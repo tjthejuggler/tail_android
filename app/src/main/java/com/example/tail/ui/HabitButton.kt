@@ -3,6 +3,7 @@ package com.example.tail.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,9 @@ import com.example.tail.data.Habit
  *   Center:       icon image + habit name (truncated)
  *   Bottom-left:  current streak (positive) or antistreak (negative)
  *   Bottom-right: longest streak
+ *
+ * When [infoMode] is true, tapping shows info instead of incrementing.
+ * When [isSelected] is true (info mode + this habit selected), a highlight border is shown.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -42,17 +46,29 @@ fun HabitButton(
     habit: Habit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    infoMode: Boolean = false,
+    isSelected: Boolean = false
 ) {
     val bgColor = getHabitColor(habit.name, habit.todayCount)
     val iconRes = getHabitIconRes(habit.name)
     val streakText = if (habit.currentStreak >= 0) "+${habit.currentStreak}" else "${habit.currentStreak}"
 
+    val shape = RoundedCornerShape(6.dp)
+    val borderMod = if (isSelected) {
+        Modifier.border(2.dp, Color(0xFFFFD700), shape)  // gold border when selected in info mode
+    } else if (infoMode) {
+        Modifier.border(1.dp, Color(0xFF88CCFF), shape)  // subtle blue border in info mode
+    } else {
+        Modifier
+    }
+
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(6.dp))
+            .clip(shape)
             .background(bgColor)
+            .then(borderMod)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
@@ -68,8 +84,16 @@ fun HabitButton(
             modifier = Modifier.align(Alignment.TopStart)
         )
 
-        // Top-right: custom input badge
-        if (habit.useCustomInput) {
+        // Top-right: custom input badge OR info mode indicator
+        if (infoMode) {
+            Text(
+                text = "ℹ",
+                color = Color(0xFF88CCFF),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.align(Alignment.TopEnd)
+            )
+        } else if (habit.useCustomInput) {
             Text(
                 text = "+",
                 color = Color.Yellow,

@@ -9,6 +9,7 @@ import com.example.tail.data.AppSettings
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.HabitsRepository
+import com.example.tail.data.HistoricalTotals
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.dateString
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +48,14 @@ class HabitViewModel(
     /** True when selectedDate == today */
     val isToday: Boolean get() = _selectedDate.value == LocalDate.now()
 
+    /** When true, tapping a habit button shows its info panel instead of incrementing. */
+    private val _infoMode = MutableStateFlow(false)
+    val infoMode: StateFlow<Boolean> = _infoMode.asStateFlow()
+
+    /** The habit currently selected for info display (null = none). */
+    private val _selectedInfoHabit = MutableStateFlow<Habit?>(null)
+    val selectedInfoHabit: StateFlow<Habit?> = _selectedInfoHabit.asStateFlow()
+
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
 
@@ -55,6 +64,9 @@ class HabitViewModel(
 
     // Cache the historical database so we don't re-read it on every increment
     private var cachedHistoricalDb: HabitsDatabase = emptyMap()
+
+    // Cache the historical totals (pre-computed stats from habitsdb_without_phone_totals.txt)
+    private var cachedHistoricalTotals: HistoricalTotals = emptyMap()
 
     init {
         viewModelScope.launch {
@@ -67,6 +79,12 @@ class HabitViewModel(
                     if (s.historicalFileUri.isNotEmpty()) {
                         cachedHistoricalDb = habitsRepo.loadHistoricalDatabase(
                             Uri.parse(s.historicalFileUri), context
+                        )
+                    }
+                    // Load historical totals if configured
+                    if (s.totalsFileUri.isNotEmpty()) {
+                        cachedHistoricalTotals = habitsRepo.loadHistoricalTotals(
+                            Uri.parse(s.totalsFileUri), context
                         )
                     }
                     catchUpAndLoad(Uri.parse(s.fileUri))
@@ -118,6 +136,7 @@ class HabitViewModel(
             db = cachedPhoneDb,
             settings = _settings.value,
             historicalDb = cachedHistoricalDb,
+            historicalTotals = cachedHistoricalTotals,
             targetDate = _selectedDate.value
         )
     }
@@ -142,6 +161,15 @@ class HabitViewModel(
             if (phoneUriString.isNotEmpty()) {
                 loadFromFile(Uri.parse(phoneUriString))
             }
+        }
+    }
+
+    fun setTotalsFileUri(uri: Uri) {
+        viewModelScope.launch {
+            settingsRepo.saveTotalsFileUri(uri.toString())
+            // Load and cache the historical totals, then rebuild habit list
+            cachedHistoricalTotals = habitsRepo.loadHistoricalTotals(uri, context)
+            rebuildHabitList()
         }
     }
 
@@ -192,6 +220,24 @@ class HabitViewModel(
 
     fun clearError() {
         _errorMessage.value = null
+    }
+
+    /** Toggles info mode on/off. Clears selected habit when turning off. */
+    fun toggleInfoMode() {
+        _infoMode.value = !_infoMode.value
+        if (!_infoMode.value) {
+            _selectedInfoHabit.value = null
+        }
+    }
+
+    /** Called when a habit is tapped in info mode — selects it for display. */
+    fun selectInfoHabit(habit: Habit) {
+        _selectedInfoHabit.value = habit
+    }
+
+    /** Clears the currently selected info habit (e.g. when tapping elsewhere). */
+    fun clearInfoHabit() {
+        _selectedInfoHabit.value = null
     }
 }
 

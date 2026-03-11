@@ -76,6 +76,18 @@ fun SettingsScreen(
         }
     }
 
+    val totalsFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            viewModel.setTotalsFileUri(uri)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -121,17 +133,17 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // Historical DB file location section
+            // Historical DB file location section (habitsdb.txt — raw full history)
             item {
-                Text("Historical DB File (habitsdb_without_phone_totals)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("Historical DB File (habitsdb.txt)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    text = "Optional: older history file from desktop. Merged with phone DB for full streak/record stats.",
+                    text = "Optional: full raw history file from desktop. Merged with phone DB for rolling averages.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = if (settings.historicalFileUri.isEmpty()) "No file selected (stats show phone data only)"
+                    text = if (settings.historicalFileUri.isEmpty()) "No file selected"
                            else settings.historicalFileUri,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -141,6 +153,36 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = { historicalFilePicker.launch(arrayOf("*/*")) }) {
                     Text("Change Historical File")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Historical totals file (habitsdb_without_phone_totals.txt — pre-computed streak baselines)
+            item {
+                Text("Historical Totals File (habitsdb_without_phone_totals.txt)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    text = "Required for correct streaks: pre-computed stats from desktop history. " +
+                           "Provides streak baseline so phone-only window shows full streak length.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (settings.totalsFileUri.isEmpty()) "No file selected (streaks capped at ~30 days)"
+                           else settings.totalsFileUri,
+                    fontSize = 12.sp,
+                    color = if (settings.totalsFileUri.isEmpty())
+                        MaterialTheme.colorScheme.error
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = { totalsFilePicker.launch(arrayOf("*/*")) }) {
+                    Text("Change Totals File")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()

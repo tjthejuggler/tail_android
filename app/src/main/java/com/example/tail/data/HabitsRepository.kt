@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -146,6 +147,35 @@ class HabitsRepository {
         loadDatabase(uri, context)
 
     /**
+     * Reads and parses habitsdb_without_phone_totals.txt — a pre-computed stats file.
+     * Format: { "habit_name": { "days_since_not_zero": N, "days_since_zero": N, "longest_streak": N } }
+     * Returns an empty map if the file is missing or malformed.
+     */
+    suspend fun loadHistoricalTotals(uri: Uri, context: Context): HistoricalTotals =
+        withContext(Dispatchers.IO) {
+            try {
+                val cr = context.contentResolver
+                cr.openInputStream(uri)?.use { stream ->
+                    val text = stream.bufferedReader().readText()
+                    val jsonObj = gson.fromJson(text, JsonObject::class.java)
+                        ?: return@withContext emptyMap()
+                    val result = mutableMapOf<String, HabitHistoricalStats>()
+                    for ((habitName, statsElem) in jsonObj.entrySet()) {
+                        val statsObj = statsElem.asJsonObject
+                        result[habitName] = HabitHistoricalStats(
+                            daysSinceNotZero = statsObj.get("days_since_not_zero")?.asInt ?: 0,
+                            daysSinceZero = statsObj.get("days_since_zero")?.asInt ?: 0,
+                            longestStreak = statsObj.get("longest_streak")?.asInt ?: 0
+                        )
+                    }
+                    result
+                } ?: emptyMap()
+            } catch (e: Exception) {
+                emptyMap()
+            }
+        }
+
+    /**
      * Merges two databases by combining their date entries per habit.
      * Phone DB entries take precedence on date conflicts (phone is the source of truth for recent data).
      */
@@ -162,11 +192,13 @@ class HabitsRepository {
     /**
      * Builds the display [Habit] list from raw database + settings for a specific [targetDate].
      * If a historical database is provided, merges it with the phone database first.
+     * If historicalTotals is provided, uses pre-computed streak baselines to extend phone-only streaks.
      */
     fun buildHabitList(
         db: HabitsDatabase,
         settings: AppSettings,
         historicalDb: HabitsDatabase = emptyMap(),
+        historicalTotals: HistoricalTotals = emptyMap(),
         targetDate: LocalDate = LocalDate.now()
     ): List<Habit> {
         val merged = if (historicalDb.isEmpty()) db else mergeDatabases(db, historicalDb)
@@ -176,6 +208,7 @@ class HabitsRepository {
                 name = name,
                 entries = entries,
                 useCustomInput = name in settings.customInputHabits,
+                historicalStats = historicalTotals[name],
                 targetDate = targetDate
             )
         }

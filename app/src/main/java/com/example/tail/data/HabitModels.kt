@@ -1,6 +1,14 @@
 package com.example.tail.data
 
 /**
+ * All-time high for a rolling window: the peak average value and the date it occurred.
+ */
+data class RollingHigh(
+    val value: Double,   // the peak rolling average
+    val date: String     // "YYYY-MM-DD" of the peak
+)
+
+/**
  * Represents a single habit with all computed stats for display.
  */
 data class Habit(
@@ -8,8 +16,20 @@ data class Habit(
     val todayCount: Int = 0,
     val currentStreak: Int = 0,       // positive = streak, negative = antistreak
     val longestStreak: Int = 0,
-    val allTimeHighDay: Int = 0,
-    val useCustomInput: Boolean = false
+    val allTimeHighDay: Int = 0,      // top-left: max single-day raw count
+    val useCustomInput: Boolean = false,
+
+    // Current rolling averages (matching desktop current_values)
+    val currentDayValue: Int = 0,     // most recent entry's raw value
+    val avgLast7Days: Double = 0.0,
+    val avgLast30Days: Double = 0.0,
+    val avgLast365Days: Double = 0.0,
+
+    // All-time high rolling windows (matching desktop all_time_high_values)
+    val allTimeHighWeek: RollingHigh = RollingHigh(0.0, ""),
+    val allTimeHighMonth: RollingHigh = RollingHigh(0.0, ""),
+    val allTimeHighYear: RollingHigh = RollingHigh(0.0, ""),
+    val allTimeHighDayDate: String = ""  // date of the all-time high single day
 )
 
 /**
@@ -19,11 +39,28 @@ data class Habit(
 typealias HabitsDatabase = Map<String, Map<String, Int>>
 
 /**
+ * Pre-computed historical stats for a single habit, loaded from habitsdb_without_phone_totals.txt.
+ * Format: { "habit_name": { "days_since_not_zero": N, "days_since_zero": N, "longest_streak": N } }
+ *
+ * - daysSinceZero: how long the streak was at the end of the historical DB (carry-forward baseline)
+ * - longestStreak: all-time longest streak from historical data
+ */
+data class HabitHistoricalStats(
+    val daysSinceNotZero: Int,
+    val daysSinceZero: Int,
+    val longestStreak: Int
+)
+
+/** Map of habit name → historical stats, loaded from habitsdb_without_phone_totals.txt */
+typealias HistoricalTotals = Map<String, HabitHistoricalStats>
+
+/**
  * App settings stored in DataStore.
  */
 data class AppSettings(
     val fileUri: String = "",
     val historicalFileUri: String = "",
+    val totalsFileUri: String = "",
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS
 )
 
