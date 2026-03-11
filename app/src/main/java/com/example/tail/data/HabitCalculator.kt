@@ -12,12 +12,30 @@ private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 fun todayString(): String = LocalDate.now().format(DATE_FMT)
 
 /**
+ * Formats any [LocalDate] as "YYYY-MM-DD".
+ */
+fun dateString(date: LocalDate): String = date.format(DATE_FMT)
+
+/**
+ * Parses a "YYYY-MM-DD" string back to a [LocalDate], or null if invalid.
+ */
+fun parseDate(s: String): LocalDate? = try {
+    LocalDate.parse(s, DATE_FMT)
+} catch (e: Exception) {
+    null
+}
+
+/**
+ * Gets the raw count for a specific date from a habit's date map.
+ */
+fun getCountForDate(entries: Map<String, Int>, date: LocalDate): Int {
+    return entries[dateString(date)] ?: 0
+}
+
+/**
  * Gets the raw count for today from a habit's date map.
  */
-fun getTodayCount(entries: Map<String, Int>): Int {
-    val today = todayString()
-    return entries[today] ?: 0
-}
+fun getTodayCount(entries: Map<String, Int>): Int = getCountForDate(entries, LocalDate.now())
 
 /**
  * Applies the special display adjustment for certain habits (matching desktop logic).
@@ -90,20 +108,26 @@ fun calculateAllTimeHighDay(entries: Map<String, Int>): Int {
 }
 
 /**
- * Builds a [Habit] display object from raw database entries.
+ * Builds a [Habit] display object from raw database entries for a specific [targetDate].
+ * All stats (streak, antistreak, etc.) are computed as if [targetDate] is "today".
  */
 fun buildHabit(
     name: String,
     entries: Map<String, Int>,
-    useCustomInput: Boolean
+    useCustomInput: Boolean,
+    targetDate: java.time.LocalDate = java.time.LocalDate.now()
 ): Habit {
-    val todayCount = getTodayCount(entries)
-    val streakDisplay = calculateStreakDisplay(entries)
-    val longestStreak = calculateLongestStreak(entries)
-    val allTimeHighDay = calculateAllTimeHighDay(entries)
+    // Only include entries up to and including targetDate for streak/stat calculations
+    val targetDateStr = dateString(targetDate)
+    val filteredEntries = entries.filter { (k, _) -> k <= targetDateStr }
+
+    val countForDate = getCountForDate(filteredEntries, targetDate)
+    val streakDisplay = calculateStreakDisplay(filteredEntries)
+    val longestStreak = calculateLongestStreak(filteredEntries)
+    val allTimeHighDay = calculateAllTimeHighDay(filteredEntries)
     return Habit(
         name = name,
-        todayCount = todayCount,
+        todayCount = countForDate,
         currentStreak = streakDisplay,
         longestStreak = longestStreak,
         allTimeHighDay = allTimeHighDay,

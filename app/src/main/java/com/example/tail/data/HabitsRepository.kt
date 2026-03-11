@@ -7,6 +7,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 
 private val gson = Gson()
 private val prettyGson = GsonBuilder().setPrettyPrinting().create()
@@ -56,6 +57,77 @@ class HabitsRepository {
         }
 
     /**
+     * Ensures every habit has an entry for every date from the latest recorded date
+     * up to and including [today]. Missing dates are added with value 0.
+     * Returns the updated database (and saves it if any dates were added).
+     */
+    suspend fun ensureDaysExist(
+        uri: Uri,
+        context: Context,
+        today: LocalDate = LocalDate.now()
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        val db = loadDatabase(uri, context).toMutableMap()
+        val todayStr = dateString(today)
+        var anyAdded = false
+
+        for (name in HABIT_ORDER) {
+            val entries = db[name]?.toMutableMap() ?: mutableMapOf()
+
+            // Find the latest date already in this habit's entries
+            val latestExisting = entries.keys.maxOrNull()
+
+            if (latestExisting == null) {
+                // No entries at all — just add today with 0
+                entries[todayStr] = 0
+                anyAdded = true
+            } else if (latestExisting < todayStr) {
+                // Fill in every missing day from day-after-latest up to today
+                var cursor = parseDate(latestExisting)?.plusDays(1) ?: today
+                while (!cursor.isAfter(today)) {
+                    val ds = dateString(cursor)
+                    if (!entries.containsKey(ds)) {
+                        entries[ds] = 0
+                        anyAdded = true
+                    }
+                    cursor = cursor.plusDays(1)
+                }
+            }
+
+            db[name] = entries.toSortedMap()
+        }
+
+        if (anyAdded) {
+            saveDatabase(uri, context, db)
+        }
+        db
+    }
+
+    /**
+     * Increments the count for a habit on [date] by [amount], then saves.
+     * Performs atomic read-modify-write.
+     */
+    suspend fun incrementHabitForDate(
+        uri: Uri,
+        context: Context,
+        habitName: String,
+        amount: Int,
+        date: LocalDate
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        val db = loadDatabase(uri, context).toMutableMap()
+        val dateStr = dateString(date)
+
+        val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
+        val current = habitEntries[dateStr] ?: 0
+        habitEntries[dateStr] = current + amount
+
+        // Keep entries sorted by date
+        db[habitName] = habitEntries.toSortedMap()
+
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
      * Increments today's count for a habit by [amount], then saves.
      * Performs atomic read-modify-write.
      */
@@ -64,20 +136,7 @@ class HabitsRepository {
         context: Context,
         habitName: String,
         amount: Int
-    ): HabitsDatabase = withContext(Dispatchers.IO) {
-        val db = loadDatabase(uri, context).toMutableMap()
-        val today = todayString()
-
-        val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
-        val current = habitEntries[today] ?: 0
-        habitEntries[today] = current + amount
-
-        // Keep entries sorted by date
-        db[habitName] = habitEntries.toSortedMap()
-
-        saveDatabase(uri, context, db)
-        db
-    }
+    ): HabitsDatabase = incrementHabitForDate(uri, context, habitName, amount, LocalDate.now())
 
     /**
      * Reads and parses the historical habits JSON file (read-only, no write needed).
@@ -101,13 +160,14 @@ class HabitsRepository {
     }
 
     /**
-     * Builds the display [Habit] list from raw database + settings.
+     * Builds the display [Habit] list from raw database + settings for a specific [targetDate].
      * If a historical database is provided, merges it with the phone database first.
      */
     fun buildHabitList(
         db: HabitsDatabase,
         settings: AppSettings,
-        historicalDb: HabitsDatabase = emptyMap()
+        historicalDb: HabitsDatabase = emptyMap(),
+        targetDate: LocalDate = LocalDate.now()
     ): List<Habit> {
         val merged = if (historicalDb.isEmpty()) db else mergeDatabases(db, historicalDb)
         return HABIT_ORDER.map { name ->
@@ -115,7 +175,8 @@ class HabitsRepository {
             buildHabit(
                 name = name,
                 entries = entries,
-                useCustomInput = name in settings.customInputHabits
+                useCustomInput = name in settings.customInputHabits,
+                targetDate = targetDate
             )
         }
     }

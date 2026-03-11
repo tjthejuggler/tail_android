@@ -10,13 +10,17 @@ import com.example.tail.data.Habit
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.dateString
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 /**
  * Main ViewModel: owns habits list + settings state, delegates I/O to repositories.
+ * Supports day navigation: selectedDate can be moved backward/forward relative to today.
  */
 class HabitViewModel(
     private val habitsRepo: HabitsRepository,
@@ -36,8 +40,18 @@ class HabitViewModel(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    /** The date currently being viewed/edited. Starts at today. */
+    private val _selectedDate = MutableStateFlow(LocalDate.now())
+    val selectedDate: StateFlow<LocalDate> = _selectedDate.asStateFlow()
+
+    /** True when selectedDate == today */
+    val isToday: Boolean get() = _selectedDate.value == LocalDate.now()
+
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
+
+    // Cache the raw phone DB so we can rebuild the habit list without re-reading the file
+    private var cachedPhoneDb: HabitsDatabase = emptyMap()
 
     // Cache the historical database so we don't re-read it on every increment
     private var cachedHistoricalDb: HabitsDatabase = emptyMap()
@@ -55,8 +69,29 @@ class HabitViewModel(
                             Uri.parse(s.historicalFileUri), context
                         )
                     }
-                    loadFromFile(Uri.parse(s.fileUri))
+                    catchUpAndLoad(Uri.parse(s.fileUri))
                 }
+            }
+        }
+    }
+
+    /**
+     * On app start (or file selection): ensure all missing days are filled in up to today,
+     * then load and display the habit list for the selected date.
+     */
+    private fun catchUpAndLoad(uri: Uri) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+            try {
+                // Fill in any missing days up to today, save, and get the updated DB
+                val db = habitsRepo.ensureDaysExist(uri, context)
+                cachedPhoneDb = db
+                rebuildHabitList()
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to load file: ${e.message}"
+            } finally {
+                _isLoading.value = false
             }
         }
     }
@@ -66,8 +101,9 @@ class HabitViewModel(
             _isLoading.value = true
             _errorMessage.value = null
             try {
-                val db = habitsRepo.loadDatabase(uri, context)
-                _habits.value = habitsRepo.buildHabitList(db, _settings.value, cachedHistoricalDb)
+                val db = habitsRepo.ensureDaysExist(uri, context)
+                cachedPhoneDb = db
+                rebuildHabitList()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to load file: ${e.message}"
             } finally {
@@ -76,12 +112,24 @@ class HabitViewModel(
         }
     }
 
+    /** Rebuilds the displayed habit list from cached data for the current selectedDate. */
+    private fun rebuildHabitList() {
+        _habits.value = habitsRepo.buildHabitList(
+            db = cachedPhoneDb,
+            settings = _settings.value,
+            historicalDb = cachedHistoricalDb,
+            targetDate = _selectedDate.value
+        )
+    }
+
     fun setFileUri(uri: Uri) {
         viewModelScope.launch {
             val uriString = uri.toString()
             lastLoadedUri = uriString
             settingsRepo.saveFileUri(uriString)
-            loadFromFile(uri)
+            // Reset to today when a new file is picked
+            _selectedDate.value = LocalDate.now()
+            catchUpAndLoad(uri)
         }
     }
 
@@ -97,6 +145,18 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Navigate the selected date by [deltaDays] (negative = go back, positive = go forward).
+     * Cannot navigate past today.
+     */
+    fun navigateDay(deltaDays: Int) {
+        val newDate = _selectedDate.value.plusDays(deltaDays.toLong())
+        val today = LocalDate.now()
+        // Clamp: don't allow going into the future beyond today
+        _selectedDate.value = if (newDate.isAfter(today)) today else newDate
+        rebuildHabitList()
+    }
+
     fun incrementHabit(habitName: String, amount: Int = 1) {
         val uriString = _settings.value.fileUri
         if (uriString.isEmpty()) {
@@ -106,8 +166,11 @@ class HabitViewModel(
         viewModelScope.launch {
             try {
                 val uri = Uri.parse(uriString)
-                val db = habitsRepo.incrementHabit(uri, context, habitName, amount)
-                _habits.value = habitsRepo.buildHabitList(db, _settings.value, cachedHistoricalDb)
+                val db = habitsRepo.incrementHabitForDate(
+                    uri, context, habitName, amount, _selectedDate.value
+                )
+                cachedPhoneDb = db
+                rebuildHabitList()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
