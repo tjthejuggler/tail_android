@@ -202,7 +202,9 @@ class HabitsRepository {
         targetDate: LocalDate = LocalDate.now()
     ): List<Habit> {
         val merged = if (historicalDb.isEmpty()) db else mergeDatabases(db, historicalDb)
-        return HABIT_ORDER.map { name ->
+        // Use custom order if set, otherwise fall back to default HABIT_ORDER
+        val order = if (settings.habitOrder.isNotEmpty()) settings.habitOrder else HABIT_ORDER
+        return order.map { name ->
             val entries = merged[name] ?: emptyMap()
             buildHabit(
                 name = name,

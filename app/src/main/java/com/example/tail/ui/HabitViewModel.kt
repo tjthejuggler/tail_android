@@ -12,12 +12,15 @@ import com.example.tail.data.HabitsRepository
 import com.example.tail.data.HistoricalTotals
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.dateString
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+
+private const val TAG = "HabitVM"
 
 /**
  * Main ViewModel: owns habits list + settings state, delegates I/O to repositories.
@@ -56,8 +59,27 @@ class HabitViewModel(
     private val _selectedInfoHabit = MutableStateFlow<Habit?>(null)
     val selectedInfoHabit: StateFlow<Habit?> = _selectedInfoHabit.asStateFlow()
 
+    /** When true, the grid is in tap-to-select reorder edit mode. */
+    private val _editMode = MutableStateFlow(false)
+    val editMode: StateFlow<Boolean> = _editMode.asStateFlow()
+
+    /**
+     * The current display order of habit names. Starts as HABIT_ORDER, then reflects
+     * any custom ordering the user has saved.
+     */
+    private val _habitOrder = MutableStateFlow<List<String>>(com.example.tail.data.HABIT_ORDER)
+    val habitOrder: StateFlow<List<String>> = _habitOrder.asStateFlow()
+
+    /** The index (in the current habit list) of the habit selected for reordering. -1 = none. */
+    private val _selectedEditIndex = MutableStateFlow(-1)
+    val selectedEditIndex: StateFlow<Int> = _selectedEditIndex.asStateFlow()
+
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
+
+    // Flag to suppress settingsFlow reaction while we're saving a new habit order
+    // (avoids a feedback loop: saveHabitOrder → DataStore emits → collector updates _habitOrder → etc.)
+    private var isSavingOrder: Boolean = false
 
     // Cache the raw phone DB so we can rebuild the habit list without re-reading the file
     private var cachedPhoneDb: HabitsDatabase = emptyMap()
@@ -72,6 +94,11 @@ class HabitViewModel(
         viewModelScope.launch {
             settingsRepo.settingsFlow.collect { s ->
                 _settings.value = s
+                // Sync habit order from persisted settings, but skip if we're the ones saving it
+                // (avoids feedback loop: moveSelectedHabit → saveHabitOrder → flow emits → here)
+                if (s.habitOrder.isNotEmpty() && !isSavingOrder) {
+                    _habitOrder.value = s.habitOrder
+                }
                 // Only load from file on first settings emission (app start)
                 if (s.fileUri.isNotEmpty() && lastLoadedUri.isEmpty()) {
                     lastLoadedUri = s.fileUri
@@ -238,6 +265,70 @@ class HabitViewModel(
     /** Clears the currently selected info habit (e.g. when tapping elsewhere). */
     fun clearInfoHabit() {
         _selectedInfoHabit.value = null
+    }
+
+    /** Toggles edit (tap-to-select reorder) mode on/off. Clears selection when turning off. */
+    fun toggleEditMode() {
+        _editMode.value = !_editMode.value
+        if (!_editMode.value) {
+            _selectedEditIndex.value = -1
+        }
+    }
+
+    /** Selects (or deselects) a habit by index for reordering in edit mode. */
+    fun selectEditHabit(index: Int) {
+        val prev = _selectedEditIndex.value
+        val next = if (prev == index) -1 else index
+        Log.d(TAG, "selectEditHabit: index=$index prev=$prev -> next=$next habitOrderSize=${_habitOrder.value.size} habitsSize=${_habits.value.size}")
+        _selectedEditIndex.value = next
+    }
+
+    /**
+     * Moves the currently selected habit by [delta] positions (+1 = right/down, -1 = left/up).
+     * Clamps to valid range. Persists immediately and keeps the selection tracking the moved item.
+     */
+    fun moveSelectedHabit(delta: Int) {
+        val idx = _selectedEditIndex.value
+        Log.d(TAG, "moveSelectedHabit: delta=$delta selectedIdx=$idx habitOrderSize=${_habitOrder.value.size} habitsSize=${_habits.value.size}")
+        if (idx < 0) {
+            Log.w(TAG, "moveSelectedHabit: no habit selected, ignoring")
+            return
+        }
+        val current = _habitOrder.value.toMutableList()
+        val newIdx = (idx + delta).coerceIn(0, current.size - 1)
+        Log.d(TAG, "moveSelectedHabit: moving '${current.getOrNull(idx)}' from $idx to $newIdx")
+        if (newIdx == idx) {
+            Log.d(TAG, "moveSelectedHabit: already at boundary, no-op")
+            return
+        }
+        val item = current.removeAt(idx)
+        current.add(newIdx, item)
+        _habitOrder.value = current
+        _selectedEditIndex.value = newIdx
+        // Rebuild display list with new order immediately (don't wait for DataStore round-trip)
+        val settingsWithOrder = _settings.value.copy(habitOrder = current)
+        _habits.value = habitsRepo.buildHabitList(
+            db = cachedPhoneDb,
+            settings = settingsWithOrder,
+            historicalDb = cachedHistoricalDb,
+            historicalTotals = cachedHistoricalTotals,
+            targetDate = _selectedDate.value
+        )
+        Log.d(TAG, "moveSelectedHabit: habits rebuilt, new size=${_habits.value.size}, persisting...")
+        // Persist to DataStore — use flag to suppress the settingsFlow feedback loop
+        isSavingOrder = true
+        viewModelScope.launch {
+            try {
+                settingsRepo.saveHabitOrder(current)
+                // Update _settings in-memory so it stays consistent without re-triggering a rebuild
+                _settings.value = _settings.value.copy(habitOrder = current)
+                Log.d(TAG, "moveSelectedHabit: persist complete")
+            } catch (e: Exception) {
+                Log.e(TAG, "moveSelectedHabit: persist FAILED", e)
+            } finally {
+                isSavingOrder = false
+            }
+        }
     }
 }
 

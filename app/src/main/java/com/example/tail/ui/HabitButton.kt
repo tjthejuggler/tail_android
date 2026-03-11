@@ -48,19 +48,20 @@ fun HabitButton(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
     infoMode: Boolean = false,
-    isSelected: Boolean = false
+    isSelected: Boolean = false,
+    editMode: Boolean = false
 ) {
     val bgColor = getHabitColor(habit.name, habit.todayCount)
     val iconRes = getHabitIconRes(habit.name)
     val streakText = if (habit.currentStreak >= 0) "+${habit.currentStreak}" else "${habit.currentStreak}"
 
     val shape = RoundedCornerShape(6.dp)
-    val borderMod = if (isSelected) {
-        Modifier.border(2.dp, Color(0xFFFFD700), shape)  // gold border when selected in info mode
-    } else if (infoMode) {
-        Modifier.border(1.dp, Color(0xFF88CCFF), shape)  // subtle blue border in info mode
-    } else {
-        Modifier
+    val borderMod = when {
+        isSelected && editMode -> Modifier.border(2.dp, Color(0xFFFFAA00), shape)  // orange border when selected in edit mode
+        isSelected -> Modifier.border(2.dp, Color(0xFFFFD700), shape)              // gold border when selected in info mode
+        infoMode   -> Modifier.border(1.dp, Color(0xFF88CCFF), shape)              // subtle blue border in info mode
+        editMode   -> Modifier.border(1.dp, Color(0xFFFF8C00), shape)              // dim orange border in edit mode
+        else       -> Modifier
     }
 
     Box(
@@ -84,8 +85,16 @@ fun HabitButton(
             modifier = Modifier.align(Alignment.TopStart)
         )
 
-        // Top-right: custom input badge OR info mode indicator
-        if (infoMode) {
+        // Top-right: edit mode drag handle OR info mode indicator OR custom input badge
+        if (editMode) {
+            Text(
+                text = "⠿",
+                color = Color(0xFFFF8C00),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.align(Alignment.TopEnd)
+            )
+        } else if (infoMode) {
             Text(
                 text = "ℹ",
                 color = Color(0xFF88CCFF),

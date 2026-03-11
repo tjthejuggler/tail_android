@@ -14,18 +14,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -79,7 +83,9 @@ fun HabitGridScreen(
     val settings by viewModel.settings.collectAsState()
     val selectedDate by viewModel.selectedDate.collectAsState()
     val infoMode by viewModel.infoMode.collectAsState()
+    val editMode by viewModel.editMode.collectAsState()
     val selectedInfoHabit by viewModel.selectedInfoHabit.collectAsState()
+    val selectedEditIndex by viewModel.selectedEditIndex.collectAsState()
     val context = LocalContext.current
 
     val today = LocalDate.now()
@@ -129,7 +135,7 @@ fun HabitGridScreen(
                             )
                         }
 
-                        // Date label — tapping resets to today if not already there
+                        // Date label
                         val dateLabel = if (isToday) "Today" else selectedDate.format(DISPLAY_DATE_FMT)
                         val dateLabelColor = if (isToday) Color.White else Color(0xFFFFD700)
                         Text(
@@ -140,7 +146,7 @@ fun HabitGridScreen(
                             modifier = Modifier.padding(horizontal = 2.dp)
                         )
 
-                        // Forward arrow — disabled (greyed out) when already on today
+                        // Forward arrow — disabled when already on today
                         IconButton(
                             onClick = { viewModel.navigateDay(+1) },
                             enabled = !isToday
@@ -157,7 +163,20 @@ fun HabitGridScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
-                    // Info mode toggle button — highlighted when active
+                    // Edit mode toggle button
+                    IconButton(
+                        onClick = { viewModel.toggleEditMode() },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = if (editMode) Color(0xFF4A2A00) else Color.Transparent
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = if (editMode) "Edit mode ON" else "Edit mode OFF",
+                            tint = if (editMode) Color(0xFFFFAA00) else Color.White
+                        )
+                    }
+                    // Info mode toggle button
                     IconButton(
                         onClick = { viewModel.toggleInfoMode() },
                         colors = IconButtonDefaults.iconButtonColors(
@@ -205,19 +224,19 @@ fun HabitGridScreen(
                     HabitGrid(
                         habits = habits,
                         infoMode = infoMode,
+                        editMode = editMode,
                         selectedInfoHabit = selectedInfoHabit,
-                        onHabitClick = { habit ->
-                            if (infoMode) {
-                                // In info mode: select habit to show its stats
-                                viewModel.selectInfoHabit(habit)
-                            } else if (habit.useCustomInput) {
-                                dialogHabit = habit
-                            } else {
-                                viewModel.incrementHabit(habit.name, 1)
+                        selectedEditIndex = selectedEditIndex,
+                        onHabitClick = { habit, index ->
+                            when {
+                                editMode -> viewModel.selectEditHabit(index)
+                                infoMode -> viewModel.selectInfoHabit(habit)
+                                habit.useCustomInput -> dialogHabit = habit
+                                else -> viewModel.incrementHabit(habit.name, 1)
                             }
                         },
                         onHabitLongClick = { habit ->
-                            if (!infoMode) {
+                            if (!infoMode && !editMode) {
                                 viewModel.toggleCustomInput(habit.name)
                             }
                         }
@@ -231,6 +250,18 @@ fun HabitGridScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                // Edit mode control bar — shown below grid when in edit mode
+                if (editMode) {
+                    EditModeControlBar(
+                        selectedIndex = selectedEditIndex,
+                        selectedHabitName = if (selectedEditIndex >= 0 && selectedEditIndex < habits.size)
+                            habits[selectedEditIndex].name else null,
+                        habitCount = habits.size,
+                        onMoveLeft = { viewModel.moveSelectedHabit(-1) },
+                        onMoveRight = { viewModel.moveSelectedHabit(+1) }
                     )
                 }
             }
@@ -252,14 +283,17 @@ fun HabitGridScreen(
 }
 
 /**
- * The 8-column lazy grid. Renders 76 habit buttons + 4 empty spacers = 80 cells.
+ * The 8-column lazy grid. Works for both normal mode and edit mode.
+ * In edit mode, tapping selects a habit (highlighted with orange border).
  */
 @Composable
 private fun HabitGrid(
     habits: List<Habit>,
     infoMode: Boolean,
+    editMode: Boolean,
     selectedInfoHabit: Habit?,
-    onHabitClick: (Habit) -> Unit,
+    selectedEditIndex: Int,
+    onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit
 ) {
     // Build a list of 80 nullable items (null = empty spacer)
@@ -274,15 +308,18 @@ private fun HabitGrid(
             .fillMaxSize()
             .padding(4.dp)
     ) {
-        items(cells) { habit ->
+        itemsIndexed(cells) { index, habit ->
             if (habit != null) {
+                val isEditSelected = editMode && index == selectedEditIndex
+                val isInfoSelected = infoMode && selectedInfoHabit?.name == habit.name
                 HabitButton(
                     habit = habit,
-                    onClick = { onHabitClick(habit) },
+                    onClick = { onHabitClick(habit, index) },
                     onLongClick = { onHabitLongClick(habit) },
                     modifier = Modifier.padding(2.dp),
                     infoMode = infoMode,
-                    isSelected = infoMode && selectedInfoHabit?.name == habit.name
+                    editMode = editMode,
+                    isSelected = isEditSelected || isInfoSelected
                 )
             } else {
                 Box(modifier = Modifier.aspectRatio(1f))
@@ -292,18 +329,72 @@ private fun HabitGrid(
 }
 
 /**
+ * Control bar shown below the grid in edit mode.
+ * Shows the selected habit name and ← / → buttons to move it one position at a time.
+ */
+@Composable
+private fun EditModeControlBar(
+    selectedIndex: Int,
+    selectedHabitName: String?,
+    habitCount: Int,
+    onMoveLeft: () -> Unit,
+    onMoveRight: () -> Unit
+) {
+    val hasSelection = selectedIndex >= 0
+    val canMoveLeft = hasSelection && selectedIndex > 0
+    val canMoveRight = hasSelection && selectedIndex < habitCount - 1
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1A1000))
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        // Selected habit name (or prompt)
+        Text(
+            text = if (selectedHabitName != null) "Selected: $selectedHabitName" else "✏ Tap a habit to select it, then move with ← →",
+            color = if (selectedHabitName != null) Color(0xFFFFAA00) else Color(0xFF888888),
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        if (hasSelection) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onMoveLeft,
+                    enabled = canMoveLeft,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF5A3A00),
+                        disabledContainerColor = Color(0xFF2A2A2A)
+                    ),
+                    modifier = Modifier.size(width = 100.dp, height = 36.dp)
+                ) {
+                    Text("← Move", fontSize = 12.sp, color = if (canMoveLeft) Color(0xFFFFAA00) else Color(0xFF666666))
+                }
+                Button(
+                    onClick = onMoveRight,
+                    enabled = canMoveRight,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF5A3A00),
+                        disabledContainerColor = Color(0xFF2A2A2A)
+                    ),
+                    modifier = Modifier.size(width = 100.dp, height = 36.dp)
+                ) {
+                    Text("Move →", fontSize = 12.sp, color = if (canMoveRight) Color(0xFFFFAA00) else Color(0xFF666666))
+                }
+            }
+        }
+    }
+}
+
+/**
  * Info panel shown below the grid when info mode is active.
- * Displays the same stats as the desktop app's hover tooltip.
- *
- * Desktop tooltip format:
- *   [Habit Name]
- *   Current streak/antistreak: [left_number]
- *   Longest streak: [right_number]
- *   (current) All time high - date:
- *   day: ([current_values["day"]]) [all_time_high_values["day"][1]] - [all_time_high_values["day"][0]]
- *   week: ([current_values["week"]]) [all_time_high_values["week"][1]] - [all_time_high_values["week"][0]]
- *   month: ([current_values["month"]]) [all_time_high_values["month"][1]] - [all_time_high_values["month"][0]]
- *   year: ([current_values["year"]]) [all_time_high_values["year"][1]] - [all_time_high_values["year"][0]]
  */
 @Composable
 fun HabitInfoPanel(
@@ -352,7 +443,6 @@ fun HabitInfoPanel(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Section header matching desktop: "(current) All time high - date:"
                 Text(
                     text = "(current) All time high - date:",
                     color = labelColor,
@@ -361,7 +451,6 @@ fun HabitInfoPanel(
                 )
                 Spacer(modifier = Modifier.height(3.dp))
 
-                // day: (current_values["day"]) all_time_high_values["day"][1] - all_time_high_values["day"][0]
                 InfoRow(
                     label = "day",
                     value = formatRollingRow(
@@ -371,36 +460,21 @@ fun HabitInfoPanel(
                     valueColor = valueColor,
                     labelColor = dimColor
                 )
-
-                // week: (current_values["week"]) all_time_high_values["week"][1] - all_time_high_values["week"][0]
                 InfoRow(
                     label = "week",
-                    value = formatRollingRow(
-                        currentVal = habit.avgLast7Days,
-                        high = habit.allTimeHighWeek
-                    ),
+                    value = formatRollingRow(currentVal = habit.avgLast7Days, high = habit.allTimeHighWeek),
                     valueColor = valueColor,
                     labelColor = dimColor
                 )
-
-                // month
                 InfoRow(
                     label = "month",
-                    value = formatRollingRow(
-                        currentVal = habit.avgLast30Days,
-                        high = habit.allTimeHighMonth
-                    ),
+                    value = formatRollingRow(currentVal = habit.avgLast30Days, high = habit.allTimeHighMonth),
                     valueColor = valueColor,
                     labelColor = dimColor
                 )
-
-                // year
                 InfoRow(
                     label = "year",
-                    value = formatRollingRow(
-                        currentVal = habit.avgLast365Days,
-                        high = habit.allTimeHighYear
-                    ),
+                    value = formatRollingRow(currentVal = habit.avgLast365Days, high = habit.allTimeHighYear),
                     valueColor = valueColor,
                     labelColor = dimColor
                 )
@@ -409,10 +483,6 @@ fun HabitInfoPanel(
     }
 }
 
-/**
- * Formats a rolling stats row matching the desktop tooltip format:
- * "(currentVal) highVal - highDate"
- */
 private fun formatRollingRow(currentVal: Double, high: RollingHigh): String {
     val cur = if (currentVal == currentVal.toLong().toDouble()) {
         currentVal.toLong().toString()
@@ -428,9 +498,6 @@ private fun formatRollingRow(currentVal: Double, high: RollingHigh): String {
     return "($cur) $highVal - $date"
 }
 
-/**
- * A single label: value row for the info panel.
- */
 @Composable
 private fun InfoRow(
     label: String,

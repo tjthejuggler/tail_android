@@ -61,7 +61,9 @@ data class AppSettings(
     val fileUri: String = "",
     val historicalFileUri: String = "",
     val totalsFileUri: String = "",
-    val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS
+    val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
+    /** Custom display order for habits. Empty = use HABIT_ORDER default. */
+    val habitOrder: List<String> = emptyList()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(
