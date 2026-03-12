@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -24,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
@@ -32,14 +34,20 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -57,7 +65,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.tail.data.Habit
+import com.example.tail.data.HabitScreen
 import com.example.tail.data.RollingHigh
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -86,6 +96,8 @@ fun HabitGridScreen(
     val editMode by viewModel.editMode.collectAsState()
     val selectedInfoHabit by viewModel.selectedInfoHabit.collectAsState()
     val selectedEditIndex by viewModel.selectedEditIndex.collectAsState()
+    val habitScreens by viewModel.habitScreens.collectAsState()
+    val activeScreenIndex by viewModel.activeScreenIndex.collectAsState()
     val context = LocalContext.current
 
     val today = LocalDate.now()
@@ -93,6 +105,9 @@ fun HabitGridScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var dialogHabit by remember { mutableStateOf<Habit?>(null) }
+    var showAddScreenDialog by remember { mutableStateOf(false) }
+    // Index of screen being renamed (-1 = none)
+    var renamingScreenIndex by remember { mutableStateOf(-1) }
 
     // File picker launcher — requests persistent read+write permission
     val filePicker = rememberLauncherForActivityResult(
@@ -116,11 +131,15 @@ fun HabitGridScreen(
         }
     }
 
+    // Determine the active screen name for the title
+    val activeScreenName: String? = if (habitScreens.isNotEmpty()) {
+        habitScreens.getOrNull(activeScreenIndex)?.name
+    } else null
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    // Day navigation: ← [date label] →
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Start,
@@ -155,6 +174,17 @@ fun HabitGridScreen(
                                 Icons.AutoMirrored.Filled.ArrowForward,
                                 contentDescription = "Next day",
                                 tint = if (isToday) Color.Gray else Color.White
+                            )
+                        }
+
+                        // Screen name label (shown when screens are configured)
+                        if (activeScreenName != null) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = activeScreenName,
+                                color = Color(0xFFFFAA44),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
@@ -205,6 +235,23 @@ fun HabitGridScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            // Screen tabs — shown when multiple screens exist (always, not just edit mode)
+            // In edit mode, tapping the active tab opens a rename dialog
+            if (habitScreens.size > 1) {
+                ScreenTabRow(
+                    screens = habitScreens,
+                    activeIndex = activeScreenIndex,
+                    editMode = editMode,
+                    onTabClick = { idx ->
+                        if (editMode && idx == activeScreenIndex) {
+                            renamingScreenIndex = idx
+                        } else {
+                            viewModel.switchScreen(idx)
+                        }
+                    }
+                )
+            }
+
             if (isLoading) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -255,13 +302,23 @@ fun HabitGridScreen(
 
                 // Edit mode control bar — shown below grid when in edit mode
                 if (editMode) {
+                    val selectedHabitName = if (selectedEditIndex >= 0 && selectedEditIndex < habits.size)
+                        habits[selectedEditIndex].name else null
                     EditModeControlBar(
                         selectedIndex = selectedEditIndex,
-                        selectedHabitName = if (selectedEditIndex >= 0 && selectedEditIndex < habits.size)
-                            habits[selectedEditIndex].name else null,
+                        selectedHabitName = selectedHabitName,
                         habitCount = habits.size,
+                        habitScreens = habitScreens,
+                        activeScreenIndex = activeScreenIndex,
+                        selectedHabitScreenIndex = if (selectedHabitName != null)
+                            viewModel.screenIndexForHabit(selectedHabitName) else -1,
+                        customInputHabits = settings.customInputHabits,
                         onMoveLeft = { viewModel.moveSelectedHabit(-1) },
-                        onMoveRight = { viewModel.moveSelectedHabit(+1) }
+                        onMoveRight = { viewModel.moveSelectedHabit(+1) },
+                        onMoveToScreen = { viewModel.moveHabitToScreen(it) },
+                        onAddScreen = { showAddScreenDialog = true },
+                        onDeleteScreen = { viewModel.deleteScreen(activeScreenIndex) },
+                        onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) }
                     )
                 }
             }
@@ -280,7 +337,71 @@ fun HabitGridScreen(
             onDismiss = { dialogHabit = null }
         )
     }
+
+    // Add screen dialog
+    if (showAddScreenDialog) {
+        AddScreenDialog(
+            onConfirm = { name ->
+                viewModel.addScreen(name)
+                showAddScreenDialog = false
+            },
+            onDismiss = { showAddScreenDialog = false }
+        )
+    }
+
+    // Rename screen dialog
+    if (renamingScreenIndex >= 0) {
+        val currentName = habitScreens.getOrNull(renamingScreenIndex)?.name ?: ""
+        RenameScreenDialog(
+            currentName = currentName,
+            onConfirm = { newName ->
+                viewModel.renameScreen(renamingScreenIndex, newName)
+                renamingScreenIndex = -1
+            },
+            onDismiss = { renamingScreenIndex = -1 }
+        )
+    }
 }
+
+// ── Screen tab row ────────────────────────────────────────────────────────────
+
+@Composable
+private fun ScreenTabRow(
+    screens: List<HabitScreen>,
+    activeIndex: Int,
+    editMode: Boolean,
+    onTabClick: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF111111))
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        screens.forEachIndexed { index, screen ->
+            val isActive = index == activeIndex
+            // In edit mode, active tab shows a pencil hint to indicate it's renameable
+            val label = if (editMode && isActive) "✎ ${screen.name}" else screen.name
+            TextButton(
+                onClick = { onTabClick(index) },
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = if (isActive) Color(0xFF3A2000) else Color.Transparent,
+                    contentColor = if (isActive) Color(0xFFFFAA00) else Color(0xFF888888)
+                ),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 12.sp,
+                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+        }
+    }
+}
+
+// ── Habit grid ────────────────────────────────────────────────────────────────
 
 /**
  * The 8-column lazy grid. Works for both normal mode and edit mode.
@@ -328,21 +449,40 @@ private fun HabitGrid(
     }
 }
 
+// ── Edit mode control bar ─────────────────────────────────────────────────────
+
 /**
  * Control bar shown below the grid in edit mode.
- * Shows the selected habit name and ← / → buttons to move it one position at a time.
+ * When a habit is selected it shows:
+ *   • MOVE section: ← / → position buttons + screen-jump buttons for other screens
+ *   • SETTINGS section: custom input toggle for the selected habit
+ * When no habit is selected it shows a prompt + "Add Screen" button.
  */
 @Composable
 private fun EditModeControlBar(
     selectedIndex: Int,
     selectedHabitName: String?,
     habitCount: Int,
+    habitScreens: List<HabitScreen>,
+    activeScreenIndex: Int,
+    selectedHabitScreenIndex: Int,   // which screen the selected habit is on (-1 if no screens)
+    customInputHabits: Set<String>,
     onMoveLeft: () -> Unit,
-    onMoveRight: () -> Unit
+    onMoveRight: () -> Unit,
+    onMoveToScreen: (Int) -> Unit,
+    onAddScreen: () -> Unit,
+    onDeleteScreen: () -> Unit,
+    onToggleCustomInput: (String) -> Unit
 ) {
     val hasSelection = selectedIndex >= 0
     val canMoveLeft = hasSelection && selectedIndex > 0
     val canMoveRight = hasSelection && selectedIndex < habitCount - 1
+
+    // Other screens = all screens except the one the selected habit is currently on
+    val otherScreenIndices: List<Int> = if (hasSelection && habitScreens.size > 1) {
+        val currentScreen = if (selectedHabitScreenIndex >= 0) selectedHabitScreenIndex else activeScreenIndex
+        habitScreens.indices.filter { it != currentScreen }
+    } else emptyList()
 
     Column(
         modifier = Modifier
@@ -350,22 +490,73 @@ private fun EditModeControlBar(
             .background(Color(0xFF1A1000))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        // Selected habit name (or prompt)
-        Text(
-            text = if (selectedHabitName != null) "Selected: $selectedHabitName" else "✏ Tap a habit to select it, then move with ← →",
-            color = if (selectedHabitName != null) Color(0xFFFFAA00) else Color(0xFF888888),
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        if (hasSelection) {
-            Spacer(modifier = Modifier.height(4.dp))
+        if (!hasSelection) {
+            // No habit selected — show prompt, Add Screen button, and (if >1 screen) Delete Screen button
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Text(
+                    text = "✏ Tap a habit to select it",
+                    color = Color(0xFF888888),
+                    fontSize = 11.sp
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Delete current screen — only shown when there are 2+ screens
+                    if (habitScreens.size > 1) {
+                        Button(
+                            onClick = onDeleteScreen,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A0000)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Del Screen", fontSize = 11.sp, color = Color(0xFFFF8888))
+                        }
+                    }
+                    Button(
+                        onClick = onAddScreen,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A1A)),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = "Add screen",
+                            tint = Color(0xFF88FF88),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Screen", fontSize = 11.sp, color = Color(0xFF88FF88))
+                    }
+                }
+            }
+        } else {
+            // Habit selected — show name header
+            Text(
+                text = "Selected: $selectedHabitName",
+                color = Color(0xFFFFAA00),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // ── MOVE section ──────────────────────────────────────────────
+            Text(
+                text = "MOVE",
+                color = Color(0xFF888888),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // ← position button
                 Button(
                     onClick = onMoveLeft,
                     enabled = canMoveLeft,
@@ -373,10 +564,17 @@ private fun EditModeControlBar(
                         containerColor = Color(0xFF5A3A00),
                         disabledContainerColor = Color(0xFF2A2A2A)
                     ),
-                    modifier = Modifier.size(width = 100.dp, height = 36.dp)
+                    modifier = Modifier.size(width = 48.dp, height = 32.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                 ) {
-                    Text("← Move", fontSize = 12.sp, color = if (canMoveLeft) Color(0xFFFFAA00) else Color(0xFF666666))
+                    Text(
+                        "←",
+                        fontSize = 14.sp,
+                        color = if (canMoveLeft) Color(0xFFFFAA00) else Color(0xFF666666)
+                    )
                 }
+
+                // → position button
                 Button(
                     onClick = onMoveRight,
                     enabled = canMoveRight,
@@ -384,14 +582,203 @@ private fun EditModeControlBar(
                         containerColor = Color(0xFF5A3A00),
                         disabledContainerColor = Color(0xFF2A2A2A)
                     ),
-                    modifier = Modifier.size(width = 100.dp, height = 36.dp)
+                    modifier = Modifier.size(width = 48.dp, height = 32.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                 ) {
-                    Text("Move →", fontSize = 12.sp, color = if (canMoveRight) Color(0xFFFFAA00) else Color(0xFF666666))
+                    Text(
+                        "→",
+                        fontSize = 14.sp,
+                        color = if (canMoveRight) Color(0xFFFFAA00) else Color(0xFF666666)
+                    )
+                }
+
+                // Screen jump buttons (only shown when there are other screens)
+                otherScreenIndices.forEach { screenIdx ->
+                    val screenName = habitScreens[screenIdx].name
+                    Button(
+                        onClick = { onMoveToScreen(screenIdx) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text(
+                            screenName,
+                            fontSize = 11.sp,
+                            color = Color(0xFF88CCFF)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF333300), thickness = 1.dp)
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // ── SETTINGS section ──────────────────────────────────────────
+            Text(
+                text = "SETTINGS",
+                color = Color(0xFF888888),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            if (selectedHabitName != null) {
+                val isCustomInput = selectedHabitName in customInputHabits
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Custom input",
+                            color = Color(0xFFCCCCCC),
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = if (isCustomInput) "Shows number picker on tap"
+                            else "Simple +1 on tap",
+                            color = Color(0xFF888888),
+                            fontSize = 10.sp
+                        )
+                    }
+                    Switch(
+                        checked = isCustomInput,
+                        onCheckedChange = { onToggleCustomInput(selectedHabitName) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFFFFAA00),
+                            checkedTrackColor = Color(0xFF5A3A00),
+                            uncheckedThumbColor = Color(0xFF888888),
+                            uncheckedTrackColor = Color(0xFF333333)
+                        )
+                    )
                 }
             }
         }
     }
 }
+
+// ── Rename screen dialog ──────────────────────────────────────────────────────
+
+@Composable
+private fun RenameScreenDialog(
+    currentName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(currentName) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Rename Screen",
+                color = Color(0xFFFFAA00),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Screen name", color = Color(0xFF888888)) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFFFFAA00),
+                    unfocusedBorderColor = Color(0xFF555555)
+                )
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val trimmed = name.trim()
+                        if (trimmed.isNotEmpty()) onConfirm(trimmed)
+                    },
+                    enabled = name.trim().isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A3A00))
+                ) {
+                    Text("Rename", color = Color(0xFFFFAA00))
+                }
+            }
+        }
+    }
+}
+
+// ── Add screen dialog ─────────────────────────────────────────────────────────
+
+@Composable
+private fun AddScreenDialog(
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "New Screen",
+                color = Color(0xFFFFAA00),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Screen name", color = Color(0xFF888888)) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFFFFAA00),
+                    unfocusedBorderColor = Color(0xFF555555)
+                )
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val trimmed = name.trim()
+                        if (trimmed.isNotEmpty()) onConfirm(trimmed)
+                    },
+                    enabled = name.trim().isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A3A00))
+                ) {
+                    Text("Add", color = Color(0xFFFFAA00))
+                }
+            }
+        }
+    }
+}
+
+// ── Info panel ────────────────────────────────────────────────────────────────
 
 /**
  * Info panel shown below the grid when info mode is active.

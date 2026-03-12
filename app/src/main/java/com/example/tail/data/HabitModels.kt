@@ -55,6 +55,16 @@ data class HabitHistoricalStats(
 typealias HistoricalTotals = Map<String, HabitHistoricalStats>
 
 /**
+ * A named screen (page) of habits. Each screen has a unique id, a display name,
+ * and an ordered list of habit names that appear on it.
+ */
+data class HabitScreen(
+    val id: String,
+    val name: String,
+    val habitNames: List<String>
+)
+
+/**
  * App settings stored in DataStore.
  */
 data class AppSettings(
@@ -62,8 +72,15 @@ data class AppSettings(
     val historicalFileUri: String = "",
     val totalsFileUri: String = "",
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
-    /** Custom display order for habits. Empty = use HABIT_ORDER default. */
-    val habitOrder: List<String> = emptyList()
+    /** Custom display order for habits (legacy flat list, used when screens is empty). */
+    val habitOrder: List<String> = emptyList(),
+    /**
+     * Named screens of habits. When non-empty, the app shows one screen at a time
+     * and the flat [habitOrder] is ignored. The first screen is always "general" by default.
+     */
+    val habitScreens: List<HabitScreen> = emptyList(),
+    /** Index of the currently active screen (persisted so the app reopens on the same screen). */
+    val activeScreenIndex: Int = 0
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(
