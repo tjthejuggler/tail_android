@@ -4,6 +4,8 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -79,7 +81,7 @@ private data class TextInputDialogState(
     val options: List<String>
 )
 
-// Grid is 8 columns × 10 rows = 80 cells; 76 habits + 4 empty at end
+// Grid is 8 columns × 10 rows = 80 cells
 private const val GRID_COLUMNS = 8
 private const val TOTAL_CELLS = 80
 
@@ -115,12 +117,13 @@ fun HabitGridScreen(
     var showAddScreenDialog by remember { mutableStateOf(false) }
     // Index of screen being renamed (-1 = none)
     var renamingScreenIndex by remember { mutableStateOf(-1) }
+    // Grid cell index where "Add Habit" was triggered (-1 = none)
+    var addHabitAtIndex by remember { mutableStateOf(-1) }
 
     // Text-input dialog state: non-null when the dialog should be shown
     var textInputDialogState by remember { mutableStateOf<TextInputDialogState?>(null) }
 
     // File picker for per-habit text log files (used from EditModeControlBar)
-    // We track which habit name the picker was launched for
     var textInputPickerHabit by remember { mutableStateOf<String?>(null) }
     val textInputFilePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -263,8 +266,7 @@ fun HabitGridScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Screen tabs — shown when multiple screens exist (always, not just edit mode)
-            // In edit mode, tapping the active tab opens a rename dialog
+            // Screen tabs — shown when multiple screens exist
             if (habitScreens.size > 1) {
                 ScreenTabRow(
                     screens = habitScreens,
@@ -307,7 +309,6 @@ fun HabitGridScreen(
                                 editMode -> viewModel.selectEditHabit(index)
                                 infoMode -> viewModel.selectInfoHabit(habit)
                                 habit.name in settings.textInputHabits -> {
-                                    // Text-input habit: load options then show dialog
                                     val showOpts = habit.name in settings.textInputOptionsHabits
                                     if (showOpts) {
                                         viewModel.loadTextOptions(habit.name) { opts ->
@@ -333,6 +334,10 @@ fun HabitGridScreen(
                             if (!infoMode && !editMode) {
                                 viewModel.toggleCustomInput(habit.name)
                             }
+                        },
+                        onPlaceholderClick = { index ->
+                            // In edit mode, selecting a placeholder works like selecting a habit
+                            viewModel.selectEditHabit(index)
                         }
                     )
                 }
@@ -351,9 +356,12 @@ fun HabitGridScreen(
                 if (editMode) {
                     val selectedHabitName = if (selectedEditIndex >= 0 && selectedEditIndex < habits.size)
                         habits[selectedEditIndex].name else null
+                    val isPlaceholderSelected = selectedEditIndex >= habits.size && selectedEditIndex >= 0
                     EditModeControlBar(
                         selectedIndex = selectedEditIndex,
                         selectedHabitName = selectedHabitName,
+                        isPlaceholderSelected = isPlaceholderSelected,
+                        totalCells = TOTAL_CELLS,
                         habitCount = habits.size,
                         habitScreens = habitScreens,
                         activeScreenIndex = activeScreenIndex,
@@ -365,6 +373,9 @@ fun HabitGridScreen(
                         textInputFileUris = settings.textInputFileUris,
                         onMoveLeft = { viewModel.moveSelectedHabit(-1) },
                         onMoveRight = { viewModel.moveSelectedHabit(+1) },
+                        onMovePlaceholderLeft = { viewModel.movePlaceholderSelection(-1) },
+                        onMovePlaceholderRight = { viewModel.movePlaceholderSelection(+1) },
+                        onAddHabit = { addHabitAtIndex = selectedEditIndex },
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
                         onAddScreen = { showAddScreenDialog = true },
                         onDeleteScreen = { viewModel.deleteScreen(activeScreenIndex) },
@@ -419,6 +430,17 @@ fun HabitGridScreen(
         )
     }
 
+    // Add habit dialog — triggered when user taps a placeholder in edit mode
+    if (addHabitAtIndex >= 0) {
+        AddHabitDialog(
+            onConfirm = { name ->
+                viewModel.addHabit(name, addHabitAtIndex)
+                addHabitAtIndex = -1
+            },
+            onDismiss = { addHabitAtIndex = -1 }
+        )
+    }
+
     // Rename screen dialog
     if (renamingScreenIndex >= 0) {
         val currentName = habitScreens.getOrNull(renamingScreenIndex)?.name ?: ""
@@ -451,7 +473,6 @@ private fun ScreenTabRow(
     ) {
         screens.forEachIndexed { index, screen ->
             val isActive = index == activeIndex
-            // In edit mode, active tab shows a pencil hint to indicate it's renameable
             val label = if (editMode && isActive) "✎ ${screen.name}" else screen.name
             TextButton(
                 onClick = { onTabClick(index) },
@@ -474,8 +495,8 @@ private fun ScreenTabRow(
 // ── Habit grid ────────────────────────────────────────────────────────────────
 
 /**
- * The 8-column lazy grid. Works for both normal mode and edit mode.
- * In edit mode, tapping selects a habit (highlighted with orange border).
+ * The 8-column lazy grid. In edit mode, empty cells (placeholders) are shown as
+ * clickable dashed cells. In normal mode they are invisible.
  */
 @Composable
 private fun HabitGrid(
@@ -485,9 +506,10 @@ private fun HabitGrid(
     selectedInfoHabit: Habit?,
     selectedEditIndex: Int,
     onHabitClick: (Habit, Int) -> Unit,
-    onHabitLongClick: (Habit) -> Unit
+    onHabitLongClick: (Habit) -> Unit,
+    onPlaceholderClick: (Int) -> Unit
 ) {
-    // Build a list of 80 nullable items (null = empty spacer)
+    // Build a list of TOTAL_CELLS nullable items (null = placeholder)
     val cells: List<Habit?> = buildList {
         addAll(habits)
         repeat(TOTAL_CELLS - habits.size) { add(null) }
@@ -512,6 +534,13 @@ private fun HabitGrid(
                     editMode = editMode,
                     isSelected = isEditSelected || isInfoSelected
                 )
+            } else if (editMode) {
+                // In edit mode, placeholders are selectable cells
+                PlaceholderCell(
+                    isSelected = index == selectedEditIndex,
+                    onClick = { onPlaceholderClick(index) },
+                    modifier = Modifier.padding(2.dp)
+                )
             } else {
                 Box(modifier = Modifier.aspectRatio(1f))
             }
@@ -519,29 +548,67 @@ private fun HabitGrid(
     }
 }
 
+/**
+ * A placeholder cell shown in edit mode. Tapping selects it (orange highlight).
+ */
+@Composable
+private fun PlaceholderCell(
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .aspectRatio(1f)
+            .background(
+                color = if (isSelected) Color(0xFF3A2000) else Color(0xFF0D0D0D),
+                shape = RoundedCornerShape(4.dp)
+            )
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = if (isSelected) "+" else "·",
+            color = if (isSelected) Color(0xFFFFAA00) else Color(0xFF2A2A2A),
+            fontSize = if (isSelected) 18.sp else 12.sp,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
 // ── Edit mode control bar ─────────────────────────────────────────────────────
 
 /**
  * Control bar shown below the grid in edit mode.
- * When a habit is selected it shows:
- *   • MOVE section: ← / → position buttons + screen-jump buttons for other screens
- *   • SETTINGS section: custom input toggle for the selected habit
- * When no habit is selected it shows a prompt + "Add Screen" button.
+ *
+ * Three states:
+ *  1. Nothing selected → prompt + Add Screen / Del Screen buttons
+ *  2. Placeholder selected → MOVE (← →) + "Add Habit" button
+ *  3. Habit selected → MOVE (← →) + screen-jump buttons + SETTINGS section
  */
 @Composable
 private fun EditModeControlBar(
     selectedIndex: Int,
     selectedHabitName: String?,
+    isPlaceholderSelected: Boolean,
+    totalCells: Int,
     habitCount: Int,
     habitScreens: List<HabitScreen>,
     activeScreenIndex: Int,
-    selectedHabitScreenIndex: Int,   // which screen the selected habit is on (-1 if no screens)
+    selectedHabitScreenIndex: Int,
     customInputHabits: Set<String>,
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
     textInputFileUris: Map<String, String>,
     onMoveLeft: () -> Unit,
     onMoveRight: () -> Unit,
+    onMovePlaceholderLeft: () -> Unit,
+    onMovePlaceholderRight: () -> Unit,
+    onAddHabit: () -> Unit,
     onMoveToScreen: (Int) -> Unit,
     onAddScreen: () -> Unit,
     onDeleteScreen: () -> Unit,
@@ -551,11 +618,17 @@ private fun EditModeControlBar(
     onPickTextInputFile: (String) -> Unit
 ) {
     val hasSelection = selectedIndex >= 0
-    val canMoveLeft = hasSelection && selectedIndex > 0
-    val canMoveRight = hasSelection && selectedIndex < habitCount - 1
 
-    // Other screens = all screens except the one the selected habit is currently on
-    val otherScreenIndices: List<Int> = if (hasSelection && habitScreens.size > 1) {
+    // For habits: can move within habit list bounds
+    val canHabitMoveLeft = hasSelection && !isPlaceholderSelected && selectedIndex > 0
+    val canHabitMoveRight = hasSelection && !isPlaceholderSelected && selectedIndex < habitCount - 1
+
+    // For placeholders: can move within total grid bounds
+    val canPlaceholderMoveLeft = isPlaceholderSelected && selectedIndex > 0
+    val canPlaceholderMoveRight = isPlaceholderSelected && selectedIndex < totalCells - 1
+
+    // Other screens for habit move-to-screen
+    val otherScreenIndices: List<Int> = if (hasSelection && !isPlaceholderSelected && habitScreens.size > 1) {
         val currentScreen = if (selectedHabitScreenIndex >= 0) selectedHabitScreenIndex else activeScreenIndex
         habitScreens.indices.filter { it != currentScreen }
     } else emptyList()
@@ -566,282 +639,323 @@ private fun EditModeControlBar(
             .background(Color(0xFF1A1000))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        if (!hasSelection) {
-            // No habit selected — show prompt, Add Screen button, and (if >1 screen) Delete Screen button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "✏ Tap a habit to select it",
-                    color = Color(0xFF888888),
-                    fontSize = 11.sp
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // Delete current screen — only shown when there are 2+ screens
-                    if (habitScreens.size > 1) {
+        when {
+            // ── Nothing selected ──────────────────────────────────────────
+            !hasSelection -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "✏ Tap a habit or placeholder to select",
+                        color = Color(0xFF888888),
+                        fontSize = 11.sp
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (habitScreens.size > 1) {
+                            Button(
+                                onClick = onDeleteScreen,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A0000)),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("Del Screen", fontSize = 11.sp, color = Color(0xFFFF8888))
+                            }
+                        }
                         Button(
-                            onClick = onDeleteScreen,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A0000)),
+                            onClick = onAddScreen,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A1A)),
                             modifier = Modifier.height(32.dp)
                         ) {
-                            Text("Del Screen", fontSize = 11.sp, color = Color(0xFFFF8888))
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "Add screen",
+                                tint = Color(0xFF88FF88),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Add Screen", fontSize = 11.sp, color = Color(0xFF88FF88))
                         }
                     }
+                }
+            }
+
+            // ── Placeholder selected ──────────────────────────────────────
+            isPlaceholderSelected -> {
+                Text(
+                    text = "Placeholder [${selectedIndex}]",
+                    color = Color(0xFF888888),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // ← move placeholder selection left
                     Button(
-                        onClick = onAddScreen,
+                        onClick = onMovePlaceholderLeft,
+                        enabled = canPlaceholderMoveLeft,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF5A3A00),
+                            disabledContainerColor = Color(0xFF2A2A2A)
+                        ),
+                        modifier = Modifier.size(width = 48.dp, height = 32.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            "←",
+                            fontSize = 14.sp,
+                            color = if (canPlaceholderMoveLeft) Color(0xFFFFAA00) else Color(0xFF666666)
+                        )
+                    }
+
+                    // → move placeholder selection right
+                    Button(
+                        onClick = onMovePlaceholderRight,
+                        enabled = canPlaceholderMoveRight,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF5A3A00),
+                            disabledContainerColor = Color(0xFF2A2A2A)
+                        ),
+                        modifier = Modifier.size(width = 48.dp, height = 32.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            "→",
+                            fontSize = 14.sp,
+                            color = if (canPlaceholderMoveRight) Color(0xFFFFAA00) else Color(0xFF666666)
+                        )
+                    }
+
+                    // Add Habit button
+                    Button(
+                        onClick = onAddHabit,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A1A)),
                         modifier = Modifier.height(32.dp)
                     ) {
                         Icon(
                             Icons.Default.Add,
-                            contentDescription = "Add screen",
+                            contentDescription = "Add habit",
                             tint = Color(0xFF88FF88),
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Add Screen", fontSize = 11.sp, color = Color(0xFF88FF88))
-                    }
-                }
-            }
-        } else {
-            // Habit selected — show name header
-            Text(
-                text = "Selected: $selectedHabitName",
-                color = Color(0xFFFFAA00),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // ── MOVE section ──────────────────────────────────────────────
-            Text(
-                text = "MOVE",
-                color = Color(0xFF888888),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // ← position button
-                Button(
-                    onClick = onMoveLeft,
-                    enabled = canMoveLeft,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF5A3A00),
-                        disabledContainerColor = Color(0xFF2A2A2A)
-                    ),
-                    modifier = Modifier.size(width = 48.dp, height = 32.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                ) {
-                    Text(
-                        "←",
-                        fontSize = 14.sp,
-                        color = if (canMoveLeft) Color(0xFFFFAA00) else Color(0xFF666666)
-                    )
-                }
-
-                // → position button
-                Button(
-                    onClick = onMoveRight,
-                    enabled = canMoveRight,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF5A3A00),
-                        disabledContainerColor = Color(0xFF2A2A2A)
-                    ),
-                    modifier = Modifier.size(width = 48.dp, height = 32.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                ) {
-                    Text(
-                        "→",
-                        fontSize = 14.sp,
-                        color = if (canMoveRight) Color(0xFFFFAA00) else Color(0xFF666666)
-                    )
-                }
-
-                // Screen jump buttons (only shown when there are other screens)
-                otherScreenIndices.forEach { screenIdx ->
-                    val screenName = habitScreens[screenIdx].name
-                    Button(
-                        onClick = { onMoveToScreen(screenIdx) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Text(
-                            screenName,
-                            fontSize = 11.sp,
-                            color = Color(0xFF88CCFF)
-                        )
+                        Text("Add Habit", fontSize = 11.sp, color = Color(0xFF88FF88))
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider(color = Color(0xFF333300), thickness = 1.dp)
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // ── SETTINGS section ──────────────────────────────────────────
-            Text(
-                text = "SETTINGS",
-                color = Color(0xFF888888),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-
-            if (selectedHabitName != null) {
-                // ── Custom input toggle ────────────────────────────────────────
-                val isCustomInput = selectedHabitName in customInputHabits
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Custom input",
-                            color = Color(0xFFCCCCCC),
-                            fontSize = 12.sp
-                        )
-                        Text(
-                            text = if (isCustomInput) "Shows number picker on tap"
-                            else "Simple +1 on tap",
-                            color = Color(0xFF888888),
-                            fontSize = 10.sp
-                        )
-                    }
-                    Switch(
-                        checked = isCustomInput,
-                        onCheckedChange = { onToggleCustomInput(selectedHabitName) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color(0xFFFFAA00),
-                            checkedTrackColor = Color(0xFF5A3A00),
-                            uncheckedThumbColor = Color(0xFF888888),
-                            uncheckedTrackColor = Color(0xFF333333)
-                        )
-                    )
-                }
-
+            // ── Habit selected ────────────────────────────────────────────
+            else -> {
+                Text(
+                    text = "Selected: $selectedHabitName",
+                    color = Color(0xFFFFAA00),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // ── Text input toggle ──────────────────────────────────────────
-                val isTextInput = selectedHabitName in textInputHabits
+                // MOVE section
+                Text(
+                    text = "MOVE",
+                    color = Color(0xFF888888),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Button(
+                        onClick = onMoveLeft,
+                        enabled = canHabitMoveLeft,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF5A3A00),
+                            disabledContainerColor = Color(0xFF2A2A2A)
+                        ),
+                        modifier = Modifier.size(width = 48.dp, height = 32.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                    ) {
                         Text(
-                            text = "Text input",
-                            color = Color(0xFFCCCCCC),
-                            fontSize = 12.sp
-                        )
-                        Text(
-                            text = if (isTextInput) "Shows text entry on tap"
-                            else "No text entry",
-                            color = Color(0xFF888888),
-                            fontSize = 10.sp
+                            "←",
+                            fontSize = 14.sp,
+                            color = if (canHabitMoveLeft) Color(0xFFFFAA00) else Color(0xFF666666)
                         )
                     }
-                    Switch(
-                        checked = isTextInput,
-                        onCheckedChange = { onToggleTextInput(selectedHabitName) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color(0xFF44AAFF),
-                            checkedTrackColor = Color(0xFF003A5A),
-                            uncheckedThumbColor = Color(0xFF888888),
-                            uncheckedTrackColor = Color(0xFF333333)
+
+                    Button(
+                        onClick = onMoveRight,
+                        enabled = canHabitMoveRight,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF5A3A00),
+                            disabledContainerColor = Color(0xFF2A2A2A)
+                        ),
+                        modifier = Modifier.size(width = 48.dp, height = 32.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            "→",
+                            fontSize = 14.sp,
+                            color = if (canHabitMoveRight) Color(0xFFFFAA00) else Color(0xFF666666)
                         )
-                    )
+                    }
+
+                    // Screen jump buttons
+                    otherScreenIndices.forEach { screenIdx ->
+                        val screenName = habitScreens[screenIdx].name
+                        Button(
+                            onClick = { onMoveToScreen(screenIdx) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text(screenName, fontSize = 11.sp, color = Color(0xFF88CCFF))
+                        }
+                    }
                 }
 
-                // ── Options toggle + file picker (only when text input is on) ──
-                if (isTextInput) {
-                    Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = Color(0xFF333300), thickness = 1.dp)
+                Spacer(modifier = Modifier.height(6.dp))
 
-                    // Options sub-toggle
-                    val isOptions = selectedHabitName in textInputOptionsHabits
+                // SETTINGS section
+                Text(
+                    text = "SETTINGS",
+                    color = Color(0xFF888888),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+
+                if (selectedHabitName != null) {
+                    // Custom input toggle
+                    val isCustomInput = selectedHabitName in customInputHabits
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
+                            Text(text = "Custom input", color = Color(0xFFCCCCCC), fontSize = 12.sp)
                             Text(
-                                text = "  Options",
-                                color = Color(0xFFAAAAAA),
-                                fontSize = 12.sp
-                            )
-                            Text(
-                                text = if (isOptions) "Shows past entries as choices"
-                                else "Free-text only",
-                                color = Color(0xFF666666),
-                                fontSize = 10.sp
+                                text = if (isCustomInput) "Shows number picker on tap" else "Simple +1 on tap",
+                                color = Color(0xFF888888), fontSize = 10.sp
                             )
                         }
                         Switch(
-                            checked = isOptions,
-                            onCheckedChange = { onToggleTextInputOptions(selectedHabitName) },
+                            checked = isCustomInput,
+                            onCheckedChange = { onToggleCustomInput(selectedHabitName) },
                             colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFF88FFCC),
-                                checkedTrackColor = Color(0xFF004433),
-                                uncheckedThumbColor = Color(0xFF666666),
-                                uncheckedTrackColor = Color(0xFF2A2A2A)
+                                checkedThumbColor = Color(0xFFFFAA00),
+                                checkedTrackColor = Color(0xFF5A3A00),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
                             )
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                    // File picker row
-                    val hasFile = textInputFileUris.containsKey(selectedHabitName)
+                    // Text input toggle
+                    val isTextInput = selectedHabitName in textInputHabits
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column {
+                            Text(text = "Text input", color = Color(0xFFCCCCCC), fontSize = 12.sp)
                             Text(
-                                text = "  Text log file",
-                                color = Color(0xFFAAAAAA),
-                                fontSize = 12.sp
-                            )
-                            Text(
-                                text = if (hasFile) "✓ File selected" else "⚠ No file selected",
-                                color = if (hasFile) Color(0xFF88FF88) else Color(0xFFFF8844),
-                                fontSize = 10.sp
+                                text = if (isTextInput) "Shows text entry on tap" else "No text entry",
+                                color = Color(0xFF888888), fontSize = 10.sp
                             )
                         }
-                        Button(
-                            onClick = { onPickTextInputFile(selectedHabitName) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF003A5A)
-                            ),
-                            modifier = Modifier.height(32.dp)
+                        Switch(
+                            checked = isTextInput,
+                            onCheckedChange = { onToggleTextInput(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF44AAFF),
+                                checkedTrackColor = Color(0xFF003A5A),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    if (isTextInput) {
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Options sub-toggle
+                        val isOptions = selectedHabitName in textInputOptionsHabits
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                Icons.Default.Folder,
-                                contentDescription = "Pick text log file",
-                                tint = Color(0xFF88CCFF),
-                                modifier = Modifier.size(14.dp)
+                            Column {
+                                Text(text = "  Options", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                                Text(
+                                    text = if (isOptions) "Shows past entries as choices" else "Free-text only",
+                                    color = Color(0xFF666666), fontSize = 10.sp
+                                )
+                            }
+                            Switch(
+                                checked = isOptions,
+                                onCheckedChange = { onToggleTextInputOptions(selectedHabitName) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color(0xFF88FFCC),
+                                    checkedTrackColor = Color(0xFF004433),
+                                    uncheckedThumbColor = Color(0xFF666666),
+                                    uncheckedTrackColor = Color(0xFF2A2A2A)
+                                )
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                if (hasFile) "Change" else "Select",
-                                fontSize = 11.sp,
-                                color = Color(0xFF88CCFF)
-                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // File picker row
+                        val hasFile = textInputFileUris.containsKey(selectedHabitName)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "  Text log file", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                                Text(
+                                    text = if (hasFile) "✓ File selected" else "⚠ No file selected",
+                                    color = if (hasFile) Color(0xFF88FF88) else Color(0xFFFF8844),
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Button(
+                                onClick = { onPickTextInputFile(selectedHabitName) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Folder,
+                                    contentDescription = "Pick text log file",
+                                    tint = Color(0xFF88CCFF),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    if (hasFile) "Change" else "Select",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF88CCFF)
+                                )
+                            }
                         }
                     }
                 }
@@ -969,11 +1083,67 @@ private fun AddScreenDialog(
     }
 }
 
+// ── Add habit dialog ──────────────────────────────────────────────────────────
+
+@Composable
+private fun AddHabitDialog(
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Add Habit",
+                color = Color(0xFF88FF88),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Habit name", color = Color(0xFF888888)) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFF88FF88),
+                    unfocusedBorderColor = Color(0xFF555555)
+                )
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val trimmed = name.trim()
+                        if (trimmed.isNotEmpty()) onConfirm(trimmed)
+                    },
+                    enabled = name.trim().isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A1A))
+                ) {
+                    Text("Add", color = Color(0xFF88FF88))
+                }
+            }
+        }
+    }
+}
+
 // ── Info panel ────────────────────────────────────────────────────────────────
 
-/**
- * Info panel shown below the grid when info mode is active.
- */
 @Composable
 fun HabitInfoPanel(
     habit: Habit?,
@@ -1003,7 +1173,6 @@ fun HabitInfoPanel(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                // Habit name header
                 Text(
                     text = habit.name,
                     color = Color(0xFFFFD700),
@@ -1012,7 +1181,6 @@ fun HabitInfoPanel(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Streak info
                 val streakLabel = if (habit.currentStreak >= 0) "Current streak" else "Current antistreak"
                 val streakVal = if (habit.currentStreak >= 0) "+${habit.currentStreak}" else "${habit.currentStreak}"
                 val streakColor = if (habit.currentStreak >= 0) Color(0xFF80FF80) else Color(0xFFFF8080)

@@ -315,12 +315,23 @@ class HabitViewModel(
         }
     }
 
-    /** Selects (or deselects) a habit by index for reordering in edit mode. */
+    /** Selects (or deselects) a cell by grid index in edit mode (works for habits and placeholders). */
     fun selectEditHabit(index: Int) {
         val prev = _selectedEditIndex.value
         val next = if (prev == index) -1 else index
         Log.d(TAG, "selectEditHabit: index=$index prev=$prev -> next=$next")
         _selectedEditIndex.value = next
+    }
+
+    /**
+     * Moves the placeholder selection cursor by [delta] positions without changing any data.
+     * Used when a placeholder is selected and the user taps ← or →.
+     */
+    fun movePlaceholderSelection(delta: Int) {
+        val current = _selectedEditIndex.value
+        if (current < 0) return
+        val newIdx = (current + delta).coerceIn(0, 79) // 80 cells total (8×10 grid)
+        _selectedEditIndex.value = newIdx
     }
 
     /**
@@ -488,6 +499,57 @@ class HabitViewModel(
         _selectedEditIndex.value = -1
         rebuildHabitList()
         persistScreens(screens)
+    }
+
+    /**
+     * Adds a new habit with [habitName] at grid position [atIndex] within the active screen
+     * (or flat order if no screens). [atIndex] is the cell index in the full TOTAL_CELLS grid,
+     * so it equals the position among existing habits (placeholders don't occupy slots in
+     * habitNames — they are the gaps after the last habit).
+     *
+     * The habit is inserted at [atIndex] if [atIndex] <= current habit count, otherwise appended.
+     */
+    fun addHabit(habitName: String, atIndex: Int) {
+        val trimmed = habitName.trim()
+        if (trimmed.isEmpty()) return
+
+        val screens = _habitScreens.value
+        if (screens.isNotEmpty()) {
+            val screenIdx = _activeScreenIndex.value.coerceIn(0, screens.size - 1)
+            val screen = screens[screenIdx]
+            val current = screen.habitNames.toMutableList()
+            val insertAt = atIndex.coerceIn(0, current.size)
+            current.add(insertAt, trimmed)
+            val updatedScreen = screen.copy(habitNames = current)
+            val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
+            _habitScreens.value = updatedScreens
+            _selectedEditIndex.value = insertAt
+            rebuildHabitList()
+            persistScreens(updatedScreens)
+        } else {
+            val current = _habitOrder.value.toMutableList()
+            val insertAt = atIndex.coerceIn(0, current.size)
+            current.add(insertAt, trimmed)
+            _habitOrder.value = current
+            _selectedEditIndex.value = insertAt
+            val settingsWithOrder = _settings.value.copy(habitOrder = current)
+            _habits.value = habitsRepo.buildHabitList(
+                db = cachedPhoneDb,
+                settings = settingsWithOrder,
+                historicalDb = cachedHistoricalDb,
+                historicalTotals = cachedHistoricalTotals,
+                targetDate = _selectedDate.value
+            )
+            isSavingOrder = true
+            viewModelScope.launch {
+                try {
+                    settingsRepo.saveHabitOrder(current)
+                    _settings.value = _settings.value.copy(habitOrder = current)
+                } finally {
+                    isSavingOrder = false
+                }
+            }
+        }
     }
 
     private fun persistScreens(screens: List<HabitScreen>, activeIndex: Int = _activeScreenIndex.value) {
