@@ -176,6 +176,31 @@ class HabitsRepository {
         }
 
     /**
+     * Adds a new habit to one or more JSON database files.
+     * For each provided URI, reads the file, adds the habit with today's date = 0 if not already present,
+     * then saves. This ensures the new habit appears in all configured habit files.
+     */
+    suspend fun addHabitToFiles(
+        uris: List<Uri>,
+        context: Context,
+        habitName: String,
+        today: LocalDate = LocalDate.now()
+    ) = withContext(Dispatchers.IO) {
+        val todayStr = dateString(today)
+        for (uri in uris) {
+            try {
+                val db = loadDatabase(uri, context).toMutableMap()
+                if (!db.containsKey(habitName)) {
+                    db[habitName] = sortedMapOf(todayStr to 0)
+                    saveDatabase(uri, context, db)
+                }
+            } catch (e: Exception) {
+                // Best-effort: skip files that can't be written
+            }
+        }
+    }
+
+    /**
      * Merges two databases by combining their date entries per habit.
      * Phone DB entries take precedence on date conflicts (phone is the source of truth for recent data).
      */

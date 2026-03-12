@@ -52,10 +52,11 @@ fun HabitButton(
     modifier: Modifier = Modifier,
     infoMode: Boolean = false,
     isSelected: Boolean = false,
-    editMode: Boolean = false
+    editMode: Boolean = false,
+    customIconOverrides: Map<String, String> = emptyMap()
 ) {
     val bgColor = getHabitColor(habit.name, habit.todayCount)
-    val iconRes = getHabitIconRes(habit.name)
+    val iconRes = getHabitIconRes(habit.name, customIconOverrides)
     val streakText = if (habit.currentStreak >= 0) "+${habit.currentStreak}" else "${habit.currentStreak}"
 
     val shape = RoundedCornerShape(6.dp)

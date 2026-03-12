@@ -24,6 +24,8 @@ private val KEY_TEXT_INPUT_HABITS = stringSetPreferencesKey("text_input_habits")
 private val KEY_TEXT_INPUT_OPTIONS_HABITS = stringSetPreferencesKey("text_input_options_habits")
 // Stored as "habitName\x00uri|||habitName\x00uri" pairs
 private val KEY_TEXT_INPUT_FILE_URIS = stringPreferencesKey("text_input_file_uris")
+// Stored as "habitName\x00iconName|||habitName\x00iconName" pairs
+private val KEY_HABIT_ICONS = stringPreferencesKey("habit_icons")
 
 // Serialisation helpers for HabitScreen list.
 // Format: each screen is "id\tname\thabit1|habit2|habit3", screens separated by "\n"
@@ -80,6 +82,7 @@ class SettingsRepository(private val context: Context) {
         val screens = decodeScreens(screensRaw)
         val activeScreenIndex = prefs[KEY_ACTIVE_SCREEN_INDEX] ?: 0
         val textInputFileUrisRaw = prefs[KEY_TEXT_INPUT_FILE_URIS] ?: ""
+        val habitIconsRaw = prefs[KEY_HABIT_ICONS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             historicalFileUri = prefs[KEY_HISTORICAL_FILE_URI] ?: "",
@@ -90,7 +93,8 @@ class SettingsRepository(private val context: Context) {
             activeScreenIndex = activeScreenIndex.coerceAtLeast(0),
             textInputHabits = prefs[KEY_TEXT_INPUT_HABITS] ?: emptySet(),
             textInputOptionsHabits = prefs[KEY_TEXT_INPUT_OPTIONS_HABITS] ?: emptySet(),
-            textInputFileUris = decodeFileUriMap(textInputFileUrisRaw)
+            textInputFileUris = decodeFileUriMap(textInputFileUrisRaw),
+            habitIcons = decodeFileUriMap(habitIconsRaw)
         )
     }
 
@@ -157,6 +161,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveTextInputFileUris(uris: Map<String, String>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_TEXT_INPUT_FILE_URIS] = encodeFileUriMap(uris)
+        }
+    }
+
+    /** Saves the map of habit name → icon name (custom icon overrides). */
+    suspend fun saveHabitIcons(icons: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_HABIT_ICONS] = encodeFileUriMap(icons)
         }
     }
 }

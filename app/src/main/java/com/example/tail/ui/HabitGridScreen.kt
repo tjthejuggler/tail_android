@@ -3,7 +3,9 @@ package com.example.tail.ui
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,7 +65,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -119,6 +124,10 @@ fun HabitGridScreen(
     var renamingScreenIndex by remember { mutableStateOf(-1) }
     // Grid cell index where "Add Habit" was triggered (-1 = none)
     var addHabitAtIndex by remember { mutableStateOf(-1) }
+    // Habit name pending delete confirmation (null = none)
+    var deleteConfirmHabitName by remember { mutableStateOf<String?>(null) }
+    // Habit name for which icon picker is open (null = none)
+    var iconPickerHabitName by remember { mutableStateOf<String?>(null) }
 
     // Text-input dialog state: non-null when the dialog should be shown
     var textInputDialogState by remember { mutableStateOf<TextInputDialogState?>(null) }
@@ -304,6 +313,7 @@ fun HabitGridScreen(
                         editMode = editMode,
                         selectedInfoHabit = selectedInfoHabit,
                         selectedEditIndex = selectedEditIndex,
+                        customIconOverrides = settings.habitIcons,
                         onHabitClick = { habit, index ->
                             when {
                                 editMode -> viewModel.selectEditHabit(index)
@@ -385,7 +395,9 @@ fun HabitGridScreen(
                         onPickTextInputFile = { name ->
                             textInputPickerHabit = name
                             textInputFilePicker.launch(arrayOf("application/json", "*/*"))
-                        }
+                        },
+                        onDeleteHabit = { name -> deleteConfirmHabitName = name },
+                        onChangeIcon = { name -> iconPickerHabitName = name }
                     )
                 }
             }
@@ -453,6 +465,32 @@ fun HabitGridScreen(
             onDismiss = { renamingScreenIndex = -1 }
         )
     }
+
+    // Delete habit confirmation dialog
+    deleteConfirmHabitName?.let { habitName ->
+        DeleteHabitConfirmDialog(
+            habitName = habitName,
+            onConfirm = {
+                val idx = habits.indexOfFirst { it.name == habitName }
+                if (idx >= 0) viewModel.deleteHabit(idx)
+                deleteConfirmHabitName = null
+            },
+            onDismiss = { deleteConfirmHabitName = null }
+        )
+    }
+
+    // Icon picker dialog
+    iconPickerHabitName?.let { habitName ->
+        IconPickerDialog(
+            habitName = habitName,
+            currentIconName = settings.habitIcons[habitName],
+            onIconSelected = { iconName ->
+                viewModel.setHabitIcon(habitName, iconName)
+                iconPickerHabitName = null
+            },
+            onDismiss = { iconPickerHabitName = null }
+        )
+    }
 }
 
 // ── Screen tab row ────────────────────────────────────────────────────────────
@@ -505,6 +543,7 @@ private fun HabitGrid(
     editMode: Boolean,
     selectedInfoHabit: Habit?,
     selectedEditIndex: Int,
+    customIconOverrides: Map<String, String> = emptyMap(),
     onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit,
     onPlaceholderClick: (Int) -> Unit
@@ -532,7 +571,8 @@ private fun HabitGrid(
                     modifier = Modifier.padding(2.dp),
                     infoMode = infoMode,
                     editMode = editMode,
-                    isSelected = isEditSelected || isInfoSelected
+                    isSelected = isEditSelected || isInfoSelected,
+                    customIconOverrides = customIconOverrides
                 )
             } else if (editMode) {
                 // In edit mode, placeholders are selectable cells
@@ -615,7 +655,9 @@ private fun EditModeControlBar(
     onToggleCustomInput: (String) -> Unit,
     onToggleTextInput: (String) -> Unit,
     onToggleTextInputOptions: (String) -> Unit,
-    onPickTextInputFile: (String) -> Unit
+    onPickTextInputFile: (String) -> Unit,
+    onDeleteHabit: (String) -> Unit,
+    onChangeIcon: (String) -> Unit
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -819,6 +861,31 @@ private fun EditModeControlBar(
                             modifier = Modifier.height(32.dp)
                         ) {
                             Text(screenName, fontSize = 11.sp, color = Color(0xFF88CCFF))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // ACTIONS section (Delete + Change Icon)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (selectedHabitName != null) {
+                        Button(
+                            onClick = { onDeleteHabit(selectedHabitName) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A0000)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("🗑 Delete", fontSize = 11.sp, color = Color(0xFFFF8888))
+                        }
+                        Button(
+                            onClick = { onChangeIcon(selectedHabitName) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A3A)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("🎨 Icon", fontSize = 11.sp, color = Color(0xFF88FFFF))
                         }
                     }
                 }
@@ -1136,6 +1203,158 @@ private fun AddHabitDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A1A))
                 ) {
                     Text("Add", color = Color(0xFF88FF88))
+                }
+            }
+        }
+    }
+}
+
+// ── Delete habit confirmation dialog ─────────────────────────────────────────
+
+@Composable
+private fun DeleteHabitConfirmDialog(
+    habitName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Delete Habit",
+                color = Color(0xFFFF8888),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "Remove \"$habitName\" from the grid?\n\nThe habit data in your JSON files will NOT be deleted.",
+                color = Color(0xFFCCCCCC),
+                fontSize = 13.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onConfirm,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A0000))
+                ) {
+                    Text("Delete", color = Color(0xFFFF8888))
+                }
+            }
+        }
+    }
+}
+
+// ── Icon picker dialog ────────────────────────────────────────────────────────
+
+@Composable
+private fun IconPickerDialog(
+    habitName: String,
+    currentIconName: String?,
+    onIconSelected: (String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Choose Icon — $habitName",
+                color = Color(0xFF88FFFF),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // "No icon" option
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { onIconSelected(null) }
+                    .background(
+                        if (currentIconName == null) Color(0xFF003A3A) else Color.Transparent,
+                        RoundedCornerShape(6.dp)
+                    )
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "✕  No icon",
+                    color = if (currentIconName == null) Color(0xFF88FFFF) else Color(0xFF888888),
+                    fontSize = 12.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Scrollable grid of all icons — 6 columns
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(6),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(400.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(ALL_ICON_NAMES) { iconName ->
+                    val resId = ICON_NAME_TO_RES[iconName]
+                    val isSelected = iconName == currentIconName
+                    Box(
+                        modifier = Modifier
+                            .aspectRatio(1f)
+                            .background(
+                                if (isSelected) Color(0xFF003A3A) else Color(0xFF2A2A2A),
+                                RoundedCornerShape(4.dp)
+                            )
+                            .then(
+                                if (isSelected) Modifier.border(1.dp, Color(0xFF88FFFF), RoundedCornerShape(4.dp))
+                                else Modifier
+                            )
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) { onIconSelected(iconName) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (resId != null) {
+                            Image(
+                                painter = painterResource(id = resId),
+                                contentDescription = iconName,
+                                modifier = Modifier.size(28.dp),
+                                colorFilter = ColorFilter.tint(Color.White)
+                            )
+                        } else {
+                            Text("?", color = Color(0xFF666666), fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
                 }
             }
         }

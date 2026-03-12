@@ -101,7 +101,14 @@ data class AppSettings(
      * Maps habit name → SAF URI string for the per-habit text-log JSON file.
      * Format of that file: { "2023-07-07 10:00:17": "some text", ... }
      */
-    val textInputFileUris: Map<String, String> = emptyMap()
+    val textInputFileUris: Map<String, String> = emptyMap(),
+
+    /**
+     * Maps habit name → icon name (without .png extension) for custom icon overrides.
+     * When a habit is in this map, its icon is shown from the named drawable instead of
+     * the default HABIT_ICON mapping.
+     */
+    val habitIcons: Map<String, String> = emptyMap()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

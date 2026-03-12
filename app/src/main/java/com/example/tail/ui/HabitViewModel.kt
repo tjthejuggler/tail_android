@@ -508,6 +508,7 @@ class HabitViewModel(
      * habitNames — they are the gaps after the last habit).
      *
      * The habit is inserted at [atIndex] if [atIndex] <= current habit count, otherwise appended.
+     * Also writes the new habit to all configured JSON files (phone DB, historical DB, totals DB).
      */
     fun addHabit(habitName: String, atIndex: Int) {
         val trimmed = habitName.trim()
@@ -549,6 +550,93 @@ class HabitViewModel(
                     isSavingOrder = false
                 }
             }
+        }
+
+        // Write the new habit to all configured JSON files
+        viewModelScope.launch {
+            val s = _settings.value
+            val uris = buildList {
+                if (s.fileUri.isNotEmpty()) add(android.net.Uri.parse(s.fileUri))
+                if (s.historicalFileUri.isNotEmpty()) add(android.net.Uri.parse(s.historicalFileUri))
+                if (s.totalsFileUri.isNotEmpty()) add(android.net.Uri.parse(s.totalsFileUri))
+            }
+            if (uris.isNotEmpty()) {
+                try {
+                    habitsRepo.addHabitToFiles(uris, context, trimmed)
+                    // Reload phone DB so the new habit shows up with today's entry
+                    val phoneUriString = s.fileUri
+                    if (phoneUriString.isNotEmpty()) {
+                        val db = habitsRepo.ensureDaysExist(android.net.Uri.parse(phoneUriString), context)
+                        cachedPhoneDb = db
+                        rebuildHabitList()
+                    }
+                } catch (e: Exception) {
+                    _errorMessage.value = "Added habit but failed to write to files: ${e.message}"
+                }
+            }
+        }
+    }
+
+    /**
+     * Deletes the habit at [index] from the active screen (or flat order).
+     * Does NOT remove data from JSON files — historical data is preserved.
+     * Clears the selection after deletion.
+     */
+    fun deleteHabit(index: Int) {
+        val screens = _habitScreens.value
+        if (screens.isNotEmpty()) {
+            val screenIdx = _activeScreenIndex.value.coerceIn(0, screens.size - 1)
+            val screen = screens[screenIdx]
+            val current = screen.habitNames.toMutableList()
+            if (index !in current.indices) return
+            current.removeAt(index)
+            val updatedScreen = screen.copy(habitNames = current)
+            val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
+            _habitScreens.value = updatedScreens
+            _selectedEditIndex.value = -1
+            rebuildHabitList()
+            persistScreens(updatedScreens)
+        } else {
+            val current = _habitOrder.value.toMutableList()
+            if (index !in current.indices) return
+            current.removeAt(index)
+            _habitOrder.value = current
+            _selectedEditIndex.value = -1
+            val settingsWithOrder = _settings.value.copy(habitOrder = current)
+            _habits.value = habitsRepo.buildHabitList(
+                db = cachedPhoneDb,
+                settings = settingsWithOrder,
+                historicalDb = cachedHistoricalDb,
+                historicalTotals = cachedHistoricalTotals,
+                targetDate = _selectedDate.value
+            )
+            isSavingOrder = true
+            viewModelScope.launch {
+                try {
+                    settingsRepo.saveHabitOrder(current)
+                    _settings.value = _settings.value.copy(habitOrder = current)
+                } finally {
+                    isSavingOrder = false
+                }
+            }
+        }
+    }
+
+    /**
+     * Sets or clears the custom icon for [habitName].
+     * [iconName] is the drawable resource name without extension (e.g. "bicycle"),
+     * or null to clear the override and revert to the default icon.
+     */
+    fun setHabitIcon(habitName: String, iconName: String?) {
+        viewModelScope.launch {
+            val current = _settings.value.habitIcons.toMutableMap()
+            if (iconName == null) {
+                current.remove(habitName)
+            } else {
+                current[habitName] = iconName
+            }
+            settingsRepo.saveHabitIcons(current)
+            _settings.value = _settings.value.copy(habitIcons = current)
         }
     }
 

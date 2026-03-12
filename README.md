@@ -1,6 +1,6 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-03-10T18:24Z
+**Last updated:** 2026-03-12T18:23Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
@@ -10,7 +10,7 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 
 - **8×10 habit grid** — 76 habits in exact order matching the desktop app
 - **Color-coded buttons** — 7 color tiers based on today's count (red → orange → green → blue → pink → yellow → glass)
-- **Real habit icons** — 79 PNG icons from the original `py_habits_widget` project imported as Android drawables, tinted white; mapped via `IconFinder.py` habit→icon table
+- **Real habit icons** — 269 PNG icons from the original `py_habits_widget` project imported as Android drawables, tinted white; mapped via `HABIT_ICON` table; custom overrides supported per habit
 - **Corner stats** — top-left: all-time high day, bottom-left: streak/antistreak, bottom-right: longest streak
 - **Custom input mode** — long-press any habit to toggle; shows numeric dialog instead of simple +1
 - **Default custom input habits:** Launch Pushups Widget, Launch Situps Widget, Launch Squats Widget, Cold Shower Widget, Sweat
@@ -18,6 +18,10 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 - **Historical DB support** — optionally pick `habitsdb_without_phone_totals.txt` to merge full history; phone DB takes precedence on date conflicts; stats (streaks, ATH) reflect all-time data
 - **Settings screen** — change files, toggle custom input per habit, reset to defaults
 - **Dark theme** by default
+- **Edit mode** — tap ✏️ to enter edit mode; select a habit to reorder, delete, or change its icon
+- **Delete habit** — in edit mode, select a habit → tap 🗑 Delete → confirm; removes from screen order only (JSON data files are untouched)
+- **Add habit to JSON files** — when adding a new habit via the placeholder cell, it is automatically written to all currently configured JSON files (`habitsdb_phone.txt`, `habitsdb.txt`, `habitsdb_without_phone_totals.txt`)
+- **Icon picker** — in edit mode, select a habit → tap 🎨 Icon → scrollable 6-column grid of all 269 available icons; tap to assign, "No icon" to clear override
 
 ---
 
