@@ -6,7 +6,7 @@ import com.example.tail.data.getDisplayValue
 
 // 7 muted, near-monochrome color tiers — very slight tints on dark gray bases
 val ColorRed    = Color(0xFF2E2020)   // dark gray with faint red tint    — count 0
-val ColorOrange = Color(0xFF2E2418)   // dark gray with faint orange tint — count 1
+val ColorOrange = Color(0xFF2E2A14)   // dark gray with faint orange tint — count 1
 val ColorGreen  = Color(0xFF1C2620)   // dark gray with faint green tint  — count 2
 val ColorBlue   = Color(0xFF1A1E2A)   // dark gray with faint blue tint   — count 3
 val ColorPink   = Color(0xFF2A1C22)   // dark gray with faint pink tint   — count 4
