@@ -104,8 +104,33 @@ class HabitsRepository {
     }
 
     /**
+     * Applies an increment to [db] in memory only — no disk I/O.
+     * Returns the updated database. Safe to call on the main thread.
+     */
+    fun applyIncrementToDb(
+        db: HabitsDatabase,
+        habitName: String,
+        amount: Int,
+        date: LocalDate
+    ): HabitsDatabase {
+        val dateStr = dateString(date)
+        val mutable = db.toMutableMap()
+        val habitEntries = mutable[habitName]?.toMutableMap() ?: mutableMapOf()
+        habitEntries[dateStr] = (habitEntries[dateStr] ?: 0) + amount
+        mutable[habitName] = habitEntries.toSortedMap()
+        return mutable
+    }
+
+    /**
+     * Writes [db] to disk at [uri]. Call this after an optimistic in-memory update.
+     */
+    suspend fun persistDatabase(uri: Uri, context: Context, db: HabitsDatabase) =
+        saveDatabase(uri, context, db)
+
+    /**
      * Increments the count for a habit on [date] by [amount], then saves.
-     * Performs atomic read-modify-write.
+     * Performs atomic read-modify-write (reads from disk first).
+     * Prefer [applyIncrementToDb] + [persistDatabase] for optimistic UI updates.
      */
     suspend fun incrementHabitForDate(
         uri: Uri,

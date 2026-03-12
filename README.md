@@ -1,6 +1,6 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-03-12T18:23Z
+**Last updated:** 2026-03-12T19:25Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
@@ -19,6 +19,8 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 - **Settings screen** — change files, toggle custom input per habit, reset to defaults
 - **Dark theme** by default
 - **Edit mode** — tap ✏️ to enter edit mode; select a habit to reorder, delete, or change its icon
+- **Debounced reorder** — rapid taps on ← / → accumulate into a single move applied 300 ms after the last tap; the selection highlight moves instantly on every tap so the UI stays responsive without freezing
+- **Instant habit color change** — tapping a habit does a zero-cost targeted `todayCount` update on the existing list first (no calculations), so the button recolors on the same frame; a full background rebuild (`Dispatchers.Default`) then updates streak/ATH stats without touching the main thread; the file write also happens in the background
 - **Delete habit** — in edit mode, select a habit → tap 🗑 Delete → confirm; removes from screen order only (JSON data files are untouched)
 - **Add habit to JSON files** — when adding a new habit via the placeholder cell, it is automatically written to all currently configured JSON files (`habitsdb_phone.txt`, `habitsdb.txt`, `habitsdb_without_phone_totals.txt`)
 - **Icon picker** — in edit mode, select a habit → tap 🎨 Icon → scrollable 6-column grid of all 269 available icons; tap to assign, "No icon" to clear override

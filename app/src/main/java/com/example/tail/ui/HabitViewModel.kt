@@ -16,10 +16,14 @@ import com.example.tail.data.TextInputRepository
 import com.example.tail.data.dateString
 import com.example.tail.data.HABIT_ORDER
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.util.UUID
 
@@ -89,6 +93,13 @@ class HabitViewModel(
 
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
+
+    // Debounce state for moveSelectedHabit: accumulate rapid taps, apply after idle period.
+    // moveOriginIndex is the index BEFORE the current burst started (fixed for the whole burst).
+    private var pendingMoveDelta: Int = 0
+    private var moveOriginIndex: Int = -1
+    private var moveDebounceJob: Job? = null
+    private val MOVE_DEBOUNCE_MS = 300L
 
     // Flag to suppress settingsFlow reaction while we're saving a new habit order / screens
     private var isSavingOrder: Boolean = false
@@ -196,7 +207,7 @@ class HabitViewModel(
     }
 
     /** Rebuilds the displayed habit list from cached data for the current selectedDate. */
-    private fun rebuildHabitList() {
+    private suspend fun rebuildHabitList() {
         val effectiveOrder = activeHabitOrder()
         // If screens are configured and the active screen is empty, show nothing.
         // We must NOT fall back to HABIT_ORDER in this case.
@@ -205,13 +216,17 @@ class HabitViewModel(
             return
         }
         val settingsWithOrder = _settings.value.copy(habitOrder = effectiveOrder)
-        _habits.value = habitsRepo.buildHabitList(
-            db = cachedPhoneDb,
-            settings = settingsWithOrder,
-            historicalDb = cachedHistoricalDb,
-            historicalTotals = cachedHistoricalTotals,
-            targetDate = _selectedDate.value
-        )
+        // Run the heavy per-habit calculations on a background CPU thread
+        val newList = withContext(Dispatchers.Default) {
+            habitsRepo.buildHabitList(
+                db = cachedPhoneDb,
+                settings = settingsWithOrder,
+                historicalDb = cachedHistoricalDb,
+                historicalTotals = cachedHistoricalTotals,
+                targetDate = _selectedDate.value
+            )
+        }
+        _habits.value = newList
     }
 
     fun setFileUri(uri: Uri) {
@@ -251,7 +266,7 @@ class HabitViewModel(
         val newDate = _selectedDate.value.plusDays(deltaDays.toLong())
         val today = LocalDate.now()
         _selectedDate.value = if (newDate.isAfter(today)) today else newDate
-        rebuildHabitList()
+        viewModelScope.launch { rebuildHabitList() }
     }
 
     fun incrementHabit(habitName: String, amount: Int = 1) {
@@ -260,14 +275,26 @@ class HabitViewModel(
             _errorMessage.value = "No file selected. Please pick a file in Settings."
             return
         }
+
+        // Step 1: instant targeted update — just flip todayCount for this one habit.
+        // This is O(n) list copy with zero calculations, so it's effectively instant.
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
+        val newCount = (currentEntries[dateStr] ?: 0) + amount
+        _habits.value = _habits.value.map { h ->
+            if (h.name == habitName) h.copy(todayCount = newCount) else h
+        }
+
+        // Step 2: update in-memory cache
+        val updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, amount, _selectedDate.value)
+        cachedPhoneDb = updatedDb
+
+        // Step 3: full rebuild (streak/ATH recalc) + disk write in background
         viewModelScope.launch {
+            rebuildHabitList()
             try {
                 val uri = Uri.parse(uriString)
-                val db = habitsRepo.incrementHabitForDate(
-                    uri, context, habitName, amount, _selectedDate.value
-                )
-                cachedPhoneDb = db
-                rebuildHabitList()
+                habitsRepo.persistDatabase(uri, context, updatedDb)
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
@@ -335,22 +362,65 @@ class HabitViewModel(
     }
 
     /**
-     * Moves the currently selected habit by [delta] positions (+1 = right/down, -1 = left/up)
-     * within the active screen (or flat order if no screens).
+     * Moves the currently selected habit by [delta] positions (+1 = right/down, -1 = left/up).
+     *
+     * Taps are debounced: rapid consecutive taps accumulate their deltas and the actual
+     * list mutation + persist happens once, 300 ms after the last tap. The selection
+     * highlight moves immediately on every tap so the UI feels responsive.
      */
     fun moveSelectedHabit(delta: Int) {
-        val idx = _selectedEditIndex.value
-        if (idx < 0) return
+        val currentIdx = _selectedEditIndex.value
+        if (currentIdx < 0) return
+
+        // Determine the valid range for the current context
+        val screens = _habitScreens.value
+        val maxIdx = if (screens.isNotEmpty()) {
+            val screenIdx = _activeScreenIndex.value.coerceIn(0, screens.size - 1)
+            screens[screenIdx].habitNames.size - 1
+        } else {
+            _habitOrder.value.size - 1
+        }
+
+        // On the first tap of a new burst, record the origin index
+        if (moveDebounceJob == null || moveDebounceJob?.isActive == false) {
+            moveOriginIndex = currentIdx
+            pendingMoveDelta = 0
+        }
+
+        // Accumulate delta and clamp the preview index immediately
+        pendingMoveDelta += delta
+        val previewIdx = (moveOriginIndex + pendingMoveDelta).coerceIn(0, maxIdx)
+        // Clamp accumulated delta to avoid over-accumulation at edges
+        pendingMoveDelta = previewIdx - moveOriginIndex
+        _selectedEditIndex.value = previewIdx
+
+        // Cancel any existing debounce timer and restart it
+        moveDebounceJob?.cancel()
+        moveDebounceJob = viewModelScope.launch {
+            delay(MOVE_DEBOUNCE_MS)
+            applyPendingMove()
+        }
+    }
+
+    /**
+     * Applies the accumulated [pendingMoveDelta] from [moveOriginIndex] in one shot.
+     * Called by the debounce timer after tapping stops.
+     */
+    private suspend fun applyPendingMove() {
+        val fromIdx = moveOriginIndex
+        val totalDelta = pendingMoveDelta
+        pendingMoveDelta = 0
+        moveOriginIndex = -1
+        if (totalDelta == 0 || fromIdx < 0) return
 
         val screens = _habitScreens.value
         if (screens.isNotEmpty()) {
-            // Move within the active screen's habit list
             val screenIdx = _activeScreenIndex.value.coerceIn(0, screens.size - 1)
             val screen = screens[screenIdx]
             val current = screen.habitNames.toMutableList()
-            val newIdx = (idx + delta).coerceIn(0, current.size - 1)
-            if (newIdx == idx) return
-            val item = current.removeAt(idx)
+            val newIdx = (fromIdx + totalDelta).coerceIn(0, current.size - 1)
+            if (newIdx == fromIdx) return
+            val item = current.removeAt(fromIdx)
             current.add(newIdx, item)
             val updatedScreen = screen.copy(habitNames = current)
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
@@ -359,22 +429,14 @@ class HabitViewModel(
             rebuildHabitList()
             persistScreens(updatedScreens)
         } else {
-            // Legacy flat order
             val current = _habitOrder.value.toMutableList()
-            val newIdx = (idx + delta).coerceIn(0, current.size - 1)
-            if (newIdx == idx) return
-            val item = current.removeAt(idx)
+            val newIdx = (fromIdx + totalDelta).coerceIn(0, current.size - 1)
+            if (newIdx == fromIdx) return
+            val item = current.removeAt(fromIdx)
             current.add(newIdx, item)
             _habitOrder.value = current
             _selectedEditIndex.value = newIdx
-            val settingsWithOrder = _settings.value.copy(habitOrder = current)
-            _habits.value = habitsRepo.buildHabitList(
-                db = cachedPhoneDb,
-                settings = settingsWithOrder,
-                historicalDb = cachedHistoricalDb,
-                historicalTotals = cachedHistoricalTotals,
-                targetDate = _selectedDate.value
-            )
+            rebuildHabitList()
             isSavingOrder = true
             viewModelScope.launch {
                 try {
@@ -398,8 +460,8 @@ class HabitViewModel(
         if (screens.isEmpty() || index !in screens.indices) return
         _activeScreenIndex.value = index
         _selectedEditIndex.value = -1
-        rebuildHabitList()
         viewModelScope.launch {
+            rebuildHabitList()
             settingsRepo.saveActiveScreenIndex(index)
         }
     }
@@ -425,7 +487,7 @@ class HabitViewModel(
         val newIndex = current.size - 1
         _activeScreenIndex.value = newIndex
         _selectedEditIndex.value = -1
-        rebuildHabitList()
+        viewModelScope.launch { rebuildHabitList() }
         persistScreens(current, newIndex)
     }
 
@@ -454,7 +516,7 @@ class HabitViewModel(
         _habitScreens.value = screens
         _activeScreenIndex.value = newActive
         _selectedEditIndex.value = -1
-        rebuildHabitList()
+        viewModelScope.launch { rebuildHabitList() }
         persistScreens(screens, newActive)
     }
 
@@ -497,7 +559,7 @@ class HabitViewModel(
 
         _habitScreens.value = screens
         _selectedEditIndex.value = -1
-        rebuildHabitList()
+        viewModelScope.launch { rebuildHabitList() }
         persistScreens(screens)
     }
 
@@ -525,7 +587,7 @@ class HabitViewModel(
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
             _habitScreens.value = updatedScreens
             _selectedEditIndex.value = insertAt
-            rebuildHabitList()
+            viewModelScope.launch { rebuildHabitList() }
             persistScreens(updatedScreens)
         } else {
             val current = _habitOrder.value.toMutableList()
@@ -533,16 +595,9 @@ class HabitViewModel(
             current.add(insertAt, trimmed)
             _habitOrder.value = current
             _selectedEditIndex.value = insertAt
-            val settingsWithOrder = _settings.value.copy(habitOrder = current)
-            _habits.value = habitsRepo.buildHabitList(
-                db = cachedPhoneDb,
-                settings = settingsWithOrder,
-                historicalDb = cachedHistoricalDb,
-                historicalTotals = cachedHistoricalTotals,
-                targetDate = _selectedDate.value
-            )
             isSavingOrder = true
             viewModelScope.launch {
+                rebuildHabitList()
                 try {
                     settingsRepo.saveHabitOrder(current)
                     _settings.value = _settings.value.copy(habitOrder = current)
@@ -594,7 +649,7 @@ class HabitViewModel(
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
             _habitScreens.value = updatedScreens
             _selectedEditIndex.value = -1
-            rebuildHabitList()
+            viewModelScope.launch { rebuildHabitList() }
             persistScreens(updatedScreens)
         } else {
             val current = _habitOrder.value.toMutableList()
@@ -602,16 +657,9 @@ class HabitViewModel(
             current.removeAt(index)
             _habitOrder.value = current
             _selectedEditIndex.value = -1
-            val settingsWithOrder = _settings.value.copy(habitOrder = current)
-            _habits.value = habitsRepo.buildHabitList(
-                db = cachedPhoneDb,
-                settings = settingsWithOrder,
-                historicalDb = cachedHistoricalDb,
-                historicalTotals = cachedHistoricalTotals,
-                targetDate = _selectedDate.value
-            )
             isSavingOrder = true
             viewModelScope.launch {
+                rebuildHabitList()
                 try {
                     settingsRepo.saveHabitOrder(current)
                     _settings.value = _settings.value.copy(habitOrder = current)
