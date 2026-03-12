@@ -1,6 +1,6 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-03-12T19:25Z
+**Last updated:** 2026-03-12T20:12Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
@@ -36,6 +36,9 @@ app/src/main/java/com/example/tail/
 │   ├── HabitCalculator.kt    # Streak/antistreak/ATH calculations, display value adjustments
 │   ├── HabitsRepository.kt   # JSON read/write via SAF URI (Gson), habit list builder
 │   └── SettingsRepository.kt # DataStore Preferences (file URI, custom input set)
+├── ipc/
+│   ├── HabitsContentProvider.kt  # Read-only ContentProvider: exposes habit list to same-keystore apps
+│   └── HabitIncrementReceiver.kt # BroadcastReceiver: increments a habit when triggered by same-keystore app
 ├── ui/
 │   ├── HabitViewModel.kt     # StateFlow<List<Habit>>, StateFlow<AppSettings>, increment/toggle
 │   ├── HabitColors.kt        # Color tiers, drawable icon map (HABIT_ICON), getHabitColor(), getHabitIconRes()
@@ -46,6 +49,83 @@ app/src/main/java/com/example/tail/
 │   └── theme/                # Material3 theme (Color, Theme, Type)
 └── MainActivity.kt           # NavHost: "grid" ↔ "settings", dark theme
 ```
+
+---
+
+## IPC API (Inter-Process Communication)
+
+*Added: 2026-03-12T20:12Z*
+
+Tail exposes a secure IPC API so other apps you own (signed with the **same keystore**) can read the habit list and trigger increments without any user interaction.
+
+### Security
+
+A custom `signature`-level permission gates all IPC access:
+
+```xml
+android:name="com.example.tail.permission.TAIL_INTEGRATION"
+android:protectionLevel="signature"
+```
+
+The calling app must declare `<uses-permission android:name="com.example.tail.permission.TAIL_INTEGRATION" />` in its manifest. Android will only grant it if both APKs share the same signing certificate.
+
+---
+
+### 1. ContentProvider — Read the Habit List
+
+**Authority:** `com.example.tail.provider`
+**URI:** `content://com.example.tail.provider/habits`
+**Columns:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `habit_id` | `Int` | 0-based index in the current display order |
+| `habit_name` | `String` | Habit name as stored in the JSON database |
+
+**Example (Kotlin):**
+
+```kotlin
+val uri = Uri.parse("content://com.example.tail.provider/habits")
+val cursor = contentResolver.query(uri, null, null, null, null)
+cursor?.use {
+    while (it.moveToNext()) {
+        val id   = it.getInt(it.getColumnIndexOrThrow("habit_id"))
+        val name = it.getString(it.getColumnIndexOrThrow("habit_name"))
+        Log.d("IPC", "[$id] $name")
+    }
+}
+```
+
+`insert`, `update`, and `delete` throw `UnsupportedOperationException` — the provider is read-only.
+
+---
+
+### 2. BroadcastReceiver — Increment a Habit
+
+**Action:** `com.example.tail.ACTION_INCREMENT_HABIT`
+**Extra:** `EXTRA_HABIT_ID` — the habit to increment (String name **or** Int index)
+
+The receiver calls `HabitsRepository.incrementHabit()` which does an atomic read-modify-write on `habitsdb_phone.txt` for today's date, incrementing the count by 1.
+
+**Example (Kotlin):**
+
+```kotlin
+// By name
+val intent = Intent("com.example.tail.ACTION_INCREMENT_HABIT").apply {
+    setPackage("com.example.tail")          // explicit target — required on Android 8+
+    putExtra("EXTRA_HABIT_ID", "Flossed")
+}
+sendBroadcast(intent, "com.example.tail.permission.TAIL_INTEGRATION")
+
+// By index (0-based)
+val intent2 = Intent("com.example.tail.ACTION_INCREMENT_HABIT").apply {
+    setPackage("com.example.tail")
+    putExtra("EXTRA_HABIT_ID", 74)          // Int extra → resolved to habit name at that index
+}
+sendBroadcast(intent2, "com.example.tail.permission.TAIL_INTEGRATION")
+```
+
+> **Note:** Pass the permission string as the second argument to `sendBroadcast()` so Android enforces that only Tail can receive it (defence-in-depth on the sender side).
 
 ---
 

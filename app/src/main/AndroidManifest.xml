@@ -2,6 +2,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+        Custom signature permission for IPC.
+        Only apps signed with the same keystore can use the ContentProvider or
+        send the increment broadcast.
+    -->
+    <permission
+        android:name="com.example.tail.permission.TAIL_INTEGRATION"
+        android:protectionLevel="signature"
+        android:label="Tail Integration"
+        android:description="@string/permission_tail_integration_description" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -11,6 +22,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Tail">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -22,6 +34,31 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            ContentProvider: exposes the habit list (habit_id, habit_name) to same-keystore apps.
+            android:readPermission restricts query() to callers holding TAIL_INTEGRATION.
+            Write operations are not permitted (UnsupportedOperationException in code).
+        -->
+        <provider
+            android:name=".ipc.HabitsContentProvider"
+            android:authorities="com.example.tail.provider"
+            android:exported="true"
+            android:readPermission="com.example.tail.permission.TAIL_INTEGRATION" />
+
+        <!--
+            BroadcastReceiver: listens for ACTION_INCREMENT_HABIT from same-keystore apps.
+            android:permission restricts which senders can deliver the broadcast.
+        -->
+        <receiver
+            android:name=".ipc.HabitIncrementReceiver"
+            android:exported="true"
+            android:permission="com.example.tail.permission.TAIL_INTEGRATION">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_INCREMENT_HABIT" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

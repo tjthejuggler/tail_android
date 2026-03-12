@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">tail</string>
+    <string name="permission_tail_integration_description">Allows same-keystore apps to read the habit list and trigger habit increments via IPC.</string>
 </resources>
