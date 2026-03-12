@@ -80,7 +80,28 @@ data class AppSettings(
      */
     val habitScreens: List<HabitScreen> = emptyList(),
     /** Index of the currently active screen (persisted so the app reopens on the same screen). */
-    val activeScreenIndex: Int = 0
+    val activeScreenIndex: Int = 0,
+
+    /**
+     * Habits that have the "text input" feature enabled.
+     * When a habit is in this set, tapping it shows a text-entry popup instead of
+     * (or in addition to) incrementing the numeric count.
+     */
+    val textInputHabits: Set<String> = emptySet(),
+
+    /**
+     * Habits that have the "show options" sub-feature enabled.
+     * Only meaningful when the habit is also in [textInputHabits].
+     * When enabled, the text-entry popup also shows a list of all unique past entries
+     * so the user can pick one instead of typing from scratch.
+     */
+    val textInputOptionsHabits: Set<String> = emptySet(),
+
+    /**
+     * Maps habit name → SAF URI string for the per-habit text-log JSON file.
+     * Format of that file: { "2023-07-07 10:00:17": "some text", ... }
+     */
+    val textInputFileUris: Map<String, String> = emptyMap()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

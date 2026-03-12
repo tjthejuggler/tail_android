@@ -20,6 +20,10 @@ private val KEY_CUSTOM_INPUT = stringSetPreferencesKey("custom_input_habits")
 private val KEY_HABIT_ORDER = stringPreferencesKey("habit_order")
 private val KEY_HABIT_SCREENS = stringPreferencesKey("habit_screens")
 private val KEY_ACTIVE_SCREEN_INDEX = intPreferencesKey("active_screen_index")
+private val KEY_TEXT_INPUT_HABITS = stringSetPreferencesKey("text_input_habits")
+private val KEY_TEXT_INPUT_OPTIONS_HABITS = stringSetPreferencesKey("text_input_options_habits")
+// Stored as "habitName\x00uri|||habitName\x00uri" pairs
+private val KEY_TEXT_INPUT_FILE_URIS = stringPreferencesKey("text_input_file_uris")
 
 // Serialisation helpers for HabitScreen list.
 // Format: each screen is "id\tname\thabit1|habit2|habit3", screens separated by "\n"
@@ -42,6 +46,23 @@ private fun decodeScreens(raw: String): List<HabitScreen> {
     }
 }
 
+// Serialisation helpers for Map<String, String> (habit name → URI).
+// Format: "habitName\x00uri|||habitName\x00uri"
+// We use \x00 (null byte) as the name/uri separator since it can't appear in either.
+private const val PAIR_SEP = "|||"
+private const val KV_SEP = "\u0000"
+
+private fun encodeFileUriMap(map: Map<String, String>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) -> "$k$KV_SEP$v" }
+
+private fun decodeFileUriMap(raw: String): Map<String, String> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null else pair.substring(0, idx) to pair.substring(idx + 1)
+    }.toMap()
+}
+
 /**
  * Persists app settings (file URIs, custom input habits, custom habit order, habit screens)
  * using DataStore.
@@ -58,6 +79,7 @@ class SettingsRepository(private val context: Context) {
         val screensRaw = prefs[KEY_HABIT_SCREENS] ?: ""
         val screens = decodeScreens(screensRaw)
         val activeScreenIndex = prefs[KEY_ACTIVE_SCREEN_INDEX] ?: 0
+        val textInputFileUrisRaw = prefs[KEY_TEXT_INPUT_FILE_URIS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             historicalFileUri = prefs[KEY_HISTORICAL_FILE_URI] ?: "",
@@ -65,7 +87,10 @@ class SettingsRepository(private val context: Context) {
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
             habitScreens = screens,
-            activeScreenIndex = activeScreenIndex.coerceAtLeast(0)
+            activeScreenIndex = activeScreenIndex.coerceAtLeast(0),
+            textInputHabits = prefs[KEY_TEXT_INPUT_HABITS] ?: emptySet(),
+            textInputOptionsHabits = prefs[KEY_TEXT_INPUT_OPTIONS_HABITS] ?: emptySet(),
+            textInputFileUris = decodeFileUriMap(textInputFileUrisRaw)
         )
     }
 
@@ -111,6 +136,27 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveActiveScreenIndex(index: Int) {
         context.dataStore.edit { prefs ->
             prefs[KEY_ACTIVE_SCREEN_INDEX] = index
+        }
+    }
+
+    /** Saves the set of habits that have text input enabled. */
+    suspend fun saveTextInputHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TEXT_INPUT_HABITS] = habits
+        }
+    }
+
+    /** Saves the set of habits that have the "show options" sub-feature enabled. */
+    suspend fun saveTextInputOptionsHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TEXT_INPUT_OPTIONS_HABITS] = habits
+        }
+    }
+
+    /** Saves the map of habit name → text-log file URI. */
+    suspend fun saveTextInputFileUris(uris: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TEXT_INPUT_FILE_URIS] = encodeFileUriMap(uris)
         }
     }
 }

@@ -12,6 +12,7 @@ import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.HistoricalTotals
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.TextInputRepository
 import com.example.tail.data.dateString
 import com.example.tail.data.HABIT_ORDER
 import android.util.Log
@@ -32,6 +33,7 @@ private const val TAG = "HabitVM"
 class HabitViewModel(
     private val habitsRepo: HabitsRepository,
     private val settingsRepo: SettingsRepository,
+    private val textInputRepo: TextInputRepository,
     private val context: Context
 ) : ViewModel() {
 
@@ -503,15 +505,109 @@ class HabitViewModel(
             }
         }
     }
+
+    // ── Text input feature ────────────────────────────────────────────────────
+
+    /**
+     * Toggles the "text input" feature on/off for [habitName].
+     * When turned off, also removes the habit from the options set (options requires text input).
+     */
+    fun toggleTextInput(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.textInputHabits.toMutableSet()
+            if (habitName in current) {
+                current.remove(habitName)
+                // Also remove from options set — options requires text input to be on
+                val opts = _settings.value.textInputOptionsHabits.toMutableSet()
+                opts.remove(habitName)
+                settingsRepo.saveTextInputOptionsHabits(opts)
+                _settings.value = _settings.value.copy(textInputOptionsHabits = opts)
+            } else {
+                current.add(habitName)
+            }
+            settingsRepo.saveTextInputHabits(current)
+            _settings.value = _settings.value.copy(textInputHabits = current)
+        }
+    }
+
+    /**
+     * Toggles the "show options" sub-feature on/off for [habitName].
+     * Only has effect when the habit already has text input enabled.
+     */
+    fun toggleTextInputOptions(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.textInputOptionsHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveTextInputOptionsHabits(current)
+            _settings.value = _settings.value.copy(textInputOptionsHabits = current)
+        }
+    }
+
+    /**
+     * Associates [uri] as the text-log file for [habitName].
+     * Takes a persistent read+write permission on the URI.
+     */
+    fun setTextInputFileUri(habitName: String, uri: Uri) {
+        viewModelScope.launch {
+            val uriString = uri.toString()
+            val current = _settings.value.textInputFileUris.toMutableMap()
+            current[habitName] = uriString
+            settingsRepo.saveTextInputFileUris(current)
+            _settings.value = _settings.value.copy(textInputFileUris = current)
+        }
+    }
+
+    /**
+     * Saves a text entry for [habitName] to its associated log file,
+     * then also increments the habit count by 1 (so the habit is marked done for today).
+     */
+    fun saveTextEntry(habitName: String, text: String) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            _errorMessage.value = "No text log file set for '$habitName'. Select one in edit mode."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                textInputRepo.appendTextEntry(Uri.parse(uriString), context, text)
+                // Also increment the habit count so it registers as done today
+                incrementHabit(habitName, 1)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to save text entry: ${e.message}"
+            }
+        }
+    }
+
+    /**
+     * Loads the list of unique past text entries for [habitName] from its log file.
+     * Returns an empty list if no file is configured or the file is empty.
+     * Calls [onResult] on the main thread with the sorted unique options.
+     */
+    fun loadTextOptions(habitName: String, onResult: (List<String>) -> Unit) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            onResult(emptyList())
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val options = textInputRepo.loadUniqueOptions(Uri.parse(uriString), context)
+                onResult(options)
+            } catch (e: Exception) {
+                onResult(emptyList())
+            }
+        }
+    }
 }
 
 class HabitViewModelFactory(
     private val habitsRepo: HabitsRepository,
     private val settingsRepo: SettingsRepository,
+    private val textInputRepo: TextInputRepository,
     private val context: Context
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return HabitViewModel(habitsRepo, settingsRepo, context) as T
+        return HabitViewModel(habitsRepo, settingsRepo, textInputRepo, context) as T
     }
 }

@@ -72,6 +72,13 @@ import com.example.tail.data.RollingHigh
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
+// Sentinel used to track which habit's text-input dialog is open
+private data class TextInputDialogState(
+    val habit: Habit,
+    val showOptions: Boolean,
+    val options: List<String>
+)
+
 // Grid is 8 columns × 10 rows = 80 cells; 76 habits + 4 empty at end
 private const val GRID_COLUMNS = 8
 private const val TOTAL_CELLS = 80
@@ -108,6 +115,27 @@ fun HabitGridScreen(
     var showAddScreenDialog by remember { mutableStateOf(false) }
     // Index of screen being renamed (-1 = none)
     var renamingScreenIndex by remember { mutableStateOf(-1) }
+
+    // Text-input dialog state: non-null when the dialog should be shown
+    var textInputDialogState by remember { mutableStateOf<TextInputDialogState?>(null) }
+
+    // File picker for per-habit text log files (used from EditModeControlBar)
+    // We track which habit name the picker was launched for
+    var textInputPickerHabit by remember { mutableStateOf<String?>(null) }
+    val textInputFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        val habitName = textInputPickerHabit
+        if (uri != null && habitName != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            viewModel.setTextInputFileUri(habitName, uri)
+        }
+        textInputPickerHabit = null
+    }
 
     // File picker launcher — requests persistent read+write permission
     val filePicker = rememberLauncherForActivityResult(
@@ -278,6 +306,25 @@ fun HabitGridScreen(
                             when {
                                 editMode -> viewModel.selectEditHabit(index)
                                 infoMode -> viewModel.selectInfoHabit(habit)
+                                habit.name in settings.textInputHabits -> {
+                                    // Text-input habit: load options then show dialog
+                                    val showOpts = habit.name in settings.textInputOptionsHabits
+                                    if (showOpts) {
+                                        viewModel.loadTextOptions(habit.name) { opts ->
+                                            textInputDialogState = TextInputDialogState(
+                                                habit = habit,
+                                                showOptions = true,
+                                                options = opts
+                                            )
+                                        }
+                                    } else {
+                                        textInputDialogState = TextInputDialogState(
+                                            habit = habit,
+                                            showOptions = false,
+                                            options = emptyList()
+                                        )
+                                    }
+                                }
                                 habit.useCustomInput -> dialogHabit = habit
                                 else -> viewModel.incrementHabit(habit.name, 1)
                             }
@@ -313,12 +360,21 @@ fun HabitGridScreen(
                         selectedHabitScreenIndex = if (selectedHabitName != null)
                             viewModel.screenIndexForHabit(selectedHabitName) else -1,
                         customInputHabits = settings.customInputHabits,
+                        textInputHabits = settings.textInputHabits,
+                        textInputOptionsHabits = settings.textInputOptionsHabits,
+                        textInputFileUris = settings.textInputFileUris,
                         onMoveLeft = { viewModel.moveSelectedHabit(-1) },
                         onMoveRight = { viewModel.moveSelectedHabit(+1) },
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
                         onAddScreen = { showAddScreenDialog = true },
                         onDeleteScreen = { viewModel.deleteScreen(activeScreenIndex) },
-                        onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) }
+                        onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) },
+                        onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
+                        onToggleTextInputOptions = { name -> viewModel.toggleTextInputOptions(name) },
+                        onPickTextInputFile = { name ->
+                            textInputPickerHabit = name
+                            textInputFilePicker.launch(arrayOf("application/json", "*/*"))
+                        }
                     )
                 }
             }
@@ -335,6 +391,20 @@ fun HabitGridScreen(
                 dialogHabit = null
             },
             onDismiss = { dialogHabit = null }
+        )
+    }
+
+    // Text-input dialog
+    textInputDialogState?.let { state ->
+        TextInputDialog(
+            habitName = state.habit.name,
+            showOptions = state.showOptions,
+            options = state.options,
+            onConfirm = { text ->
+                viewModel.saveTextEntry(state.habit.name, text)
+                textInputDialogState = null
+            },
+            onDismiss = { textInputDialogState = null }
         )
     }
 
@@ -467,12 +537,18 @@ private fun EditModeControlBar(
     activeScreenIndex: Int,
     selectedHabitScreenIndex: Int,   // which screen the selected habit is on (-1 if no screens)
     customInputHabits: Set<String>,
+    textInputHabits: Set<String>,
+    textInputOptionsHabits: Set<String>,
+    textInputFileUris: Map<String, String>,
     onMoveLeft: () -> Unit,
     onMoveRight: () -> Unit,
     onMoveToScreen: (Int) -> Unit,
     onAddScreen: () -> Unit,
     onDeleteScreen: () -> Unit,
-    onToggleCustomInput: (String) -> Unit
+    onToggleCustomInput: (String) -> Unit,
+    onToggleTextInput: (String) -> Unit,
+    onToggleTextInputOptions: (String) -> Unit,
+    onPickTextInputFile: (String) -> Unit
 ) {
     val hasSelection = selectedIndex >= 0
     val canMoveLeft = hasSelection && selectedIndex > 0
@@ -624,6 +700,7 @@ private fun EditModeControlBar(
             Spacer(modifier = Modifier.height(4.dp))
 
             if (selectedHabitName != null) {
+                // ── Custom input toggle ────────────────────────────────────────
                 val isCustomInput = selectedHabitName in customInputHabits
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -653,6 +730,120 @@ private fun EditModeControlBar(
                             uncheckedTrackColor = Color(0xFF333333)
                         )
                     )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // ── Text input toggle ──────────────────────────────────────────
+                val isTextInput = selectedHabitName in textInputHabits
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Text input",
+                            color = Color(0xFFCCCCCC),
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = if (isTextInput) "Shows text entry on tap"
+                            else "No text entry",
+                            color = Color(0xFF888888),
+                            fontSize = 10.sp
+                        )
+                    }
+                    Switch(
+                        checked = isTextInput,
+                        onCheckedChange = { onToggleTextInput(selectedHabitName) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF44AAFF),
+                            checkedTrackColor = Color(0xFF003A5A),
+                            uncheckedThumbColor = Color(0xFF888888),
+                            uncheckedTrackColor = Color(0xFF333333)
+                        )
+                    )
+                }
+
+                // ── Options toggle + file picker (only when text input is on) ──
+                if (isTextInput) {
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Options sub-toggle
+                    val isOptions = selectedHabitName in textInputOptionsHabits
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "  Options",
+                                color = Color(0xFFAAAAAA),
+                                fontSize = 12.sp
+                            )
+                            Text(
+                                text = if (isOptions) "Shows past entries as choices"
+                                else "Free-text only",
+                                color = Color(0xFF666666),
+                                fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isOptions,
+                            onCheckedChange = { onToggleTextInputOptions(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF88FFCC),
+                                checkedTrackColor = Color(0xFF004433),
+                                uncheckedThumbColor = Color(0xFF666666),
+                                uncheckedTrackColor = Color(0xFF2A2A2A)
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // File picker row
+                    val hasFile = textInputFileUris.containsKey(selectedHabitName)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "  Text log file",
+                                color = Color(0xFFAAAAAA),
+                                fontSize = 12.sp
+                            )
+                            Text(
+                                text = if (hasFile) "✓ File selected" else "⚠ No file selected",
+                                color = if (hasFile) Color(0xFF88FF88) else Color(0xFFFF8844),
+                                fontSize = 10.sp
+                            )
+                        }
+                        Button(
+                            onClick = { onPickTextInputFile(selectedHabitName) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF003A5A)
+                            ),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Folder,
+                                contentDescription = "Pick text log file",
+                                tint = Color(0xFF88CCFF),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                if (hasFile) "Change" else "Select",
+                                fontSize = 11.sp,
+                                color = Color(0xFF88CCFF)
+                            )
+                        }
+                    }
                 }
             }
         }

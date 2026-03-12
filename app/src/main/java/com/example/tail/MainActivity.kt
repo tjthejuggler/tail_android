@@ -11,6 +11,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.TextInputRepository
 import com.example.tail.ui.HabitGridScreen
 import com.example.tail.ui.HabitViewModel
 import com.example.tail.ui.HabitViewModelFactory
@@ -28,7 +29,8 @@ class MainActivity : ComponentActivity() {
             TailTheme(darkTheme = true) {
                 TailApp(
                     habitsRepo = HabitsRepository(),
-                    settingsRepo = SettingsRepository(applicationContext)
+                    settingsRepo = SettingsRepository(applicationContext),
+                    textInputRepo = TextInputRepository()
                 )
             }
         }
@@ -38,13 +40,15 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TailApp(
     habitsRepo: HabitsRepository,
-    settingsRepo: SettingsRepository
+    settingsRepo: SettingsRepository,
+    textInputRepo: TextInputRepository
 ) {
     val navController = rememberNavController()
     val viewModel: HabitViewModel = viewModel(
         factory = HabitViewModelFactory(
             habitsRepo = habitsRepo,
             settingsRepo = settingsRepo,
+            textInputRepo = textInputRepo,
             context = androidx.compose.ui.platform.LocalContext.current
         )
     )
