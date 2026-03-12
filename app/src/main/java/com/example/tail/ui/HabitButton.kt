@@ -6,9 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,12 +18,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.Habit
+
+// Shared style that strips the extra font padding Compose adds above/below text glyphs
+private val tightTextStyle = TextStyle(
+    platformStyle = PlatformTextStyle(includeFontPadding = false)
+)
 
 /**
  * A single habit cell in the 8×10 grid.
@@ -74,7 +77,6 @@ fun HabitButton(
                 onClick = onClick,
                 onLongClick = onLongClick
             )
-            .padding(3.dp)
     ) {
         // Top-left: all-time high day
         Text(
@@ -82,7 +84,10 @@ fun HabitButton(
             color = Color.White,
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.align(Alignment.TopStart)
+            style = tightTextStyle,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 1.dp, top = 0.dp)
         )
 
         // Top-right: edit mode drag handle OR info mode indicator OR custom input badge
@@ -92,7 +97,10 @@ fun HabitButton(
                 color = Color(0xFFFF8C00),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.align(Alignment.TopEnd)
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 1.dp, top = 0.dp)
             )
         } else if (infoMode) {
             Text(
@@ -100,7 +108,10 @@ fun HabitButton(
                 color = Color(0xFF88CCFF),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.align(Alignment.TopEnd)
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 1.dp, top = 0.dp)
             )
         } else if (habit.useCustomInput) {
             Text(
@@ -108,36 +119,23 @@ fun HabitButton(
                 color = Color.Yellow,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.align(Alignment.TopEnd)
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 1.dp, top = 0.dp)
             )
         }
 
-        // Center: icon + name
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 10.dp, bottom = 10.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (iconRes != null) {
-                    Image(
-                        painter = painterResource(id = iconRes),
-                        contentDescription = habit.name,
-                        modifier = Modifier.size(18.dp),
-                        colorFilter = ColorFilter.tint(Color.White)
-                    )
-                }
-                Text(
-                    text = habit.name,
-                    color = Color.White,
-                    fontSize = 7.sp,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    lineHeight = 8.sp
-                )
-            }
+        // Center: icon only
+        if (iconRes != null) {
+            Image(
+                painter = painterResource(id = iconRes),
+                contentDescription = habit.name,
+                modifier = Modifier
+                    .size(20.dp)
+                    .align(Alignment.Center),
+                colorFilter = ColorFilter.tint(Color.White)
+            )
         }
 
         // Bottom-left: streak/antistreak
@@ -146,7 +144,10 @@ fun HabitButton(
             color = if (habit.currentStreak >= 0) Color(0xFF80FF80) else Color(0xFFFF8080),
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.align(Alignment.BottomStart)
+            style = tightTextStyle,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 1.dp, bottom = 0.dp)
         )
 
         // Bottom-right: longest streak
@@ -155,7 +156,10 @@ fun HabitButton(
             color = Color(0xFFADD8E6),
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.align(Alignment.BottomEnd)
+            style = tightTextStyle,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 1.dp, bottom = 0.dp)
         )
     }
 }
