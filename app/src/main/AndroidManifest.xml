@@ -13,6 +13,13 @@
         android:label="Tail Integration"
         android:description="@string/permission_tail_integration_description" />
 
+    <!--
+        Tail must hold its own signature permission so that when wags calls
+        sendBroadcast(intent, PERMISSION_TAIL) — which requires the *receiver*
+        to hold the permission — the broadcast is actually delivered here.
+    -->
+    <uses-permission android:name="com.example.tail.permission.TAIL_INTEGRATION" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

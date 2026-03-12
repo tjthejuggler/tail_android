@@ -54,7 +54,7 @@ app/src/main/java/com/example/tail/
 
 ## IPC API (Inter-Process Communication)
 
-*Added: 2026-03-12T20:12Z*
+*Added: 2026-03-12T20:12Z — Updated: 2026-03-12T21:52Z*
 
 Tail exposes a secure IPC API so other apps you own (signed with the **same keystore**) can read the habit list and trigger increments without any user interaction.
 
@@ -68,6 +68,12 @@ android:protectionLevel="signature"
 ```
 
 The calling app must declare `<uses-permission android:name="com.example.tail.permission.TAIL_INTEGRATION" />` in its manifest. Android will only grant it if both APKs share the same signing certificate.
+
+**Important — Tail also holds its own permission.** Tail's manifest includes:
+```xml
+<uses-permission android:name="com.example.tail.permission.TAIL_INTEGRATION" />
+```
+This is required because the calling app passes the permission string as the `receiverPermission` argument to `sendBroadcast(intent, PERMISSION_TAIL)`. That argument tells Android to only deliver the broadcast to receivers that **hold** the permission. Since Tail declares the permission, it must also explicitly hold it via `<uses-permission>` — Android does not automatically grant a declaring app its own signature permission.
 
 ---
 

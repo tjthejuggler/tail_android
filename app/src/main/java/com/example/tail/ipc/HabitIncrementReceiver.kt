@@ -60,9 +60,13 @@ class HabitIncrementReceiver : BroadcastReceiver() {
         // goAsync() lets us do I/O without the system killing the receiver after onReceive returns.
         val pendingResult = goAsync()
 
+        // Always use applicationContext: it holds the persisted SAF URI permissions
+        // that were granted when the user picked the file in the main app.
+        val appContext = context.applicationContext
+
         scope.launch {
             try {
-                val settingsRepo = SettingsRepository(context)
+                val settingsRepo = SettingsRepository(appContext)
                 val habitsRepo = HabitsRepository()
                 val settings = settingsRepo.settingsFlow.first()
 
@@ -80,7 +84,7 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                 }
 
                 val uri = Uri.parse(fileUriString)
-                habitsRepo.incrementHabit(uri, context, habitName, 1)
+                habitsRepo.incrementHabit(uri, appContext, habitName, 1)
                 Log.i(TAG, "Incremented habit '$habitName' via IPC broadcast")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to increment habit '$habitId': ${e.message}", e)
