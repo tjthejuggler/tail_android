@@ -171,11 +171,6 @@ fun HabitGridScreen(
         }
     }
 
-    // Determine the active screen name for the title
-    val activeScreenName: String? = if (habitScreens.isNotEmpty()) {
-        habitScreens.getOrNull(activeScreenIndex)?.name
-    } else null
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -217,16 +212,6 @@ fun HabitGridScreen(
                             )
                         }
 
-                        // Screen name label (shown when screens are configured)
-                        if (activeScreenName != null) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = activeScreenName,
-                                color = Color(0xFFFFAA44),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

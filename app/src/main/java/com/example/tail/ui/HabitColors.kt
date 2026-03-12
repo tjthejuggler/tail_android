@@ -4,14 +4,14 @@ import androidx.compose.ui.graphics.Color
 import com.example.tail.R
 import com.example.tail.data.getDisplayValue
 
-// 7 color tiers matching the desktop icon folders
-val ColorRed    = Color(0xFFB71C1C)   // redgoldpainthd    — count 0
-val ColorOrange = Color(0xFFE65100)   // orangewhitepearlhd — count 1
-val ColorGreen  = Color(0xFF2E7D32)   // greenfloralhd      — count 2
-val ColorBlue   = Color(0xFF1565C0)   // bluewhitepearlhd   — count 3
-val ColorPink   = Color(0xFFAD1457)   // pinkorbhd          — count 4
-val ColorYellow = Color(0xFFF9A825)   // yellowpainthd      — count 5
-val ColorGlass  = Color(0xFF37474F)   // transparentglasshd — count 6+
+// 7 muted, near-monochrome color tiers — very slight tints on dark gray bases
+val ColorRed    = Color(0xFF2E2020)   // dark gray with faint red tint    — count 0
+val ColorOrange = Color(0xFF2E2418)   // dark gray with faint orange tint — count 1
+val ColorGreen  = Color(0xFF1C2620)   // dark gray with faint green tint  — count 2
+val ColorBlue   = Color(0xFF1A1E2A)   // dark gray with faint blue tint   — count 3
+val ColorPink   = Color(0xFF2A1C22)   // dark gray with faint pink tint   — count 4
+val ColorYellow = Color(0xFF282618)   // dark gray with faint yellow tint — count 5
+val ColorGlass  = Color(0xFF1E2226)   // dark gray with faint teal tint   — count 6+
 
 /**
  * Returns the background color for a habit button based on today's count,
