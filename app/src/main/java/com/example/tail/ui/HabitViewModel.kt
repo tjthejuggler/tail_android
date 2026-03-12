@@ -17,8 +17,6 @@ import com.example.tail.data.dateString
 import com.example.tail.data.HABIT_ORDER
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +26,9 @@ import java.time.LocalDate
 import java.util.UUID
 
 private const val TAG = "HabitVM"
+
+/** Total cells in the 8×10 habit grid — matches TOTAL_CELLS in HabitGridScreen. */
+private const val TOTAL_GRID_CELLS = 80
 
 /**
  * Main ViewModel: owns habits list + settings state, delegates I/O to repositories.
@@ -83,6 +84,14 @@ class HabitViewModel(
     private val _selectedEditIndex = MutableStateFlow(-1)
     val selectedEditIndex: StateFlow<Int> = _selectedEditIndex.asStateFlow()
 
+    /**
+     * When >= 0, the user has tapped "Move" on the selected habit and we are waiting for
+     * them to tap a destination cell. This stores the source grid index.
+     * -1 = not in move-pending mode.
+     */
+    private val _movePendingSourceIndex = MutableStateFlow(-1)
+    val movePendingSourceIndex: StateFlow<Int> = _movePendingSourceIndex.asStateFlow()
+
     /** The list of named habit screens. Empty = not yet initialised (use flat habitOrder). */
     private val _habitScreens = MutableStateFlow<List<HabitScreen>>(emptyList())
     val habitScreens: StateFlow<List<HabitScreen>> = _habitScreens.asStateFlow()
@@ -93,13 +102,6 @@ class HabitViewModel(
 
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
-
-    // Debounce state for moveSelectedHabit: accumulate rapid taps, apply after idle period.
-    // moveOriginIndex is the index BEFORE the current burst started (fixed for the whole burst).
-    private var pendingMoveDelta: Int = 0
-    private var moveOriginIndex: Int = -1
-    private var moveDebounceJob: Job? = null
-    private val MOVE_DEBOUNCE_MS = 300L
 
     // Flag to suppress settingsFlow reaction while we're saving a new habit order / screens
     private var isSavingOrder: Boolean = false
@@ -339,11 +341,24 @@ class HabitViewModel(
         _editMode.value = !_editMode.value
         if (!_editMode.value) {
             _selectedEditIndex.value = -1
+            _movePendingSourceIndex.value = -1
         }
     }
 
     /** Selects (or deselects) a cell by grid index in edit mode (works for habits and placeholders). */
     fun selectEditHabit(index: Int) {
+        // If we are in move-pending mode, this tap is the destination — perform the move
+        if (_movePendingSourceIndex.value >= 0) {
+            val fromIdx = _movePendingSourceIndex.value
+            _movePendingSourceIndex.value = -1
+            if (index != fromIdx) {
+                viewModelScope.launch { applyMove(fromIdx, index) }
+            }
+            // After move, keep the destination selected so the user can see where it landed
+            _selectedEditIndex.value = index
+            return
+        }
+
         val prev = _selectedEditIndex.value
         val next = if (prev == index) -1 else index
         Log.d(TAG, "selectEditHabit: index=$index prev=$prev -> next=$next")
@@ -351,91 +366,109 @@ class HabitViewModel(
     }
 
     /**
-     * Moves the placeholder selection cursor by [delta] positions without changing any data.
-     * Used when a placeholder is selected and the user taps ← or →.
+     * Enters "move-pending" mode for the currently selected habit.
+     * The next tap on any grid cell will move the habit there.
+     * Calling again while already pending cancels move mode.
      */
-    fun movePlaceholderSelection(delta: Int) {
-        val current = _selectedEditIndex.value
-        if (current < 0) return
-        val newIdx = (current + delta).coerceIn(0, 79) // 80 cells total (8×10 grid)
-        _selectedEditIndex.value = newIdx
-    }
-
-    /**
-     * Moves the currently selected habit by [delta] positions (+1 = right/down, -1 = left/up).
-     *
-     * Taps are debounced: rapid consecutive taps accumulate their deltas and the actual
-     * list mutation + persist happens once, 300 ms after the last tap. The selection
-     * highlight moves immediately on every tap so the UI feels responsive.
-     */
-    fun moveSelectedHabit(delta: Int) {
-        val currentIdx = _selectedEditIndex.value
-        if (currentIdx < 0) return
-
-        // Determine the valid range for the current context
-        val screens = _habitScreens.value
-        val maxIdx = if (screens.isNotEmpty()) {
-            val screenIdx = _activeScreenIndex.value.coerceIn(0, screens.size - 1)
-            screens[screenIdx].habitNames.size - 1
+    fun startMoveMode() {
+        val idx = _selectedEditIndex.value
+        if (idx < 0) return
+        if (_movePendingSourceIndex.value >= 0) {
+            // Already in move mode — cancel it
+            _movePendingSourceIndex.value = -1
         } else {
-            _habitOrder.value.size - 1
-        }
-
-        // On the first tap of a new burst, record the origin index
-        if (moveDebounceJob == null || moveDebounceJob?.isActive == false) {
-            moveOriginIndex = currentIdx
-            pendingMoveDelta = 0
-        }
-
-        // Accumulate delta and clamp the preview index immediately
-        pendingMoveDelta += delta
-        val previewIdx = (moveOriginIndex + pendingMoveDelta).coerceIn(0, maxIdx)
-        // Clamp accumulated delta to avoid over-accumulation at edges
-        pendingMoveDelta = previewIdx - moveOriginIndex
-        _selectedEditIndex.value = previewIdx
-
-        // Cancel any existing debounce timer and restart it
-        moveDebounceJob?.cancel()
-        moveDebounceJob = viewModelScope.launch {
-            delay(MOVE_DEBOUNCE_MS)
-            applyPendingMove()
+            _movePendingSourceIndex.value = idx
         }
     }
 
     /**
-     * Applies the accumulated [pendingMoveDelta] from [moveOriginIndex] in one shot.
-     * Called by the debounce timer after tapping stops.
+     * Moves the habit at [fromIdx] to [toIdx].
+     *
+     * - If [toIdx] is a placeholder (empty string or beyond list end): simple swap/place.
+     * - If [toIdx] is occupied by another habit: shift that habit and all subsequent
+     *   habits one position to the right until an empty slot (or end of list) is found.
+     *
+     * After the move the selection lands on [toIdx].
      */
-    private suspend fun applyPendingMove() {
-        val fromIdx = moveOriginIndex
-        val totalDelta = pendingMoveDelta
-        pendingMoveDelta = 0
-        moveOriginIndex = -1
-        if (totalDelta == 0 || fromIdx < 0) return
+    private suspend fun applyMove(fromIdx: Int, toIdx: Int) {
+        if (fromIdx == toIdx) return
 
         val screens = _habitScreens.value
         if (screens.isNotEmpty()) {
             val screenIdx = _activeScreenIndex.value.coerceIn(0, screens.size - 1)
             val screen = screens[screenIdx]
             val current = screen.habitNames.toMutableList()
-            val newIdx = (fromIdx + totalDelta).coerceIn(0, current.size - 1)
-            if (newIdx == fromIdx) return
-            val item = current.removeAt(fromIdx)
-            current.add(newIdx, item)
+            if (fromIdx !in current.indices) return
+
+            // Pad list with empty strings up to toIdx if needed
+            while (current.size <= toIdx) current.add("")
+
+            val habitToMove = current[fromIdx]
+            current[fromIdx] = ""  // vacate source
+
+            if (current[toIdx].isEmpty()) {
+                // Target is empty — just place it there
+                current[toIdx] = habitToMove
+            } else {
+                // Target is occupied — shift habits right until we find an empty slot
+                // Find the first empty slot at or after toIdx
+                var emptySlot = -1
+                for (i in toIdx until current.size) {
+                    if (current[i].isEmpty()) {
+                        emptySlot = i
+                        break
+                    }
+                }
+                if (emptySlot < 0) {
+                    // No empty slot found — append one at the end
+                    current.add("")
+                    emptySlot = current.size - 1
+                }
+                // Shift everything from toIdx..emptySlot-1 one step right
+                for (i in emptySlot downTo toIdx + 1) {
+                    current[i] = current[i - 1]
+                }
+                current[toIdx] = habitToMove
+            }
+
             val updatedScreen = screen.copy(habitNames = current)
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
             _habitScreens.value = updatedScreens
-            _selectedEditIndex.value = newIdx
+            _selectedEditIndex.value = toIdx
             rebuildHabitList()
             persistScreens(updatedScreens)
         } else {
             val current = _habitOrder.value.toMutableList()
-            val newIdx = (fromIdx + totalDelta).coerceIn(0, current.size - 1)
-            if (newIdx == fromIdx) return
-            val item = current.removeAt(fromIdx)
-            current.add(newIdx, item)
+            if (fromIdx !in current.indices) return
+
+            // Pad list with empty strings up to toIdx if needed
+            while (current.size <= toIdx) current.add("")
+
+            val habitToMove = current[fromIdx]
+            current[fromIdx] = ""  // vacate source
+
+            if (current[toIdx].isEmpty()) {
+                current[toIdx] = habitToMove
+            } else {
+                var emptySlot = -1
+                for (i in toIdx until current.size) {
+                    if (current[i].isEmpty()) {
+                        emptySlot = i
+                        break
+                    }
+                }
+                if (emptySlot < 0) {
+                    current.add("")
+                    emptySlot = current.size - 1
+                }
+                for (i in emptySlot downTo toIdx + 1) {
+                    current[i] = current[i - 1]
+                }
+                current[toIdx] = habitToMove
+            }
+
             _habitOrder.value = current
-            _selectedEditIndex.value = newIdx
+            _selectedEditIndex.value = toIdx
             rebuildHabitList()
             isSavingOrder = true
             viewModelScope.launch {
@@ -550,8 +583,12 @@ class HabitViewModel(
         val currentScreen = screens[currentScreenIdx]
         val habitNames = currentScreen.habitNames.toMutableList()
         if (idx !in habitNames.indices) return
+        val habitName = habitNames[idx]
+        if (habitName.isEmpty()) return  // can't move a placeholder
 
-        val habitName = habitNames.removeAt(idx)
+        // Leave an empty-string placeholder at the moved habit's position so the
+        // grid layout doesn't shift — other habits stay in their cells.
+        habitNames[idx] = ""
         screens[currentScreenIdx] = currentScreen.copy(habitNames = habitNames)
 
         val targetScreen = screens[targetScreenIndex]
@@ -565,11 +602,11 @@ class HabitViewModel(
 
     /**
      * Adds a new habit with [habitName] at grid position [atIndex] within the active screen
-     * (or flat order if no screens). [atIndex] is the cell index in the full TOTAL_CELLS grid,
-     * so it equals the position among existing habits (placeholders don't occupy slots in
-     * habitNames — they are the gaps after the last habit).
+     * (or flat order if no screens). [atIndex] is the cell index in the full TOTAL_CELLS grid.
      *
-     * The habit is inserted at [atIndex] if [atIndex] <= current habit count, otherwise appended.
+     * If [atIndex] points to an existing empty-string placeholder in the list, the placeholder
+     * is *replaced* in-place (no shifting). Otherwise the habit is inserted at [atIndex]
+     * (or appended if beyond the list end).
      * Also writes the new habit to all configured JSON files (phone DB, historical DB, totals DB).
      */
     fun addHabit(habitName: String, atIndex: Int) {
@@ -581,8 +618,15 @@ class HabitViewModel(
             val screenIdx = _activeScreenIndex.value.coerceIn(0, screens.size - 1)
             val screen = screens[screenIdx]
             val current = screen.habitNames.toMutableList()
-            val insertAt = atIndex.coerceIn(0, current.size)
-            current.add(insertAt, trimmed)
+            val insertAt: Int
+            if (atIndex in current.indices && current[atIndex].isEmpty()) {
+                // Replace the embedded placeholder in-place — no shifting
+                current[atIndex] = trimmed
+                insertAt = atIndex
+            } else {
+                insertAt = atIndex.coerceIn(0, current.size)
+                current.add(insertAt, trimmed)
+            }
             val updatedScreen = screen.copy(habitNames = current)
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
             _habitScreens.value = updatedScreens
@@ -591,8 +635,15 @@ class HabitViewModel(
             persistScreens(updatedScreens)
         } else {
             val current = _habitOrder.value.toMutableList()
-            val insertAt = atIndex.coerceIn(0, current.size)
-            current.add(insertAt, trimmed)
+            val insertAt: Int
+            if (atIndex in current.indices && current[atIndex].isEmpty()) {
+                // Replace the embedded placeholder in-place — no shifting
+                current[atIndex] = trimmed
+                insertAt = atIndex
+            } else {
+                insertAt = atIndex.coerceIn(0, current.size)
+                current.add(insertAt, trimmed)
+            }
             _habitOrder.value = current
             _selectedEditIndex.value = insertAt
             isSavingOrder = true
@@ -644,6 +695,9 @@ class HabitViewModel(
             val screen = screens[screenIdx]
             val current = screen.habitNames.toMutableList()
             if (index !in current.indices) return
+            // Empty-string entries are already placeholders — just keep them as-is.
+            // Only remove real habit names.
+            if (current[index].isEmpty()) return
             current.removeAt(index)
             val updatedScreen = screen.copy(habitNames = current)
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
@@ -654,6 +708,7 @@ class HabitViewModel(
         } else {
             val current = _habitOrder.value.toMutableList()
             if (index !in current.indices) return
+            if (current[index].isEmpty()) return
             current.removeAt(index)
             _habitOrder.value = current
             _selectedEditIndex.value = -1

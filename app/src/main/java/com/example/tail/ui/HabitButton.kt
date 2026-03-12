@@ -53,6 +53,10 @@ fun HabitButton(
     infoMode: Boolean = false,
     isSelected: Boolean = false,
     editMode: Boolean = false,
+    /** True when this cell is the habit currently "in flight" waiting to be placed. */
+    isMovePendingSource: Boolean = false,
+    /** True when move-pending mode is active and this cell is a valid drop target. */
+    isMovePendingTarget: Boolean = false,
     customIconOverrides: Map<String, String> = emptyMap()
 ) {
     val bgColor = getHabitColor(habit.name, habit.todayCount)
@@ -61,18 +65,26 @@ fun HabitButton(
 
     val shape = RoundedCornerShape(6.dp)
     val borderMod = when {
+        isMovePendingSource -> Modifier.border(2.dp, Color(0xFF44FFFF), shape)     // cyan border = "in flight"
         isSelected && editMode -> Modifier.border(2.dp, Color(0xFFFFAA00), shape)  // orange border when selected in edit mode
+        isMovePendingTarget -> Modifier.border(1.dp, Color(0xFF44FFFF), shape)     // cyan border = valid drop target
         isSelected -> Modifier.border(2.dp, Color(0xFFFFD700), shape)              // gold border when selected in info mode
         infoMode   -> Modifier.border(1.dp, Color(0xFF88CCFF), shape)              // subtle blue border in info mode
         editMode   -> Modifier.border(1.dp, Color(0xFFFF8C00), shape)              // dim orange border in edit mode
         else       -> Modifier
+    }
+    // Dim the background slightly when this is a potential drop target (but not the source)
+    val effectiveBgColor = when {
+        isMovePendingSource -> bgColor.copy(alpha = 0.5f)
+        isMovePendingTarget -> bgColor.copy(alpha = 0.7f)
+        else -> bgColor
     }
 
     Box(
         modifier = modifier
             .aspectRatio(1f)
             .clip(shape)
-            .background(bgColor)
+            .background(effectiveBgColor)
             .then(borderMod)
             .combinedClickable(
                 onClick = onClick,
@@ -91,8 +103,19 @@ fun HabitButton(
                 .padding(start = 1.dp, top = 0.dp)
         )
 
-        // Top-right: edit mode drag handle OR info mode indicator OR custom input badge
-        if (editMode) {
+        // Top-right: move-pending indicator OR edit mode handle OR info mode indicator OR custom input badge
+        if (isMovePendingSource) {
+            Text(
+                text = "↕",
+                color = Color(0xFF44FFFF),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 1.dp, top = 0.dp)
+            )
+        } else if (editMode) {
             Text(
                 text = "⠿",
                 color = Color(0xFFFF8C00),

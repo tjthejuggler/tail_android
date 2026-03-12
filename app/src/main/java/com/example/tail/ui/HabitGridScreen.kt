@@ -110,6 +110,7 @@ fun HabitGridScreen(
     val editMode by viewModel.editMode.collectAsState()
     val selectedInfoHabit by viewModel.selectedInfoHabit.collectAsState()
     val selectedEditIndex by viewModel.selectedEditIndex.collectAsState()
+    val movePendingSourceIndex by viewModel.movePendingSourceIndex.collectAsState()
     val habitScreens by viewModel.habitScreens.collectAsState()
     val activeScreenIndex by viewModel.activeScreenIndex.collectAsState()
     val context = LocalContext.current
@@ -298,6 +299,7 @@ fun HabitGridScreen(
                         editMode = editMode,
                         selectedInfoHabit = selectedInfoHabit,
                         selectedEditIndex = selectedEditIndex,
+                        movePendingSourceIndex = movePendingSourceIndex,
                         customIconOverrides = settings.habitIcons,
                         onHabitClick = { habit, index ->
                             when {
@@ -349,15 +351,18 @@ fun HabitGridScreen(
 
                 // Edit mode control bar — shown below grid when in edit mode
                 if (editMode) {
-                    val selectedHabitName = if (selectedEditIndex >= 0 && selectedEditIndex < habits.size)
-                        habits[selectedEditIndex].name else null
-                    val isPlaceholderSelected = selectedEditIndex >= habits.size && selectedEditIndex >= 0
+                    // A cell is a "real habit" only if it has a non-empty name.
+                    // Empty-name entries are embedded placeholders (moved-away habits).
+                    val selectedHabitAtIndex = if (selectedEditIndex >= 0 && selectedEditIndex < habits.size)
+                        habits[selectedEditIndex] else null
+                    val selectedHabitName = selectedHabitAtIndex?.name?.takeIf { it.isNotEmpty() }
+                    val isPlaceholderSelected = selectedEditIndex >= 0 &&
+                        (selectedEditIndex >= habits.size || selectedHabitAtIndex?.name?.isEmpty() == true)
                     EditModeControlBar(
                         selectedIndex = selectedEditIndex,
                         selectedHabitName = selectedHabitName,
                         isPlaceholderSelected = isPlaceholderSelected,
-                        totalCells = TOTAL_CELLS,
-                        habitCount = habits.size,
+                        movePending = movePendingSourceIndex >= 0,
                         habitScreens = habitScreens,
                         activeScreenIndex = activeScreenIndex,
                         selectedHabitScreenIndex = if (selectedHabitName != null)
@@ -366,10 +371,7 @@ fun HabitGridScreen(
                         textInputHabits = settings.textInputHabits,
                         textInputOptionsHabits = settings.textInputOptionsHabits,
                         textInputFileUris = settings.textInputFileUris,
-                        onMoveLeft = { viewModel.moveSelectedHabit(-1) },
-                        onMoveRight = { viewModel.moveSelectedHabit(+1) },
-                        onMovePlaceholderLeft = { viewModel.movePlaceholderSelection(-1) },
-                        onMovePlaceholderRight = { viewModel.movePlaceholderSelection(+1) },
+                        onStartMove = { viewModel.startMoveMode() },
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
                         onAddScreen = { showAddScreenDialog = true },
@@ -528,16 +530,21 @@ private fun HabitGrid(
     editMode: Boolean,
     selectedInfoHabit: Habit?,
     selectedEditIndex: Int,
+    movePendingSourceIndex: Int = -1,
     customIconOverrides: Map<String, String> = emptyMap(),
     onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit,
     onPlaceholderClick: (Int) -> Unit
 ) {
-    // Build a list of TOTAL_CELLS nullable items (null = placeholder)
+    // Build a list of TOTAL_CELLS nullable items (null = placeholder).
+    // Habits with an empty name are embedded placeholders (moved to another screen) —
+    // treat them as null so the grid renders a placeholder cell in their position.
     val cells: List<Habit?> = buildList {
-        addAll(habits)
+        habits.forEach { habit -> add(if (habit.name.isEmpty()) null else habit) }
         repeat(TOTAL_CELLS - habits.size) { add(null) }
     }
+
+    val isMovePending = movePendingSourceIndex >= 0
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(GRID_COLUMNS),
@@ -549,6 +556,7 @@ private fun HabitGrid(
             if (habit != null) {
                 val isEditSelected = editMode && index == selectedEditIndex
                 val isInfoSelected = infoMode && selectedInfoHabit?.name == habit.name
+                val isMovePendingSource = editMode && index == movePendingSourceIndex
                 HabitButton(
                     habit = habit,
                     onClick = { onHabitClick(habit, index) },
@@ -557,12 +565,15 @@ private fun HabitGrid(
                     infoMode = infoMode,
                     editMode = editMode,
                     isSelected = isEditSelected || isInfoSelected,
+                    isMovePendingSource = isMovePendingSource,
+                    isMovePendingTarget = isMovePending && !isMovePendingSource && editMode,
                     customIconOverrides = customIconOverrides
                 )
             } else if (editMode) {
                 // In edit mode, placeholders are selectable cells
                 PlaceholderCell(
                     isSelected = index == selectedEditIndex,
+                    isMovePendingTarget = isMovePending,
                     onClick = { onPlaceholderClick(index) },
                     modifier = Modifier.padding(2.dp)
                 )
@@ -575,19 +586,37 @@ private fun HabitGrid(
 
 /**
  * A placeholder cell shown in edit mode. Tapping selects it (orange highlight).
+ * When [isMovePendingTarget] is true the cell pulses cyan to invite a drop.
  */
 @Composable
 private fun PlaceholderCell(
     isSelected: Boolean,
+    isMovePendingTarget: Boolean = false,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val bgColor = when {
+        isSelected -> Color(0xFF3A2000)
+        isMovePendingTarget -> Color(0xFF003A3A)
+        else -> Color(0xFF0D0D0D)
+    }
+    val textColor = when {
+        isSelected -> Color(0xFFFFAA00)
+        isMovePendingTarget -> Color(0xFF44FFFF)
+        else -> Color(0xFF2A2A2A)
+    }
+    val text = when {
+        isSelected -> "+"
+        isMovePendingTarget -> "→"
+        else -> "·"
+    }
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .background(
-                color = if (isSelected) Color(0xFF3A2000) else Color(0xFF0D0D0D),
-                shape = RoundedCornerShape(4.dp)
+            .background(color = bgColor, shape = RoundedCornerShape(4.dp))
+            .then(
+                if (isMovePendingTarget) Modifier.border(1.dp, Color(0xFF44FFFF), RoundedCornerShape(4.dp))
+                else Modifier
             )
             .clickable(
                 indication = null,
@@ -597,9 +626,9 @@ private fun PlaceholderCell(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = if (isSelected) "+" else "·",
-            color = if (isSelected) Color(0xFFFFAA00) else Color(0xFF2A2A2A),
-            fontSize = if (isSelected) 18.sp else 12.sp,
+            text = text,
+            color = textColor,
+            fontSize = if (isSelected || isMovePendingTarget) 18.sp else 12.sp,
             textAlign = TextAlign.Center
         )
     }
@@ -612,16 +641,18 @@ private fun PlaceholderCell(
  *
  * Three states:
  *  1. Nothing selected → prompt + Add Screen / Del Screen buttons
- *  2. Placeholder selected → MOVE (← →) + "Add Habit" button
- *  3. Habit selected → MOVE (← →) + screen-jump buttons + SETTINGS section
+ *  2. Placeholder selected → "Add Habit" button
+ *  3. Habit selected → MOVE button + screen-jump buttons + SETTINGS section
+ *
+ * When [movePending] is true (Move button was tapped), the bar shows a cancel prompt
+ * and all grid cells become move targets.
  */
 @Composable
 private fun EditModeControlBar(
     selectedIndex: Int,
     selectedHabitName: String?,
     isPlaceholderSelected: Boolean,
-    totalCells: Int,
-    habitCount: Int,
+    movePending: Boolean,
     habitScreens: List<HabitScreen>,
     activeScreenIndex: Int,
     selectedHabitScreenIndex: Int,
@@ -629,10 +660,7 @@ private fun EditModeControlBar(
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
     textInputFileUris: Map<String, String>,
-    onMoveLeft: () -> Unit,
-    onMoveRight: () -> Unit,
-    onMovePlaceholderLeft: () -> Unit,
-    onMovePlaceholderRight: () -> Unit,
+    onStartMove: () -> Unit,
     onAddHabit: () -> Unit,
     onMoveToScreen: (Int) -> Unit,
     onAddScreen: () -> Unit,
@@ -646,14 +674,6 @@ private fun EditModeControlBar(
 ) {
     val hasSelection = selectedIndex >= 0
 
-    // For habits: can move within habit list bounds
-    val canHabitMoveLeft = hasSelection && !isPlaceholderSelected && selectedIndex > 0
-    val canHabitMoveRight = hasSelection && !isPlaceholderSelected && selectedIndex < habitCount - 1
-
-    // For placeholders: can move within total grid bounds
-    val canPlaceholderMoveLeft = isPlaceholderSelected && selectedIndex > 0
-    val canPlaceholderMoveRight = isPlaceholderSelected && selectedIndex < totalCells - 1
-
     // Other screens for habit move-to-screen
     val otherScreenIndices: List<Int> = if (hasSelection && !isPlaceholderSelected && habitScreens.size > 1) {
         val currentScreen = if (selectedHabitScreenIndex >= 0) selectedHabitScreenIndex else activeScreenIndex
@@ -663,9 +683,34 @@ private fun EditModeControlBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF1A1000))
+            .background(if (movePending) Color(0xFF001A1A) else Color(0xFF1A1000))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
+        // ── Move-pending banner (shown on top of any state when move is active) ──
+        if (movePending) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "↕ Tap any cell to move \"$selectedHabitName\" there",
+                    color = Color(0xFF44FFFF),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Button(
+                    onClick = onStartMove,  // second tap cancels
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A00)),
+                    modifier = Modifier.height(28.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                ) {
+                    Text("Cancel", fontSize = 11.sp, color = Color(0xFFFFFF44))
+                }
+            }
+            return@Column
+        }
+
         when {
             // ── Nothing selected ──────────────────────────────────────────
             !hasSelection -> {
@@ -709,56 +754,18 @@ private fun EditModeControlBar(
 
             // ── Placeholder selected ──────────────────────────────────────
             isPlaceholderSelected -> {
-                Text(
-                    text = "Placeholder [${selectedIndex}]",
-                    color = Color(0xFF888888),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // ← move placeholder selection left
-                    Button(
-                        onClick = onMovePlaceholderLeft,
-                        enabled = canPlaceholderMoveLeft,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF5A3A00),
-                            disabledContainerColor = Color(0xFF2A2A2A)
-                        ),
-                        modifier = Modifier.size(width = 48.dp, height = 32.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                    ) {
-                        Text(
-                            "←",
-                            fontSize = 14.sp,
-                            color = if (canPlaceholderMoveLeft) Color(0xFFFFAA00) else Color(0xFF666666)
-                        )
-                    }
-
-                    // → move placeholder selection right
-                    Button(
-                        onClick = onMovePlaceholderRight,
-                        enabled = canPlaceholderMoveRight,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF5A3A00),
-                            disabledContainerColor = Color(0xFF2A2A2A)
-                        ),
-                        modifier = Modifier.size(width = 48.dp, height = 32.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                    ) {
-                        Text(
-                            "→",
-                            fontSize = 14.sp,
-                            color = if (canPlaceholderMoveRight) Color(0xFFFFAA00) else Color(0xFF666666)
-                        )
-                    }
-
+                    Text(
+                        text = "Placeholder [${selectedIndex}]",
+                        color = Color(0xFF888888),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
                     // Add Habit button
                     Button(
                         onClick = onAddHabit,
@@ -788,53 +795,18 @@ private fun EditModeControlBar(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // MOVE section
-                Text(
-                    text = "MOVE",
-                    color = Color(0xFF888888),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // MOVE button — tap to enter move-pending mode
                     Button(
-                        onClick = onMoveLeft,
-                        enabled = canHabitMoveLeft,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF5A3A00),
-                            disabledContainerColor = Color(0xFF2A2A2A)
-                        ),
-                        modifier = Modifier.size(width = 48.dp, height = 32.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                        onClick = onStartMove,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004A4A)),
+                        modifier = Modifier.height(32.dp)
                     ) {
-                        Text(
-                            "←",
-                            fontSize = 14.sp,
-                            color = if (canHabitMoveLeft) Color(0xFFFFAA00) else Color(0xFF666666)
-                        )
-                    }
-
-                    Button(
-                        onClick = onMoveRight,
-                        enabled = canHabitMoveRight,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF5A3A00),
-                            disabledContainerColor = Color(0xFF2A2A2A)
-                        ),
-                        modifier = Modifier.size(width = 48.dp, height = 32.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                    ) {
-                        Text(
-                            "→",
-                            fontSize = 14.sp,
-                            color = if (canHabitMoveRight) Color(0xFFFFAA00) else Color(0xFF666666)
-                        )
+                        Text("↕ Move", fontSize = 11.sp, color = Color(0xFF44FFFF))
                     }
 
                     // Screen jump buttons
