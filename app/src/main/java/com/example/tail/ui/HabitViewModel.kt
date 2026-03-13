@@ -303,6 +303,47 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Sets the count for [habitName] on the currently selected date to an absolute [newCount].
+     * Clamps to >= 0. Persists to the DB file.
+     */
+    fun setHabitCount(habitName: String, newCount: Int) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            _errorMessage.value = "No file selected. Please pick a file in Settings."
+            return
+        }
+        val clamped = newCount.coerceAtLeast(0)
+
+        // Step 1: instant targeted UI update
+        _habits.value = _habits.value.map { h ->
+            if (h.name == habitName) h.copy(todayCount = clamped) else h
+        }
+
+        // Step 2: update in-memory cache — compute delta from current stored value
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
+        val currentCount = currentEntries[dateStr] ?: 0
+        val delta = clamped - currentCount
+        val updatedDb = if (delta != 0) {
+            habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, delta, _selectedDate.value)
+        } else {
+            cachedPhoneDb
+        }
+        cachedPhoneDb = updatedDb
+
+        // Step 3: full rebuild + disk write in background
+        viewModelScope.launch {
+            rebuildHabitList()
+            try {
+                val uri = Uri.parse(uriString)
+                habitsRepo.persistDatabase(uri, context, updatedDb)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to save: ${e.message}"
+            }
+        }
+    }
+
     fun toggleCustomInput(habitName: String) {
         viewModelScope.launch {
             val current = _settings.value.customInputHabits.toMutableSet()
