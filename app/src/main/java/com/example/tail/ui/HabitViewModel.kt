@@ -318,11 +318,18 @@ class HabitViewModel(
         _errorMessage.value = null
     }
 
-    /** Toggles info mode on/off. Clears selected habit when turning off. */
+    /** Toggles info mode on/off. Clears selected habit when turning off.
+     *  Acts as a radio button with edit mode — turning info on turns edit off. */
     fun toggleInfoMode() {
-        _infoMode.value = !_infoMode.value
-        if (!_infoMode.value) {
+        val turningOn = !_infoMode.value
+        _infoMode.value = turningOn
+        if (!turningOn) {
             _selectedInfoHabit.value = null
+        } else {
+            // Deactivate edit mode when info mode is activated
+            _editMode.value = false
+            _selectedEditIndex.value = -1
+            _movePendingSourceIndex.value = -1
         }
     }
 
@@ -336,12 +343,18 @@ class HabitViewModel(
         _selectedInfoHabit.value = null
     }
 
-    /** Toggles edit (tap-to-select reorder) mode on/off. Clears selection when turning off. */
+    /** Toggles edit (tap-to-select reorder) mode on/off. Clears selection when turning off.
+     *  Acts as a radio button with info mode — turning edit on turns info off. */
     fun toggleEditMode() {
-        _editMode.value = !_editMode.value
-        if (!_editMode.value) {
+        val turningOn = !_editMode.value
+        _editMode.value = turningOn
+        if (!turningOn) {
             _selectedEditIndex.value = -1
             _movePendingSourceIndex.value = -1
+        } else {
+            // Deactivate info mode when edit mode is activated
+            _infoMode.value = false
+            _selectedInfoHabit.value = null
         }
     }
 
