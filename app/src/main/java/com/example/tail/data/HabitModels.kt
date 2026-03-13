@@ -108,7 +108,33 @@ data class AppSettings(
      * When a habit is in this map, its icon is shown from the named drawable instead of
      * the default HABIT_ICON mapping.
      */
-    val habitIcons: Map<String, String> = emptyMap()
+    val habitIcons: Map<String, String> = emptyMap(),
+
+    /**
+     * Habits that have the "Dated Entry" feature enabled.
+     * When a habit is in this set, its count for each day is automatically derived
+     * by parsing a linked plain-text file that contains date headers and paragraph blocks.
+     * Each blank-line-separated paragraph under a date counts as +1 for that day.
+     */
+    val datedEntryHabits: Set<String> = emptySet(),
+
+    /**
+     * Maps habit name → SAF URI string for the per-habit dated-entry source file.
+     * The file uses date headers (M/D/YY or YYYY-MM-DD) followed by paragraph blocks.
+     */
+    val datedEntryFileUris: Map<String, String> = emptyMap(),
+
+    /**
+     * Maps habit name → last-seen file size (bytes) for the dated-entry source file.
+     * Used to detect changes efficiently: if the size hasn't changed since the last
+     * sync we skip re-parsing entirely.
+     *
+     * When the file only grows (new entries appended), we use this as a seek offset:
+     * we re-read from [lastOverlapBytes] before the old size to catch any date header
+     * that straddles the boundary, then parse only the new tail. This keeps parse time
+     * O(new content) rather than O(total file size) as the file grows.
+     */
+    val datedEntryFileSizes: Map<String, Long> = emptyMap()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(
