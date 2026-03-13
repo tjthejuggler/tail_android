@@ -361,6 +361,7 @@ fun HabitGridScreen(
                     EditModeControlBar(
                         selectedIndex = selectedEditIndex,
                         selectedHabitName = selectedHabitName,
+                        selectedHabitTodayCount = selectedHabitAtIndex?.todayCount ?: 0,
                         isPlaceholderSelected = isPlaceholderSelected,
                         movePending = movePendingSourceIndex >= 0,
                         habitScreens = habitScreens,
@@ -384,7 +385,8 @@ fun HabitGridScreen(
                             textInputFilePicker.launch(arrayOf("application/json", "*/*"))
                         },
                         onDeleteHabit = { name -> deleteConfirmHabitName = name },
-                        onChangeIcon = { name -> iconPickerHabitName = name }
+                        onChangeIcon = { name -> iconPickerHabitName = name },
+                        onSetCount = { name, count -> viewModel.setHabitCount(name, count) }
                     )
                 }
             }
@@ -651,6 +653,7 @@ private fun PlaceholderCell(
 private fun EditModeControlBar(
     selectedIndex: Int,
     selectedHabitName: String?,
+    selectedHabitTodayCount: Int,
     isPlaceholderSelected: Boolean,
     movePending: Boolean,
     habitScreens: List<HabitScreen>,
@@ -670,7 +673,8 @@ private fun EditModeControlBar(
     onToggleTextInputOptions: (String) -> Unit,
     onPickTextInputFile: (String) -> Unit,
     onDeleteHabit: (String) -> Unit,
-    onChangeIcon: (String) -> Unit
+    onChangeIcon: (String) -> Unit,
+    onSetCount: (String, Int) -> Unit
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -786,13 +790,61 @@ private fun EditModeControlBar(
 
             // ── Habit selected ────────────────────────────────────────────
             else -> {
-                Text(
-                    text = "Selected: $selectedHabitName",
-                    color = Color(0xFFFFAA00),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                // Header row: name + inline count adjuster
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = selectedHabitName ?: "",
+                        color = Color(0xFFFFAA00),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (selectedHabitName != null) {
+                        // Count adjuster: [−] count [+]
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "today:",
+                                color = Color(0xFF888888),
+                                fontSize = 10.sp
+                            )
+                            Button(
+                                onClick = { onSetCount(selectedHabitName, selectedHabitTodayCount - 1) },
+                                enabled = selectedHabitTodayCount > 0,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF3A1A00),
+                                    disabledContainerColor = Color(0xFF1A1A1A)
+                                ),
+                                modifier = Modifier.size(28.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                            ) {
+                                Text("−", fontSize = 14.sp, color = if (selectedHabitTodayCount > 0) Color(0xFFFFAA00) else Color(0xFF555555))
+                            }
+                            Text(
+                                text = selectedHabitTodayCount.toString(),
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.width(28.dp),
+                                textAlign = TextAlign.Center
+                            )
+                            Button(
+                                onClick = { onSetCount(selectedHabitName, selectedHabitTodayCount + 1) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A00)),
+                                modifier = Modifier.size(28.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                            ) {
+                                Text("+", fontSize = 14.sp, color = Color(0xFF88FF88))
+                            }
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Row(
