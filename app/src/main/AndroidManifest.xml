@@ -43,6 +43,25 @@
         </activity>
 
         <!--
+            ShareTextActivity: appears in the system share sheet when the user
+            highlights text and taps "Share". Lets them pick a text-input habit
+            and saves the shared text as a log entry for that habit.
+            The transparent theme makes it look like a floating dialog rather
+            than a full-screen activity.
+        -->
+        <activity
+            android:name=".ShareTextActivity"
+            android:exported="true"
+            android:label="@string/share_activity_label"
+            android:theme="@style/Theme.Tail.Transparent">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!--
             ContentProvider: exposes the habit list (habit_id, habit_name) to same-keystore apps.
             android:readPermission restricts query() to callers holding TAIL_INTEGRATION.
             Write operations are not permitted (UnsupportedOperationException in code).
