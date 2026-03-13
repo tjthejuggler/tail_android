@@ -2,10 +2,12 @@ package com.example.tail.ui
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.tail.data.AppSettings
+import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.HabitsDatabase
@@ -15,7 +17,6 @@ import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.dateString
 import com.example.tail.data.HABIT_ORDER
-import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,6 +40,7 @@ class HabitViewModel(
     private val habitsRepo: HabitsRepository,
     private val settingsRepo: SettingsRepository,
     private val textInputRepo: TextInputRepository,
+    private val datedEntryRepo: DatedEntryRepository,
     private val context: Context
 ) : ViewModel() {
 
@@ -143,6 +145,13 @@ class HabitViewModel(
                         )
                     }
                     catchUpAndLoad(Uri.parse(s.fileUri))
+                    // After the phone DB is loaded, sync any dated-entry habits.
+                    // We do this here (after settings are confirmed loaded) rather than
+                    // in onAppForegrounded() to avoid the race where ON_RESUME fires
+                    // before the DataStore settings have been read.
+                    if (s.datedEntryHabits.isNotEmpty()) {
+                        syncAllDatedEntries(forceReparse = false)
+                    }
                 }
             }
         }
@@ -176,35 +185,23 @@ class HabitViewModel(
         return screens.indexOfFirst { habitName in it.habitNames }
     }
 
-    private fun catchUpAndLoad(uri: Uri) {
-        viewModelScope.launch {
-            _isLoading.value = true
-            _errorMessage.value = null
-            try {
-                val db = habitsRepo.ensureDaysExist(uri, context)
-                cachedPhoneDb = db
-                rebuildHabitList()
-            } catch (e: Exception) {
-                _errorMessage.value = "Failed to load file: ${e.message}"
-            } finally {
-                _isLoading.value = false
-            }
+    private suspend fun catchUpAndLoad(uri: Uri) {
+        _isLoading.value = true
+        _errorMessage.value = null
+        try {
+            val db = habitsRepo.ensureDaysExist(uri, context)
+            cachedPhoneDb = db
+            rebuildHabitList()
+        } catch (e: Exception) {
+            _errorMessage.value = "Failed to load file: ${e.message}"
+        } finally {
+            _isLoading.value = false
         }
     }
 
     fun loadFromFile(uri: Uri) {
         viewModelScope.launch {
-            _isLoading.value = true
-            _errorMessage.value = null
-            try {
-                val db = habitsRepo.ensureDaysExist(uri, context)
-                cachedPhoneDb = db
-                rebuildHabitList()
-            } catch (e: Exception) {
-                _errorMessage.value = "Failed to load file: ${e.message}"
-            } finally {
-                _isLoading.value = false
-            }
+            catchUpAndLoad(uri)
         }
     }
 
@@ -905,16 +902,159 @@ class HabitViewModel(
             }
         }
     }
+    // ── Dated Entry feature ───────────────────────────────────────────────────
+
+    /**
+     * Toggles the "Dated Entry" feature on/off for [habitName].
+     * When turned off the linked file URI is kept (so it can be re-enabled easily)
+     * but the cached file size is cleared so the next enable forces a fresh parse.
+     */
+    fun toggleDatedEntry(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.datedEntryHabits.toMutableSet()
+            if (habitName in current) {
+                current.remove(habitName)
+            } else {
+                current.add(habitName)
+            }
+            settingsRepo.saveDatedEntryHabits(current)
+            _settings.value = _settings.value.copy(datedEntryHabits = current)
+            // If just enabled and a file is already linked, run a sync immediately
+            if (habitName in current) {
+                val uriStr = _settings.value.datedEntryFileUris[habitName]
+                if (!uriStr.isNullOrEmpty()) {
+                    syncSingleDatedEntry(habitName, Uri.parse(uriStr), forceReparse = true)
+                }
+            }
+        }
+    }
+
+    /**
+     * Associates [uri] as the dated-entry source file for [habitName].
+     * Takes a persistent read permission on the URI, then immediately runs a sync.
+     */
+    fun setDatedEntryFileUri(habitName: String, uri: Uri) {
+        viewModelScope.launch {
+            val uriString = uri.toString()
+            val current = _settings.value.datedEntryFileUris.toMutableMap()
+            current[habitName] = uriString
+            settingsRepo.saveDatedEntryFileUris(current)
+            _settings.value = _settings.value.copy(datedEntryFileUris = current)
+            // Force a fresh parse since this is a new/changed file
+            syncSingleDatedEntry(habitName, uri, forceReparse = true)
+        }
+    }
+
+    /**
+     * Called when the app comes to the foreground (via lifecycle observer in MainActivity).
+     * Checks all dated-entry habits for file changes and syncs any that have changed.
+     * Uses file-size comparison to skip unchanged files — very cheap when nothing changed.
+     */
+    fun onAppForegrounded() {
+        viewModelScope.launch {
+            syncAllDatedEntries(forceReparse = false)
+        }
+    }
+
+    /**
+     * Iterates over all habits that have Dated Entry enabled and a file URI set.
+     * For each one, compares the current file size against the last-seen size.
+     * Only re-parses files whose size has changed (or [forceReparse] is true).
+     */
+    private suspend fun syncAllDatedEntries(forceReparse: Boolean) {
+        val s = _settings.value
+        val habits = s.datedEntryHabits
+        if (habits.isEmpty()) return
+
+        for (habitName in habits) {
+            val uriStr = s.datedEntryFileUris[habitName] ?: continue
+            val uri = Uri.parse(uriStr)
+            syncSingleDatedEntry(habitName, uri, forceReparse)
+        }
+    }
+
+    /**
+     * Syncs a single dated-entry habit:
+     *  1. Reads the current file size via SAF metadata (no stream open).
+     *  2. If size matches last-seen size and [forceReparse] is false → skip.
+     *  3. Otherwise parse the file, update cachedPhoneDb with the new counts,
+     *     persist the DB, and save the new file size.
+     *
+     * The parsed counts *replace* (not add to) the existing values for each date
+     * in the phone DB, so the DB always reflects the current file state.
+     */
+    private suspend fun syncSingleDatedEntry(
+        habitName: String,
+        uri: Uri,
+        forceReparse: Boolean
+    ) {
+        // Read current state on the calling (main) thread before switching to IO
+        val lastSize = _settings.value.datedEntryFileSizes[habitName] ?: -2L
+        val phoneUriStr = _settings.value.fileUri
+        if (phoneUriStr.isEmpty()) return
+
+        try {
+            // ── IO work: file size check + parse ─────────────────────────────
+            val currentSize = withContext(Dispatchers.IO) {
+                datedEntryRepo.getFileSize(uri, context)
+            }
+
+            if (!forceReparse && currentSize == lastSize && currentSize >= 0) {
+                Log.d(TAG, "DatedEntry[$habitName]: file unchanged (size=$currentSize), skipping")
+                return
+            }
+
+            Log.d(TAG, "DatedEntry[$habitName]: parsing file (size=$currentSize, last=$lastSize)")
+            val parsedCounts: Map<String, Int> = withContext(Dispatchers.IO) {
+                datedEntryRepo.parseFile(uri, context)
+            }
+
+            if (parsedCounts.isEmpty() && currentSize > 0) {
+                // Parse returned nothing but file is non-empty — likely a permissions issue
+                Log.w(TAG, "DatedEntry[$habitName]: parse returned empty for non-empty file")
+                return
+            }
+
+            // ── Main-thread state mutations ───────────────────────────────────
+            // All reads/writes of cachedPhoneDb and _settings happen here on Main.
+            val mutableDb = cachedPhoneDb.toMutableMap()
+            val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap()
+            for ((dateStr, count) in parsedCounts) {
+                habitEntries[dateStr] = count
+            }
+            mutableDb[habitName] = habitEntries.toSortedMap()
+            cachedPhoneDb = mutableDb
+
+            // Save the new file size
+            val newSizes = _settings.value.datedEntryFileSizes.toMutableMap()
+            newSizes[habitName] = currentSize
+            _settings.value = _settings.value.copy(datedEntryFileSizes = newSizes)
+
+            // Rebuild the displayed habit list (also on Main)
+            rebuildHabitList()
+
+            // ── IO work: persist to disk + save size to DataStore ─────────────
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
+                settingsRepo.saveDatedEntryFileSizes(newSizes)
+            }
+
+            Log.d(TAG, "DatedEntry[$habitName]: synced ${parsedCounts.size} dates")
+        } catch (e: Exception) {
+            Log.e(TAG, "DatedEntry[$habitName]: sync failed: ${e.message}")
+        }
+    }
 }
 
 class HabitViewModelFactory(
     private val habitsRepo: HabitsRepository,
     private val settingsRepo: SettingsRepository,
     private val textInputRepo: TextInputRepository,
+    private val datedEntryRepo: DatedEntryRepository,
     private val context: Context
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return HabitViewModel(habitsRepo, settingsRepo, textInputRepo, context) as T
+        return HabitViewModel(habitsRepo, settingsRepo, textInputRepo, datedEntryRepo, context) as T
     }
 }

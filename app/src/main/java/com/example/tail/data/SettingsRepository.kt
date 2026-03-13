@@ -26,6 +26,11 @@ private val KEY_TEXT_INPUT_OPTIONS_HABITS = stringSetPreferencesKey("text_input_
 private val KEY_TEXT_INPUT_FILE_URIS = stringPreferencesKey("text_input_file_uris")
 // Stored as "habitName\x00iconName|||habitName\x00iconName" pairs
 private val KEY_HABIT_ICONS = stringPreferencesKey("habit_icons")
+// Dated-entry feature keys
+private val KEY_DATED_ENTRY_HABITS = stringSetPreferencesKey("dated_entry_habits")
+private val KEY_DATED_ENTRY_FILE_URIS = stringPreferencesKey("dated_entry_file_uris")
+// Stored as "habitName\x00size|||habitName\x00size" pairs (size as decimal string)
+private val KEY_DATED_ENTRY_FILE_SIZES = stringPreferencesKey("dated_entry_file_sizes")
 
 // Serialisation helpers for HabitScreen list.
 // Format: each screen is "id\tname\thabit1|habit2|habit3", screens separated by "\n"
@@ -65,6 +70,24 @@ private fun decodeFileUriMap(raw: String): Map<String, String> {
     }.toMap()
 }
 
+// Serialisation helpers for Map<String, Long> (habit name → file size).
+// Reuses the same PAIR_SEP / KV_SEP scheme; value is stored as decimal string.
+private fun encodeLongMap(map: Map<String, Long>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) -> "$k$KV_SEP$v" }
+
+private fun decodeLongMap(raw: String): Map<String, Long> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null
+        else {
+            val key = pair.substring(0, idx)
+            val value = pair.substring(idx + 1).toLongOrNull() ?: return@mapNotNull null
+            key to value
+        }
+    }.toMap()
+}
+
 /**
  * Persists app settings (file URIs, custom input habits, custom habit order, habit screens)
  * using DataStore.
@@ -83,6 +106,8 @@ class SettingsRepository(private val context: Context) {
         val activeScreenIndex = prefs[KEY_ACTIVE_SCREEN_INDEX] ?: 0
         val textInputFileUrisRaw = prefs[KEY_TEXT_INPUT_FILE_URIS] ?: ""
         val habitIconsRaw = prefs[KEY_HABIT_ICONS] ?: ""
+        val datedEntryFileUrisRaw = prefs[KEY_DATED_ENTRY_FILE_URIS] ?: ""
+        val datedEntryFileSizesRaw = prefs[KEY_DATED_ENTRY_FILE_SIZES] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             historicalFileUri = prefs[KEY_HISTORICAL_FILE_URI] ?: "",
@@ -94,7 +119,10 @@ class SettingsRepository(private val context: Context) {
             textInputHabits = prefs[KEY_TEXT_INPUT_HABITS] ?: emptySet(),
             textInputOptionsHabits = prefs[KEY_TEXT_INPUT_OPTIONS_HABITS] ?: emptySet(),
             textInputFileUris = decodeFileUriMap(textInputFileUrisRaw),
-            habitIcons = decodeFileUriMap(habitIconsRaw)
+            habitIcons = decodeFileUriMap(habitIconsRaw),
+            datedEntryHabits = prefs[KEY_DATED_ENTRY_HABITS] ?: emptySet(),
+            datedEntryFileUris = decodeFileUriMap(datedEntryFileUrisRaw),
+            datedEntryFileSizes = decodeLongMap(datedEntryFileSizesRaw)
         )
     }
 
@@ -168,6 +196,30 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveHabitIcons(icons: Map<String, String>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_HABIT_ICONS] = encodeFileUriMap(icons)
+        }
+    }
+
+    /** Saves the set of habits that have the "Dated Entry" feature enabled. */
+    suspend fun saveDatedEntryHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_DATED_ENTRY_HABITS] = habits
+        }
+    }
+
+    /** Saves the map of habit name → dated-entry source file URI. */
+    suspend fun saveDatedEntryFileUris(uris: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_DATED_ENTRY_FILE_URIS] = encodeFileUriMap(uris)
+        }
+    }
+
+    /**
+     * Saves the map of habit name → last-seen file size (bytes).
+     * Updated after each successful parse so we can skip unchanged files.
+     */
+    suspend fun saveDatedEntryFileSizes(sizes: Map<String, Long>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_DATED_ENTRY_FILE_SIZES] = encodeLongMap(sizes)
         }
     }
 }

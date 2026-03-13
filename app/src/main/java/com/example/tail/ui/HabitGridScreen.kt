@@ -150,6 +150,22 @@ fun HabitGridScreen(
         textInputPickerHabit = null
     }
 
+    // File picker for per-habit dated-entry source files (read-only is sufficient)
+    var datedEntryPickerHabit by remember { mutableStateOf<String?>(null) }
+    val datedEntryFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        val habitName = datedEntryPickerHabit
+        if (uri != null && habitName != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            viewModel.setDatedEntryFileUri(habitName, uri)
+        }
+        datedEntryPickerHabit = null
+    }
+
     // File picker launcher — requests persistent read+write permission
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -372,6 +388,8 @@ fun HabitGridScreen(
                         textInputHabits = settings.textInputHabits,
                         textInputOptionsHabits = settings.textInputOptionsHabits,
                         textInputFileUris = settings.textInputFileUris,
+                        datedEntryHabits = settings.datedEntryHabits,
+                        datedEntryFileUris = settings.datedEntryFileUris,
                         onStartMove = { viewModel.startMoveMode() },
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
@@ -383,6 +401,11 @@ fun HabitGridScreen(
                         onPickTextInputFile = { name ->
                             textInputPickerHabit = name
                             textInputFilePicker.launch(arrayOf("application/json", "*/*"))
+                        },
+                        onToggleDatedEntry = { name -> viewModel.toggleDatedEntry(name) },
+                        onPickDatedEntryFile = { name ->
+                            datedEntryPickerHabit = name
+                            datedEntryFilePicker.launch(arrayOf("text/plain", "text/markdown", "*/*"))
                         },
                         onDeleteHabit = { name -> deleteConfirmHabitName = name },
                         onChangeIcon = { name -> iconPickerHabitName = name },
@@ -663,6 +686,8 @@ private fun EditModeControlBar(
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
     textInputFileUris: Map<String, String>,
+    datedEntryHabits: Set<String>,
+    datedEntryFileUris: Map<String, String>,
     onStartMove: () -> Unit,
     onAddHabit: () -> Unit,
     onMoveToScreen: (Int) -> Unit,
@@ -672,6 +697,8 @@ private fun EditModeControlBar(
     onToggleTextInput: (String) -> Unit,
     onToggleTextInputOptions: (String) -> Unit,
     onPickTextInputFile: (String) -> Unit,
+    onToggleDatedEntry: (String) -> Unit,
+    onPickDatedEntryFile: (String) -> Unit,
     onDeleteHabit: (String) -> Unit,
     onChangeIcon: (String) -> Unit,
     onSetCount: (String, Int) -> Unit
@@ -1034,6 +1061,179 @@ private fun EditModeControlBar(
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // ── Dated Entry toggle ────────────────────────────────────
+                    val isDatedEntry = selectedHabitName in datedEntryHabits
+                    var showDatedEntryInfo by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column {
+                                Text(text = "Dated Entry", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                Text(
+                                    text = if (isDatedEntry) "Auto-counts from linked file" else "Manual count only",
+                                    color = Color(0xFF888888), fontSize = 10.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            IconButton(
+                                onClick = { showDatedEntryInfo = true },
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = "Dated Entry format info",
+                                    tint = Color(0xFF6699CC),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = isDatedEntry,
+                            onCheckedChange = { onToggleDatedEntry(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFFFFCC44),
+                                checkedTrackColor = Color(0xFF4A3A00),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    if (isDatedEntry) {
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Dated-entry file picker row
+                        val hasDatedFile = datedEntryFileUris.containsKey(selectedHabitName)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "  Source file", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                                Text(
+                                    text = if (hasDatedFile) "✓ File linked" else "⚠ No file linked",
+                                    color = if (hasDatedFile) Color(0xFFFFCC44) else Color(0xFFFF8844),
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Button(
+                                onClick = { onPickDatedEntryFile(selectedHabitName) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Folder,
+                                    contentDescription = "Pick dated entry source file",
+                                    tint = Color(0xFFFFCC44),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    if (hasDatedFile) "Change" else "Link File",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFFFCC44)
+                                )
+                            }
+                        }
+                    }
+
+                    // Dated Entry format info dialog
+                    if (showDatedEntryInfo) {
+                        DatedEntryInfoDialog(onDismiss = { showDatedEntryInfo = false })
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Dated Entry format info dialog ────────────────────────────────────────────
+
+@Composable
+private fun DatedEntryInfoDialog(onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = androidx.compose.ui.Modifier
+                .background(Color(0xFF1A1A0A), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = "Dated Entry Format",
+                color = Color(0xFFFFCC44),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "Link a plain-text file that contains date headers followed by paragraph blocks. " +
+                       "Each blank-line-separated paragraph under a date counts as +1 for that day.",
+                color = Color(0xFFCCCCCC),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(text = "Accepted date formats:", color = Color(0xFFFFCC44), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = "  M/D/YY   →  7/13/24", color = Color(0xFFAAAAAA), fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            Text(text = "  YYYY-MM-DD  →  2025-10-21", color = Color(0xFFAAAAAA), fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Date lines may start with # heading markers and may have a trailing HH:MM:SS timestamp (both are ignored).",
+                color = Color(0xFF888888),
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(text = "Example file:", color = Color(0xFFFFCC44), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "# 2025-03-10\n" +
+                       "First paragraph here.\n" +
+                       "More lines of the same entry.\n" +
+                       "\n" +
+                       "Second paragraph — blank line above = new entry.\n" +
+                       "\n" +
+                       "# 2025-03-11\n" +
+                       "Only one paragraph today.",
+                color = Color(0xFF88FFCC),
+                fontSize = 11.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Result: 2025-03-10 = 2,  2025-03-11 = 1",
+                color = Color(0xFFCCCCCC),
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Paragraphs can also be separated by a line containing only ,,, instead of a blank line.",
+                color = Color(0xFF888888),
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "The file is checked every time the app comes to the foreground. " +
+                       "Only files whose size has changed are re-parsed, so this is very efficient.",
+                color = Color(0xFF888888),
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(modifier = androidx.compose.ui.Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A3A00))
+                ) {
+                    Text("Got it", color = Color(0xFFFFCC44))
                 }
             }
         }
