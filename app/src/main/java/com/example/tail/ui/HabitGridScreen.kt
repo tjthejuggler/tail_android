@@ -504,8 +504,8 @@ private fun ScreenTabRow(
             TextButton(
                 onClick = { onTabClick(index) },
                 colors = ButtonDefaults.textButtonColors(
-                    containerColor = if (isActive) Color(0xFF3A2000) else Color.Transparent,
-                    contentColor = if (isActive) Color(0xFFFFAA00) else Color(0xFF888888)
+                    containerColor = if (isActive) Color(0xFF555555) else Color.Transparent,
+                    contentColor = if (isActive) Color.White else Color(0xFF888888)
                 ),
                 modifier = Modifier.height(32.dp)
             ) {
