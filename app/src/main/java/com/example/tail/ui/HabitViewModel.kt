@@ -947,11 +947,32 @@ class HabitViewModel(
 
     /**
      * Called when the app comes to the foreground (via lifecycle observer in MainActivity).
-     * Checks all dated-entry habits for file changes and syncs any that have changed.
-     * Uses file-size comparison to skip unchanged files — very cheap when nothing changed.
+     *
+     * Two things happen:
+     *  1. The phone DB file is re-read from disk so that any external writes
+     *     (e.g. from ShareTextActivity running in a separate task) are reflected
+     *     immediately without requiring a full app restart.
+     *  2. All dated-entry habits are checked for file changes and synced if needed.
+     *
+     * Both operations are cheap when nothing has changed: ensureDaysExist is
+     * idempotent and dated-entry sync uses file-size comparison to skip unchanged files.
      */
     fun onAppForegrounded() {
         viewModelScope.launch {
+            // Re-read the phone DB so external increments (e.g. from ShareTextActivity)
+            // are visible immediately when the user returns to the app.
+            val phoneUriStr = _settings.value.fileUri
+            if (phoneUriStr.isNotEmpty()) {
+                try {
+                    val db = withContext(Dispatchers.IO) {
+                        habitsRepo.ensureDaysExist(Uri.parse(phoneUriStr), context)
+                    }
+                    cachedPhoneDb = db
+                    rebuildHabitList()
+                } catch (e: Exception) {
+                    Log.w(TAG, "onAppForegrounded: failed to reload phone DB: ${e.message}")
+                }
+            }
             syncAllDatedEntries(forceReparse = false)
         }
     }
