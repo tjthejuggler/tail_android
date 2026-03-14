@@ -301,7 +301,11 @@ class HabitViewModel(
         // This is O(n) list copy with zero calculations, so it's effectively instant.
         val dateStr = com.example.tail.data.dateString(_selectedDate.value)
         val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
-        val newCount = (currentEntries[dateStr] ?: 0) + amount
+        val rawNewCount = (currentEntries[dateStr] ?: 0) + amount
+        // If this habit has the "1 max" cap, clamp to 1
+        val newCount = if (habitName in _settings.value.maxOneHabits) rawNewCount.coerceAtMost(1) else rawNewCount
+        // If the count didn't actually change (e.g. already at 1 with 1-max), bail out early
+        if (newCount == (currentEntries[dateStr] ?: 0)) return
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(todayCount = newCount) else h
         }
@@ -360,6 +364,19 @@ class HabitViewModel(
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
+        }
+    }
+
+    /**
+     * Toggles the "1 max" cap on/off for [habitName].
+     * When enabled, the habit's daily count can never exceed 1 (binary done/not-done).
+     */
+    fun toggleMaxOne(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.maxOneHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveMaxOneHabits(current)
+            _settings.value = _settings.value.copy(maxOneHabits = current)
         }
     }
 
