@@ -71,6 +71,13 @@ data class AppSettings(
     val fileUri: String = "",
     val historicalFileUri: String = "",
     val totalsFileUri: String = "",
+    /**
+     * SAF URI for the screens_layout.json relay file shared with the PC widget.
+     * When set, the app writes the current screen layout to this file whenever
+     * screens are created, renamed, reordered, or habits are moved between screens.
+     * The PC widget reads this file to mirror the same multi-screen layout.
+     */
+    val screensRelayFileUri: String = "",
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
     /** Custom display order for habits (legacy flat list, used when screens is empty). */
     val habitOrder: List<String> = emptyList(),
