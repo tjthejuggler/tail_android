@@ -60,6 +60,9 @@ class HabitsRepository {
     /**
      * Ensures every habit has an entry for every date from the latest recorded date
      * up to and including [today]. Missing dates are added with value 0.
+     * Iterates ALL habits present in the DB (not just HABIT_ORDER) so that habits
+     * added outside the canonical list (e.g. "hrv readiness", "See Sun", "Dream Recorded")
+     * also get their missing days filled in.
      * Returns the updated database (and saves it if any dates were added).
      */
     suspend fun ensureDaysExist(
@@ -71,7 +74,10 @@ class HabitsRepository {
         val todayStr = dateString(today)
         var anyAdded = false
 
-        for (name in HABIT_ORDER) {
+        // Use ALL habits present in the DB so that habits not in HABIT_ORDER
+        // (e.g. "hrv readiness", "See Sun", "Dream Recorded") are also caught.
+        val allHabitNames = db.keys.toSet() + HABIT_ORDER
+        for (name in allHabitNames) {
             val entries = db[name]?.toMutableMap() ?: mutableMapOf()
 
             // Find the latest date already in this habit's entries
