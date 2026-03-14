@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.time.LocalDate
 import java.util.UUID
 
@@ -152,6 +154,12 @@ class HabitViewModel(
                     if (s.datedEntryHabits.isNotEmpty()) {
                         syncAllDatedEntries(forceReparse = false)
                     }
+                    // Write the relay file on startup so the PC widget always has
+                    // the latest screen layout AND icon assignments, even if nothing
+                    // changed since the last run.
+                    if (s.screensRelayFileUri.isNotEmpty() && s.habitScreens.isNotEmpty()) {
+                        writeScreensRelayFile(s.habitScreens, s.activeScreenIndex, s.screensRelayFileUri)
+                    }
                 }
             }
         }
@@ -254,6 +262,20 @@ class HabitViewModel(
             settingsRepo.saveTotalsFileUri(uri.toString())
             cachedHistoricalTotals = habitsRepo.loadHistoricalTotals(uri, context)
             rebuildHabitList()
+        }
+    }
+
+    /**
+     * Sets the SAF URI for the screens_layout.json relay file.
+     * Immediately writes the current screen layout to the file.
+     */
+    fun setScreensRelayFileUri(uri: Uri) {
+        viewModelScope.launch {
+            val uriString = uri.toString()
+            settingsRepo.saveScreensRelayFileUri(uriString)
+            _settings.value = _settings.value.copy(screensRelayFileUri = uriString)
+            // Write current layout immediately so the file is up-to-date
+            writeScreensRelayFile(_habitScreens.value, _activeScreenIndex.value, uriString)
         }
     }
 
@@ -791,6 +813,11 @@ class HabitViewModel(
             }
             settingsRepo.saveHabitIcons(current)
             _settings.value = _settings.value.copy(habitIcons = current)
+            // Sync icon change to relay file so PC widget picks it up
+            val relayUri = _settings.value.screensRelayFileUri
+            if (relayUri.isNotEmpty()) {
+                writeScreensRelayFile(_habitScreens.value, _activeScreenIndex.value, relayUri)
+            }
         }
     }
 
@@ -804,9 +831,72 @@ class HabitViewModel(
                     habitScreens = screens,
                     activeScreenIndex = activeIndex
                 )
+                // Write relay file so the PC widget stays in sync
+                val relayUri = _settings.value.screensRelayFileUri
+                if (relayUri.isNotEmpty()) {
+                    writeScreensRelayFile(screens, activeIndex, relayUri)
+                }
             } finally {
                 isSavingOrder = false
             }
+        }
+    }
+
+    /**
+     * Writes the current screen layout to the screens_layout.json relay file.
+     *
+     * Format:
+     * {
+     *   "version": 1,
+     *   "active_screen_index": 0,
+     *   "screens": [
+     *     { "id": "...", "name": "general", "habits": ["Habit A", "", "Habit B", ...] },
+     *     ...
+     *   ]
+     * }
+     *
+     * Empty strings in the habits list represent placeholder/empty grid cells.
+     * The PC widget reads this file to mirror the same multi-screen layout.
+     */
+    private suspend fun writeScreensRelayFile(
+        screens: List<HabitScreen>,
+        activeIndex: Int,
+        relayUriString: String
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val root = JSONObject()
+            root.put("version", 1)
+            root.put("active_screen_index", activeIndex)
+
+            // Include custom icon overrides so the PC widget uses the same icons
+            val iconsObj = JSONObject()
+            for ((habitName, iconName) in _settings.value.habitIcons) {
+                iconsObj.put(habitName, iconName)
+            }
+            root.put("habit_icons", iconsObj)
+
+            val screensArray = JSONArray()
+            for (screen in screens) {
+                val screenObj = JSONObject()
+                screenObj.put("id", screen.id)
+                screenObj.put("name", screen.name)
+                val habitsArray = JSONArray()
+                for (habitName in screen.habitNames) {
+                    habitsArray.put(habitName)
+                }
+                screenObj.put("habits", habitsArray)
+                screensArray.put(screenObj)
+            }
+            root.put("screens", screensArray)
+            val json = root.toString(2)  // pretty-print with 2-space indent
+
+            val uri = Uri.parse(relayUriString)
+            context.contentResolver.openOutputStream(uri, "wt")?.use { stream ->
+                stream.bufferedWriter().use { it.write(json) }
+            }
+            Log.d(TAG, "Wrote screens relay file: ${screens.size} screens, ${_settings.value.habitIcons.size} icon overrides")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write screens relay file: ${e.message}")
         }
     }
 

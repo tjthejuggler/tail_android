@@ -80,6 +80,19 @@ fun SettingsScreen(
         }
     }
 
+    val screensRelayFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            viewModel.setScreensRelayFileUri(uri)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -178,6 +191,37 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Screens relay file (screens_layout.json — shared with PC widget)
+            item {
+                Text("Screens Relay File (screens_layout.json)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    text = "Shared with the PC widget to keep screen names and habit arrangement in sync. " +
+                           "Pick the screens_layout.json file in your noteVault/tail/ folder. " +
+                           "The app writes to it whenever you add, rename, or rearrange screens.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (settings.screensRelayFileUri.isEmpty()) "No file selected (PC widget won't sync screens)"
+                           else settings.screensRelayFileUri,
+                    fontSize = 12.sp,
+                    color = if (settings.screensRelayFileUri.isEmpty())
+                        MaterialTheme.colorScheme.error
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = { screensRelayFilePicker.launch(arrayOf("*/*")) }) {
+                    Text("Change Relay File")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                androidx.compose.material3.HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
             }
 

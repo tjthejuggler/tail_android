@@ -16,6 +16,7 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 private val KEY_FILE_URI = stringPreferencesKey("file_uri")
 private val KEY_HISTORICAL_FILE_URI = stringPreferencesKey("historical_file_uri")
 private val KEY_TOTALS_FILE_URI = stringPreferencesKey("totals_file_uri")
+private val KEY_SCREENS_RELAY_FILE_URI = stringPreferencesKey("screens_relay_file_uri")
 private val KEY_CUSTOM_INPUT = stringSetPreferencesKey("custom_input_habits")
 private val KEY_HABIT_ORDER = stringPreferencesKey("habit_order")
 private val KEY_HABIT_SCREENS = stringPreferencesKey("habit_screens")
@@ -112,6 +113,7 @@ class SettingsRepository(private val context: Context) {
             fileUri = prefs[KEY_FILE_URI] ?: "",
             historicalFileUri = prefs[KEY_HISTORICAL_FILE_URI] ?: "",
             totalsFileUri = prefs[KEY_TOTALS_FILE_URI] ?: "",
+            screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
             habitScreens = screens,
@@ -141,6 +143,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveTotalsFileUri(uri: String) {
         context.dataStore.edit { prefs ->
             prefs[KEY_TOTALS_FILE_URI] = uri
+        }
+    }
+
+    /** Saves the SAF URI for the screens_layout.json relay file. */
+    suspend fun saveScreensRelayFileUri(uri: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_SCREENS_RELAY_FILE_URI] = uri
         }
     }
 
