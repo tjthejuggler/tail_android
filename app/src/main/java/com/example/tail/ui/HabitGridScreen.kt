@@ -384,6 +384,7 @@ fun HabitGridScreen(
                         activeScreenIndex = activeScreenIndex,
                         selectedHabitScreenIndex = if (selectedHabitName != null)
                             viewModel.screenIndexForHabit(selectedHabitName) else -1,
+                        maxOneHabits = settings.maxOneHabits,
                         customInputHabits = settings.customInputHabits,
                         textInputHabits = settings.textInputHabits,
                         textInputOptionsHabits = settings.textInputOptionsHabits,
@@ -395,6 +396,7 @@ fun HabitGridScreen(
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
                         onAddScreen = { showAddScreenDialog = true },
                         onDeleteScreen = { viewModel.deleteScreen(activeScreenIndex) },
+                        onToggleMaxOne = { name -> viewModel.toggleMaxOne(name) },
                         onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) },
                         onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
                         onToggleTextInputOptions = { name -> viewModel.toggleTextInputOptions(name) },
@@ -682,6 +684,7 @@ private fun EditModeControlBar(
     habitScreens: List<HabitScreen>,
     activeScreenIndex: Int,
     selectedHabitScreenIndex: Int,
+    maxOneHabits: Set<String>,
     customInputHabits: Set<String>,
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
@@ -693,6 +696,7 @@ private fun EditModeControlBar(
     onMoveToScreen: (Int) -> Unit,
     onAddScreen: () -> Unit,
     onDeleteScreen: () -> Unit,
+    onToggleMaxOne: (String) -> Unit,
     onToggleCustomInput: (String) -> Unit,
     onToggleTextInput: (String) -> Unit,
     onToggleTextInputOptions: (String) -> Unit,
@@ -941,6 +945,34 @@ private fun EditModeControlBar(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 if (selectedHabitName != null) {
+                    // 1 max toggle
+                    val isMaxOne = selectedHabitName in maxOneHabits
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "1 max", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isMaxOne) "Capped at 1 per day (binary)" else "No daily cap",
+                                color = Color(0xFF888888), fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isMaxOne,
+                            onCheckedChange = { onToggleMaxOne(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF88FF88),
+                                checkedTrackColor = Color(0xFF1A4A1A),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
                     // Custom input toggle
                     val isCustomInput = selectedHabitName in customInputHabits
                     Row(

@@ -90,6 +90,13 @@ data class AppSettings(
     val activeScreenIndex: Int = 0,
 
     /**
+     * Habits that have the "1 max" feature enabled.
+     * When a habit is in this set, its daily count is capped at 1 — tapping it
+     * when already at 1 has no effect (binary done/not-done behaviour).
+     */
+    val maxOneHabits: Set<String> = emptySet(),
+
+    /**
      * Habits that have the "text input" feature enabled.
      * When a habit is in this set, tapping it shows a text-entry popup instead of
      * (or in addition to) incrementing the numeric count.

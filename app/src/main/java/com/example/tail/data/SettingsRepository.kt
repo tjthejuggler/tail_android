@@ -27,6 +27,8 @@ private val KEY_TEXT_INPUT_OPTIONS_HABITS = stringSetPreferencesKey("text_input_
 private val KEY_TEXT_INPUT_FILE_URIS = stringPreferencesKey("text_input_file_uris")
 // Stored as "habitName\x00iconName|||habitName\x00iconName" pairs
 private val KEY_HABIT_ICONS = stringPreferencesKey("habit_icons")
+// 1-max feature key
+private val KEY_MAX_ONE_HABITS = stringSetPreferencesKey("max_one_habits")
 // Dated-entry feature keys
 private val KEY_DATED_ENTRY_HABITS = stringSetPreferencesKey("dated_entry_habits")
 private val KEY_DATED_ENTRY_FILE_URIS = stringPreferencesKey("dated_entry_file_uris")
@@ -118,6 +120,7 @@ class SettingsRepository(private val context: Context) {
             habitOrder = customOrder,
             habitScreens = screens,
             activeScreenIndex = activeScreenIndex.coerceAtLeast(0),
+            maxOneHabits = prefs[KEY_MAX_ONE_HABITS] ?: emptySet(),
             textInputHabits = prefs[KEY_TEXT_INPUT_HABITS] ?: emptySet(),
             textInputOptionsHabits = prefs[KEY_TEXT_INPUT_OPTIONS_HABITS] ?: emptySet(),
             textInputFileUris = decodeFileUriMap(textInputFileUrisRaw),
@@ -177,6 +180,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveActiveScreenIndex(index: Int) {
         context.dataStore.edit { prefs ->
             prefs[KEY_ACTIVE_SCREEN_INDEX] = index
+        }
+    }
+
+    /** Saves the set of habits that have the "1 max" cap enabled. */
+    suspend fun saveMaxOneHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_MAX_ONE_HABITS] = habits
         }
     }
 
