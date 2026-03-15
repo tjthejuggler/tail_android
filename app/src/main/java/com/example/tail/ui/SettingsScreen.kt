@@ -30,9 +30,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Settings screen: file pickers only.
- * Per-habit settings (custom input toggle) have moved to the edit mode panel
- * in the main grid screen (select a habit in edit mode to see its settings).
+ * Settings screen: two file pickers only.
+ *  1. habitsdb.txt — the single unified habit database (read+write, synced via Syncthing)
+ *  2. screens_layout.json — UI layout relay file shared with the PC widget (read+write)
+ *
+ * Per-habit settings (custom input toggle, etc.) are in the edit mode panel on the main screen.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,6 +45,7 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val context = LocalContext.current
 
+    // Picker for habitsdb.txt — needs read+write so the app can increment habits
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -56,30 +59,7 @@ fun SettingsScreen(
         }
     }
 
-    val historicalFilePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-            viewModel.setHistoricalFileUri(uri)
-        }
-    }
-
-    val totalsFilePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-            viewModel.setTotalsFileUri(uri)
-        }
-    }
-
+    // Picker for screens_layout.json — needs read+write so the app can update the relay file
     val screensRelayFilePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -111,12 +91,13 @@ fun SettingsScreen(
                 .padding(paddingValues)
                 .padding(horizontal = 16.dp)
         ) {
-            // Phone DB file location section
+            // ── Habit database file ──────────────────────────────────────────
             item {
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Phone DB File (habitsdb_phone)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("Habit Database (habitsdb.txt)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    text = "The file you record habits into on this device.",
+                    text = "The unified habit database shared between this device and the PC via Syncthing. " +
+                           "Both devices read and write this single file.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -125,7 +106,10 @@ fun SettingsScreen(
                     text = if (settings.fileUri.isEmpty()) "No file selected"
                            else settings.fileUri,
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (settings.fileUri.isEmpty())
+                        MaterialTheme.colorScheme.error
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -138,65 +122,9 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // Historical DB file location section (habitsdb.txt — raw full history)
+            // ── Screens relay file ───────────────────────────────────────────
             item {
-                Text("Historical DB File (habitsdb.txt)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(
-                    text = "Optional: full raw history file from desktop. Merged with phone DB for rolling averages.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (settings.historicalFileUri.isEmpty()) "No file selected"
-                           else settings.historicalFileUri,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = { historicalFilePicker.launch(arrayOf("*/*")) }) {
-                    Text("Change Historical File")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // Historical totals file (habitsdb_without_phone_totals.txt — pre-computed streak baselines)
-            item {
-                Text("Historical Totals File (habitsdb_without_phone_totals.txt)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(
-                    text = "Required for correct streaks: pre-computed stats from desktop history. " +
-                           "Provides streak baseline so phone-only window shows full streak length.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (settings.totalsFileUri.isEmpty()) "No file selected (streaks capped at ~30 days)"
-                           else settings.totalsFileUri,
-                    fontSize = 12.sp,
-                    color = if (settings.totalsFileUri.isEmpty())
-                        MaterialTheme.colorScheme.error
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = { totalsFilePicker.launch(arrayOf("*/*")) }) {
-                    Text("Change Totals File")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // Screens relay file (screens_layout.json — shared with PC widget)
-            item {
-                Text("Screens Relay File (screens_layout.json)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("Screens Layout (screens_layout.json)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
                     text = "Shared with the PC widget to keep screen names and habit arrangement in sync. " +
                            "Pick the screens_layout.json file in your noteVault/tail/ folder. " +
@@ -214,18 +142,18 @@ fun SettingsScreen(
                     else
                         MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 3,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = { screensRelayFilePicker.launch(arrayOf("*/*")) }) {
                     Text("Change Relay File")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                androidx.compose.material3.HorizontalDivider()
+                HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // Hint about per-habit settings
+            // ── Per-habit settings hint ──────────────────────────────────────
             item {
                 Text(
                     text = "Per-habit settings",

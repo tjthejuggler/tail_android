@@ -14,8 +14,6 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "tail_settings")
 
 private val KEY_FILE_URI = stringPreferencesKey("file_uri")
-private val KEY_HISTORICAL_FILE_URI = stringPreferencesKey("historical_file_uri")
-private val KEY_TOTALS_FILE_URI = stringPreferencesKey("totals_file_uri")
 private val KEY_SCREENS_RELAY_FILE_URI = stringPreferencesKey("screens_relay_file_uri")
 private val KEY_CUSTOM_INPUT = stringSetPreferencesKey("custom_input_habits")
 private val KEY_HABIT_ORDER = stringPreferencesKey("habit_order")
@@ -113,8 +111,6 @@ class SettingsRepository(private val context: Context) {
         val datedEntryFileSizesRaw = prefs[KEY_DATED_ENTRY_FILE_SIZES] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
-            historicalFileUri = prefs[KEY_HISTORICAL_FILE_URI] ?: "",
-            totalsFileUri = prefs[KEY_TOTALS_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
@@ -134,18 +130,6 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveFileUri(uri: String) {
         context.dataStore.edit { prefs ->
             prefs[KEY_FILE_URI] = uri
-        }
-    }
-
-    suspend fun saveHistoricalFileUri(uri: String) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_HISTORICAL_FILE_URI] = uri
-        }
-    }
-
-    suspend fun saveTotalsFileUri(uri: String) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_TOTALS_FILE_URI] = uri
         }
     }
 

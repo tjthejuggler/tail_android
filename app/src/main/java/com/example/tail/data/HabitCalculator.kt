@@ -215,21 +215,12 @@ fun getAllTimeHighRolling(entries: Map<String, Int>, windowSize: Int): RollingHi
  * All stats (streak, antistreak, etc.) are computed as if [targetDate] is "today".
  * Matches the desktop app's full tooltip data.
  *
- * If [historicalStats] is provided (from habitsdb_without_phone_totals.txt), it is used to
- * extend the streak and longest-streak beyond the phone-only 30-day window:
- *
- * - Current streak: if the phone DB shows a continuous streak from its earliest entry
- *   (i.e. the streak reaches all the way back to the start of the phone window), then
- *   the true streak = phone streak + historical daysSinceZero (the streak at the end of
- *   the historical DB, which is the day immediately before the phone window starts).
- *
- * - Longest streak: max(phone-computed longest, historical longestStreak).
+ * The full habitsdb.txt is used directly — no historical stats merging needed.
  */
 fun buildHabit(
     name: String,
     entries: Map<String, Int>,
     useCustomInput: Boolean,
-    historicalStats: HabitHistoricalStats? = null,
     targetDate: java.time.LocalDate = java.time.LocalDate.now()
 ): Habit {
     // Only include entries up to and including targetDate for streak/stat calculations
@@ -237,38 +228,8 @@ fun buildHabit(
     val filteredEntries = entries.filter { (k, _) -> k <= targetDateStr }
 
     val countForDate = getCountForDate(filteredEntries, targetDate)
-    val phoneStreakDisplay = calculateStreakDisplay(filteredEntries)
-    val phoneLongestStreak = calculateLongestStreak(filteredEntries)
-
-    // Combine phone streak with historical baseline if available
-    val streakDisplay: Int
-    val longestStreak: Int
-    if (historicalStats != null) {
-        // Extend current streak: if the phone DB streak reaches back to its earliest entry,
-        // the streak was already ongoing when the phone window started — add the historical carry.
-        val extendedStreak = if (phoneStreakDisplay > 0) {
-            // Check if the streak covers the entire phone window (streak == number of non-zero
-            // entries from the start). We detect this by checking whether the phone DB's
-            // earliest entry is non-zero AND the streak equals the full phone window length.
-            val expanded = expandEntriesToCalendarDaysPublic(filteredEntries)
-            val sortedAsc = expanded.keys.sorted()
-            // The streak "reaches the start" if the first entry in the phone window is non-zero
-            // (meaning there was no zero break within the phone window from the beginning)
-            val firstEntryNonZero = sortedAsc.isNotEmpty() && (expanded[sortedAsc.first()] ?: 0) != 0
-            if (firstEntryNonZero && historicalStats.daysSinceZero > 0) {
-                phoneStreakDisplay + historicalStats.daysSinceZero
-            } else {
-                phoneStreakDisplay
-            }
-        } else {
-            phoneStreakDisplay
-        }
-        streakDisplay = extendedStreak
-        longestStreak = maxOf(phoneLongestStreak, historicalStats.longestStreak)
-    } else {
-        streakDisplay = phoneStreakDisplay
-        longestStreak = phoneLongestStreak
-    }
+    val streakDisplay = calculateStreakDisplay(filteredEntries)
+    val longestStreak = calculateLongestStreak(filteredEntries)
 
     val (allTimeHighDayVal, allTimeHighDayDate) = calculateAllTimeHighDay(filteredEntries)
     val currentDayValue = getMostRecentValue(filteredEntries)
