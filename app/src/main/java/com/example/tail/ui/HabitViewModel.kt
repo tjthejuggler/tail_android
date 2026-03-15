@@ -12,7 +12,6 @@ import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.HabitsRepository
-import com.example.tail.data.HistoricalTotals
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.dateString
@@ -110,14 +109,8 @@ class HabitViewModel(
     // Flag to suppress settingsFlow reaction while we're saving a new habit order / screens
     private var isSavingOrder: Boolean = false
 
-    // Cache the raw phone DB so we can rebuild the habit list without re-reading the file
+    // Cache the full unified DB so we can rebuild the habit list without re-reading the file
     private var cachedPhoneDb: HabitsDatabase = emptyMap()
-
-    // Cache the historical database so we don't re-read it on every increment
-    private var cachedHistoricalDb: HabitsDatabase = emptyMap()
-
-    // Cache the historical totals (pre-computed stats from habitsdb_without_phone_totals.txt)
-    private var cachedHistoricalTotals: HistoricalTotals = emptyMap()
 
     init {
         viewModelScope.launch {
@@ -136,27 +129,13 @@ class HabitViewModel(
                 // Only load from file on first settings emission (app start)
                 if (s.fileUri.isNotEmpty() && lastLoadedUri.isEmpty()) {
                     lastLoadedUri = s.fileUri
-                    if (s.historicalFileUri.isNotEmpty()) {
-                        cachedHistoricalDb = habitsRepo.loadHistoricalDatabase(
-                            Uri.parse(s.historicalFileUri), context
-                        )
-                    }
-                    if (s.totalsFileUri.isNotEmpty()) {
-                        cachedHistoricalTotals = habitsRepo.loadHistoricalTotals(
-                            Uri.parse(s.totalsFileUri), context
-                        )
-                    }
                     catchUpAndLoad(Uri.parse(s.fileUri))
-                    // After the phone DB is loaded, sync any dated-entry habits.
-                    // We do this here (after settings are confirmed loaded) rather than
-                    // in onAppForegrounded() to avoid the race where ON_RESUME fires
-                    // before the DataStore settings have been read.
+                    // After the DB is loaded, sync any dated-entry habits.
                     if (s.datedEntryHabits.isNotEmpty()) {
                         syncAllDatedEntries(forceReparse = false)
                     }
                     // Write the relay file on startup so the PC widget always has
-                    // the latest screen layout AND icon assignments, even if nothing
-                    // changed since the last run.
+                    // the latest screen layout AND icon assignments.
                     if (s.screensRelayFileUri.isNotEmpty() && s.habitScreens.isNotEmpty()) {
                         writeScreensRelayFile(s.habitScreens, s.activeScreenIndex, s.screensRelayFileUri)
                     }
@@ -228,8 +207,6 @@ class HabitViewModel(
             habitsRepo.buildHabitList(
                 db = cachedPhoneDb,
                 settings = settingsWithOrder,
-                historicalDb = cachedHistoricalDb,
-                historicalTotals = cachedHistoricalTotals,
                 targetDate = _selectedDate.value
             )
         }
@@ -243,25 +220,6 @@ class HabitViewModel(
             settingsRepo.saveFileUri(uriString)
             _selectedDate.value = LocalDate.now()
             catchUpAndLoad(uri)
-        }
-    }
-
-    fun setHistoricalFileUri(uri: Uri) {
-        viewModelScope.launch {
-            settingsRepo.saveHistoricalFileUri(uri.toString())
-            cachedHistoricalDb = habitsRepo.loadHistoricalDatabase(uri, context)
-            val phoneUriString = _settings.value.fileUri
-            if (phoneUriString.isNotEmpty()) {
-                loadFromFile(Uri.parse(phoneUriString))
-            }
-        }
-    }
-
-    fun setTotalsFileUri(uri: Uri) {
-        viewModelScope.launch {
-            settingsRepo.saveTotalsFileUri(uri.toString())
-            cachedHistoricalTotals = habitsRepo.loadHistoricalTotals(uri, context)
-            rebuildHabitList()
         }
     }
 
@@ -748,26 +706,18 @@ class HabitViewModel(
             }
         }
 
-        // Write the new habit to all configured JSON files
+        // Write the new habit to the unified DB file
         viewModelScope.launch {
             val s = _settings.value
-            val uris = buildList {
-                if (s.fileUri.isNotEmpty()) add(android.net.Uri.parse(s.fileUri))
-                if (s.historicalFileUri.isNotEmpty()) add(android.net.Uri.parse(s.historicalFileUri))
-                if (s.totalsFileUri.isNotEmpty()) add(android.net.Uri.parse(s.totalsFileUri))
-            }
-            if (uris.isNotEmpty()) {
+            if (s.fileUri.isNotEmpty()) {
                 try {
-                    habitsRepo.addHabitToFiles(uris, context, trimmed)
-                    // Reload phone DB so the new habit shows up with today's entry
-                    val phoneUriString = s.fileUri
-                    if (phoneUriString.isNotEmpty()) {
-                        val db = habitsRepo.ensureDaysExist(android.net.Uri.parse(phoneUriString), context)
-                        cachedPhoneDb = db
-                        rebuildHabitList()
-                    }
+                    habitsRepo.addHabitToFiles(listOf(android.net.Uri.parse(s.fileUri)), context, trimmed)
+                    // Reload DB so the new habit shows up with today's entry
+                    val db = habitsRepo.ensureDaysExist(android.net.Uri.parse(s.fileUri), context)
+                    cachedPhoneDb = db
+                    rebuildHabitList()
                 } catch (e: Exception) {
-                    _errorMessage.value = "Added habit but failed to write to files: ${e.message}"
+                    _errorMessage.value = "Added habit but failed to write to file: ${e.message}"
                 }
             }
         }

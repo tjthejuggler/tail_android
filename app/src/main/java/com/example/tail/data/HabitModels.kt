@@ -33,26 +33,10 @@ data class Habit(
 )
 
 /**
- * Raw database format matching habitsdb_phone.txt:
+ * Raw database format matching habitsdb.txt:
  * { "Habit Name": { "2026-01-05": 1, "2026-01-06": 0 } }
  */
 typealias HabitsDatabase = Map<String, Map<String, Int>>
-
-/**
- * Pre-computed historical stats for a single habit, loaded from habitsdb_without_phone_totals.txt.
- * Format: { "habit_name": { "days_since_not_zero": N, "days_since_zero": N, "longest_streak": N } }
- *
- * - daysSinceZero: how long the streak was at the end of the historical DB (carry-forward baseline)
- * - longestStreak: all-time longest streak from historical data
- */
-data class HabitHistoricalStats(
-    val daysSinceNotZero: Int,
-    val daysSinceZero: Int,
-    val longestStreak: Int
-)
-
-/** Map of habit name → historical stats, loaded from habitsdb_without_phone_totals.txt */
-typealias HistoricalTotals = Map<String, HabitHistoricalStats>
 
 /**
  * A named screen (page) of habits. Each screen has a unique id, a display name,
@@ -68,9 +52,8 @@ data class HabitScreen(
  * App settings stored in DataStore.
  */
 data class AppSettings(
+    /** SAF URI for habitsdb.txt — the single unified habit database shared with the PC. */
     val fileUri: String = "",
-    val historicalFileUri: String = "",
-    val totalsFileUri: String = "",
     /**
      * SAF URI for the screens_layout.json relay file shared with the PC widget.
      * When set, the app writes the current screen layout to this file whenever
