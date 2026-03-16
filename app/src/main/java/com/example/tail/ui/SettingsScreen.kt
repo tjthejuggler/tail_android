@@ -59,6 +59,20 @@ fun SettingsScreen(
         }
     }
 
+    // Picker for the Tasker stats txt file — needs read+write so the app can overwrite it
+    val taskerFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            viewModel.setTaskerFileUri(uri)
+        }
+    }
+
     // Picker for screens_layout.json — needs read+write so the app can update the relay file
     val screensRelayFilePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -147,6 +161,37 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = { screensRelayFilePicker.launch(arrayOf("*/*")) }) {
                     Text("Change Relay File")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // ── Tasker stats file ────────────────────────────────────────────
+            item {
+                Text("Tasker Stats File (total_habits.txt)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    text = "A simple txt file Tasker can read for habit stats. " +
+                           "Updated after every habit count change. " +
+                           "Format: today=N / avg7=X.XX / avg30=X.XX",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (settings.taskerFileUri.isEmpty()) "No file selected"
+                           else settings.taskerFileUri,
+                    fontSize = 12.sp,
+                    color = if (settings.taskerFileUri.isEmpty())
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = { taskerFilePicker.launch(arrayOf("*/*")) }) {
+                    Text("Change Tasker File")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()

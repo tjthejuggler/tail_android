@@ -227,6 +227,58 @@ class HabitViewModel(
      * Sets the SAF URI for the screens_layout.json relay file.
      * Immediately writes the current screen layout to the file.
      */
+    fun setTaskerFileUri(uri: Uri) {
+        viewModelScope.launch {
+            val uriString = uri.toString()
+            settingsRepo.saveTaskerFileUri(uriString)
+            _settings.value = _settings.value.copy(taskerFileUri = uriString)
+            // Write current stats immediately so the file is up-to-date
+            writeTaskerFile(uriString)
+        }
+    }
+
+    /**
+     * Writes today's habit stats to the Tasker relay txt file (if configured).
+     * Format:
+     *   today=<N>      — habits with count > 0 today
+     *   avg7=<X.XX>    — average habits done per day over last 7 days
+     *   avg30=<X.XX>   — average habits done per day over last 30 days
+     * Runs on Dispatchers.IO; errors are silently logged so they never disrupt the UI.
+     */
+    private fun writeTaskerFile(taskerUriString: String) {
+        if (taskerUriString.isEmpty()) return
+        val db = cachedPhoneDb
+        val today = LocalDate.now()
+        val todayStr = com.example.tail.data.dateString(today)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val todayCount = db.values.count { entries -> (entries[todayStr] ?: 0) > 0 }
+
+                fun avgOverDays(days: Int): Double {
+                    var total = 0
+                    for (i in 0 until days) {
+                        val ds = com.example.tail.data.dateString(today.minusDays(i.toLong()))
+                        total += db.values.count { entries -> (entries[ds] ?: 0) > 0 }
+                    }
+                    return total.toDouble() / days
+                }
+
+                val avg7 = avgOverDays(7)
+                val avg30 = avgOverDays(30)
+
+                val content = "today=$todayCount\navg7=${"%.2f".format(avg7)}\navg30=${"%.2f".format(avg30)}\n"
+
+                val uri = Uri.parse(taskerUriString)
+                context.contentResolver.openOutputStream(uri, "wt")?.use { stream ->
+                    stream.bufferedWriter().use { it.write(content) }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to write Tasker file: ${e.message}")
+            }
+        }
+    }
+
     fun setScreensRelayFileUri(uri: Uri) {
         viewModelScope.launch {
             val uriString = uri.toString()
@@ -281,6 +333,8 @@ class HabitViewModel(
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
+            // Update Tasker relay file after every count change
+            writeTaskerFile(_settings.value.taskerFileUri)
         }
     }
 
@@ -322,6 +376,8 @@ class HabitViewModel(
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
+            // Update Tasker relay file after every count change
+            writeTaskerFile(_settings.value.taskerFileUri)
         }
     }
 

@@ -61,6 +61,14 @@ data class AppSettings(
      * The PC widget reads this file to mirror the same multi-screen layout.
      */
     val screensRelayFileUri: String = "",
+    /**
+     * SAF URI for the Tasker relay txt file.
+     * When set, the app writes three lines to this file after every habit count change:
+     *   today=<N>          — total habits done today (count > 0)
+     *   avg7=<X.XX>        — average habits done per day over the last 7 days
+     *   avg30=<X.XX>       — average habits done per day over the last 30 days
+     */
+    val taskerFileUri: String = "",
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
     /** Custom display order for habits (legacy flat list, used when screens is empty). */
     val habitOrder: List<String> = emptyList(),
