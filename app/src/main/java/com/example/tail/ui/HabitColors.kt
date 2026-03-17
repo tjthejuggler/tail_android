@@ -4,14 +4,14 @@ import androidx.compose.ui.graphics.Color
 import com.example.tail.R
 import com.example.tail.data.getDisplayValue
 
-// 7 muted, near-monochrome color tiers — very slight tints on dark gray bases
-val ColorRed    = Color(0xFF2E2020)   // dark gray with faint red tint    — count 0
-val ColorOrange = Color(0xFF2E2A14)   // dark gray with faint orange tint — count 1
-val ColorGreen  = Color(0xFF1C2620)   // dark gray with faint green tint  — count 2
-val ColorBlue   = Color(0xFF1A1E2A)   // dark gray with faint blue tint   — count 3
-val ColorPink   = Color(0xFF2A1C22)   // dark gray with faint pink tint   — count 4
-val ColorYellow = Color(0xFF282618)   // dark gray with faint yellow tint — count 5
-val ColorGlass  = Color(0xFF1E2226)   // dark gray with faint teal tint   — count 6+
+// 7 color tiers — progressively brighter/more saturated as count increases
+val ColorRed    = Color(0xFF3D1515)   // muted dark red                        — count 0
+val ColorOrange = Color(0xFF7A3800)   // distinctly orange, medium-dark        — count 1
+val ColorGreen  = Color(0xFF1A4020)   // medium-muted green                    — count 2
+val ColorBlue   = Color(0xFF102255)   // medium-muted blue                     — count 3
+val ColorPink   = Color(0xFF901060)   // semi-bright neon-ish magenta-pink     — count 4
+val ColorYellow = Color(0xFFB8B000)   // bright neon-ish yellow                — count 5
+val ColorGlass  = Color(0xFFD0D0E0)   // bright near-white with faint blue     — count 6+
 
 /**
  * Returns the background color for a habit button based on today's count,
