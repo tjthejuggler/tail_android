@@ -253,13 +253,13 @@ class HabitViewModel(
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val todayCount = db.values.count { entries -> (entries[todayStr] ?: 0) > 0 }
+                val todayCount = db.values.sumOf { entries -> entries[todayStr] ?: 0 }
 
                 fun avgOverDays(days: Int): Double {
                     var total = 0
                     for (i in 0 until days) {
                         val ds = com.example.tail.data.dateString(today.minusDays(i.toLong()))
-                        total += db.values.count { entries -> (entries[ds] ?: 0) > 0 }
+                        total += db.values.sumOf { entries -> entries[ds] ?: 0 }
                     }
                     return total.toDouble() / days
                 }
