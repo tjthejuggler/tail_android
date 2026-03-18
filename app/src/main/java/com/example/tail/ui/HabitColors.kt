@@ -2,7 +2,6 @@ package com.example.tail.ui
 
 import androidx.compose.ui.graphics.Color
 import com.example.tail.R
-import com.example.tail.data.getDisplayValue
 
 // 7 color tiers — progressively brighter/more saturated as count increases
 val ColorRed    = Color(0xFF3D1515)   // muted dark red                        — count 0
@@ -14,12 +13,12 @@ val ColorYellow = Color(0xFFB8B000)   // bright neon-ish yellow                �
 val ColorGlass  = Color(0xFFD0D0E0)   // bright near-white with faint blue     — count 6+
 
 /**
- * Returns the background color for a habit button based on today's count,
- * applying the same special adjustments as the desktop app.
+ * Returns the background color for a habit button based on today's effective points count.
+ * [count] is already the divided/adjusted value from [buildHabit] — no further transformation
+ * is applied here. The color tier maps directly to the displayed number.
  */
-fun getHabitColor(habitName: String, rawCount: Int): Color {
-    val displayValue = getDisplayValue(habitName, rawCount)
-    return when (displayValue) {
+fun getHabitColor(habitName: String, count: Int): Color {
+    return when (count) {
         0    -> ColorRed
         1    -> ColorOrange
         2    -> ColorGreen

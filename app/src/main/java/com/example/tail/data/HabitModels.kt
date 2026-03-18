@@ -13,11 +13,22 @@ data class RollingHigh(
  */
 data class Habit(
     val name: String,
+    /** The effective "points" value for today — raw count divided by [divider] (rounded, min 1 if non-zero). */
     val todayCount: Int = 0,
+    /** The raw stored count for today, before any divider is applied. Used in the edit bar. */
+    val rawTodayCount: Int = 0,
     val currentStreak: Int = 0,       // positive = streak, negative = antistreak
     val longestStreak: Int = 0,
     val allTimeHighDay: Int = 0,      // top-left: max single-day raw count
     val useCustomInput: Boolean = false,
+
+    /**
+     * When > 1, the raw stored count is divided by this value (rounded to nearest int)
+     * to produce the displayed "points" value. The raw count is always stored as-is in
+     * the database; only the display and totals use the divided value.
+     * 0 or 1 means no division (normal behaviour).
+     */
+    val divider: Int = 1,
 
     // Current rolling averages (matching desktop current_values)
     val currentDayValue: Int = 0,     // most recent entry's raw value
@@ -31,6 +42,19 @@ data class Habit(
     val allTimeHighYear: RollingHigh = RollingHigh(0.0, ""),
     val allTimeHighDayDate: String = ""  // date of the all-time high single day
 )
+
+/**
+ * Returns the effective "points" value for a raw count given a divider.
+ * When [divider] <= 1 the raw count is returned unchanged.
+ * Otherwise the result is rounded to the nearest whole number.
+ * If the raw count is > 0 the result is always at least 1 (never rounds down to 0).
+ */
+fun applyDivider(rawCount: Int, divider: Int): Int {
+    if (divider <= 1) return rawCount
+    if (rawCount <= 0) return 0
+    val divided = Math.round(rawCount.toDouble() / divider).toInt()
+    return maxOf(divided, 1)
+}
 
 /**
  * Raw database format matching habitsdb.txt:
@@ -139,7 +163,15 @@ data class AppSettings(
      * that straddles the boundary, then parse only the new tail. This keeps parse time
      * O(new content) rather than O(total file size) as the file grows.
      */
-    val datedEntryFileSizes: Map<String, Long> = emptyMap()
+    val datedEntryFileSizes: Map<String, Long> = emptyMap(),
+
+    /**
+     * Maps habit name → divisor value for the "divider" feature.
+     * When a habit is in this map with a value > 1, the raw stored count is divided
+     * by that value (rounded to nearest int) to produce the displayed points value.
+     * The raw count is always stored unchanged in the database.
+     */
+    val habitDividers: Map<String, Int> = emptyMap()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

@@ -202,6 +202,7 @@ class HabitsRepository {
                 name = name,
                 entries = entries,
                 useCustomInput = name in settings.customInputHabits,
+                divider = settings.habitDividers[name] ?: 1,
                 targetDate = targetDate
             )
         }
