@@ -14,6 +14,7 @@ import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
+import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
 import com.example.tail.data.HABIT_ORDER
 import kotlinx.coroutines.Dispatchers
@@ -250,16 +251,24 @@ class HabitViewModel(
         val db = cachedPhoneDb
         val today = LocalDate.now()
         val todayStr = com.example.tail.data.dateString(today)
+        val dividers = _settings.value.habitDividers
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val todayCount = db.values.sumOf { entries -> entries[todayStr] ?: 0 }
+                // Sum divided (points) values for each habit
+                val todayCount = db.entries.sumOf { (habitName, entries) ->
+                    val raw = entries[todayStr] ?: 0
+                    applyDivider(raw, dividers[habitName] ?: 1)
+                }
 
                 fun avgOverDays(days: Int): Double {
                     var total = 0
                     for (i in 0 until days) {
                         val ds = com.example.tail.data.dateString(today.minusDays(i.toLong()))
-                        total += db.values.sumOf { entries -> entries[ds] ?: 0 }
+                        total += db.entries.sumOf { (habitName, entries) ->
+                            val raw = entries[ds] ?: 0
+                            applyDivider(raw, dividers[habitName] ?: 1)
+                        }
                     }
                     return total.toDouble() / days
                 }
@@ -316,8 +325,12 @@ class HabitViewModel(
         val newCount = if (habitName in _settings.value.maxOneHabits) rawNewCount.coerceAtMost(1) else rawNewCount
         // If the count didn't actually change (e.g. already at 1 with 1-max), bail out early
         if (newCount == (currentEntries[dateStr] ?: 0)) return
+        val divider = _settings.value.habitDividers[habitName] ?: 1
         _habits.value = _habits.value.map { h ->
-            if (h.name == habitName) h.copy(todayCount = newCount) else h
+            if (h.name == habitName) h.copy(
+                todayCount = applyDivider(newCount, divider),
+                rawTodayCount = newCount
+            ) else h
         }
 
         // Step 2: update in-memory cache
@@ -340,7 +353,7 @@ class HabitViewModel(
 
     /**
      * Sets the count for [habitName] on the currently selected date to an absolute [newCount].
-     * Clamps to >= 0. Persists to the DB file.
+     * [newCount] is the raw value to store. Clamps to >= 0. Persists to the DB file.
      */
     fun setHabitCount(habitName: String, newCount: Int) {
         val uriString = _settings.value.fileUri
@@ -349,10 +362,14 @@ class HabitViewModel(
             return
         }
         val clamped = newCount.coerceAtLeast(0)
+        val divider = _settings.value.habitDividers[habitName] ?: 1
 
         // Step 1: instant targeted UI update
         _habits.value = _habits.value.map { h ->
-            if (h.name == habitName) h.copy(todayCount = clamped) else h
+            if (h.name == habitName) h.copy(
+                todayCount = applyDivider(clamped, divider),
+                rawTodayCount = clamped
+            ) else h
         }
 
         // Step 2: update in-memory cache — compute delta from current stored value
@@ -402,6 +419,25 @@ class HabitViewModel(
             _habits.value = _habits.value.map { habit ->
                 habit.copy(useCustomInput = habit.name in current)
             }
+        }
+    }
+
+    /**
+     * Sets (or clears) the divider for [habitName].
+     * [divisor] must be >= 2 to enable division; pass 1 (or 0) to disable.
+     * When changed, the habit list is rebuilt so the displayed count updates immediately.
+     */
+    fun setHabitDivider(habitName: String, divisor: Int) {
+        viewModelScope.launch {
+            val current = _settings.value.habitDividers.toMutableMap()
+            if (divisor <= 1) {
+                current.remove(habitName)
+            } else {
+                current[habitName] = divisor
+            }
+            settingsRepo.saveHabitDividers(current)
+            _settings.value = _settings.value.copy(habitDividers = current)
+            rebuildHabitList()
         }
     }
 

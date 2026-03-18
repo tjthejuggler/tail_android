@@ -55,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -68,7 +69,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -377,7 +380,7 @@ fun HabitGridScreen(
                     EditModeControlBar(
                         selectedIndex = selectedEditIndex,
                         selectedHabitName = selectedHabitName,
-                        selectedHabitTodayCount = selectedHabitAtIndex?.todayCount ?: 0,
+                        selectedHabitRawTodayCount = selectedHabitAtIndex?.rawTodayCount ?: 0,
                         isPlaceholderSelected = isPlaceholderSelected,
                         movePending = movePendingSourceIndex >= 0,
                         habitScreens = habitScreens,
@@ -391,6 +394,7 @@ fun HabitGridScreen(
                         textInputFileUris = settings.textInputFileUris,
                         datedEntryHabits = settings.datedEntryHabits,
                         datedEntryFileUris = settings.datedEntryFileUris,
+                        habitDividers = settings.habitDividers,
                         onStartMove = { viewModel.startMoveMode() },
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
@@ -411,7 +415,8 @@ fun HabitGridScreen(
                         },
                         onDeleteHabit = { name -> deleteConfirmHabitName = name },
                         onChangeIcon = { name -> iconPickerHabitName = name },
-                        onSetCount = { name, count -> viewModel.setHabitCount(name, count) }
+                        onSetCount = { name, count -> viewModel.setHabitCount(name, count) },
+                        onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) }
                     )
                 }
             }
@@ -678,7 +683,7 @@ private fun PlaceholderCell(
 private fun EditModeControlBar(
     selectedIndex: Int,
     selectedHabitName: String?,
-    selectedHabitTodayCount: Int,
+    selectedHabitRawTodayCount: Int,
     isPlaceholderSelected: Boolean,
     movePending: Boolean,
     habitScreens: List<HabitScreen>,
@@ -691,6 +696,7 @@ private fun EditModeControlBar(
     textInputFileUris: Map<String, String>,
     datedEntryHabits: Set<String>,
     datedEntryFileUris: Map<String, String>,
+    habitDividers: Map<String, Int>,
     onStartMove: () -> Unit,
     onAddHabit: () -> Unit,
     onMoveToScreen: (Int) -> Unit,
@@ -705,7 +711,8 @@ private fun EditModeControlBar(
     onPickDatedEntryFile: (String) -> Unit,
     onDeleteHabit: (String) -> Unit,
     onChangeIcon: (String) -> Unit,
-    onSetCount: (String, Int) -> Unit
+    onSetCount: (String, Int) -> Unit,
+    onSetDivider: (String, Int) -> Unit
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -835,7 +842,8 @@ private fun EditModeControlBar(
                         modifier = Modifier.weight(1f)
                     )
                     if (selectedHabitName != null) {
-                        // Count adjuster: [−] count [+]
+                        // Count adjuster: [−] rawCount [+]
+                        // Always shows the raw input value (before any divider is applied)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -846,8 +854,8 @@ private fun EditModeControlBar(
                                 fontSize = 10.sp
                             )
                             Button(
-                                onClick = { onSetCount(selectedHabitName, selectedHabitTodayCount - 1) },
-                                enabled = selectedHabitTodayCount > 0,
+                                onClick = { onSetCount(selectedHabitName, selectedHabitRawTodayCount - 1) },
+                                enabled = selectedHabitRawTodayCount > 0,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF3A1A00),
                                     disabledContainerColor = Color(0xFF1A1A1A)
@@ -855,10 +863,10 @@ private fun EditModeControlBar(
                                 modifier = Modifier.size(28.dp),
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                             ) {
-                                Text("−", fontSize = 14.sp, color = if (selectedHabitTodayCount > 0) Color(0xFFFFAA00) else Color(0xFF555555))
+                                Text("−", fontSize = 14.sp, color = if (selectedHabitRawTodayCount > 0) Color(0xFFFFAA00) else Color(0xFF555555))
                             }
                             Text(
-                                text = selectedHabitTodayCount.toString(),
+                                text = selectedHabitRawTodayCount.toString(),
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
@@ -866,7 +874,7 @@ private fun EditModeControlBar(
                                 textAlign = TextAlign.Center
                             )
                             Button(
-                                onClick = { onSetCount(selectedHabitName, selectedHabitTodayCount + 1) },
+                                onClick = { onSetCount(selectedHabitName, selectedHabitRawTodayCount + 1) },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A00)),
                                 modifier = Modifier.size(28.dp),
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
@@ -945,6 +953,87 @@ private fun EditModeControlBar(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 if (selectedHabitName != null) {
+                    // ── Divider toggle ────────────────────────────────────────
+                    val currentDivisor = habitDividers[selectedHabitName] ?: 1
+                    val isDivider = currentDivisor > 1
+                    // Local state for the divisor text field (only shown when divider is on)
+                    var divisorText by remember(selectedHabitName) {
+                        mutableStateOf(if (isDivider) currentDivisor.toString() else "")
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "Divider", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isDivider) "Points = input ÷ $currentDivisor (rounded, min 1)" else "Points = raw input",
+                                color = Color(0xFF888888), fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isDivider,
+                            onCheckedChange = { on ->
+                                if (on) {
+                                    // Enable with default divisor of 2 if no text entered yet
+                                    val d = divisorText.toIntOrNull()?.coerceAtLeast(2) ?: 2
+                                    divisorText = d.toString()
+                                    onSetDivider(selectedHabitName, d)
+                                } else {
+                                    onSetDivider(selectedHabitName, 1)
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFFFF88FF),
+                                checkedTrackColor = Color(0xFF4A004A),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    if (isDivider) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "  Divide by:",
+                                color = Color(0xFFAAAAAA),
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = divisorText,
+                                onValueChange = { v ->
+                                    divisorText = v.filter { it.isDigit() }
+                                    val d = divisorText.toIntOrNull() ?: 0
+                                    if (d >= 2) onSetDivider(selectedHabitName, d)
+                                },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number
+                                ),
+                                modifier = Modifier.width(80.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color(0xFFFF88FF),
+                                    unfocusedTextColor = Color(0xFFFF88FF),
+                                    focusedBorderColor = Color(0xFFFF88FF),
+                                    unfocusedBorderColor = Color(0xFF884488)
+                                ),
+                                textStyle = TextStyle(
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
                     // 1 max toggle
                     val isMaxOne = selectedHabitName in maxOneHabits
                     Row(

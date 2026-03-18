@@ -33,6 +33,8 @@ private val KEY_DATED_ENTRY_HABITS = stringSetPreferencesKey("dated_entry_habits
 private val KEY_DATED_ENTRY_FILE_URIS = stringPreferencesKey("dated_entry_file_uris")
 // Stored as "habitName\x00size|||habitName\x00size" pairs (size as decimal string)
 private val KEY_DATED_ENTRY_FILE_SIZES = stringPreferencesKey("dated_entry_file_sizes")
+// Stored as "habitName\x00divisor|||habitName\x00divisor" pairs (divisor as decimal string)
+private val KEY_HABIT_DIVIDERS = stringPreferencesKey("habit_dividers")
 
 // Serialisation helpers for HabitScreen list.
 // Format: each screen is "id\tname\thabit1|habit2|habit3", screens separated by "\n"
@@ -90,6 +92,24 @@ private fun decodeLongMap(raw: String): Map<String, Long> {
     }.toMap()
 }
 
+// Serialisation helpers for Map<String, Int> (habit name → divisor).
+// Reuses the same PAIR_SEP / KV_SEP scheme; value is stored as decimal string.
+private fun encodeIntMap(map: Map<String, Int>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) -> "$k$KV_SEP$v" }
+
+private fun decodeIntMap(raw: String): Map<String, Int> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null
+        else {
+            val key = pair.substring(0, idx)
+            val value = pair.substring(idx + 1).toIntOrNull() ?: return@mapNotNull null
+            key to value
+        }
+    }.toMap()
+}
+
 /**
  * Persists app settings (file URIs, custom input habits, custom habit order, habit screens)
  * using DataStore.
@@ -110,6 +130,7 @@ class SettingsRepository(private val context: Context) {
         val habitIconsRaw = prefs[KEY_HABIT_ICONS] ?: ""
         val datedEntryFileUrisRaw = prefs[KEY_DATED_ENTRY_FILE_URIS] ?: ""
         val datedEntryFileSizesRaw = prefs[KEY_DATED_ENTRY_FILE_SIZES] ?: ""
+        val habitDividersRaw = prefs[KEY_HABIT_DIVIDERS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -125,7 +146,8 @@ class SettingsRepository(private val context: Context) {
             habitIcons = decodeFileUriMap(habitIconsRaw),
             datedEntryHabits = prefs[KEY_DATED_ENTRY_HABITS] ?: emptySet(),
             datedEntryFileUris = decodeFileUriMap(datedEntryFileUrisRaw),
-            datedEntryFileSizes = decodeLongMap(datedEntryFileSizesRaw)
+            datedEntryFileSizes = decodeLongMap(datedEntryFileSizesRaw),
+            habitDividers = decodeIntMap(habitDividersRaw)
         )
     }
 
@@ -232,6 +254,16 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveDatedEntryFileSizes(sizes: Map<String, Long>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_DATED_ENTRY_FILE_SIZES] = encodeLongMap(sizes)
+        }
+    }
+
+    /**
+     * Saves the map of habit name → divisor value for the "divider" feature.
+     * A divisor of 1 (or absent) means no division.
+     */
+    suspend fun saveHabitDividers(dividers: Map<String, Int>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_HABIT_DIVIDERS] = encodeIntMap(dividers)
         }
     }
 }

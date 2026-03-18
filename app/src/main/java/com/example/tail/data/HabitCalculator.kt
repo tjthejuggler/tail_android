@@ -2,7 +2,6 @@ package com.example.tail.data
 
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import kotlin.math.floor
 
 private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
@@ -36,25 +35,6 @@ fun getCountForDate(entries: Map<String, Int>, date: LocalDate): Int {
  * Gets the raw count for today from a habit's date map.
  */
 fun getTodayCount(entries: Map<String, Int>): Int = getCountForDate(entries, LocalDate.now())
-
-/**
- * Applies the special display adjustment for certain habits (matching desktop logic).
- * Used only for determining icon color tier, not for stored values.
- */
-fun getDisplayValue(habitName: String, rawCount: Int): Int {
-    val adjusted = when {
-        "Pushups" in habitName -> floor(rawCount / 30.0 + 0.5).toInt()
-        "Situps" in habitName  -> floor(rawCount / 50.0 + 0.5).toInt()
-        "Squats" in habitName  -> floor(rawCount / 30.0 + 0.5).toInt()
-        "Sweat" == habitName   -> floor(rawCount / 15.0 + 0.5).toInt()
-        "Cold Shower" in habitName -> {
-            val v = if (rawCount in 1..2) 3 else rawCount
-            floor(v / 3.0 + 0.5).toInt()
-        }
-        else -> rawCount
-    }
-    return floor(adjusted + 0.5).toInt()
-}
 
 /**
  * Expands a sparse entries map to include every calendar day between the earliest
@@ -216,18 +196,24 @@ fun getAllTimeHighRolling(entries: Map<String, Int>, windowSize: Int): RollingHi
  * Matches the desktop app's full tooltip data.
  *
  * The full habitsdb.txt is used directly — no historical stats merging needed.
+ *
+ * [divider] — when > 1, the raw stored count is divided (rounded, min 1 if non-zero)
+ * to produce the displayed points value. The raw count is stored unchanged in the DB.
  */
 fun buildHabit(
     name: String,
     entries: Map<String, Int>,
     useCustomInput: Boolean,
+    divider: Int = 1,
     targetDate: java.time.LocalDate = java.time.LocalDate.now()
 ): Habit {
     // Only include entries up to and including targetDate for streak/stat calculations
     val targetDateStr = dateString(targetDate)
     val filteredEntries = entries.filter { (k, _) -> k <= targetDateStr }
 
-    val countForDate = getCountForDate(filteredEntries, targetDate)
+    val rawCountForDate = getCountForDate(filteredEntries, targetDate)
+    // todayCount shown on the button is the divided (points) value
+    val countForDate = applyDivider(rawCountForDate, divider)
     val streakDisplay = calculateStreakDisplay(filteredEntries)
     val longestStreak = calculateLongestStreak(filteredEntries)
 
@@ -247,11 +233,13 @@ fun buildHabit(
     return Habit(
         name = name,
         todayCount = countForDate,
+        rawTodayCount = rawCountForDate,
         currentStreak = streakDisplay,
         longestStreak = longestStreak,
         allTimeHighDay = allTimeHighDayVal,
         allTimeHighDayDate = allTimeHighDayDate,
         useCustomInput = useCustomInput,
+        divider = divider,
         currentDayValue = currentDayValue,
         avgLast7Days = avgLast7,
         avgLast30Days = avgLast30,
