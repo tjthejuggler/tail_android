@@ -18,6 +18,8 @@ import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
 import com.example.tail.data.HABIT_ORDER
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -106,6 +108,11 @@ class HabitViewModel(
 
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
+
+    // Debounce job for day navigation — cancelled on each new arrow tap so we only
+    // rebuild the habit list after the user has settled on a date for a moment.
+    private var navDebounceJob: Job? = null
+    private val NAV_DEBOUNCE_MS = 800L
 
     // Flag to suppress settingsFlow reaction while we're saving a new habit order / screens
     private var isSavingOrder: Boolean = false
@@ -301,12 +308,24 @@ class HabitViewModel(
     /**
      * Navigate the selected date by [deltaDays] (negative = go back, positive = go forward).
      * Cannot navigate past today.
+     *
+     * The date label updates instantly, but the heavy habit-list rebuild is debounced:
+     * if the user taps the arrow again within [NAV_DEBOUNCE_MS] ms the previous rebuild
+     * is cancelled and the timer restarts. This prevents loading data for every
+     * intermediate date when the user rapidly taps through many days.
      */
     fun navigateDay(deltaDays: Int) {
         val newDate = _selectedDate.value.plusDays(deltaDays.toLong())
         val today = LocalDate.now()
+        // Instant UI update — date label changes immediately
         _selectedDate.value = if (newDate.isAfter(today)) today else newDate
-        viewModelScope.launch { rebuildHabitList() }
+
+        // Cancel any pending rebuild and restart the debounce timer
+        navDebounceJob?.cancel()
+        navDebounceJob = viewModelScope.launch {
+            delay(NAV_DEBOUNCE_MS)
+            rebuildHabitList()
+        }
     }
 
     fun incrementHabit(habitName: String, amount: Int = 1) {
