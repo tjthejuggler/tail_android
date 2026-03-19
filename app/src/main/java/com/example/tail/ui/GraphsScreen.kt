@@ -1,14 +1,12 @@
 package com.example.tail.ui
 
-import android.content.res.Configuration
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -16,10 +14,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,12 +25,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 // ── Time period options ───────────────────────────────────────────────────────
@@ -106,13 +110,15 @@ fun GraphsPanel(
 ) {
     val graphSelectedHabits by viewModel.graphSelectedHabits.collectAsState()
     val selectedPeriod by viewModel.graphTimePeriod.collectAsState()
+    val zoomStartDate by viewModel.graphZoomStartDate.collectAsState()
+    val zoomEndDate by viewModel.graphZoomEndDate.collectAsState()
 
     var selectedDataPoint by remember { mutableStateOf<SelectedPoint?>(null) }
     var textEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
     var datedEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
 
     // When selection or period changes, clear the selected data point
-    LaunchedEffect(graphSelectedHabits, selectedPeriod) {
+    LaunchedEffect(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate) {
         selectedDataPoint = null
         textEntriesForPoint = emptyList()
         datedEntriesForPoint = emptyList()
@@ -175,21 +181,43 @@ fun GraphsPanel(
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 )
             }
+            // Show zoom indicator when custom zoom is active
+            if (zoomStartDate != null && zoomEndDate != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "🔍 ${zoomStartDate!!.format(SHORT_DATE_FMT)}–${zoomEndDate!!.format(SHORT_DATE_FMT)}",
+                    color = Color(0xFFFFCC44),
+                    fontSize = 10.sp,
+                    modifier = Modifier
+                        .background(Color(0xFF2A2A00), RoundedCornerShape(8.dp))
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { viewModel.clearGraphZoom() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
         }
 
         // ── Chart area ────────────────────────────────────────────────────
         if (graphSelectedHabits.isNotEmpty()) {
             val today = LocalDate.now()
             val earliestDate = viewModel.getEarliestDate(graphSelectedHabits)
+
+            // Determine effective date range: zoom overrides period
             val startDate = when {
-                selectedPeriod.days != null -> today.minusDays(selectedPeriod.days!!.toLong() - 1)
+                zoomStartDate != null -> zoomStartDate!!
+                selectedPeriod?.days != null -> today.minusDays(selectedPeriod!!.days!!.toLong() - 1)
                 earliestDate != null -> earliestDate
                 else -> today.minusDays(29)
             }
-            val endDate = today
+            val endDate = when {
+                zoomEndDate != null -> zoomEndDate!!
+                else -> today
+            }
 
             // Collect data for all selected habits
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod) {
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate) {
                 graphSelectedHabits.toList().mapIndexed { idx, habitName ->
                     val data = viewModel.getGraphData(habitName, startDate, endDate)
                     GraphSeries(
@@ -216,20 +244,31 @@ fun GraphsPanel(
                     endDate = endDate,
                     onPointSelected = { point -> selectedDataPoint = point },
                     selectedPoint = selectedDataPoint,
+                    onZoom = { newStart, newEnd ->
+                        viewModel.setGraphZoomRange(newStart, newEnd)
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
 
-            // ── Selected point info tooltip ───────────────────────────────
+            // ── Selected point info tooltip (with X to close) ─────────────
             selectedDataPoint?.let { point ->
+                val hasContent = textEntriesForPoint.isNotEmpty() || datedEntriesForPoint.isNotEmpty()
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF1A1A2E), RoundedCornerShape(8.dp))
-                        .padding(8.dp)
+                        .then(
+                            // Make scrollable when there's a lot of content
+                            if (hasContent) Modifier.heightIn(max = if (isLandscape) 160.dp else 200.dp)
+                            else Modifier
+                        )
                 ) {
+                    // Header row: date + value + X button
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -237,69 +276,94 @@ fun GraphsPanel(
                             text = point.date.format(FULL_DATE_FMT),
                             color = Color(0xFFCCDDEE),
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
                         )
                         Text(
                             text = "${point.habitName}: ${point.value}",
                             color = point.color,
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp)
                         )
-                    }
-                    if (point.rawValue != point.value) {
-                        Text(
-                            text = "Raw: ${point.rawValue}",
-                            color = Color(0xFF888899),
-                            fontSize = 10.sp
-                        )
-                    }
-                    // Show text entries for text-input habits
-                    if (textEntriesForPoint.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Text entries:",
-                            color = Color(0xFF88AACC),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        textEntriesForPoint.forEach { entry ->
-                            Text(
-                                text = "• $entry",
-                                color = Color(0xFFCCDDEE),
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                        // X button to dismiss tooltip
+                        IconButton(
+                            onClick = { selectedDataPoint = null },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = Color(0xFF888899),
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
-                    // Show dated-entry chunks for dated-entry habits
-                    if (datedEntriesForPoint.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Entries (${datedEntriesForPoint.size}):",
-                            color = Color(0xFFFFCC44),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        datedEntriesForPoint.forEachIndexed { idx, chunk ->
-                            if (idx > 0) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                HorizontalDivider(
-                                    color = Color(0xFF2A2A1A),
-                                    thickness = 0.5.dp,
-                                    modifier = Modifier.padding(start = 4.dp)
+
+                    // Scrollable content area (only shown when there's extra content)
+                    if (hasContent || point.rawValue != point.value) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (hasContent) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                                .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                        ) {
+                            if (point.rawValue != point.value) {
+                                Text(
+                                    text = "Raw: ${point.rawValue}",
+                                    color = Color(0xFF888899),
+                                    fontSize = 10.sp
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
                             }
-                            Text(
-                                text = chunk,
-                                color = Color(0xFFEEDDAA),
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
-                            )
+                            // Show text entries for text-input habits
+                            if (textEntriesForPoint.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Text entries:",
+                                    color = Color(0xFF88AACC),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                textEntriesForPoint.forEach { entry ->
+                                    Text(
+                                        text = "• $entry",
+                                        color = Color(0xFFCCDDEE),
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                    )
+                                }
+                            }
+                            // Show dated-entry chunks for dated-entry habits
+                            if (datedEntriesForPoint.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Entries (${datedEntriesForPoint.size}):",
+                                    color = Color(0xFFFFCC44),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                datedEntriesForPoint.forEachIndexed { idx, chunk ->
+                                    if (idx > 0) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        HorizontalDivider(
+                                            color = Color(0xFF2A2A1A),
+                                            thickness = 0.5.dp,
+                                            modifier = Modifier.padding(start = 4.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                    }
+                                    Text(
+                                        text = chunk,
+                                        color = Color(0xFFEEDDAA),
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -315,8 +379,8 @@ fun GraphsPanel(
                 )
             }
 
-            // ── Legend — portrait only ────────────────────────────────────
-            if (!isLandscape && graphSelectedHabits.size > 1) {
+            // ── Legend ────────────────────────────────────────────────────
+            if (graphSelectedHabits.size > 1) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -331,44 +395,13 @@ fun GraphsPanel(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
+                                    .size(if (isLandscape) 6.dp else 8.dp)
                                     .background(series.color, CircleShape)
                             )
                             Text(
                                 text = series.habitName,
                                 color = series.color,
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ── Landscape legend (compact, inline) ────────────────────────
-            if (isLandscape && graphSelectedHabits.size > 1) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    allSeriesData.forEach { series ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .background(series.color, CircleShape)
-                            )
-                            Text(
-                                text = series.habitName,
-                                color = series.color,
-                                fontSize = 9.sp,
+                                fontSize = if (isLandscape) 9.sp else 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -388,10 +421,7 @@ fun GraphsPanel(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "📊",
-                        fontSize = 32.sp
-                    )
+                    Text(text = "📊", fontSize = 32.sp)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = if (isLandscape)
@@ -435,6 +465,7 @@ private fun HabitLineChart(
     endDate: LocalDate,
     onPointSelected: (SelectedPoint?) -> Unit,
     selectedPoint: SelectedPoint?,
+    onZoom: (LocalDate, LocalDate) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val totalDays = ChronoUnit.DAYS.between(startDate, endDate).toInt() + 1
@@ -445,12 +476,42 @@ private fun HabitLineChart(
     } ?: 1
     val yMax = if (globalMax == 0) 1 else globalMax
 
-    // Calculate nice Y axis ticks
     val yTicks = calculateYTicks(yMax)
     val effectiveYMax = yTicks.lastOrNull() ?: yMax
 
+    // Pinch-to-zoom state: track the current visible fraction of the total range
+    // zoomCenter is 0..1 (fraction of total days), zoomScale is the zoom multiplier
+    var zoomScale by remember(startDate, endDate) { mutableFloatStateOf(1f) }
+    var zoomCenter by remember(startDate, endDate) { mutableFloatStateOf(0.5f) }
+
+    val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
+        // Update zoom scale (clamp between 1x and totalDays/2)
+        val newScale = (zoomScale * zoomChange).coerceIn(1f, totalDays.toFloat().coerceAtLeast(2f))
+        // Pan: shift center by pan amount relative to total width
+        val panFraction = if (totalDays > 1) panChange.x / 1000f else 0f
+        val newCenter = (zoomCenter - panFraction / newScale).coerceIn(0f, 1f)
+
+        zoomScale = newScale
+        zoomCenter = newCenter
+
+        // Calculate the visible date range from zoom state
+        if (zoomScale > 1.01f) {
+            val visibleDays = (totalDays / zoomScale).toInt().coerceAtLeast(2)
+            val centerDayIdx = (zoomCenter * (totalDays - 1)).toInt()
+            val halfVisible = visibleDays / 2
+            val visStartIdx = (centerDayIdx - halfVisible).coerceIn(0, totalDays - visibleDays)
+            val visEndIdx = (visStartIdx + visibleDays - 1).coerceIn(0, totalDays - 1)
+            val newStart = startDate.plusDays(visStartIdx.toLong())
+            val newEnd = startDate.plusDays(visEndIdx.toLong())
+            if (newStart != startDate || newEnd != endDate) {
+                onZoom(newStart, newEnd)
+            }
+        }
+    }
+
     Canvas(
         modifier = modifier
+            .transformable(state = transformableState)
             .pointerInput(seriesData, startDate, endDate) {
                 detectTapGestures { offset ->
                     val chartLeft = 40.dp.toPx()
@@ -470,12 +531,9 @@ private fun HabitLineChart(
 
                     for (series in seriesData) {
                         for (dp in series.data) {
-                            val dayIdx =
-                                ChronoUnit.DAYS.between(startDate, dp.date).toInt()
-                            val x =
-                                chartLeft + (dayIdx.toFloat() / (totalDays - 1).coerceAtLeast(1)) * chartWidth
-                            val y =
-                                chartBottom - (dp.pointsValue.toFloat() / effectiveYMax) * chartHeight
+                            val dayIdx = ChronoUnit.DAYS.between(startDate, dp.date).toInt()
+                            val x = chartLeft + (dayIdx.toFloat() / (totalDays - 1).coerceAtLeast(1)) * chartWidth
+                            val y = chartBottom - (dp.pointsValue.toFloat() / effectiveYMax) * chartHeight
 
                             val dist = kotlin.math.sqrt(
                                 (tapX - x) * (tapX - x) + (tapY - y) * (tapY - y)
@@ -505,7 +563,7 @@ private fun HabitLineChart(
 
         if (chartWidth <= 0 || chartHeight <= 0) return@Canvas
 
-        // ── Draw grid lines and Y axis labels ─────────────────────────────
+        // ── Y axis labels and grid lines ──────────────────────────────────
         val textPaint = android.graphics.Paint().apply {
             color = 0xFF666688.toInt()
             textSize = 10.dp.toPx()
@@ -530,7 +588,7 @@ private fun HabitLineChart(
             )
         }
 
-        // ── Draw X axis labels ────────────────────────────────────────────
+        // ── X axis labels ─────────────────────────────────────────────────
         val xLabelPaint = android.graphics.Paint().apply {
             color = 0xFF666688.toInt()
             textSize = 9.dp.toPx()
@@ -567,7 +625,7 @@ private fun HabitLineChart(
             )
         }
 
-        // ── Draw zero line ────────────────────────────────────────────────
+        // ── Zero line ─────────────────────────────────────────────────────
         drawLine(
             color = Color(0xFF333344),
             start = Offset(chartLeft, chartBottom),
@@ -575,7 +633,7 @@ private fun HabitLineChart(
             strokeWidth = 1.dp.toPx()
         )
 
-        // ── Draw each series ──────────────────────────────────────────────
+        // ── Each series ───────────────────────────────────────────────────
         for (series in seriesData) {
             if (series.data.isEmpty()) continue
 
@@ -586,7 +644,7 @@ private fun HabitLineChart(
                 Offset(x, y)
             }
 
-            // Draw filled area under the line
+            // Filled area
             if (points.size >= 2) {
                 val areaPath = Path().apply {
                     moveTo(points.first().x, chartBottom)
@@ -594,38 +652,29 @@ private fun HabitLineChart(
                     lineTo(points.last().x, chartBottom)
                     close()
                 }
-                drawPath(
-                    path = areaPath,
-                    color = series.color.copy(alpha = 0.08f)
-                )
+                drawPath(path = areaPath, color = series.color.copy(alpha = 0.08f))
             }
 
-            // Draw the line
+            // Line
             if (points.size >= 2) {
                 val linePath = Path().apply {
                     moveTo(points.first().x, points.first().y)
-                    for (i in 1 until points.size) {
-                        lineTo(points[i].x, points[i].y)
-                    }
+                    for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
                 }
                 drawPath(
                     path = linePath,
                     color = series.color.copy(alpha = 0.8f),
-                    style = Stroke(
-                        width = 2.dp.toPx(),
-                        cap = StrokeCap.Round
-                    )
+                    style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
                 )
             }
 
-            // Draw data point dots (only if not too many)
+            // Dots (only when not too many points)
             if (totalDays <= 90) {
                 points.forEachIndexed { idx, point ->
                     val dp = series.data[idx]
                     val isSelected = selectedPoint?.habitName == series.habitName &&
                             selectedPoint?.date == dp.date
                     val dotRadius = if (isSelected) 5.dp.toPx() else 2.5.dp.toPx()
-
                     if (dp.pointsValue > 0 || isSelected) {
                         drawCircle(
                             color = if (isSelected) Color.White else series.color,
@@ -643,7 +692,7 @@ private fun HabitLineChart(
                 }
             }
 
-            // Draw moving average line (7-day) if enough data
+            // 7-day moving average
             if (series.data.size >= 7 && totalDays > 14) {
                 drawMovingAverage(
                     data = series.data,
@@ -661,7 +710,7 @@ private fun HabitLineChart(
             }
         }
 
-        // ── Draw selected point crosshair ─────────────────────────────────
+        // ── Selected point crosshair ──────────────────────────────────────
         selectedPoint?.let { sp ->
             val dayIdx = ChronoUnit.DAYS.between(startDate, sp.date).toInt()
             val x = chartLeft + (dayIdx.toFloat() / (totalDays - 1).coerceAtLeast(1)) * chartWidth
@@ -703,8 +752,7 @@ private fun HabitLineChart(
                 labelY - 12.dp.toPx(),
                 labelX + labelWidth / 2 + 4.dp.toPx(),
                 labelY + 4.dp.toPx(),
-                4.dp.toPx(),
-                4.dp.toPx(),
+                4.dp.toPx(), 4.dp.toPx(),
                 bgPaint
             )
             drawContext.canvas.nativeCanvas.drawText(label, labelX, labelY, valuePaint)
@@ -713,7 +761,7 @@ private fun HabitLineChart(
 }
 
 /**
- * Draws a moving average line on the chart.
+ * Draws a 7-day moving average line on the chart.
  */
 private fun DrawScope.drawMovingAverage(
     data: List<HabitViewModel.GraphDataPoint>,
@@ -746,9 +794,7 @@ private fun DrawScope.drawMovingAverage(
     if (maPoints.size >= 2) {
         val path = Path().apply {
             moveTo(maPoints.first().x, maPoints.first().y)
-            for (i in 1 until maPoints.size) {
-                lineTo(maPoints[i].x, maPoints[i].y)
-            }
+            for (i in 1 until maPoints.size) lineTo(maPoints[i].x, maPoints[i].y)
         }
         drawPath(
             path = path,
@@ -865,16 +911,7 @@ private fun StatChip(value: String, label: String, color: Color) {
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.padding(horizontal = 2.dp)
     ) {
-        Text(
-            text = value,
-            color = color,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = label,
-            color = Color(0xFF555566),
-            fontSize = 8.sp
-        )
+        Text(text = value, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text(text = label, color = Color(0xFF555566), fontSize = 8.sp)
     }
 }

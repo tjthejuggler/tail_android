@@ -1084,11 +1084,38 @@ class HabitViewModel(
     val graphSelectedHabits: StateFlow<Set<String>> = _graphSelectedHabits.asStateFlow()
 
     /** Currently selected time period for the graph — survives rotation. */
-    private val _graphTimePeriod = MutableStateFlow(GraphTimePeriod.MONTH)
-    val graphTimePeriod: StateFlow<GraphTimePeriod> = _graphTimePeriod.asStateFlow()
+    private val _graphTimePeriod = MutableStateFlow<GraphTimePeriod?>(GraphTimePeriod.MONTH)
+    val graphTimePeriod: StateFlow<GraphTimePeriod?> = _graphTimePeriod.asStateFlow()
 
     fun setGraphTimePeriod(period: GraphTimePeriod) {
         _graphTimePeriod.value = period
+        // Clear any custom zoom range when a period button is tapped
+        _graphZoomStartDate.value = null
+        _graphZoomEndDate.value = null
+    }
+
+    /**
+     * Custom zoom date range set by pinch-to-zoom gesture.
+     * When non-null, overrides the time period selection (which becomes null/deselected).
+     */
+    private val _graphZoomStartDate = MutableStateFlow<LocalDate?>(null)
+    val graphZoomStartDate: StateFlow<LocalDate?> = _graphZoomStartDate.asStateFlow()
+
+    private val _graphZoomEndDate = MutableStateFlow<LocalDate?>(null)
+    val graphZoomEndDate: StateFlow<LocalDate?> = _graphZoomEndDate.asStateFlow()
+
+    fun setGraphZoomRange(startDate: LocalDate, endDate: LocalDate) {
+        _graphZoomStartDate.value = startDate
+        _graphZoomEndDate.value = endDate
+        // Deselect the time period bubble
+        _graphTimePeriod.value = null
+    }
+
+    fun clearGraphZoom() {
+        _graphZoomStartDate.value = null
+        _graphZoomEndDate.value = null
+        // Restore default period
+        _graphTimePeriod.value = GraphTimePeriod.MONTH
     }
 
     fun toggleGraphMode() {
