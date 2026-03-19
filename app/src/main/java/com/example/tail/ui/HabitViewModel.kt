@@ -16,6 +16,7 @@ import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
+import com.example.tail.data.parseDate
 import com.example.tail.data.HABIT_ORDER
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -472,10 +473,11 @@ class HabitViewModel(
         if (!turningOn) {
             _selectedInfoHabit.value = null
         } else {
-            // Deactivate edit mode when info mode is activated
+            // Deactivate edit mode and graph mode when info mode is activated
             _editMode.value = false
             _selectedEditIndex.value = -1
             _movePendingSourceIndex.value = -1
+            _graphMode.value = false
         }
     }
 
@@ -498,9 +500,10 @@ class HabitViewModel(
             _selectedEditIndex.value = -1
             _movePendingSourceIndex.value = -1
         } else {
-            // Deactivate info mode when edit mode is activated
+            // Deactivate info mode and graph mode when edit mode is activated
             _infoMode.value = false
             _selectedInfoHabit.value = null
+            _graphMode.value = false
         }
     }
 
@@ -1070,6 +1073,167 @@ class HabitViewModel(
             }
         }
     }
+    // ── Graph mode ────────────────────────────────────────────────────────────
+
+    /** Whether graph mode is active. */
+    private val _graphMode = MutableStateFlow(false)
+    val graphMode: StateFlow<Boolean> = _graphMode.asStateFlow()
+
+    /** Habit names currently selected for graphing. */
+    private val _graphSelectedHabits = MutableStateFlow<Set<String>>(emptySet())
+    val graphSelectedHabits: StateFlow<Set<String>> = _graphSelectedHabits.asStateFlow()
+
+    /** Currently selected time period for the graph — survives rotation. */
+    private val _graphTimePeriod = MutableStateFlow(GraphTimePeriod.MONTH)
+    val graphTimePeriod: StateFlow<GraphTimePeriod> = _graphTimePeriod.asStateFlow()
+
+    fun setGraphTimePeriod(period: GraphTimePeriod) {
+        _graphTimePeriod.value = period
+    }
+
+    fun toggleGraphMode() {
+        val turningOn = !_graphMode.value
+        _graphMode.value = turningOn
+        if (turningOn) {
+            // Deactivate other modes
+            _infoMode.value = false
+            _selectedInfoHabit.value = null
+            _editMode.value = false
+            _selectedEditIndex.value = -1
+            _movePendingSourceIndex.value = -1
+        } else {
+            _graphSelectedHabits.value = emptySet()
+        }
+    }
+
+    fun toggleGraphHabitSelection(habitName: String) {
+        val current = _graphSelectedHabits.value.toMutableSet()
+        if (habitName in current) current.remove(habitName) else current.add(habitName)
+        _graphSelectedHabits.value = current
+    }
+
+    fun clearGraphSelection() {
+        _graphSelectedHabits.value = emptySet()
+    }
+
+    /**
+     * Data point for a single day on the graph.
+     */
+    data class GraphDataPoint(
+        val date: LocalDate,
+        val dateStr: String,
+        val rawValue: Int,
+        val pointsValue: Int,
+        val textEntry: String? = null  // for text-input habits
+    )
+
+    /**
+     * Returns the time-series data for a habit within the given date range.
+     * Includes text entries for text-input habits if available.
+     */
+    fun getGraphData(
+        habitName: String,
+        startDate: LocalDate,
+        endDate: LocalDate
+    ): List<GraphDataPoint> {
+        val entries = cachedPhoneDb[habitName] ?: return emptyList()
+        val divider = _settings.value.habitDividers[habitName] ?: 1
+        val startStr = dateString(startDate)
+        val endStr = dateString(endDate)
+
+        val result = mutableListOf<GraphDataPoint>()
+        var cursor = startDate
+        while (!cursor.isAfter(endDate)) {
+            val ds = dateString(cursor)
+            val raw = entries[ds] ?: 0
+            result.add(
+                GraphDataPoint(
+                    date = cursor,
+                    dateStr = ds,
+                    rawValue = raw,
+                    pointsValue = applyDivider(raw, divider)
+                )
+            )
+            cursor = cursor.plusDays(1)
+        }
+        return result
+    }
+
+    /**
+     * Returns the earliest date with data for any of the given habits.
+     */
+    fun getEarliestDate(habitNames: Set<String>): LocalDate? {
+        var earliest: LocalDate? = null
+        for (name in habitNames) {
+            val entries = cachedPhoneDb[name] ?: continue
+            val firstKey = entries.keys.minOrNull() ?: continue
+            val date = parseDate(firstKey) ?: continue
+            if (earliest == null || date.isBefore(earliest)) {
+                earliest = date
+            }
+        }
+        return earliest
+    }
+
+    /**
+     * Returns the latest date with data for any of the given habits.
+     */
+    fun getLatestDate(habitNames: Set<String>): LocalDate? {
+        var latest: LocalDate? = null
+        for (name in habitNames) {
+            val entries = cachedPhoneDb[name] ?: continue
+            val lastKey = entries.keys.maxOrNull() ?: continue
+            val date = parseDate(lastKey) ?: continue
+            if (latest == null || date.isAfter(latest)) {
+                latest = date
+            }
+        }
+        return latest
+    }
+
+    /**
+     * Loads text entries for a text-input habit on a specific date.
+     * Returns all text entries whose timestamp starts with the given date string.
+     */
+    fun loadTextEntriesForDate(habitName: String, date: LocalDate, onResult: (List<String>) -> Unit) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            onResult(emptyList())
+            return
+        }
+        val datePrefix = dateString(date)
+        viewModelScope.launch {
+            try {
+                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                val entries = log.filter { (key, _) -> key.startsWith(datePrefix) }
+                    .values.toList()
+                onResult(entries)
+            } catch (e: Exception) {
+                onResult(emptyList())
+            }
+        }
+    }
+
+    /**
+     * Returns all habit names across all screens (for graph mode selection).
+     */
+    fun getAllHabitNames(): List<String> {
+        val screens = _habitScreens.value
+        return if (screens.isNotEmpty()) {
+            screens.flatMap { it.habitNames }.filter { it.isNotEmpty() }.distinct()
+        } else {
+            val order = _habitOrder.value
+            (if (order.isNotEmpty()) order else HABIT_ORDER).filter { it.isNotEmpty() }
+        }
+    }
+
+    /**
+     * Checks if a habit is a text-input habit.
+     */
+    fun isTextInputHabit(habitName: String): Boolean {
+        return habitName in _settings.value.textInputHabits
+    }
+
     // ── Dated Entry feature ───────────────────────────────────────────────────
 
     /**
