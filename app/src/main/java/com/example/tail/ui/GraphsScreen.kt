@@ -204,22 +204,18 @@ fun GraphsPanel(
             val today = LocalDate.now()
             val earliestDate = viewModel.getEarliestDate(graphSelectedHabits)
 
-            // Determine effective date range: zoom overrides period
-            val startDate = when {
-                zoomStartDate != null -> zoomStartDate!!
+            // Full period range — never affected by zoom (stable reference for the chart)
+            val fullStartDate = when {
                 selectedPeriod?.days != null -> today.minusDays(selectedPeriod!!.days!!.toLong() - 1)
                 earliestDate != null -> earliestDate
                 else -> today.minusDays(29)
             }
-            val endDate = when {
-                zoomEndDate != null -> zoomEndDate!!
-                else -> today
-            }
+            val fullEndDate = today
 
-            // Collect data for all selected habits
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate) {
+            // Collect data for all selected habits over the full period range
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod) {
                 graphSelectedHabits.toList().mapIndexed { idx, habitName ->
-                    val data = viewModel.getGraphData(habitName, startDate, endDate)
+                    val data = viewModel.getGraphData(habitName, fullStartDate, fullEndDate)
                     GraphSeries(
                         habitName = habitName,
                         data = data,
@@ -240,13 +236,14 @@ fun GraphsPanel(
             ) {
                 HabitLineChart(
                     seriesData = allSeriesData,
-                    startDate = startDate,
-                    endDate = endDate,
+                    fullStartDate = fullStartDate,
+                    fullEndDate = fullEndDate,
                     onPointSelected = { point -> selectedDataPoint = point },
                     selectedPoint = selectedDataPoint,
                     onZoom = { newStart, newEnd ->
                         viewModel.setGraphZoomRange(newStart, newEnd)
                     },
+                    onZoomReset = { viewModel.clearGraphZoom() },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -461,58 +458,78 @@ data class SelectedPoint(
 @Composable
 private fun HabitLineChart(
     seriesData: List<GraphSeries>,
-    startDate: LocalDate,
-    endDate: LocalDate,
+    fullStartDate: LocalDate,
+    fullEndDate: LocalDate,
     onPointSelected: (SelectedPoint?) -> Unit,
     selectedPoint: SelectedPoint?,
     onZoom: (LocalDate, LocalDate) -> Unit,
+    onZoomReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val totalDays = ChronoUnit.DAYS.between(startDate, endDate).toInt() + 1
+    val fullTotalDays = ChronoUnit.DAYS.between(fullStartDate, fullEndDate).toInt() + 1
 
-    // Find global max for Y axis
+    // Pinch-to-zoom state — relative to the full period range (stable, never resets on zoom)
+    // zoomScale=1 means show the full range; zoomScale=2 means show half the range, etc.
+    // zoomCenter is 0..1 fraction of fullTotalDays indicating the center of the visible window
+    var zoomScale by remember(fullStartDate, fullEndDate) { mutableFloatStateOf(1f) }
+    var zoomCenter by remember(fullStartDate, fullEndDate) { mutableFloatStateOf(1f) }  // default: right edge (today)
+
+    // Derive the visible date range from zoom state
+    val visStartDate: LocalDate
+    val visEndDate: LocalDate
+    val visTotalDays: Int
+    if (zoomScale <= 1.01f) {
+        visStartDate = fullStartDate
+        visEndDate = fullEndDate
+        visTotalDays = fullTotalDays
+    } else {
+        val visibleDays = (fullTotalDays / zoomScale).toInt().coerceAtLeast(2)
+        val centerDayIdx = (zoomCenter * (fullTotalDays - 1)).toInt().coerceIn(0, fullTotalDays - 1)
+        val halfVisible = visibleDays / 2
+        val visStartIdx = (centerDayIdx - halfVisible).coerceIn(0, (fullTotalDays - visibleDays).coerceAtLeast(0))
+        val visEndIdx = (visStartIdx + visibleDays - 1).coerceIn(0, fullTotalDays - 1)
+        visStartDate = fullStartDate.plusDays(visStartIdx.toLong())
+        visEndDate = fullStartDate.plusDays(visEndIdx.toLong())
+        visTotalDays = ChronoUnit.DAYS.between(visStartDate, visEndDate).toInt() + 1
+    }
+
+    // Find global max for Y axis (over the visible range)
     val globalMax = seriesData.maxOfOrNull { series ->
-        series.data.maxOfOrNull { it.pointsValue } ?: 0
+        series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
+            .maxOfOrNull { it.pointsValue } ?: 0
     } ?: 1
     val yMax = if (globalMax == 0) 1 else globalMax
-
     val yTicks = calculateYTicks(yMax)
     val effectiveYMax = yTicks.lastOrNull() ?: yMax
 
-    // Pinch-to-zoom state: track the current visible fraction of the total range
-    // zoomCenter is 0..1 (fraction of total days), zoomScale is the zoom multiplier
-    var zoomScale by remember(startDate, endDate) { mutableFloatStateOf(1f) }
-    var zoomCenter by remember(startDate, endDate) { mutableFloatStateOf(0.5f) }
-
     val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
-        // Update zoom scale (clamp between 1x and totalDays/2)
-        val newScale = (zoomScale * zoomChange).coerceIn(1f, totalDays.toFloat().coerceAtLeast(2f))
-        // Pan: shift center by pan amount relative to total width
-        val panFraction = if (totalDays > 1) panChange.x / 1000f else 0f
+        val newScale = (zoomScale * zoomChange).coerceIn(1f, fullTotalDays.toFloat().coerceAtLeast(2f))
+        val panFraction = if (fullTotalDays > 1) panChange.x / 1000f else 0f
         val newCenter = (zoomCenter - panFraction / newScale).coerceIn(0f, 1f)
 
         zoomScale = newScale
         zoomCenter = newCenter
 
-        // Calculate the visible date range from zoom state
-        if (zoomScale > 1.01f) {
-            val visibleDays = (totalDays / zoomScale).toInt().coerceAtLeast(2)
-            val centerDayIdx = (zoomCenter * (totalDays - 1)).toInt()
+        if (newScale <= 1.01f) {
+            // Fully zoomed out — reset to full range
+            onZoomReset()
+        } else {
+            // Notify parent of the current visible range (for the zoom indicator)
+            val visibleDays = (fullTotalDays / newScale).toInt().coerceAtLeast(2)
+            val centerDayIdx = (newCenter * (fullTotalDays - 1)).toInt().coerceIn(0, fullTotalDays - 1)
             val halfVisible = visibleDays / 2
-            val visStartIdx = (centerDayIdx - halfVisible).coerceIn(0, totalDays - visibleDays)
-            val visEndIdx = (visStartIdx + visibleDays - 1).coerceIn(0, totalDays - 1)
-            val newStart = startDate.plusDays(visStartIdx.toLong())
-            val newEnd = startDate.plusDays(visEndIdx.toLong())
-            if (newStart != startDate || newEnd != endDate) {
-                onZoom(newStart, newEnd)
-            }
+            val visStartIdx = (centerDayIdx - halfVisible).coerceIn(0, (fullTotalDays - visibleDays).coerceAtLeast(0))
+            val visEndIdx = (visStartIdx + visibleDays - 1).coerceIn(0, fullTotalDays - 1)
+            val newStart = fullStartDate.plusDays(visStartIdx.toLong())
+            val newEnd = fullStartDate.plusDays(visEndIdx.toLong())
+            onZoom(newStart, newEnd)
         }
     }
 
     Canvas(
         modifier = modifier
             .transformable(state = transformableState)
-            .pointerInput(seriesData, startDate, endDate) {
+            .pointerInput(seriesData, visStartDate, visEndDate) {
                 detectTapGestures { offset ->
                     val chartLeft = 40.dp.toPx()
                     val chartRight = size.width - 12.dp.toPx()
@@ -521,7 +538,7 @@ private fun HabitLineChart(
                     val chartWidth = chartRight - chartLeft
                     val chartHeight = chartBottom - chartTop
 
-                    if (totalDays <= 0 || chartWidth <= 0) return@detectTapGestures
+                    if (visTotalDays <= 0 || chartWidth <= 0) return@detectTapGestures
 
                     val tapX = offset.x
                     val tapY = offset.y
@@ -531,8 +548,9 @@ private fun HabitLineChart(
 
                     for (series in seriesData) {
                         for (dp in series.data) {
-                            val dayIdx = ChronoUnit.DAYS.between(startDate, dp.date).toInt()
-                            val x = chartLeft + (dayIdx.toFloat() / (totalDays - 1).coerceAtLeast(1)) * chartWidth
+                            if (dp.date < visStartDate || dp.date > visEndDate) continue
+                            val dayIdx = ChronoUnit.DAYS.between(visStartDate, dp.date).toInt()
+                            val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
                             val y = chartBottom - (dp.pointsValue.toFloat() / effectiveYMax) * chartHeight
 
                             val dist = kotlin.math.sqrt(
@@ -597,20 +615,20 @@ private fun HabitLineChart(
         }
 
         val labelInterval = when {
-            totalDays <= 7 -> 1
-            totalDays <= 14 -> 2
-            totalDays <= 30 -> 5
-            totalDays <= 90 -> 10
-            totalDays <= 180 -> 20
-            totalDays <= 365 -> 30
-            else -> (totalDays / 12).coerceAtLeast(30)
+            visTotalDays <= 7 -> 1
+            visTotalDays <= 14 -> 2
+            visTotalDays <= 30 -> 5
+            visTotalDays <= 90 -> 10
+            visTotalDays <= 180 -> 20
+            visTotalDays <= 365 -> 30
+            else -> (visTotalDays / 12).coerceAtLeast(30)
         }
 
-        val dateFmt = if (totalDays <= 30) SHORT_DATE_FMT else MEDIUM_DATE_FMT
+        val dateFmt = if (visTotalDays <= 30) SHORT_DATE_FMT else MEDIUM_DATE_FMT
 
-        for (i in 0 until totalDays step labelInterval) {
-            val date = startDate.plusDays(i.toLong())
-            val x = chartLeft + (i.toFloat() / (totalDays - 1).coerceAtLeast(1)) * chartWidth
+        for (i in 0 until visTotalDays step labelInterval) {
+            val date = visStartDate.plusDays(i.toLong())
+            val x = chartLeft + (i.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
             drawContext.canvas.nativeCanvas.drawText(
                 date.format(dateFmt),
                 x,
@@ -637,9 +655,13 @@ private fun HabitLineChart(
         for (series in seriesData) {
             if (series.data.isEmpty()) continue
 
-            val points = series.data.map { dp ->
-                val dayIdx = ChronoUnit.DAYS.between(startDate, dp.date).toInt()
-                val x = chartLeft + (dayIdx.toFloat() / (totalDays - 1).coerceAtLeast(1)) * chartWidth
+            // Only include data points within the visible range
+            val visibleData = series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
+            if (visibleData.isEmpty()) continue
+
+            val points = visibleData.map { dp ->
+                val dayIdx = ChronoUnit.DAYS.between(visStartDate, dp.date).toInt()
+                val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
                 val y = chartBottom - (dp.pointsValue.toFloat() / effectiveYMax) * chartHeight
                 Offset(x, y)
             }
@@ -669,9 +691,9 @@ private fun HabitLineChart(
             }
 
             // Dots (only when not too many points)
-            if (totalDays <= 90) {
+            if (visTotalDays <= 90) {
                 points.forEachIndexed { idx, point ->
-                    val dp = series.data[idx]
+                    val dp = visibleData[idx]
                     val isSelected = selectedPoint?.habitName == series.habitName &&
                             selectedPoint?.date == dp.date
                     val dotRadius = if (isSelected) 5.dp.toPx() else 2.5.dp.toPx()
@@ -693,13 +715,13 @@ private fun HabitLineChart(
             }
 
             // 7-day moving average
-            if (series.data.size >= 7 && totalDays > 14) {
+            if (visibleData.size >= 7 && visTotalDays > 14) {
                 drawMovingAverage(
-                    data = series.data,
+                    data = visibleData,
                     windowSize = 7,
                     color = series.color.copy(alpha = 0.4f),
-                    startDate = startDate,
-                    totalDays = totalDays,
+                    startDate = visStartDate,
+                    totalDays = visTotalDays,
                     effectiveYMax = effectiveYMax,
                     chartLeft = chartLeft,
                     chartBottom = chartBottom,
@@ -712,8 +734,9 @@ private fun HabitLineChart(
 
         // ── Selected point crosshair ──────────────────────────────────────
         selectedPoint?.let { sp ->
-            val dayIdx = ChronoUnit.DAYS.between(startDate, sp.date).toInt()
-            val x = chartLeft + (dayIdx.toFloat() / (totalDays - 1).coerceAtLeast(1)) * chartWidth
+            if (sp.date < visStartDate || sp.date > visEndDate) return@let
+            val dayIdx = ChronoUnit.DAYS.between(visStartDate, sp.date).toInt()
+            val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
             val y = chartBottom - (sp.value.toFloat() / effectiveYMax) * chartHeight
 
             drawLine(
