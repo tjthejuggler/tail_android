@@ -121,6 +121,9 @@ class HabitViewModel(
     // Cache the full unified DB so we can rebuild the habit list without re-reading the file
     private var cachedPhoneDb: HabitsDatabase = emptyMap()
 
+    /** Public read-only access to the cached database for stats computation. */
+    fun getCachedDatabase(): HabitsDatabase = cachedPhoneDb
+
     init {
         viewModelScope.launch {
             settingsRepo.settingsFlow.collect { s ->

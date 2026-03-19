@@ -15,6 +15,8 @@ import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
+import com.example.tail.data.parseDate
+import com.example.tail.ui.AppStatsScreen
 import com.example.tail.ui.HabitGridScreen
 import com.example.tail.ui.HabitViewModel
 import com.example.tail.ui.HabitViewModelFactory
@@ -23,6 +25,7 @@ import com.example.tail.ui.theme.TailTheme
 
 private const val ROUTE_GRID = "grid"
 private const val ROUTE_SETTINGS = "settings"
+private const val ROUTE_APP_STATS = "app_stats"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,7 +86,19 @@ private fun TailApp(
         composable(ROUTE_SETTINGS) {
             SettingsScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToAppStats = { navController.navigate(ROUTE_APP_STATS) }
+            )
+        }
+        composable(ROUTE_APP_STATS) {
+            AppStatsScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToDate = { date ->
+                    // Navigate to the date on the main grid, popping back to grid first
+                    viewModel.navigateToDate(date)
+                    navController.popBackStack(ROUTE_GRID, inclusive = false)
+                }
             )
         }
     }
