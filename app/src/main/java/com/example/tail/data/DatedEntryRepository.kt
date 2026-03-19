@@ -83,6 +83,79 @@ class DatedEntryRepository {
             }
         }
 
+    /**
+     * Parses the dated-entry file at [uri] and returns the list of text chunks
+     * (paragraphs) for the given [targetDate] ("YYYY-MM-DD").
+     *
+     * Each chunk is a non-empty block of text separated by blank lines or ,,, separators.
+     * Returns an empty list if the date is not found or on any error.
+     *
+     * Runs on [Dispatchers.IO].
+     */
+    suspend fun parseChunksForDate(uri: Uri, context: Context, targetDate: String): List<String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val lines = context.contentResolver.openInputStream(uri)
+                    ?.bufferedReader()
+                    ?.readLines()
+                    ?: return@withContext emptyList()
+                parseChunksForDateInternal(lines, targetDate)
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+
+    /**
+     * Pure function: extracts the text chunks for [targetDate] from [lines].
+     * Exposed as internal for testing.
+     */
+    internal fun parseChunksForDateInternal(lines: List<String>, targetDate: String): List<String> {
+        // First pass: collect all body lines for the target date
+        var inTargetDate = false
+        val bodyLines = mutableListOf<String>()
+
+        for (line in lines) {
+            val (date, rest) = parseDateHeader(line)
+            if (date != null) {
+                if (date == targetDate) {
+                    inTargetDate = true
+                    if (!rest.isNullOrEmpty()) bodyLines.add(rest)
+                } else if (inTargetDate) {
+                    // Hit the next date — stop collecting
+                    break
+                } else {
+                    inTargetDate = false
+                }
+            } else if (inTargetDate) {
+                bodyLines.add(line.trimEnd('\n', '\r'))
+            }
+        }
+
+        if (bodyLines.isEmpty()) return emptyList()
+
+        // Second pass: split body lines into chunks (separated by blank lines or ,,,)
+        val chunks = mutableListOf<String>()
+        val currentChunk = mutableListOf<String>()
+
+        fun flushChunk() {
+            val text = currentChunk.joinToString("\n").trim()
+            if (text.isNotEmpty()) chunks.add(text)
+            currentChunk.clear()
+        }
+
+        for (line in bodyLines) {
+            val s = line.trim()
+            if (s.isEmpty() || s == ",,,") {
+                flushChunk()
+            } else {
+                currentChunk.add(line)
+            }
+        }
+        flushChunk()
+
+        return chunks
+    }
+
     // ── Internal parsing ──────────────────────────────────────────────────────
 
     /**

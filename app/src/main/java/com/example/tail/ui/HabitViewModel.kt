@@ -1215,6 +1215,35 @@ class HabitViewModel(
     }
 
     /**
+     * Loads the text chunks from the dated-entry source file for [habitName] on [date].
+     * Each chunk is a paragraph block from the file under that date's header.
+     * Returns an empty list if the habit has no dated-entry file configured, or on error.
+     */
+    fun loadDatedEntriesForDate(habitName: String, date: LocalDate, onResult: (List<String>) -> Unit) {
+        val uriString = _settings.value.datedEntryFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            onResult(emptyList())
+            return
+        }
+        val dateStr = dateString(date)
+        viewModelScope.launch {
+            try {
+                val chunks = datedEntryRepo.parseChunksForDate(Uri.parse(uriString), context, dateStr)
+                onResult(chunks)
+            } catch (e: Exception) {
+                onResult(emptyList())
+            }
+        }
+    }
+
+    /**
+     * Checks if a habit is a dated-entry habit.
+     */
+    fun isDatedEntryHabit(habitName: String): Boolean {
+        return habitName in _settings.value.datedEntryHabits
+    }
+
+    /**
      * Returns all habit names across all screens (for graph mode selection).
      */
     fun getAllHabitNames(): List<String> {

@@ -109,22 +109,36 @@ fun GraphsPanel(
 
     var selectedDataPoint by remember { mutableStateOf<SelectedPoint?>(null) }
     var textEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
+    var datedEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
 
     // When selection or period changes, clear the selected data point
     LaunchedEffect(graphSelectedHabits, selectedPeriod) {
         selectedDataPoint = null
         textEntriesForPoint = emptyList()
+        datedEntriesForPoint = emptyList()
     }
 
-    // When a data point is selected, load text entries if applicable
+    // When a data point is selected, load text entries and/or dated entries if applicable
     LaunchedEffect(selectedDataPoint) {
         val point = selectedDataPoint
-        if (point != null && viewModel.isTextInputHabit(point.habitName)) {
-            viewModel.loadTextEntriesForDate(point.habitName, point.date) { entries ->
-                textEntriesForPoint = entries
+        if (point != null) {
+            if (viewModel.isTextInputHabit(point.habitName)) {
+                viewModel.loadTextEntriesForDate(point.habitName, point.date) { entries ->
+                    textEntriesForPoint = entries
+                }
+            } else {
+                textEntriesForPoint = emptyList()
+            }
+            if (viewModel.isDatedEntryHabit(point.habitName)) {
+                viewModel.loadDatedEntriesForDate(point.habitName, point.date) { chunks ->
+                    datedEntriesForPoint = chunks
+                }
+            } else {
+                datedEntriesForPoint = emptyList()
             }
         } else {
             textEntriesForPoint = emptyList()
+            datedEntriesForPoint = emptyList()
         }
     }
 
@@ -254,6 +268,35 @@ fun GraphsPanel(
                             Text(
                                 text = "• $entry",
                                 color = Color(0xFFCCDDEE),
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                            )
+                        }
+                    }
+                    // Show dated-entry chunks for dated-entry habits
+                    if (datedEntriesForPoint.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Entries (${datedEntriesForPoint.size}):",
+                            color = Color(0xFFFFCC44),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        datedEntriesForPoint.forEachIndexed { idx, chunk ->
+                            if (idx > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                HorizontalDivider(
+                                    color = Color(0xFF2A2A1A),
+                                    thickness = 0.5.dp,
+                                    modifier = Modifier.padding(start = 4.dp)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+                            Text(
+                                text = chunk,
+                                color = Color(0xFFEEDDAA),
                                 fontSize = 11.sp,
                                 modifier = Modifier.padding(start = 4.dp, top = 2.dp)
                             )
