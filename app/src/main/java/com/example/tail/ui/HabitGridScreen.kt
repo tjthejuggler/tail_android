@@ -169,20 +169,6 @@ fun HabitGridScreen(
         datedEntryPickerHabit = null
     }
 
-    // File picker launcher — requests persistent read+write permission
-    val filePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            viewModel.setFileUri(uri)
-        }
-    }
-
     // Show errors as snackbar
     LaunchedEffect(errorMessage) {
         if (errorMessage != null) {
@@ -264,9 +250,6 @@ fun HabitGridScreen(
                             tint = if (infoMode) Color(0xFF88CCFF) else Color.White
                         )
                     }
-                    IconButton(onClick = { filePicker.launch(arrayOf("*/*")) }) {
-                        Icon(Icons.Default.Folder, contentDescription = "Open file")
-                    }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
@@ -303,7 +286,7 @@ fun HabitGridScreen(
             } else if (habits.isEmpty() && settings.fileUri.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Text(
-                        text = "Tap 📂 to select your habitsdb_phone.txt file",
+                        text = "Go to ⚙ Settings to select your habitsdb.txt file",
                         modifier = Modifier
                             .align(Alignment.Center)
                             .padding(24.dp)
