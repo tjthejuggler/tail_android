@@ -40,7 +40,8 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun SettingsScreen(
     viewModel: HabitViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToAppStats: () -> Unit = {}
 ) {
     val settings by viewModel.settings.collectAsState()
     val context = LocalContext.current
@@ -192,6 +193,24 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = { taskerFilePicker.launch(arrayOf("*/*")) }) {
                     Text("Change Tasker File")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // ── App Stats ─────────────────────────────────────────────────────
+            item {
+                Text("App Stats", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    text = "View comprehensive statistics about your habit tracking: " +
+                           "highest points, streaks, top habits, trends, and more.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = onNavigateToAppStats) {
+                    Text("View App Stats")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
