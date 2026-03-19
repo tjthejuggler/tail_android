@@ -329,6 +329,53 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Navigates directly to [date] (clamped to today at the latest).
+     * Immediately rebuilds the habit list for that date (no debounce — this is
+     * a deliberate jump, not rapid arrow tapping).
+     */
+    fun navigateToDate(date: LocalDate) {
+        val today = LocalDate.now()
+        val clamped = if (date.isAfter(today)) today else date
+        _selectedDate.value = clamped
+        navDebounceJob?.cancel()
+        navDebounceJob = viewModelScope.launch {
+            rebuildHabitList()
+        }
+    }
+
+    /**
+     * Returns a map of dateString → total habit points for every day in the given
+     * [year]/[month]. Points are the sum of applyDivider(raw, divider) across ALL
+     * habits that have data for that day.
+     *
+     * Only habits that are part of any screen (or the flat habitOrder) are included,
+     * so the totals match what the user actually tracks.
+     */
+    fun getDailyTotals(year: Int, month: Int): Map<String, Int> {
+        val db = cachedPhoneDb
+        if (db.isEmpty()) return emptyMap()
+
+        val dividers = _settings.value.habitDividers
+        // Use all habit names present in the DB (covers all screens)
+        val habitNames = db.keys
+
+        val result = mutableMapOf<String, Int>()
+        // Build date strings for every day in the month
+        val firstDay = LocalDate.of(year, month, 1)
+        val daysInMonth = firstDay.lengthOfMonth()
+        for (d in 1..daysInMonth) {
+            val ds = dateString(LocalDate.of(year, month, d))
+            var total = 0
+            for (name in habitNames) {
+                val raw = db[name]?.get(ds) ?: 0
+                total += applyDivider(raw, dividers[name] ?: 1)
+            }
+            result[ds] = total
+        }
+        return result
+    }
+
     fun incrementHabit(habitName: String, amount: Int = 1) {
         val uriString = _settings.value.fileUri
         if (uriString.isEmpty()) {
