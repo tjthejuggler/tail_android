@@ -1,5 +1,6 @@
 package com.example.tail.ui
 
+import android.content.res.Configuration
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
@@ -67,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
@@ -111,6 +114,8 @@ fun HabitGridScreen(
     val selectedDate by viewModel.selectedDate.collectAsState()
     val infoMode by viewModel.infoMode.collectAsState()
     val editMode by viewModel.editMode.collectAsState()
+    val graphMode by viewModel.graphMode.collectAsState()
+    val graphSelectedHabits by viewModel.graphSelectedHabits.collectAsState()
     val selectedInfoHabit by viewModel.selectedInfoHabit.collectAsState()
     val selectedEditIndex by viewModel.selectedEditIndex.collectAsState()
     val movePendingSourceIndex by viewModel.movePendingSourceIndex.collectAsState()
@@ -120,6 +125,10 @@ fun HabitGridScreen(
 
     val today = LocalDate.now()
     val isToday = selectedDate == today
+
+    // Detect landscape orientation
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     val snackbarHostState = remember { SnackbarHostState() }
     var dialogHabit by remember { mutableStateOf<Habit?>(null) }
@@ -224,6 +233,19 @@ fun HabitGridScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
+                    // Graph mode toggle button
+                    IconButton(
+                        onClick = { viewModel.toggleGraphMode() },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = if (graphMode) Color(0xFF0A2A4A) else Color.Transparent
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.BarChart,
+                            contentDescription = if (graphMode) "Graph mode ON" else "Graph mode OFF",
+                            tint = if (graphMode) Color(0xFF4FC3F7) else Color.White
+                        )
+                    }
                     // Edit mode toggle button
                     IconButton(
                         onClick = { viewModel.toggleEditMode() },
@@ -263,8 +285,8 @@ fun HabitGridScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Screen tabs — shown when multiple screens exist
-            if (habitScreens.size > 1) {
+            // Screen tabs — shown when multiple screens exist (hidden in landscape)
+            if (habitScreens.size > 1 && !isLandscape) {
                 ScreenTabRow(
                     screens = habitScreens,
                     activeIndex = activeScreenIndex,
@@ -292,19 +314,32 @@ fun HabitGridScreen(
                             .padding(24.dp)
                     )
                 }
+            } else if (graphMode && isLandscape) {
+                // ── Landscape + Graph mode: fullscreen graph ───────────────
+                GraphsPanel(
+                    viewModel = viewModel,
+                    isLandscape = true,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f)
+                )
             } else {
+                // ── Portrait (or landscape without graph mode) ─────────────
                 // Grid takes up most of the screen
                 Box(modifier = Modifier.weight(1f)) {
                     HabitGrid(
                         habits = habits,
                         infoMode = infoMode,
                         editMode = editMode,
+                        graphMode = graphMode,
+                        graphSelectedHabits = graphSelectedHabits,
                         selectedInfoHabit = selectedInfoHabit,
                         selectedEditIndex = selectedEditIndex,
                         movePendingSourceIndex = movePendingSourceIndex,
                         customIconOverrides = settings.habitIcons,
                         onHabitClick = { habit, index ->
                             when {
+                                graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
                                 editMode -> viewModel.selectEditHabit(index)
                                 infoMode -> viewModel.selectInfoHabit(habit)
                                 habit.name in settings.textInputHabits -> {
@@ -330,7 +365,7 @@ fun HabitGridScreen(
                             }
                         },
                         onHabitLongClick = { habit ->
-                            if (!infoMode && !editMode) {
+                            if (!infoMode && !editMode && !graphMode) {
                                 viewModel.toggleCustomInput(habit.name)
                             }
                         },
@@ -338,6 +373,16 @@ fun HabitGridScreen(
                             // In edit mode, selecting a placeholder works like selecting a habit
                             viewModel.selectEditHabit(index)
                         }
+                    )
+                }
+
+                // Graph panel — shown below grid when in graph mode (portrait)
+                if (graphMode) {
+                    GraphsPanel(
+                        viewModel = viewModel,
+                        isLandscape = false,
+                        modifier = Modifier
+                            .fillMaxWidth()
                     )
                 }
 
@@ -543,6 +588,8 @@ private fun HabitGrid(
     habits: List<Habit>,
     infoMode: Boolean,
     editMode: Boolean,
+    graphMode: Boolean = false,
+    graphSelectedHabits: Set<String> = emptySet(),
     selectedInfoHabit: Habit?,
     selectedEditIndex: Int,
     movePendingSourceIndex: Int = -1,
@@ -571,6 +618,7 @@ private fun HabitGrid(
             if (habit != null) {
                 val isEditSelected = editMode && index == selectedEditIndex
                 val isInfoSelected = infoMode && selectedInfoHabit?.name == habit.name
+                val isGraphSelected = graphMode && habit.name in graphSelectedHabits
                 val isMovePendingSource = editMode && index == movePendingSourceIndex
                 HabitButton(
                     habit = habit,
@@ -579,10 +627,12 @@ private fun HabitGrid(
                     modifier = Modifier.padding(2.dp),
                     infoMode = infoMode,
                     editMode = editMode,
-                    isSelected = isEditSelected || isInfoSelected,
+                    isSelected = isEditSelected || isInfoSelected || isGraphSelected,
                     isMovePendingSource = isMovePendingSource,
                     isMovePendingTarget = isMovePending && !isMovePendingSource && editMode,
-                    customIconOverrides = customIconOverrides
+                    customIconOverrides = customIconOverrides,
+                    graphMode = graphMode,
+                    isGraphSelected = isGraphSelected
                 )
             } else if (editMode) {
                 // In edit mode, placeholders are selectable cells
