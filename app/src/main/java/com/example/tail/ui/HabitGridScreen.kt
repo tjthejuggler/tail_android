@@ -132,6 +132,7 @@ fun HabitGridScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var dialogHabit by remember { mutableStateOf<Habit?>(null) }
+    var showCalendarPicker by remember { mutableStateOf(false) }
     var showAddScreenDialog by remember { mutableStateOf(false) }
     // Index of screen being renamed (-1 = none)
     var renamingScreenIndex by remember { mutableStateOf(-1) }
@@ -204,7 +205,7 @@ fun HabitGridScreen(
                             )
                         }
 
-                        // Date label
+                        // Date label — tappable to open the calendar picker
                         val dateLabel = if (isToday) "Today" else selectedDate.format(DISPLAY_DATE_FMT)
                         val dateLabelColor = if (isToday) Color.White else Color(0xFFFFD700)
                         Text(
@@ -212,7 +213,12 @@ fun HabitGridScreen(
                             color = dateLabelColor,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 2.dp)
+                            modifier = Modifier
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() }
+                                ) { showCalendarPicker = true }
+                                .padding(horizontal = 6.dp, vertical = 4.dp)
                         )
 
                         // Forward arrow — disabled when already on today
@@ -449,6 +455,19 @@ fun HabitGridScreen(
                 }
             }
         }
+    }
+
+    // Calendar picker dialog
+    if (showCalendarPicker) {
+        CalendarPickerDialog(
+            initialDate     = selectedDate,
+            getDailyTotals  = { yr, mo -> viewModel.getDailyTotals(yr, mo) },
+            onDateSelected  = { date ->
+                showCalendarPicker = false
+                viewModel.navigateToDate(date)
+            },
+            onDismiss       = { showCalendarPicker = false }
+        )
     }
 
     // Custom increment dialog
