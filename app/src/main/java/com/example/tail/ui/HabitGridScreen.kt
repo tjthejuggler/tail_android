@@ -239,19 +239,6 @@ fun HabitGridScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
-                    // Graph mode toggle button
-                    IconButton(
-                        onClick = { viewModel.toggleGraphMode() },
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = if (graphMode) Color(0xFF0A2A4A) else Color.Transparent
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.BarChart,
-                            contentDescription = if (graphMode) "Graph mode ON" else "Graph mode OFF",
-                            tint = if (graphMode) Color(0xFF4FC3F7) else Color.White
-                        )
-                    }
                     // Edit mode toggle button
                     IconButton(
                         onClick = { viewModel.toggleEditMode() },
@@ -263,6 +250,19 @@ fun HabitGridScreen(
                             Icons.Default.Edit,
                             contentDescription = if (editMode) "Edit mode ON" else "Edit mode OFF",
                             tint = if (editMode) Color(0xFFFFAA00) else Color.White
+                        )
+                    }
+                    // Graph mode toggle button
+                    IconButton(
+                        onClick = { viewModel.toggleGraphMode() },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = if (graphMode) Color(0xFF0A2A0A) else Color.Transparent
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.BarChart,
+                            contentDescription = if (graphMode) "Graph mode ON" else "Graph mode OFF",
+                            tint = if (graphMode) Color(0xFF66DD66) else Color.White
                         )
                     }
                     // Info mode toggle button
