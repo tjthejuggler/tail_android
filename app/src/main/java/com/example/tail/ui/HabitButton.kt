@@ -68,11 +68,11 @@ fun HabitButton(
     val shape = RoundedCornerShape(6.dp)
     val borderMod = when {
         isMovePendingSource -> Modifier.border(2.dp, Color(0xFF44FFFF), shape)     // cyan border = "in flight"
-        isGraphSelected -> Modifier.border(2.dp, Color(0xFF4FC3F7), shape)         // light blue border when selected for graph
+        isGraphSelected -> Modifier.border(2.dp, Color(0xFF66DD66), shape)         // green border when selected for graph
         isSelected && editMode -> Modifier.border(2.dp, Color(0xFFFFAA00), shape)  // orange border when selected in edit mode
         isMovePendingTarget -> Modifier.border(1.dp, Color(0xFF44FFFF), shape)     // cyan border = valid drop target
         isSelected -> Modifier.border(2.dp, Color(0xFFFFD700), shape)              // gold border when selected in info mode
-        graphMode  -> Modifier.border(1.dp, Color(0xFF2A4A6A), shape)              // dim blue border in graph mode
+        graphMode  -> Modifier.border(1.dp, Color(0xFF1A4A1A), shape)              // dim green border in graph mode
         infoMode   -> Modifier.border(1.dp, Color(0xFF88CCFF), shape)              // subtle blue border in info mode
         editMode   -> Modifier.border(1.dp, Color(0xFFFF8C00), shape)              // dim orange border in edit mode
         else       -> Modifier
@@ -111,7 +111,7 @@ fun HabitButton(
         if (isGraphSelected) {
             Text(
                 text = "📊",
-                color = Color(0xFF4FC3F7),
+                color = Color(0xFF66DD66),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.ExtraBold,
                 style = tightTextStyle,
@@ -122,7 +122,7 @@ fun HabitButton(
         } else if (graphMode) {
             Text(
                 text = "○",
-                color = Color(0xFF2A4A6A),
+                color = Color(0xFF1A4A1A),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.ExtraBold,
                 style = tightTextStyle,

@@ -151,7 +151,7 @@ fun GraphsPanel(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color(0xFF0A0A1A))
+            .background(Color(0xFF0A1A0A))
     ) {
         // ── Time period selector — shown in both portrait and landscape ────
         Row(
@@ -165,13 +165,13 @@ fun GraphsPanel(
                 val isActive = period == selectedPeriod
                 Text(
                     text = period.label,
-                    color = if (isActive) Color(0xFF000000) else Color(0xFF88AACC),
+                    color = if (isActive) Color(0xFF000000) else Color(0xFF88AA88),
                     fontSize = 11.sp,
                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .background(
-                            if (isActive) Color(0xFF4FC3F7) else Color(0xFF1A1A2E),
+                            if (isActive) Color(0xFF66DD66) else Color(0xFF1A2E1A),
                             RoundedCornerShape(8.dp)
                         )
                         .clickable(
@@ -252,9 +252,9 @@ fun GraphsPanel(
             selectedDataPoint?.let { point ->
                 val hasContent = textEntriesForPoint.isNotEmpty() || datedEntriesForPoint.isNotEmpty()
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF1A1A2E), RoundedCornerShape(8.dp))
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF1A2E1A), RoundedCornerShape(8.dp))
                         .then(
                             // Make scrollable when there's a lot of content
                             if (hasContent) Modifier.heightIn(max = if (isLandscape) 160.dp else 200.dp)
@@ -271,7 +271,7 @@ fun GraphsPanel(
                     ) {
                         Text(
                             text = point.date.format(FULL_DATE_FMT),
-                            color = Color(0xFFCCDDEE),
+                            color = Color(0xFFCCEECC),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f)
@@ -291,7 +291,7 @@ fun GraphsPanel(
                             Icon(
                                 Icons.Default.Close,
                                 contentDescription = "Close",
-                                tint = Color(0xFF888899),
+                                tint = Color(0xFF889988),
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -308,25 +308,25 @@ fun GraphsPanel(
                             if (point.rawValue != point.value) {
                                 Text(
                                     text = "Raw: ${point.rawValue}",
-                                    color = Color(0xFF888899),
+                                    color = Color(0xFF889988),
                                     fontSize = 10.sp
                                 )
                             }
                             // Show text entries for text-input habits
                             if (textEntriesForPoint.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(4.dp))
-                                HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
+                                HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Text entries:",
-                                    color = Color(0xFF88AACC),
+                                    color = Color(0xFF88CC88),
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 textEntriesForPoint.forEach { entry ->
                                     Text(
                                         text = "• $entry",
-                                        color = Color(0xFFCCDDEE),
+                                        color = Color(0xFFCCEECC),
                                         fontSize = 11.sp,
                                         modifier = Modifier.padding(start = 4.dp, top = 2.dp)
                                     )
@@ -335,7 +335,7 @@ fun GraphsPanel(
                             // Show dated-entry chunks for dated-entry habits
                             if (datedEntriesForPoint.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(4.dp))
-                                HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
+                                HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Entries (${datedEntriesForPoint.size}):",
@@ -425,7 +425,7 @@ fun GraphsPanel(
                             "Tap habit icons (portrait) to add them to the graph"
                         else
                             "Tap habit icons above to add them to the graph",
-                        color = Color(0xFF666688),
+                        color = Color(0xFF668866),
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 16.dp)
@@ -583,7 +583,7 @@ private fun HabitLineChart(
 
         // ── Y axis labels and grid lines ──────────────────────────────────
         val textPaint = android.graphics.Paint().apply {
-            color = 0xFF666688.toInt()
+            color = 0xFF668866.toInt()
             textSize = 10.dp.toPx()
             isAntiAlias = true
             textAlign = android.graphics.Paint.Align.RIGHT
@@ -592,7 +592,7 @@ private fun HabitLineChart(
         for (tick in yTicks) {
             val y = chartBottom - (tick.toFloat() / effectiveYMax) * chartHeight
             drawLine(
-                color = Color(0xFF1A1A2E),
+                color = Color(0xFF1A2E1A),
                 start = Offset(chartLeft, y),
                 end = Offset(chartRight, y),
                 strokeWidth = 0.5.dp.toPx(),
@@ -608,7 +608,7 @@ private fun HabitLineChart(
 
         // ── X axis labels ─────────────────────────────────────────────────
         val xLabelPaint = android.graphics.Paint().apply {
-            color = 0xFF666688.toInt()
+            color = 0xFF668866.toInt()
             textSize = 9.dp.toPx()
             isAntiAlias = true
             textAlign = android.graphics.Paint.Align.CENTER
@@ -636,7 +636,7 @@ private fun HabitLineChart(
                 xLabelPaint
             )
             drawLine(
-                color = Color(0xFF111122),
+                color = Color(0xFF112211),
                 start = Offset(x, chartTop),
                 end = Offset(x, chartBottom),
                 strokeWidth = 0.5.dp.toPx()
@@ -645,7 +645,7 @@ private fun HabitLineChart(
 
         // ── Zero line ─────────────────────────────────────────────────────
         drawLine(
-            color = Color(0xFF333344),
+            color = Color(0xFF334433),
             start = Offset(chartLeft, chartBottom),
             end = Offset(chartRight, chartBottom),
             strokeWidth = 1.dp.toPx()
@@ -762,7 +762,7 @@ private fun HabitLineChart(
                 isFakeBoldText = true
             }
             val bgPaint = android.graphics.Paint().apply {
-                color = 0xCC1A1A2E.toInt()
+                color = 0xCC1A2E1A.toInt()
                 isAntiAlias = true
             }
             val label = sp.value.toString()
@@ -871,7 +871,7 @@ private fun StatsSummary(
 ) {
     Column(
         modifier = modifier
-            .background(Color(0xFF0D0D1E), RoundedCornerShape(8.dp))
+            .background(Color(0xFF0D1E0D), RoundedCornerShape(8.dp))
             .padding(8.dp)
     ) {
         for (series in seriesData) {
@@ -919,7 +919,7 @@ private fun StatsSummary(
 
             if (seriesData.size > 1 && series != seriesData.last()) {
                 HorizontalDivider(
-                    color = Color(0xFF1A1A2E),
+                    color = Color(0xFF1A2E1A),
                     thickness = 0.5.dp,
                     modifier = Modifier.padding(vertical = 2.dp)
                 )
@@ -935,6 +935,6 @@ private fun StatChip(value: String, label: String, color: Color) {
         modifier = Modifier.padding(horizontal = 2.dp)
     ) {
         Text(text = value, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        Text(text = label, color = Color(0xFF555566), fontSize = 8.sp)
+        Text(text = label, color = Color(0xFF556655), fontSize = 8.sp)
     }
 }
