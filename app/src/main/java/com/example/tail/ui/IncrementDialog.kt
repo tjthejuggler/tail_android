@@ -67,7 +67,10 @@ fun IncrementDialog(
                 ) {
                     QUICK_AMOUNTS.forEach { amount ->
                         OutlinedButton(
-                            onClick = { inputText = amount.toString() },
+                            onClick = {
+                                val current = inputText.toIntOrNull() ?: 0
+                                inputText = (current + amount).toString()
+                            },
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(0.dp),
