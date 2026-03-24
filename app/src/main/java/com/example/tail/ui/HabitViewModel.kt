@@ -404,7 +404,29 @@ class HabitViewModel(
         }
 
         // Step 2: update in-memory cache
-        val updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, amount, _selectedDate.value)
+        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, amount, _selectedDate.value)
+
+        // Step 2b: if this is a conditional habit, also increment all linked habits
+        val linkedHabits = if (habitName in _settings.value.conditionalHabits) {
+            _settings.value.conditionalLinkedHabits[habitName] ?: emptySet()
+        } else emptySet()
+
+        for (linkedName in linkedHabits) {
+            val linkedEntries = updatedDb[linkedName] ?: emptyMap()
+            val linkedRaw = (linkedEntries[dateStr] ?: 0) + 1
+            val linkedClamped = if (linkedName in _settings.value.maxOneHabits) linkedRaw.coerceAtMost(1) else linkedRaw
+            if (linkedClamped != (linkedEntries[dateStr] ?: 0)) {
+                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, linkedName, 1, _selectedDate.value)
+                val linkedDivider = _settings.value.habitDividers[linkedName] ?: 1
+                _habits.value = _habits.value.map { h ->
+                    if (h.name == linkedName) h.copy(
+                        todayCount = applyDivider(linkedClamped, linkedDivider),
+                        rawTodayCount = linkedClamped
+                    ) else h
+                }
+            }
+        }
+
         cachedPhoneDb = updatedDb
 
         // Step 3: full rebuild (streak/ATH recalc) + disk write in background
@@ -514,6 +536,41 @@ class HabitViewModel(
     fun clearError() {
         _errorMessage.value = null
     }
+
+    /**
+     * Toggles the "conditional" type on/off for [habitName].
+     * When enabled, tapping this habit also auto-increments all habits in its linked set.
+     */
+    fun toggleConditional(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.conditionalHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveConditionalHabits(current)
+            _settings.value = _settings.value.copy(conditionalHabits = current)
+        }
+    }
+
+    /**
+     * Sets the linked habits for a conditional habit.
+     * [linkedNames] is the full replacement set of habit names to auto-increment.
+     * Pass an empty set to clear all links (but keep the conditional type enabled).
+     */
+    fun setConditionalLinks(habitName: String, linkedNames: Set<String>) {
+        viewModelScope.launch {
+            val current = _settings.value.conditionalLinkedHabits.toMutableMap()
+            if (linkedNames.isEmpty()) {
+                current.remove(habitName)
+            } else {
+                current[habitName] = linkedNames
+            }
+            settingsRepo.saveConditionalLinkedHabits(current)
+            _settings.value = _settings.value.copy(conditionalLinkedHabits = current)
+        }
+    }
+
+    /** Returns the current set of linked habit names for a conditional habit. */
+    fun getConditionalLinks(habitName: String): Set<String> =
+        _settings.value.conditionalLinkedHabits[habitName] ?: emptySet()
 
     /** Toggles info mode on/off. Clears selected habit when turning off.
      *  Acts as a radio button with edit mode — turning info on turns edit off. */

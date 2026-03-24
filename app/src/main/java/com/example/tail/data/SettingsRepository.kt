@@ -35,6 +35,10 @@ private val KEY_DATED_ENTRY_FILE_URIS = stringPreferencesKey("dated_entry_file_u
 private val KEY_DATED_ENTRY_FILE_SIZES = stringPreferencesKey("dated_entry_file_sizes")
 // Stored as "habitName\x00divisor|||habitName\x00divisor" pairs (divisor as decimal string)
 private val KEY_HABIT_DIVIDERS = stringPreferencesKey("habit_dividers")
+// Conditional habit type keys
+private val KEY_CONDITIONAL_HABITS = stringSetPreferencesKey("conditional_habits")
+// Stored as "habitName\x00link1,link2,link3|||habitName\x00link1" pairs
+private val KEY_CONDITIONAL_LINKED_HABITS = stringPreferencesKey("conditional_linked_habits")
 
 // Serialisation helpers for HabitScreen list.
 // Format: each screen is "id\tname\thabit1|habit2|habit3", screens separated by "\n"
@@ -110,6 +114,32 @@ private fun decodeIntMap(raw: String): Map<String, Int> {
     }.toMap()
 }
 
+// Serialisation helpers for Map<String, Set<String>> (habit name → set of linked habit names).
+// Format: "habitName\x00link1,link2,link3|||habitName\x00link1"
+// Commas inside habit names are escaped as \, to avoid ambiguity.
+private const val LINK_SEP = ","
+
+private fun encodeLinkedHabitsMap(map: Map<String, Set<String>>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) ->
+        val links = v.joinToString(LINK_SEP) { it.replace(",", "\\,") }
+        "$k$KV_SEP$links"
+    }
+
+private fun decodeLinkedHabitsMap(raw: String): Map<String, Set<String>> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null
+        else {
+            val key = pair.substring(0, idx)
+            val linksStr = pair.substring(idx + 1)
+            val links = if (linksStr.isEmpty()) emptySet()
+            else linksStr.split(Regex("(?<!\\\\),")).map { it.replace("\\,", ",") }.toSet()
+            key to links
+        }
+    }.toMap()
+}
+
 /**
  * Persists app settings (file URIs, custom input habits, custom habit order, habit screens)
  * using DataStore.
@@ -131,6 +161,7 @@ class SettingsRepository(private val context: Context) {
         val datedEntryFileUrisRaw = prefs[KEY_DATED_ENTRY_FILE_URIS] ?: ""
         val datedEntryFileSizesRaw = prefs[KEY_DATED_ENTRY_FILE_SIZES] ?: ""
         val habitDividersRaw = prefs[KEY_HABIT_DIVIDERS] ?: ""
+        val conditionalLinkedHabitsRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -147,7 +178,9 @@ class SettingsRepository(private val context: Context) {
             datedEntryHabits = prefs[KEY_DATED_ENTRY_HABITS] ?: emptySet(),
             datedEntryFileUris = decodeFileUriMap(datedEntryFileUrisRaw),
             datedEntryFileSizes = decodeLongMap(datedEntryFileSizesRaw),
-            habitDividers = decodeIntMap(habitDividersRaw)
+            habitDividers = decodeIntMap(habitDividersRaw),
+            conditionalHabits = prefs[KEY_CONDITIONAL_HABITS] ?: emptySet(),
+            conditionalLinkedHabits = decodeLinkedHabitsMap(conditionalLinkedHabitsRaw)
         )
     }
 
@@ -264,6 +297,20 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveHabitDividers(dividers: Map<String, Int>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_HABIT_DIVIDERS] = encodeIntMap(dividers)
+        }
+    }
+
+    /** Saves the set of habits that have the "conditional" type enabled. */
+    suspend fun saveConditionalHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CONDITIONAL_HABITS] = habits
+        }
+    }
+
+    /** Saves the map of conditional habit name → set of linked habit names. */
+    suspend fun saveConditionalLinkedHabits(links: Map<String, Set<String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CONDITIONAL_LINKED_HABITS] = encodeLinkedHabitsMap(links)
         }
     }
 }

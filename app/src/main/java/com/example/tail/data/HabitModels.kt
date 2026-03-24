@@ -171,7 +171,20 @@ data class AppSettings(
      * by that value (rounded to nearest int) to produce the displayed points value.
      * The raw count is always stored unchanged in the database.
      */
-    val habitDividers: Map<String, Int> = emptyMap()
+    val habitDividers: Map<String, Int> = emptyMap(),
+
+    /**
+     * Habits that have the "conditional" type enabled.
+     * When a habit is in this set, tapping it also auto-increments all habits
+     * listed in [conditionalLinkedHabits] for that habit.
+     */
+    val conditionalHabits: Set<String> = emptySet(),
+
+    /**
+     * Maps a conditional habit name → the set of other habit names that should be
+     * auto-incremented whenever the conditional habit is tapped.
+     */
+    val conditionalLinkedHabits: Map<String, Set<String>> = emptyMap()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

@@ -142,6 +142,8 @@ fun HabitGridScreen(
     var deleteConfirmHabitName by remember { mutableStateOf<String?>(null) }
     // Habit name for which icon picker is open (null = none)
     var iconPickerHabitName by remember { mutableStateOf<String?>(null) }
+    // Habit name for which the conditional links picker is open (null = none)
+    var conditionalLinksPickerHabit by remember { mutableStateOf<String?>(null) }
 
     // Text-input dialog state: non-null when the dialog should be shown
     var textInputDialogState by remember { mutableStateOf<TextInputDialogState?>(null) }
@@ -429,6 +431,9 @@ fun HabitGridScreen(
                         datedEntryHabits = settings.datedEntryHabits,
                         datedEntryFileUris = settings.datedEntryFileUris,
                         habitDividers = settings.habitDividers,
+                        conditionalHabits = settings.conditionalHabits,
+                        conditionalLinkedHabits = settings.conditionalLinkedHabits,
+                        allHabitNames = viewModel.getAllHabitNames(),
                         onStartMove = { viewModel.startMoveMode() },
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
@@ -450,7 +455,9 @@ fun HabitGridScreen(
                         onDeleteHabit = { name -> deleteConfirmHabitName = name },
                         onChangeIcon = { name -> iconPickerHabitName = name },
                         onSetCount = { name, count -> viewModel.setHabitCount(name, count) },
-                        onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) }
+                        onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
+                        onToggleConditional = { name -> viewModel.toggleConditional(name) },
+                        onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name }
                     )
                 }
             }
@@ -555,6 +562,20 @@ fun HabitGridScreen(
                 iconPickerHabitName = null
             },
             onDismiss = { iconPickerHabitName = null }
+        )
+    }
+
+    // Conditional links picker dialog
+    conditionalLinksPickerHabit?.let { habitName ->
+        ConditionalLinksPickerDialog(
+            habitName = habitName,
+            allHabitNames = viewModel.getAllHabitNames(),
+            currentLinks = viewModel.getConditionalLinks(habitName),
+            onConfirm = { links ->
+                viewModel.setConditionalLinks(habitName, links)
+                conditionalLinksPickerHabit = null
+            },
+            onDismiss = { conditionalLinksPickerHabit = null }
         )
     }
 }
@@ -749,6 +770,9 @@ private fun EditModeControlBar(
     datedEntryHabits: Set<String>,
     datedEntryFileUris: Map<String, String>,
     habitDividers: Map<String, Int>,
+    conditionalHabits: Set<String>,
+    conditionalLinkedHabits: Map<String, Set<String>>,
+    allHabitNames: List<String>,
     onStartMove: () -> Unit,
     onAddHabit: () -> Unit,
     onMoveToScreen: (Int) -> Unit,
@@ -764,7 +788,9 @@ private fun EditModeControlBar(
     onDeleteHabit: (String) -> Unit,
     onChangeIcon: (String) -> Unit,
     onSetCount: (String, Int) -> Unit,
-    onSetDivider: (String, Int) -> Unit
+    onSetDivider: (String, Int) -> Unit,
+    onToggleConditional: (String) -> Unit,
+    onSetConditionalLinks: (String) -> Unit
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -1324,6 +1350,175 @@ private fun EditModeControlBar(
                     if (showDatedEntryInfo) {
                         DatedEntryInfoDialog(onDismiss = { showDatedEntryInfo = false })
                     }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // ── Conditional toggle ────────────────────────────────────
+                    val isConditional = selectedHabitName in conditionalHabits
+                    val linkedCount = conditionalLinkedHabits[selectedHabitName]?.size ?: 0
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "Conditional", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isConditional) "Auto-increments $linkedCount linked habit(s)" else "No auto-increment",
+                                color = Color(0xFF888888), fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isConditional,
+                            onCheckedChange = { onToggleConditional(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFFFF88CC),
+                                checkedTrackColor = Color(0xFF4A0030),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    if (isConditional) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "  Linked habits", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                                val linkNames = conditionalLinkedHabits[selectedHabitName]
+                                Text(
+                                    text = if (linkNames.isNullOrEmpty()) "⚠ None selected"
+                                           else "✓ ${linkNames.joinToString(", ")}",
+                                    color = if (linkNames.isNullOrEmpty()) Color(0xFFFF8844) else Color(0xFFFF88CC),
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Button(
+                                onClick = { onSetConditionalLinks(selectedHabitName) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A0030)),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text(
+                                    if (linkedCount > 0) "Edit Links" else "Set Links",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFFF88CC)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Conditional links picker dialog ──────────────────────────────────────────
+
+/**
+ * A popup that lists all habits (except the conditional habit itself) as checkboxes.
+ * The user can select any number of them as the habits to auto-increment.
+ */
+@Composable
+private fun ConditionalLinksPickerDialog(
+    habitName: String,
+    allHabitNames: List<String>,
+    currentLinks: Set<String>,
+    onConfirm: (Set<String>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val otherHabits = remember(allHabitNames, habitName) {
+        allHabitNames.filter { it != habitName && it.isNotEmpty() }
+    }
+    var selected by remember(currentLinks) { mutableStateOf(currentLinks.toMutableSet()) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1A0A14), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Linked habits for \"$habitName\"",
+                color = Color(0xFFFF88CC),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Select habits to auto-increment when this habit is tapped:",
+                color = Color(0xFF888888),
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (otherHabits.isEmpty()) {
+                Text(
+                    text = "No other habits available.",
+                    color = Color(0xFF666666),
+                    fontSize = 12.sp
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    otherHabits.forEach { name ->
+                        val isChecked = name in selected
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() }
+                                ) {
+                                    val next = selected.toMutableSet()
+                                    if (isChecked) next.remove(name) else next.add(name)
+                                    selected = next
+                                }
+                                .background(
+                                    if (isChecked) Color(0xFF2A0020) else Color.Transparent,
+                                    RoundedCornerShape(4.dp)
+                                )
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = if (isChecked) "☑" else "☐",
+                                color = if (isChecked) Color(0xFFFF88CC) else Color(0xFF666666),
+                                fontSize = 16.sp
+                            )
+                            Text(
+                                text = name,
+                                color = if (isChecked) Color(0xFFFF88CC) else Color(0xFFCCCCCC),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = { onConfirm(selected.toSet()) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A0030))
+                ) {
+                    Text("Save (${selected.size})", color = Color(0xFFFF88CC))
                 }
             }
         }
