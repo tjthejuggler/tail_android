@@ -84,6 +84,19 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                 }
 
                 val uri = Uri.parse(fileUriString)
+
+                // Respect the "max 1" cap: if the habit is capped at 1 and today's
+                // count is already >= 1, skip the increment entirely.
+                if (habitName in settings.maxOneHabits) {
+                    val db = habitsRepo.loadDatabase(uri, appContext)
+                    val todayStr = java.time.LocalDate.now().toString()
+                    val currentCount = db[habitName]?.get(todayStr) ?: 0
+                    if (currentCount >= 1) {
+                        Log.i(TAG, "Skipping increment for '$habitName' — already at max 1 for today")
+                        return@launch
+                    }
+                }
+
                 habitsRepo.incrementHabit(uri, appContext, habitName, 1)
                 Log.i(TAG, "Incremented habit '$habitName' via IPC broadcast")
             } catch (e: Exception) {
