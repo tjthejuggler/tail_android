@@ -1,7 +1,7 @@
 # Tail Integration Guide
 ## How to Hook Another App into Tail's Habit Incrementing System
 
-**Last updated:** 2026-03-14  
+**Last updated:** 2026-03-26
 **Applies to:** Tail app package `com.example.tail`, minSdk 26+
 
 ---
@@ -201,10 +201,14 @@ When the broadcast arrives, `HabitIncrementReceiver.onReceive()`:
 1. Calls `goAsync()` so it can do I/O without being killed after `onReceive()` returns
 2. Reads Tail's `SettingsRepository` to get the SAF URI of `habitsdb_phone.txt`
 3. If the extra was an Int, resolves it to a habit name using the current screen/order settings
-4. Calls `HabitsRepository.incrementHabit(uri, context, habitName, 1)` which does an atomic read-modify-write on the JSON file for today's date
-5. Logs success or failure to Logcat under the tag `HabitIncrementReceiver`
+4. If the habit has a "max 1" cap and today's count is already ≥ 1, skips the increment
+5. Calls `HabitsRepository.incrementHabit(uri, context, habitName, 1)` which does an atomic read-modify-write on the JSON file for today's date
+6. If the habit is a **conditional habit** (configured in Tail's settings), also increments all linked habits — respecting each linked habit's "max 1" cap
+7. Logs success or failure to Logcat under the tag `HabitIncrementReceiver`
 
 The increment always applies to **today's date** (`LocalDate.now()` in Tail's timezone). There is no way to increment a past date via the broadcast API.
+
+> **Conditional habits:** If a habit is configured as "conditional" in Tail, incrementing it (whether via the in-app UI or via this broadcast API) will also auto-increment all its linked habits. This behaviour is fully transparent to the calling app — you don't need to send separate broadcasts for the linked habits.
 
 ---
 

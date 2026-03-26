@@ -99,6 +99,25 @@ class HabitIncrementReceiver : BroadcastReceiver() {
 
                 habitsRepo.incrementHabit(uri, appContext, habitName, 1)
                 Log.i(TAG, "Incremented habit '$habitName' via IPC broadcast")
+
+                // Also increment any conditional linked habits (mirrors HabitViewModel logic)
+                if (habitName in settings.conditionalHabits) {
+                    val linkedHabits = settings.conditionalLinkedHabits[habitName] ?: emptySet()
+                    val todayStr = java.time.LocalDate.now().toString()
+                    for (linkedName in linkedHabits) {
+                        // Respect the "max 1" cap on linked habits
+                        if (linkedName in settings.maxOneHabits) {
+                            val db = habitsRepo.loadDatabase(uri, appContext)
+                            val currentCount = db[linkedName]?.get(todayStr) ?: 0
+                            if (currentCount >= 1) {
+                                Log.i(TAG, "Skipping linked increment for '$linkedName' — already at max 1")
+                                continue
+                            }
+                        }
+                        habitsRepo.incrementHabit(uri, appContext, linkedName, 1)
+                        Log.i(TAG, "Incremented linked habit '$linkedName' (conditional on '$habitName')")
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to increment habit '$habitId': ${e.message}", e)
             } finally {
