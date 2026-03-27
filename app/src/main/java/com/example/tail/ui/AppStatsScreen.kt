@@ -91,10 +91,23 @@ fun AppStatsScreen(
     var popupItems by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var showPopup by remember { mutableStateOf(false) }
 
+    // State for the streak graph popup
+    var graphPopupTitle by remember { mutableStateOf("") }
+    var graphPopupData by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
+    var graphPopupColor by remember { mutableStateOf(GreenValue) }
+    var showGraphPopup by remember { mutableStateOf(false) }
+
     fun openPopup(title: String, items: List<Pair<String, String>>) {
         popupTitle = title
         popupItems = items
         showPopup = true
+    }
+
+    fun openGraphPopup(title: String, data: List<Pair<String, Int>>, color: Color) {
+        graphPopupTitle = title
+        graphPopupData = data
+        graphPopupColor = color
+        showGraphPopup = true
     }
 
     Scaffold(
@@ -149,6 +162,69 @@ fun AppStatsScreen(
                     StatDateRow("First day with data", stats.firstDayWithData, onNavigateToDate)
                     StatDateRow("Most recent day with data", stats.lastDayWithData, onNavigateToDate)
                     StatRow("Total habit points (all time)", formatLargeNumber(stats.totalPointsAllTime))
+                    Spacer(modifier = Modifier.height(4.dp))
+                    HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    StatGraphableRow(
+                        label = "Total streak days (all habits)",
+                        value = stats.totalStreakDays.toString(),
+                        valueColor = GreenValue,
+                        onClick = {
+                            openGraphPopup(
+                                "Total Streak Days Over Time",
+                                stats.dailyTotalStreakDays,
+                                GreenValue
+                            )
+                        }
+                    )
+                    StatGraphableRow(
+                        label = "Total anti-streak days (all habits)",
+                        value = stats.totalAntiStreakDays.toString(),
+                        valueColor = RedValue,
+                        onClick = {
+                            openGraphPopup(
+                                "Total Anti-Streak Days Over Time",
+                                stats.dailyTotalAntiStreakDays,
+                                RedValue
+                            )
+                        }
+                    )
+                    StatGraphableCountRow(
+                        label = "Habits with active streak",
+                        count = stats.habitsWithStreak,
+                        valueColor = GreenValue,
+                        onClickGraph = {
+                            openGraphPopup(
+                                "Habits With Streak Over Time",
+                                stats.dailyHabitsWithStreak,
+                                GreenValue
+                            )
+                        },
+                        onClickList = {
+                            openPopup(
+                                "Habits With Streak (${stats.habitsWithStreak})",
+                                stats.habitsWithStreakList
+                            )
+                        }
+                    )
+                    StatGraphableCountRow(
+                        label = "Habits with active anti-streak",
+                        count = stats.habitsWithAntiStreak,
+                        valueColor = RedValue,
+                        onClickGraph = {
+                            openGraphPopup(
+                                "Habits With Anti-Streak Over Time",
+                                stats.dailyHabitsWithAntiStreak,
+                                RedValue
+                            )
+                        },
+                        onClickList = {
+                            openPopup(
+                                "Habits With Anti-Streak (${stats.habitsWithAntiStreak})",
+                                stats.habitsWithAntiStreakList
+                            )
+                        }
+                    )
                 }
 
                 // ── Highest Points ────────────────────────────────────────────
@@ -436,6 +512,16 @@ fun AppStatsScreen(
             onDismiss = { showPopup = false }
         )
     }
+
+    // ── Streak graph popup ────────────────────────────────────────────────────
+    if (showGraphPopup) {
+        StreakGraphPopup(
+            title = graphPopupTitle,
+            data = graphPopupData,
+            lineColor = graphPopupColor,
+            onDismiss = { showGraphPopup = false }
+        )
+    }
 }
 
 // ── Habit list popup dialog ───────────────────────────────────────────────────
@@ -621,6 +707,99 @@ private fun StatClickableCountRow(
 }
 
 /**
+ * A stat row where the value is clickable to open a graph popup.
+ * Used for total streak days / total anti-streak days.
+ */
+@Composable
+private fun StatGraphableRow(
+    label: String,
+    value: String,
+    valueColor: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = label,
+            color = LabelColor,
+            fontSize = 12.sp,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = "$value 📈",
+            color = valueColor,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            textDecoration = TextDecoration.Underline,
+            modifier = Modifier.clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onClick
+            )
+        )
+    }
+}
+
+/**
+ * A stat row where the count is clickable for both a graph popup (tap the number)
+ * and a habit list popup (tap the list icon). Used for habits-with-streak counts.
+ */
+@Composable
+private fun StatGraphableCountRow(
+    label: String,
+    count: Int,
+    valueColor: Color,
+    onClickGraph: () -> Unit,
+    onClickList: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = label,
+            color = LabelColor,
+            fontSize = 12.sp,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = count.toString(),
+                color = valueColor,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onClickList
+                )
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "📈",
+                fontSize = 12.sp,
+                modifier = Modifier.clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onClickGraph
+                )
+            )
+        }
+    }
+}
+
+/**
  * A row with a clickable date that navigates to the main screen with that date selected.
  */
 @Composable
@@ -747,6 +926,19 @@ private data class AppStats(
     val firstDayWithData: String? = null,
     val lastDayWithData: String? = null,
     val totalPointsAllTime: Long = 0,
+
+    // Streak aggregate stats (Overview section)
+    val totalStreakDays: Int = 0,                // sum of all current streak values
+    val totalAntiStreakDays: Int = 0,            // sum of all current anti-streak values
+    val habitsWithStreak: Int = 0,               // count of habits with streak > 0
+    val habitsWithAntiStreak: Int = 0,           // count of habits with anti-streak > 0
+    val habitsWithStreakList: List<Pair<String, String>> = emptyList(),
+    val habitsWithAntiStreakList: List<Pair<String, String>> = emptyList(),
+    // Historical daily values for graphing
+    val dailyTotalStreakDays: List<Pair<String, Int>> = emptyList(),     // date → sum of streaks
+    val dailyTotalAntiStreakDays: List<Pair<String, Int>> = emptyList(), // date → sum of anti-streaks
+    val dailyHabitsWithStreak: List<Pair<String, Int>> = emptyList(),    // date → count with streak
+    val dailyHabitsWithAntiStreak: List<Pair<String, Int>> = emptyList(),// date → count with anti-streak
 
     // Highest points
     val highestPointsDay: Pair<String?, Int> = Pair(null, 0),
@@ -1002,6 +1194,57 @@ private fun computeAppStats(
         HabitStat(habitName, total, longest, curStreak, antiStreak, maxDay, maxDayDate)
     }
 
+    // ── Streak aggregate stats for Overview ─────────────────────────────
+    val totalStreakDays = habitStats.sumOf { it.currentStreak }
+    val totalAntiStreakDays = habitStats.sumOf { it.antiStreak }
+    val habitsWithStreakCount = habitStats.count { it.currentStreak > 0 }
+    val habitsWithAntiStreakCount = habitStats.count { it.antiStreak > 0 }
+    val habitsWithStreakList = habitStats.filter { it.currentStreak > 0 }
+        .sortedByDescending { it.currentStreak }
+        .map { Pair(it.name, "${it.currentStreak} days") }
+    val habitsWithAntiStreakList = habitStats.filter { it.antiStreak > 0 }
+        .sortedByDescending { it.antiStreak }
+        .map { Pair(it.name, "${it.antiStreak} days") }
+
+    // ── Historical daily streak/anti-streak stats for graphing ──────────
+    // Efficient O(habits × dates) approach: for each habit, walk forward through
+    // the global sorted dates maintaining a running streak/anti-streak counter.
+    // Then aggregate per date across all habits.
+    val perDateStreakSum = IntArray(sortedDatesList.size)
+    val perDateAntiStreakSum = IntArray(sortedDatesList.size)
+    val perDateStreakCount = IntArray(sortedDatesList.size)
+    val perDateAntiStreakCount = IntArray(sortedDatesList.size)
+
+    for ((habitName, entries) in db) {
+        val divider = dividers[habitName] ?: 1
+        var streak = 0
+        var antiStrk = 0
+        for ((idx, dateStr) in sortedDatesList.withIndex()) {
+            val raw = entries[dateStr] ?: 0
+            val pts = applyDivider(raw, divider)
+            if (pts > 0) {
+                streak++
+                antiStrk = 0
+            } else {
+                antiStrk++
+                streak = 0
+            }
+            if (streak > 0) {
+                perDateStreakSum[idx] += streak
+                perDateStreakCount[idx]++
+            }
+            if (antiStrk > 0) {
+                perDateAntiStreakSum[idx] += antiStrk
+                perDateAntiStreakCount[idx]++
+            }
+        }
+    }
+
+    val dailyStreakTotals = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateStreakSum[idx]) }
+    val dailyAntiStreakTotals = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateAntiStreakSum[idx]) }
+    val dailyStreakCounts = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateStreakCount[idx]) }
+    val dailyAntiStreakCounts = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateAntiStreakCount[idx]) }
+
     val topByTotal = habitStats.sortedByDescending { it.totalPoints }.take(10)
         .map { Pair(it.name, it.totalPoints) }
     val topByLongestStreak = habitStats.sortedByDescending { it.longestStreak }.take(10)
@@ -1097,6 +1340,16 @@ private fun computeAppStats(
         firstDayWithData = firstDayWithData,
         lastDayWithData = lastDayWithData,
         totalPointsAllTime = totalPointsAllTime,
+        totalStreakDays = totalStreakDays,
+        totalAntiStreakDays = totalAntiStreakDays,
+        habitsWithStreak = habitsWithStreakCount,
+        habitsWithAntiStreak = habitsWithAntiStreakCount,
+        habitsWithStreakList = habitsWithStreakList,
+        habitsWithAntiStreakList = habitsWithAntiStreakList,
+        dailyTotalStreakDays = dailyStreakTotals,
+        dailyTotalAntiStreakDays = dailyAntiStreakTotals,
+        dailyHabitsWithStreak = dailyStreakCounts,
+        dailyHabitsWithAntiStreak = dailyAntiStreakCounts,
         highestPointsDay = highestPointsDay,
         highestPointsWeek = Pair(bestWeekEndDate, bestWeekAvg),
         highestPointsMonth = Pair(bestMonthEndDate, bestMonthAvg),
