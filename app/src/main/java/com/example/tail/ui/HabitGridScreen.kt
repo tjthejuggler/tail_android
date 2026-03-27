@@ -385,13 +385,19 @@ fun HabitGridScreen(
                 }
 
                 // Graph panel — shown below grid when in graph mode (portrait)
+                // Capped at half the screen height so the habit grid is never covered
                 if (graphMode) {
-                    GraphsPanel(
-                        viewModel = viewModel,
-                        isLandscape = false,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    )
+                    val maxGraphHeight = (configuration.screenHeightDp / 2).dp
+                    Box(modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = maxGraphHeight)
+                    ) {
+                        GraphsPanel(
+                            viewModel = viewModel,
+                            isLandscape = false,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
 
                 // Info panel — shown below grid when in info mode
