@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.tail.data.AppSettings
 import com.example.tail.data.DatedEntryRepository
+import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.HabitsDatabase
@@ -46,6 +47,7 @@ class HabitViewModel(
     private val settingsRepo: SettingsRepository,
     private val textInputRepo: TextInputRepository,
     private val datedEntryRepo: DatedEntryRepository,
+    private val subtypeDataRepo: SubtypeDataRepository,
     private val context: Context
 ) : ViewModel() {
 
@@ -571,6 +573,75 @@ class HabitViewModel(
     /** Returns the current set of linked habit names for a conditional habit. */
     fun getConditionalLinks(habitName: String): Set<String> =
         _settings.value.conditionalLinkedHabits[habitName] ?: emptySet()
+
+    // ── Subtyped habit methods ──────────────────────────────────────────────
+
+    /** Toggles the "subtyped" type on/off for [habitName]. */
+    fun toggleSubtyped(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.subtypedHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveSubtypedHabits(current)
+            _settings.value = _settings.value.copy(subtypedHabits = current)
+        }
+    }
+
+    /** Sets the ordered list of subtype names for [habitName]. */
+    fun setHabitSubtypes(habitName: String, subtypes: List<String>) {
+        viewModelScope.launch {
+            val current = _settings.value.habitSubtypes.toMutableMap()
+            if (subtypes.isEmpty()) current.remove(habitName) else current[habitName] = subtypes
+            settingsRepo.saveHabitSubtypes(current)
+            _settings.value = _settings.value.copy(habitSubtypes = current)
+        }
+    }
+
+    /** Sets the SAF URI for the subtype data file for [habitName]. */
+    fun setSubtypeDataFileUri(habitName: String, uri: Uri) {
+        viewModelScope.launch {
+            val uriString = uri.toString()
+            val current = _settings.value.subtypeDataFileUris.toMutableMap()
+            current[habitName] = uriString
+            settingsRepo.saveSubtypeDataFileUris(current)
+            _settings.value = _settings.value.copy(subtypeDataFileUris = current)
+        }
+    }
+
+    /**
+     * Loads today's subtype breakdown for [habitName], then calls [onLoaded] with the result.
+     * Returns empty map if no file is configured or no data exists for today.
+     */
+    fun loadSubtypeBreakdown(habitName: String, onLoaded: (Map<String, Int>) -> Unit) {
+        val uriString = _settings.value.subtypeDataFileUris[habitName] ?: run {
+            onLoaded(emptyMap()); return
+        }
+        viewModelScope.launch {
+            val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+            val breakdown = subtypeDataRepo.getBreakdownForDate(
+                Uri.parse(uriString), context, dateStr
+            )
+            onLoaded(breakdown)
+        }
+    }
+
+    /**
+     * Saves a subtype increment: adds [increments] to the subtype data file for today,
+     * and increments the main habit count by the total.
+     */
+    fun saveSubtypeIncrement(habitName: String, increments: Map<String, Int>) {
+        val total = increments.values.sum()
+        if (total <= 0) return
+
+        // Increment the main habit count
+        incrementHabit(habitName, total)
+
+        // Save subtype breakdown
+        val uriString = _settings.value.subtypeDataFileUris[habitName] ?: return
+        viewModelScope.launch {
+            val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+            subtypeDataRepo.addToDate(Uri.parse(uriString), context, dateStr, increments)
+        }
+    }
 
     /** Toggles info mode on/off. Clears selected habit when turning off.
      *  Acts as a radio button with edit mode — turning info on turns edit off. */
@@ -1567,10 +1638,11 @@ class HabitViewModelFactory(
     private val settingsRepo: SettingsRepository,
     private val textInputRepo: TextInputRepository,
     private val datedEntryRepo: DatedEntryRepository,
+    private val subtypeDataRepo: SubtypeDataRepository,
     private val context: Context
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return HabitViewModel(habitsRepo, settingsRepo, textInputRepo, datedEntryRepo, context) as T
+        return HabitViewModel(habitsRepo, settingsRepo, textInputRepo, datedEntryRepo, subtypeDataRepo, context) as T
     }
 }

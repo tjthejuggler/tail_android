@@ -133,6 +133,9 @@ fun HabitGridScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var dialogHabit by remember { mutableStateOf<Habit?>(null) }
+    // Subtype increment dialog state
+    var subtypeDialogHabit by remember { mutableStateOf<Habit?>(null) }
+    var subtypeDialogBreakdown by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var showCalendarPicker by remember { mutableStateOf(false) }
     var showAddScreenDialog by remember { mutableStateOf(false) }
     // Index of screen being renamed (-1 = none)
@@ -164,6 +167,23 @@ fun HabitGridScreen(
             viewModel.setTextInputFileUri(habitName, uri)
         }
         textInputPickerHabit = null
+    }
+
+    // File picker for per-habit subtype data files
+    var subtypeDataPickerHabit by remember { mutableStateOf<String?>(null) }
+    val subtypeDataFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        val habitName = subtypeDataPickerHabit
+        if (uri != null && habitName != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            viewModel.setSubtypeDataFileUri(habitName, uri)
+        }
+        subtypeDataPickerHabit = null
     }
 
     // File picker for per-habit dated-entry source files (read-only is sufficient)
@@ -351,6 +371,12 @@ fun HabitGridScreen(
                                 graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
                                 editMode -> viewModel.selectEditHabit(index)
                                 infoMode -> viewModel.selectInfoHabit(habit)
+                                habit.name in settings.subtypedHabits -> {
+                                    viewModel.loadSubtypeBreakdown(habit.name) { breakdown ->
+                                        subtypeDialogBreakdown = breakdown
+                                        subtypeDialogHabit = habit
+                                    }
+                                }
                                 habit.name in settings.textInputHabits -> {
                                     val showOpts = habit.name in settings.textInputOptionsHabits
                                     if (showOpts) {
@@ -440,6 +466,9 @@ fun HabitGridScreen(
                         habitDividers = settings.habitDividers,
                         conditionalHabits = settings.conditionalHabits,
                         conditionalLinkedHabits = settings.conditionalLinkedHabits,
+                        subtypedHabits = settings.subtypedHabits,
+                        habitSubtypes = settings.habitSubtypes,
+                        subtypeDataFileUris = settings.subtypeDataFileUris,
                         allHabitNames = viewModel.getAllHabitNames(),
                         onStartMove = { viewModel.startMoveMode() },
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
@@ -464,7 +493,13 @@ fun HabitGridScreen(
                         onSetCount = { name, count -> viewModel.setHabitCount(name, count) },
                         onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
                         onToggleConditional = { name -> viewModel.toggleConditional(name) },
-                        onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name }
+                        onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name },
+                        onToggleSubtyped = { name -> viewModel.toggleSubtyped(name) },
+                        onSetSubtypes = { name, types -> viewModel.setHabitSubtypes(name, types) },
+                        onPickSubtypeDataFile = { name ->
+                            subtypeDataPickerHabit = name
+                            subtypeDataFilePicker.launch(arrayOf("application/json", "*/*"))
+                        }
                     )
                 }
             }
@@ -495,6 +530,24 @@ fun HabitGridScreen(
             },
             onDismiss = { dialogHabit = null }
         )
+    }
+
+    // Subtype increment dialog
+    subtypeDialogHabit?.let { habit ->
+        val subtypes = settings.habitSubtypes[habit.name] ?: emptyList()
+        if (subtypes.isNotEmpty()) {
+            SubtypeIncrementDialog(
+                habitName = habit.name,
+                subtypes = subtypes,
+                currentTotal = habit.rawTodayCount,
+                currentBreakdown = subtypeDialogBreakdown,
+                onConfirm = { increments ->
+                    viewModel.saveSubtypeIncrement(habit.name, increments)
+                    subtypeDialogHabit = null
+                },
+                onDismiss = { subtypeDialogHabit = null }
+            )
+        }
     }
 
     // Text-input dialog
@@ -779,6 +832,9 @@ private fun EditModeControlBar(
     habitDividers: Map<String, Int>,
     conditionalHabits: Set<String>,
     conditionalLinkedHabits: Map<String, Set<String>>,
+    subtypedHabits: Set<String>,
+    habitSubtypes: Map<String, List<String>>,
+    subtypeDataFileUris: Map<String, String>,
     allHabitNames: List<String>,
     onStartMove: () -> Unit,
     onAddHabit: () -> Unit,
@@ -797,7 +853,10 @@ private fun EditModeControlBar(
     onSetCount: (String, Int) -> Unit,
     onSetDivider: (String, Int) -> Unit,
     onToggleConditional: (String) -> Unit,
-    onSetConditionalLinks: (String) -> Unit
+    onSetConditionalLinks: (String) -> Unit,
+    onToggleSubtyped: (String) -> Unit,
+    onSetSubtypes: (String, List<String>) -> Unit,
+    onPickSubtypeDataFile: (String) -> Unit
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -1413,6 +1472,99 @@ private fun EditModeControlBar(
                                     if (linkedCount > 0) "Edit Links" else "Set Links",
                                     fontSize = 11.sp,
                                     color = Color(0xFFFF88CC)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // ── Subtyped toggle ────────────────────────────────────
+                    val isSubtyped = selectedHabitName in subtypedHabits
+                    val currentSubtypes = habitSubtypes[selectedHabitName] ?: emptyList()
+                    var subtypesText by remember(selectedHabitName) {
+                        mutableStateOf(currentSubtypes.joinToString(", "))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "Subtyped", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isSubtyped) "${currentSubtypes.size} subtypes configured" else "No subtypes",
+                                color = Color(0xFF888888), fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isSubtyped,
+                            onCheckedChange = { onToggleSubtyped(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF44DDAA),
+                                checkedTrackColor = Color(0xFF0A3A2A),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    if (isSubtyped) {
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Subtypes editor
+                        OutlinedTextField(
+                            value = subtypesText,
+                            onValueChange = { newText ->
+                                subtypesText = newText
+                                val types = newText.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                onSetSubtypes(selectedHabitName, types)
+                            },
+                            label = { Text("Subtypes (comma-separated)", fontSize = 10.sp) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color(0xFF44DDAA),
+                                unfocusedTextColor = Color(0xFF44DDAA),
+                                focusedBorderColor = Color(0xFF44DDAA),
+                                unfocusedBorderColor = Color(0xFF226655)
+                            ),
+                            textStyle = TextStyle(fontSize = 12.sp)
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Subtype data file picker
+                        val hasSubtypeFile = subtypeDataFileUris.containsKey(selectedHabitName)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "  Data file", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                                Text(
+                                    text = if (hasSubtypeFile) "✓ File selected" else "⚠ No file selected",
+                                    color = if (hasSubtypeFile) Color(0xFF44DDAA) else Color(0xFFFF8844),
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Button(
+                                onClick = { onPickSubtypeDataFile(selectedHabitName) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A3A2A)),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Folder,
+                                    contentDescription = "Pick subtype data file",
+                                    tint = Color(0xFF44DDAA),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    if (hasSubtypeFile) "Change" else "Select",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF44DDAA)
                                 )
                             }
                         }

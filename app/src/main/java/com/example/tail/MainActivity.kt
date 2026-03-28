@@ -14,6 +14,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.parseDate
 import com.example.tail.ui.AppStatsScreen
@@ -37,7 +38,8 @@ class MainActivity : ComponentActivity() {
                     habitsRepo = HabitsRepository(),
                     settingsRepo = SettingsRepository(applicationContext),
                     textInputRepo = TextInputRepository(),
-                    datedEntryRepo = DatedEntryRepository()
+                    datedEntryRepo = DatedEntryRepository(),
+                    subtypeDataRepo = SubtypeDataRepository()
                 )
             }
         }
@@ -49,7 +51,8 @@ private fun TailApp(
     habitsRepo: HabitsRepository,
     settingsRepo: SettingsRepository,
     textInputRepo: TextInputRepository,
-    datedEntryRepo: DatedEntryRepository
+    datedEntryRepo: DatedEntryRepository,
+    subtypeDataRepo: SubtypeDataRepository
 ) {
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -59,6 +62,7 @@ private fun TailApp(
             settingsRepo = settingsRepo,
             textInputRepo = textInputRepo,
             datedEntryRepo = datedEntryRepo,
+            subtypeDataRepo = subtypeDataRepo,
             context = context
         )
     )

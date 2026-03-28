@@ -39,6 +39,10 @@ private val KEY_HABIT_DIVIDERS = stringPreferencesKey("habit_dividers")
 private val KEY_CONDITIONAL_HABITS = stringSetPreferencesKey("conditional_habits")
 // Stored as "habitName\x00link1,link2,link3|||habitName\x00link1" pairs
 private val KEY_CONDITIONAL_LINKED_HABITS = stringPreferencesKey("conditional_linked_habits")
+// Subtyped habit type keys
+private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
+private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
+private val KEY_SUBTYPE_DATA_FILE_URIS = stringPreferencesKey("subtype_data_file_uris")
 
 // Serialisation helpers for HabitScreen list.
 // Format: each screen is "id\tname\thabit1|habit2|habit3", screens separated by "\n"
@@ -114,6 +118,30 @@ private fun decodeIntMap(raw: String): Map<String, Int> {
     }.toMap()
 }
 
+// Serialisation helpers for Map<String, List<String>> (habit name → ordered list of subtype names).
+// Format: "habitName\x00type1,type2,type3|||habitName\x00type1,type2"
+// Commas inside subtype names are escaped as \, to avoid ambiguity.
+private fun encodeSubtypesMap(map: Map<String, List<String>>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) ->
+        val types = v.joinToString(LINK_SEP) { it.replace(",", "\\,") }
+        "$k$KV_SEP$types"
+    }
+
+private fun decodeSubtypesMap(raw: String): Map<String, List<String>> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null
+        else {
+            val key = pair.substring(0, idx)
+            val typesStr = pair.substring(idx + 1)
+            val types = if (typesStr.isEmpty()) emptyList()
+            else typesStr.split(Regex("(?<!\\\\),")).map { it.replace("\\,", ",") }
+            key to types
+        }
+    }.toMap()
+}
+
 // Serialisation helpers for Map<String, Set<String>> (habit name → set of linked habit names).
 // Format: "habitName\x00link1,link2,link3|||habitName\x00link1"
 // Commas inside habit names are escaped as \, to avoid ambiguity.
@@ -162,6 +190,8 @@ class SettingsRepository(private val context: Context) {
         val datedEntryFileSizesRaw = prefs[KEY_DATED_ENTRY_FILE_SIZES] ?: ""
         val habitDividersRaw = prefs[KEY_HABIT_DIVIDERS] ?: ""
         val conditionalLinkedHabitsRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
+        val habitSubtypesRaw = prefs[KEY_HABIT_SUBTYPES] ?: ""
+        val subtypeDataFileUrisRaw = prefs[KEY_SUBTYPE_DATA_FILE_URIS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -180,7 +210,10 @@ class SettingsRepository(private val context: Context) {
             datedEntryFileSizes = decodeLongMap(datedEntryFileSizesRaw),
             habitDividers = decodeIntMap(habitDividersRaw),
             conditionalHabits = prefs[KEY_CONDITIONAL_HABITS] ?: emptySet(),
-            conditionalLinkedHabits = decodeLinkedHabitsMap(conditionalLinkedHabitsRaw)
+            conditionalLinkedHabits = decodeLinkedHabitsMap(conditionalLinkedHabitsRaw),
+            subtypedHabits = prefs[KEY_SUBTYPED_HABITS] ?: emptySet(),
+            habitSubtypes = decodeSubtypesMap(habitSubtypesRaw),
+            subtypeDataFileUris = decodeFileUriMap(subtypeDataFileUrisRaw)
         )
     }
 
@@ -312,5 +345,20 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[KEY_CONDITIONAL_LINKED_HABITS] = encodeLinkedHabitsMap(links)
         }
+    }
+
+    /** Saves the set of habits that have the "subtyped" type enabled. */
+    suspend fun saveSubtypedHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_SUBTYPED_HABITS] = habits }
+    }
+
+    /** Saves the map of habit name → ordered list of subtype names. */
+    suspend fun saveHabitSubtypes(subtypes: Map<String, List<String>>) {
+        context.dataStore.edit { prefs -> prefs[KEY_HABIT_SUBTYPES] = encodeSubtypesMap(subtypes) }
+    }
+
+    /** Saves the map of habit name → SAF URI for the subtype data file. */
+    suspend fun saveSubtypeDataFileUris(uris: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_SUBTYPE_DATA_FILE_URIS] = encodeFileUriMap(uris) }
     }
 }

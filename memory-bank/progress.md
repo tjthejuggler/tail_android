@@ -1,6 +1,6 @@
 # Progress — Tail
 
-**Last updated:** 2026-03-28T15:47Z
+**Last updated:** 2026-03-28T22:18Z
 
 ## What Works
 
@@ -30,6 +30,9 @@
 - ✅ Dated entry parsing (dream journal format)
 - ✅ Text input per-habit log files
 - ✅ Calendar picker dialog
+- ✅ Subtyped habit type (per-subtype increment dialog, separate data file)
+- ✅ Pullups habit seeded with historical data from Pullups.md
+- ✅ Pullups subtypes: chinups, wide, pullups, dip, neutral
 
 ## What's Left / Known Issues
 
@@ -59,3 +62,4 @@
 | 2026-03-24 | Conditional habit type added |
 | 2026-03-26 | Integration guide updated |
 | 2026-03-28 | Memory bank initialized |
+| 2026-03-28 | Subtyped habit type added; Pullups habit seeded with subtype data |

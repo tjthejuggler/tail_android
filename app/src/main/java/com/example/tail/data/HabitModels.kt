@@ -184,7 +184,22 @@ data class AppSettings(
      * Maps a conditional habit name → the set of other habit names that should be
      * auto-incremented whenever the conditional habit is tapped.
      */
-    val conditionalLinkedHabits: Map<String, Set<String>> = emptyMap()
+    val conditionalLinkedHabits: Map<String, Set<String>> = emptyMap(),
+
+    /** Habits that have the "subtyped" feature enabled. */
+    val subtypedHabits: Set<String> = emptySet(),
+
+    /**
+     * Maps habit name → ordered list of subtype names.
+     * The first subtype is the "default" subtype.
+     */
+    val habitSubtypes: Map<String, List<String>> = emptyMap(),
+
+    /**
+     * Maps habit name → SAF URI string for the per-habit subtype data JSON file.
+     * Format of that file: { "2026-01-15": { "chinups": 5, "wide": 3 }, ... }
+     */
+    val subtypeDataFileUris: Map<String, String> = emptyMap()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(
