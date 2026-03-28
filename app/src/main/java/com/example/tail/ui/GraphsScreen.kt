@@ -248,160 +248,160 @@ fun GraphsPanel(
                 )
             }
 
-            // ── Selected point info tooltip (with X to close) ─────────────
-            selectedDataPoint?.let { point ->
-                val hasContent = textEntriesForPoint.isNotEmpty() || datedEntriesForPoint.isNotEmpty()
-                Column(
+            // ── Scrollable area below the chart (tooltip / stats / legend) ─
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // ── Selected point info tooltip (with X to close) ─────────
+                selectedDataPoint?.let { point ->
+                    val hasContent = textEntriesForPoint.isNotEmpty() || datedEntriesForPoint.isNotEmpty()
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(Color(0xFF1A2E1A), RoundedCornerShape(8.dp))
-                        .then(
-                            // Make scrollable when there's a lot of content
-                            if (hasContent) Modifier.heightIn(max = if (isLandscape) 160.dp else 200.dp)
-                            else Modifier
-                        )
-                ) {
-                    // Header row: date + value + X button
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = point.date.format(FULL_DATE_FMT),
-                            color = Color(0xFFCCEECC),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = "${point.habitName}: ${point.value}",
-                            color = point.color,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp)
-                        )
-                        // X button to dismiss tooltip
-                        IconButton(
-                            onClick = { selectedDataPoint = null },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Close,
-                                contentDescription = "Close",
-                                tint = Color(0xFF889988),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-
-                    // Scrollable content area (only shown when there's extra content)
-                    if (hasContent || point.rawValue != point.value) {
-                        Column(
+                        // Header row: date + value + X button
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .then(if (hasContent) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                                .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (point.rawValue != point.value) {
-                                Text(
-                                    text = "Raw: ${point.rawValue}",
-                                    color = Color(0xFF889988),
-                                    fontSize = 10.sp
+                            Text(
+                                text = point.date.format(FULL_DATE_FMT),
+                                color = Color(0xFFCCEECC),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "${point.habitName}: ${point.value}",
+                                color = point.color,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+                            // X button to dismiss tooltip
+                            IconButton(
+                                onClick = { selectedDataPoint = null },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Close",
+                                    tint = Color(0xFF889988),
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
-                            // Show text entries for text-input habits
-                            if (textEntriesForPoint.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Text entries:",
-                                    color = Color(0xFF88CC88),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                textEntriesForPoint.forEach { entry ->
+                        }
+
+                        // Extra content (raw value / text entries / dated entries)
+                        if (hasContent || point.rawValue != point.value) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                            ) {
+                                if (point.rawValue != point.value) {
                                     Text(
-                                        text = "• $entry",
-                                        color = Color(0xFFCCEECC),
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                        text = "Raw: ${point.rawValue}",
+                                        color = Color(0xFF889988),
+                                        fontSize = 10.sp
                                     )
                                 }
-                            }
-                            // Show dated-entry chunks for dated-entry habits
-                            if (datedEntriesForPoint.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Entries (${datedEntriesForPoint.size}):",
-                                    color = Color(0xFFFFCC44),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                datedEntriesForPoint.forEachIndexed { idx, chunk ->
-                                    if (idx > 0) {
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        HorizontalDivider(
-                                            color = Color(0xFF2A2A1A),
-                                            thickness = 0.5.dp,
-                                            modifier = Modifier.padding(start = 4.dp)
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                    }
+                                if (textEntriesForPoint.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = chunk,
-                                        color = Color(0xFFEEDDAA),
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                        text = "Text entries:",
+                                        color = Color(0xFF88CC88),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
                                     )
+                                    textEntriesForPoint.forEach { entry ->
+                                        Text(
+                                            text = "• $entry",
+                                            color = Color(0xFFCCEECC),
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                        )
+                                    }
+                                }
+                                if (datedEntriesForPoint.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Entries (${datedEntriesForPoint.size}):",
+                                        color = Color(0xFFFFCC44),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    datedEntriesForPoint.forEachIndexed { idx, chunk ->
+                                        if (idx > 0) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            HorizontalDivider(
+                                                color = Color(0xFF2A2A1A),
+                                                thickness = 0.5.dp,
+                                                modifier = Modifier.padding(start = 4.dp)
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                        }
+                                        Text(
+                                            text = chunk,
+                                            color = Color(0xFFEEDDAA),
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // ── Stats summary — portrait only ─────────────────────────────
-            if (!isLandscape && selectedDataPoint == null) {
-                StatsSummary(
-                    seriesData = allSeriesData,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
+                // ── Stats summary — portrait only ─────────────────────────
+                if (!isLandscape && selectedDataPoint == null) {
+                    StatsSummary(
+                        seriesData = allSeriesData,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
 
-            // ── Legend ────────────────────────────────────────────────────
-            if (graphSelectedHabits.size > 1) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    allSeriesData.forEach { series ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(if (isLandscape) 6.dp else 8.dp)
-                                    .background(series.color, CircleShape)
-                            )
-                            Text(
-                                text = series.habitName,
-                                color = series.color,
-                                fontSize = if (isLandscape) 9.sp else 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                // ── Legend ────────────────────────────────────────────────
+                if (graphSelectedHabits.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        allSeriesData.forEach { series ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (isLandscape) 6.dp else 8.dp)
+                                        .background(series.color, CircleShape)
+                                )
+                                Text(
+                                    text = series.habitName,
+                                    color = series.color,
+                                    fontSize = if (isLandscape) 9.sp else 10.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
