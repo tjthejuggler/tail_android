@@ -1,6 +1,6 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-03-24T16:57Z
+**Last updated:** 2026-03-29T03:02Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
@@ -13,7 +13,7 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 - **Real habit icons** — 269 PNG icons from the original `py_habits_widget` project imported as Android drawables, tinted white; mapped via `HABIT_ICON` table; custom overrides supported per habit
 - **Corner stats** — top-left: all-time high day, bottom-left: streak/antistreak, bottom-right: longest streak
 - **Custom input mode** — long-press any habit to toggle; shows numeric dialog instead of simple +1
-- **Default custom input habits:** Launch Pushups Widget, Launch Situps Widget, Launch Squats Widget, Cold Shower Widget, Sweat
+- **Default custom input habits:** Pushups, Situps, Squats, Cold Shower Widget, Sweat
 - **SAF file access** — pick `habitsdb_phone.txt` from any location; persistent URI permission stored
 - **Historical DB support** — optionally pick `habitsdb_without_phone_totals.txt` to merge full history; phone DB takes precedence on date conflicts; stats (streaks, ATH) reflect all-time data
 - **Settings screen** — change files, toggle custom input per habit, reset to defaults
@@ -25,6 +25,7 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 - **Add habit to JSON files** — when adding a new habit via the placeholder cell, it is automatically written to all currently configured JSON files (`habitsdb_phone.txt`, `habitsdb.txt`, `habitsdb_without_phone_totals.txt`)
 - **Icon picker** — in edit mode, select a habit → tap 🎨 Icon → scrollable 6-column grid of all 269 available icons; tap to assign, "No icon" to clear override
 - **Conditional habit type** *(added 2026-03-24T16:57Z)* — in edit mode, select a habit → toggle **Conditional** on → tap **Set Links** to open a multi-select popup of all other habits; any habits chosen are auto-incremented by +1 whenever the conditional habit is tapped; the linked set is shown inline in the edit bar and persisted to DataStore
+- **DataStore habit-name migration** *(added 2026-03-29T03:02Z)* — one-time migration renames legacy "Launch Pushups/Situps/Squats Widget" to "Pushups"/"Situps"/"Squats" across all persisted DataStore keys (custom input set, habit order, screens, icon maps, dividers, etc.); runs automatically on first launch after update; guarded by a boolean flag so it only executes once
 
 ---
 
@@ -156,9 +157,9 @@ Compatible with `habitsdb_phone.txt` used by the desktop PyQt widget:
 
 | Habit | Adjustment |
 |-------|-----------|
-| Launch Pushups Widget | count ÷ 30 (rounded) |
-| Launch Situps Widget  | count ÷ 50 (rounded) |
-| Launch Squats Widget  | count ÷ 30 (rounded) |
+| Pushups               | count ÷ 30 (rounded) |
+| Situps                | count ÷ 50 (rounded) |
+| Squats                | count ÷ 30 (rounded) |
 | Sweat                 | count ÷ 15 (rounded) |
 | Cold Shower Widget    | if 0 < count < 3 → set to 3; then ÷ 3 (rounded) |
 

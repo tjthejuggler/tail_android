@@ -5,7 +5,7 @@ Seed Pullups habit data into habitsdb.txt and fix inflated Pushups values.
 This script:
 1. Parses Pullups.md to get per-day pullup totals and subtype breakdowns
 2. Creates a "Pullups" habit entry in habitsdb.txt
-3. Subtracts (pullup_total × 4) from "Launch Pushups Widget" for each date
+3. Subtracts (pullup_total × 4) from "Pushups" for each date
 4. Writes subtype breakdown to pullups_subtypes.json
 5. Cross-checks with Pushups.md for verification
 """
@@ -34,7 +34,7 @@ SUBTYPE_MAP = {
     "n": "neutral",
 }
 
-PUSHUPS_HABIT_KEY = "Launch Pushups Widget"
+PUSHUPS_HABIT_KEY = "Pushups"
 PULLUPS_HABIT_KEY = "Pullups"
 
 

@@ -1,8 +1,10 @@
 package com.example.tail.data
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -46,6 +48,73 @@ private val KEY_SUBTYPE_DATA_FILE_URIS = stringPreferencesKey("subtype_data_file
 // Timed habit type keys
 private val KEY_TIMED_HABITS = stringSetPreferencesKey("timed_habits")
 private val KEY_TIMED_DATA_FILE_URIS = stringPreferencesKey("timed_data_file_uris")
+
+// Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
+private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
+
+/**
+ * One-time rename mapping for legacy "Launch … Widget" habit names.
+ * Applied to all DataStore keys that store habit names (sets, lists, map keys, screen lists).
+ */
+private val HABIT_RENAME_MAP: Map<String, String> = mapOf(
+    "Launch Pushups Widget" to "Pushups",
+    "Launch Situps Widget"  to "Situps",
+    "Launch Squats Widget"  to "Squats"
+)
+
+/** Replace any old habit name with its new name using [HABIT_RENAME_MAP]. */
+private fun migrateNameStr(name: String): String = HABIT_RENAME_MAP[name] ?: name
+
+/** Migrate a raw `|||`-separated string (used for habit order). */
+private fun migrateDelimitedStr(raw: String, sep: String = "|||"): String {
+    if (raw.isBlank()) return raw
+    return raw.split(sep).joinToString(sep) { migrateNameStr(it) }
+}
+
+/** Migrate a raw encoded screens string (id\tname\thabit1|habit2\n…). */
+private fun migrateScreensStr(raw: String): String {
+    if (raw.isBlank()) return raw
+    return raw.split("\n").joinToString("\n") { line ->
+        val parts = line.split("\t", limit = 3)
+        if (parts.size < 3) line
+        else {
+            val habits = parts[2].split(Regex("(?<!\\\\)\\|"))
+                .joinToString("|") { migrateNameStr(it) }
+            "${parts[0]}\t${parts[1]}\t$habits"
+        }
+    }
+}
+
+/**
+ * Migrate a raw KV_SEP/PAIR_SEP-encoded map string — renames keys (habit names)
+ * while preserving values. Works for file-URI maps, int maps, long maps, etc.
+ */
+private fun migrateKvMapStr(raw: String): String {
+    if (raw.isBlank()) return raw
+    return raw.split(PAIR_SEP).joinToString(PAIR_SEP) { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) pair
+        else migrateNameStr(pair.substring(0, idx)) + KV_SEP + pair.substring(idx + 1)
+    }
+}
+
+/**
+ * Migrate a raw linked-habits map string — renames both keys AND values (linked habit names).
+ */
+private fun migrateLinkedHabitsStr(raw: String): String {
+    if (raw.isBlank()) return raw
+    return raw.split(PAIR_SEP).joinToString(PAIR_SEP) { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) pair
+        else {
+            val key = migrateNameStr(pair.substring(0, idx))
+            val links = pair.substring(idx + 1)
+                .split(Regex("(?<!\\\\),"))
+                .joinToString(",") { migrateNameStr(it) }
+            "$key$KV_SEP$links"
+        }
+    }
+}
 
 // Serialisation helpers for HabitScreen list.
 // Format: each screen is "id\tname\thabit1|habit2|habit3", screens separated by "\n"
@@ -176,6 +245,75 @@ private fun decodeLinkedHabitsMap(raw: String): Map<String, Set<String>> {
  * using DataStore.
  */
 class SettingsRepository(private val context: Context) {
+
+    /**
+     * One-time migration: renames legacy "Launch … Widget" habit names to their
+     * short forms ("Pushups", "Situps", "Squats") across every DataStore key that
+     * stores habit names. Safe to call multiple times — it checks a boolean flag
+     * and no-ops if the migration was already applied.
+     */
+    suspend fun migrateHabitNames() {
+        context.dataStore.edit { prefs ->
+            if (prefs[KEY_MIGRATION_LAUNCH_RENAME_DONE] == true) return@edit
+
+            Log.i("SettingsRepo", "Running one-time habit rename migration…")
+
+            // --- StringSet keys: replace old names in the set ---
+            fun migrateStringSet(key: Preferences.Key<Set<String>>) {
+                val current = prefs[key] ?: return
+                val migrated = current.map { migrateNameStr(it) }.toSet()
+                if (migrated != current) prefs[key] = migrated
+            }
+            migrateStringSet(KEY_CUSTOM_INPUT)
+            migrateStringSet(KEY_MAX_ONE_HABITS)
+            migrateStringSet(KEY_TEXT_INPUT_HABITS)
+            migrateStringSet(KEY_TEXT_INPUT_OPTIONS_HABITS)
+            migrateStringSet(KEY_DATED_ENTRY_HABITS)
+            migrateStringSet(KEY_CONDITIONAL_HABITS)
+            migrateStringSet(KEY_SUBTYPED_HABITS)
+            migrateStringSet(KEY_TIMED_HABITS)
+
+            // --- Delimited-string keys (habit order) ---
+            val orderRaw = prefs[KEY_HABIT_ORDER] ?: ""
+            if (orderRaw.isNotEmpty()) {
+                val migrated = migrateDelimitedStr(orderRaw)
+                if (migrated != orderRaw) prefs[KEY_HABIT_ORDER] = migrated
+            }
+
+            // --- Screens (encoded string with habit names inside) ---
+            val screensRaw = prefs[KEY_HABIT_SCREENS] ?: ""
+            if (screensRaw.isNotEmpty()) {
+                val migrated = migrateScreensStr(screensRaw)
+                if (migrated != screensRaw) prefs[KEY_HABIT_SCREENS] = migrated
+            }
+
+            // --- KV-map keys (habit name → value): rename keys only ---
+            fun migrateKvKey(key: Preferences.Key<String>) {
+                val raw = prefs[key] ?: return
+                if (raw.isBlank()) return
+                val migrated = migrateKvMapStr(raw)
+                if (migrated != raw) prefs[key] = migrated
+            }
+            migrateKvKey(KEY_TEXT_INPUT_FILE_URIS)
+            migrateKvKey(KEY_HABIT_ICONS)
+            migrateKvKey(KEY_DATED_ENTRY_FILE_URIS)
+            migrateKvKey(KEY_DATED_ENTRY_FILE_SIZES)
+            migrateKvKey(KEY_HABIT_DIVIDERS)
+            migrateKvKey(KEY_HABIT_SUBTYPES)
+            migrateKvKey(KEY_SUBTYPE_DATA_FILE_URIS)
+            migrateKvKey(KEY_TIMED_DATA_FILE_URIS)
+
+            // --- Linked-habits map: rename both keys and values ---
+            val linkedRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
+            if (linkedRaw.isNotBlank()) {
+                val migrated = migrateLinkedHabitsStr(linkedRaw)
+                if (migrated != linkedRaw) prefs[KEY_CONDITIONAL_LINKED_HABITS] = migrated
+            }
+
+            prefs[KEY_MIGRATION_LAUNCH_RENAME_DONE] = true
+            Log.i("SettingsRepo", "Habit rename migration complete.")
+        }
+    }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         val orderStr = prefs[KEY_HABIT_ORDER] ?: ""

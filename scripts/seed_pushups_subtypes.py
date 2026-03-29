@@ -21,7 +21,7 @@ PUSHUPS_MD = Path("/home/twain/noteVault/Pushups.md")
 HABITSDB = Path("/home/twain/habitsdb/habitsdb.txt")
 OUTPUT = Path("/home/twain/habitsdb/pushups_subtypes.json")
 
-PUSHUPS_HABIT_KEY = "Launch Pushups Widget"
+PUSHUPS_HABIT_KEY = "Pushups"
 
 # Letter → subtype name
 SUBTYPE_MAP = {
@@ -60,7 +60,7 @@ def parse_pushups_md(path: Path) -> dict[str, dict[str, int]]:
 
 
 def load_habitsdb_pushups(path: Path) -> dict[str, int]:
-    """Load habitsdb.txt and return {date: count} for Launch Pushups Widget."""
+    """Load habitsdb.txt and return {date: count} for Pushups."""
     with open(path, "r") as f:
         data = json.load(f)
 

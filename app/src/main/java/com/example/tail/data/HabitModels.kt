@@ -214,9 +214,9 @@ data class AppSettings(
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(
-    "Launch Pushups Widget",
-    "Launch Situps Widget",
-    "Launch Squats Widget",
+    "Pushups",
+    "Situps",
+    "Squats",
     "Cold Shower Widget",
     "Sweat"
 )
@@ -251,7 +251,7 @@ val HABIT_ORDER: List<String> = listOf(
     "Apnea walked", "Apnea practiced", "Apnea apb", "Apnea spb",
     "Lung stretch", "Sweat", "Fasted", "Todos done",
     // Row 7
-    "Cold Shower Widget", "Launch Squats Widget", "Launch Situps Widget", "Launch Pushups Widget",
+    "Cold Shower Widget", "Squats", "Situps", "Pushups",
     "Cardio sessions", "Good posture", "HIT", "Fresh air",
     // Row 8
     "Programming sessions", "Juggling tech sessions", "Writing sessions", "UC post",

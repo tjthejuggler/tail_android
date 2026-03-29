@@ -52,7 +52,7 @@ This document outlines the architecture for an Android habit tracking applicatio
 14. Drm Review
 15. Early phone
 16. Apnea practiced
-17. Launch Squats Widget
+17. Squats
 18. Juggling tech sessions
 19. Podcast finished
 20. Fiction Video Intake
@@ -62,7 +62,7 @@ This document outlines the architecture for an Android habit tracking applicatio
 24. Lucidity trained
 25. Anki created
 26. Apnea apb
-27. Launch Situps Widget
+27. Situps
 28. Writing sessions
 29. Educational video watched
 30. Chess
@@ -72,7 +72,7 @@ This document outlines the architecture for an Android habit tracking applicatio
 34. Unusual experience
 35. Anki mydis done
 36. Apnea spb
-37. Launch Pushups Widget
+37. Pushups
 38. UC post
 39. Article read
 40. Rabbit Hole
@@ -494,9 +494,9 @@ fun getCurrentAntistreak(entries: Map<String, Int>): Int {
 |-----|-------|-------|-------|-------|-------|-------|-------|-------|
 | 1   | Juggle lights | Unique juggle | Juggling record broke | Dream acted | Sleep watch | Apnea walked | Cold Shower Widget | Programming sessions |
 | 2   | Book read | Fiction Book Intake | Joggle | Create juggle | Fun juggle | Drm Review | Early phone | Apnea practiced |
-| 3   | Launch Squats Widget | Juggling tech sessions | Podcast finished | Fiction Video Intake | Blind juggle | Song juggle | Janki used | Lucidity trained |
-| 4   | Anki created | Apnea apb | Launch Situps Widget | Writing sessions | Educational video watched | Chess | Juggling Balls Carry | Move juggle |
-| 5   | Filmed juggle | Unusual experience | Anki mydis done | Apnea spb | Launch Pushups Widget | UC post | Article read | Rabbit Hole |
+| 3   | Squats | Juggling tech sessions | Podcast finished | Fiction Video Intake | Blind juggle | Song juggle | Janki used | Lucidity trained |
+| 4   | Anki created | Apnea apb | Situps | Writing sessions | Educational video watched | Chess | Juggling Balls Carry | Move juggle |
+| 5   | Filmed juggle | Unusual experience | Anki mydis done | Apnea spb | Pushups | UC post | Article read | Rabbit Hole |
 | 6   | Juggling Others Learn | Juggle run | Watch juggle | Meditations | Some anki | Lung stretch | Cardio sessions | AI tool |
 | 7   | Read academic | Speak AI | Most Collisions | Free | Inspired juggle | Kind stranger | Health learned | Sweat |
 | 8   | Good posture | Drew | Language studied | Communication Improved | No Coffee | Magic practiced | Juggle goal | Broke record |
@@ -697,9 +697,9 @@ Legend:
 │  ☑ Cold Shower Widget               [Custom ▼]     │
 │  ☐ Dream acted                      [Simple ▼]     │
 │  ...                                                │
-│  ☑ Launch Pushups Widget            [Custom ▼]     │
-│  ☑ Launch Situps Widget             [Custom ▼]     │
-│  ☑ Launch Squats Widget             [Custom ▼]     │
+│  ☑ Pushups                          [Custom ▼]     │
+│  ☑ Situps                           [Custom ▼]     │
+│  ☑ Squats                           [Custom ▼]     │
 │  ...                                                │
 │  ☑ Sweat                            [Custom ▼]     │
 │  ...                                                │
@@ -712,7 +712,7 @@ Legend:
 **Custom Increment Dialog:**
 ```
 ┌─────────────────────────────────────┐
-│  Launch Pushups Widget              │
+│  Pushups                            │
 ├─────────────────────────────────────┤
 │                                     │
 │  Current today: 45                  │
@@ -977,7 +977,7 @@ Before implementation, please confirm:
 
 1. **File Location:** Should the app support selecting the file from any location (cloud storage, local, etc.) or only local storage?
 
-2. **Widget Habits:** For "Launch Pushups Widget", "Launch Situps Widget", "Launch Squats Widget" - should these show an input dialog on Android, or just increment by 1?
+2. **Widget Habits:** For "Pushups", "Situps", "Squats" - should these show an input dialog on Android, or just increment by 1?
 
 3. **Special Habits:** "Broke record" and "Apnea spb" have complex dialogs in desktop version. Should we implement these in Phase 1 or defer to Phase 2?
 

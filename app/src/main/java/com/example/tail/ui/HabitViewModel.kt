@@ -130,6 +130,10 @@ class HabitViewModel(
 
     init {
         viewModelScope.launch {
+            // One-time migration: rename legacy "Launch … Widget" habit names
+            // in persisted DataStore settings before collecting the flow.
+            settingsRepo.migrateHabitNames()
+
             settingsRepo.settingsFlow.collect { s ->
                 _settings.value = s
                 if (!isSavingOrder) {
