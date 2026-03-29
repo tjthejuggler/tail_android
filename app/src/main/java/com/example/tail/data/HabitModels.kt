@@ -199,7 +199,18 @@ data class AppSettings(
      * Maps habit name → SAF URI string for the per-habit subtype data JSON file.
      * Format of that file: { "2026-01-15": { "chinups": 5, "wide": 3 }, ... }
      */
-    val subtypeDataFileUris: Map<String, String> = emptyMap()
+    val subtypeDataFileUris: Map<String, String> = emptyMap(),
+
+    /** Habits that have the "timed" feature enabled.
+     *  When a timed habit is incremented, a timestamped session entry is also
+     *  appended to its timed data JSON file so individual sessions can be tracked. */
+    val timedHabits: Set<String> = emptySet(),
+
+    /**
+     * Maps habit name → SAF URI string for the per-habit timed data JSON file.
+     * Format: { "2026-01-18 11:45:06": { "subtype": "chinups", "count": 5 }, ... }
+     */
+    val timedDataFileUris: Map<String, String> = emptyMap()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

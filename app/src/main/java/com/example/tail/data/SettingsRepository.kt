@@ -43,6 +43,9 @@ private val KEY_CONDITIONAL_LINKED_HABITS = stringPreferencesKey("conditional_li
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
 private val KEY_SUBTYPE_DATA_FILE_URIS = stringPreferencesKey("subtype_data_file_uris")
+// Timed habit type keys
+private val KEY_TIMED_HABITS = stringSetPreferencesKey("timed_habits")
+private val KEY_TIMED_DATA_FILE_URIS = stringPreferencesKey("timed_data_file_uris")
 
 // Serialisation helpers for HabitScreen list.
 // Format: each screen is "id\tname\thabit1|habit2|habit3", screens separated by "\n"
@@ -192,6 +195,7 @@ class SettingsRepository(private val context: Context) {
         val conditionalLinkedHabitsRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
         val habitSubtypesRaw = prefs[KEY_HABIT_SUBTYPES] ?: ""
         val subtypeDataFileUrisRaw = prefs[KEY_SUBTYPE_DATA_FILE_URIS] ?: ""
+        val timedDataFileUrisRaw = prefs[KEY_TIMED_DATA_FILE_URIS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -213,7 +217,9 @@ class SettingsRepository(private val context: Context) {
             conditionalLinkedHabits = decodeLinkedHabitsMap(conditionalLinkedHabitsRaw),
             subtypedHabits = prefs[KEY_SUBTYPED_HABITS] ?: emptySet(),
             habitSubtypes = decodeSubtypesMap(habitSubtypesRaw),
-            subtypeDataFileUris = decodeFileUriMap(subtypeDataFileUrisRaw)
+            subtypeDataFileUris = decodeFileUriMap(subtypeDataFileUrisRaw),
+            timedHabits = prefs[KEY_TIMED_HABITS] ?: emptySet(),
+            timedDataFileUris = decodeFileUriMap(timedDataFileUrisRaw)
         )
     }
 
@@ -360,5 +366,15 @@ class SettingsRepository(private val context: Context) {
     /** Saves the map of habit name → SAF URI for the subtype data file. */
     suspend fun saveSubtypeDataFileUris(uris: Map<String, String>) {
         context.dataStore.edit { prefs -> prefs[KEY_SUBTYPE_DATA_FILE_URIS] = encodeFileUriMap(uris) }
+    }
+
+    /** Saves the set of habits that have the "timed" type enabled. */
+    suspend fun saveTimedHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_TIMED_HABITS] = habits }
+    }
+
+    /** Saves the map of habit name → SAF URI for the timed data file. */
+    suspend fun saveTimedDataFileUris(uris: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_TIMED_DATA_FILE_URIS] = encodeFileUriMap(uris) }
     }
 }

@@ -16,6 +16,7 @@ import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.TextInputRepository
+import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.parseDate
 import com.example.tail.ui.AppStatsScreen
 import com.example.tail.ui.HabitGridScreen
@@ -39,7 +40,8 @@ class MainActivity : ComponentActivity() {
                     settingsRepo = SettingsRepository(applicationContext),
                     textInputRepo = TextInputRepository(),
                     datedEntryRepo = DatedEntryRepository(),
-                    subtypeDataRepo = SubtypeDataRepository()
+                    subtypeDataRepo = SubtypeDataRepository(),
+                    timedDataRepo = TimedDataRepository()
                 )
             }
         }
@@ -52,7 +54,8 @@ private fun TailApp(
     settingsRepo: SettingsRepository,
     textInputRepo: TextInputRepository,
     datedEntryRepo: DatedEntryRepository,
-    subtypeDataRepo: SubtypeDataRepository
+    subtypeDataRepo: SubtypeDataRepository,
+    timedDataRepo: TimedDataRepository
 ) {
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -63,6 +66,7 @@ private fun TailApp(
             textInputRepo = textInputRepo,
             datedEntryRepo = datedEntryRepo,
             subtypeDataRepo = subtypeDataRepo,
+            timedDataRepo = timedDataRepo,
             context = context
         )
     )

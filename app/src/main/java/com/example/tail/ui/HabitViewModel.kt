@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.tail.data.AppSettings
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.SubtypeDataRepository
+import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.HabitsDatabase
@@ -48,6 +49,7 @@ class HabitViewModel(
     private val textInputRepo: TextInputRepository,
     private val datedEntryRepo: DatedEntryRepository,
     private val subtypeDataRepo: SubtypeDataRepository,
+    private val timedDataRepo: TimedDataRepository,
     private val context: Context
 ) : ViewModel() {
 
@@ -443,6 +445,21 @@ class HabitViewModel(
             // Update Tasker relay file after every count change
             writeTaskerFile(_settings.value.taskerFileUri)
         }
+
+        // Step 4: if this is a timed habit (and NOT subtyped — subtyped timed habits
+        // record their timed entries in saveSubtypeIncrement instead), append a
+        // timestamped session entry with subtype=null.
+        if (habitName in _settings.value.timedHabits && habitName !in _settings.value.subtypedHabits) {
+            val timedUri = _settings.value.timedDataFileUris[habitName]
+            if (timedUri != null) {
+                viewModelScope.launch {
+                    timedDataRepo.appendEntries(
+                        Uri.parse(timedUri), context,
+                        mapOf(null to amount)
+                    )
+                }
+            }
+        }
     }
 
     /**
@@ -640,6 +657,41 @@ class HabitViewModel(
         viewModelScope.launch {
             val dateStr = com.example.tail.data.dateString(_selectedDate.value)
             subtypeDataRepo.addToDate(Uri.parse(uriString), context, dateStr, increments)
+        }
+
+        // If this is a timed habit, also record timestamped session entries
+        if (habitName in _settings.value.timedHabits) {
+            val timedUri = _settings.value.timedDataFileUris[habitName] ?: return
+            viewModelScope.launch {
+                // Each subtype increment becomes a separate timed entry
+                timedDataRepo.appendEntries(
+                    Uri.parse(timedUri), context,
+                    increments.mapKeys { (k, _) -> k }
+                )
+            }
+        }
+    }
+
+    // ── Timed habit settings ──────────────────────────────────────────────
+
+    /** Toggles the "timed" feature on/off for [habitName]. */
+    fun toggleTimed(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.timedHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveTimedHabits(current)
+            _settings.value = _settings.value.copy(timedHabits = current)
+        }
+    }
+
+    /** Sets the SAF URI for a timed habit's data file. */
+    fun setTimedDataFileUri(habitName: String, uri: Uri) {
+        viewModelScope.launch {
+            val uriString = uri.toString()
+            val current = _settings.value.timedDataFileUris.toMutableMap()
+            current[habitName] = uriString
+            settingsRepo.saveTimedDataFileUris(current)
+            _settings.value = _settings.value.copy(timedDataFileUris = current)
         }
     }
 
@@ -1639,10 +1691,11 @@ class HabitViewModelFactory(
     private val textInputRepo: TextInputRepository,
     private val datedEntryRepo: DatedEntryRepository,
     private val subtypeDataRepo: SubtypeDataRepository,
+    private val timedDataRepo: TimedDataRepository,
     private val context: Context
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return HabitViewModel(habitsRepo, settingsRepo, textInputRepo, datedEntryRepo, subtypeDataRepo, context) as T
+        return HabitViewModel(habitsRepo, settingsRepo, textInputRepo, datedEntryRepo, subtypeDataRepo, timedDataRepo, context) as T
     }
 }
