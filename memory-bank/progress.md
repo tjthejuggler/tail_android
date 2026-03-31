@@ -1,6 +1,6 @@
 # Progress — Tail
 
-**Last updated:** 2026-03-28T22:18Z
+**Last updated:** 2026-03-31T18:57Z
 
 ## What Works
 
@@ -63,3 +63,4 @@
 | 2026-03-26 | Integration guide updated |
 | 2026-03-28 | Memory bank initialized |
 | 2026-03-28 | Subtyped habit type added; Pullups habit seeded with subtype data |
+| 2026-03-31 | Fixed anti-streak mismatch between App Stats count and streak graph "Current" value |

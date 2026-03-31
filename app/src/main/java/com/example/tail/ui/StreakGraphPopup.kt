@@ -81,6 +81,7 @@ fun StreakGraphPopup(
     title: String,
     data: List<Pair<String, Int>>,
     lineColor: Color,
+    currentValue: Int? = null,
     onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -185,10 +186,10 @@ fun StreakGraphPopup(
 
                 // Current value display
                 Spacer(modifier = Modifier.weight(1f))
-                if (filteredData.isNotEmpty()) {
-                    val currentValue = filteredData.last().second
+                val displayValue = currentValue ?: filteredData.lastOrNull()?.second
+                if (displayValue != null) {
                     Text(
-                        text = "Current: $currentValue",
+                        text = "Current: $displayValue",
                         color = lineColor,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold

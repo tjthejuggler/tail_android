@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.applyDivider
+import com.example.tail.data.expandEntriesToCalendarDaysPublic
 import com.example.tail.data.parseDate
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -95,6 +96,7 @@ fun AppStatsScreen(
     var graphPopupTitle by remember { mutableStateOf("") }
     var graphPopupData by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
     var graphPopupColor by remember { mutableStateOf(GreenValue) }
+    var graphPopupCurrentValue by remember { mutableStateOf<Int?>(null) }
     var showGraphPopup by remember { mutableStateOf(false) }
 
     fun openPopup(title: String, items: List<Pair<String, String>>) {
@@ -103,10 +105,11 @@ fun AppStatsScreen(
         showPopup = true
     }
 
-    fun openGraphPopup(title: String, data: List<Pair<String, Int>>, color: Color) {
+    fun openGraphPopup(title: String, data: List<Pair<String, Int>>, color: Color, currentValue: Int? = null) {
         graphPopupTitle = title
         graphPopupData = data
         graphPopupColor = color
+        graphPopupCurrentValue = currentValue
         showGraphPopup = true
     }
 
@@ -173,7 +176,8 @@ fun AppStatsScreen(
                             openGraphPopup(
                                 "Total Streak Days Over Time",
                                 stats.dailyTotalStreakDays,
-                                GreenValue
+                                GreenValue,
+                                stats.totalStreakDays
                             )
                         }
                     )
@@ -185,7 +189,8 @@ fun AppStatsScreen(
                             openGraphPopup(
                                 "Total Anti-Streak Days Over Time",
                                 stats.dailyTotalAntiStreakDays,
-                                RedValue
+                                RedValue,
+                                stats.totalAntiStreakDays
                             )
                         }
                     )
@@ -197,7 +202,8 @@ fun AppStatsScreen(
                             openGraphPopup(
                                 "Habits With Streak Over Time",
                                 stats.dailyHabitsWithStreak,
-                                GreenValue
+                                GreenValue,
+                                stats.habitsWithStreak
                             )
                         },
                         onClickList = {
@@ -215,7 +221,8 @@ fun AppStatsScreen(
                             openGraphPopup(
                                 "Habits With Anti-Streak Over Time",
                                 stats.dailyHabitsWithAntiStreak,
-                                RedValue
+                                RedValue,
+                                stats.habitsWithAntiStreak
                             )
                         },
                         onClickList = {
@@ -519,6 +526,7 @@ fun AppStatsScreen(
             title = graphPopupTitle,
             data = graphPopupData,
             lineColor = graphPopupColor,
+            currentValue = graphPopupCurrentValue,
             onDismiss = { showGraphPopup = false }
         )
     }
@@ -1012,6 +1020,8 @@ private fun computeAppStats(
     // ── Collect all unique dates across all habits ─────────────────────────
     val allDates = mutableSetOf<String>()
     db.values.forEach { entries -> allDates.addAll(entries.keys) }
+    // Always include today so current streak/anti-streak values are accurate
+    allDates.add(todayStr)
     val sortedDates = allDates.sorted()
     if (sortedDates.isEmpty()) return AppStats()
 
@@ -1181,13 +1191,22 @@ private fun computeAppStats(
         }
         longest = maxOf(longest, run)
 
-        val reversed = sortedEntries.reversed()
+        // Expand entries to include all calendar days up to today so that
+        // missing days count as zeros (matching desktop/calculateStreakDisplay behavior)
+        val entriesWithToday = if (entries.isNotEmpty()) {
+            val mutable = entries.toMutableMap()
+            if (!mutable.containsKey(todayStr)) mutable[todayStr] = 0
+            mutable
+        } else entries
+        val expanded = expandEntriesToCalendarDaysPublic(entriesWithToday)
+        val reversedExpanded = expanded.entries.sortedBy { it.key }.reversed()
+
         var curStreak = 0
-        for ((_, rawVal) in reversed) {
+        for ((_, rawVal) in reversedExpanded) {
             if (applyDivider(rawVal, divider) > 0) curStreak++ else break
         }
         var antiStreak = 0
-        for ((_, rawVal) in reversed) {
+        for ((_, rawVal) in reversedExpanded) {
             if (applyDivider(rawVal, divider) == 0) antiStreak++ else break
         }
 
@@ -1207,35 +1226,65 @@ private fun computeAppStats(
         .map { Pair(it.name, "${it.antiStreak} days") }
 
     // ── Historical daily streak/anti-streak stats for graphing ──────────
-    // Efficient O(habits × dates) approach: for each habit, walk forward through
-    // the global sorted dates maintaining a running streak/anti-streak counter.
-    // Then aggregate per date across all habits.
+    // For each habit on each date:
+    //   anti-streak = calendar days since the habit was last done (0 if done that day)
+    //   streak = consecutive days done ending on that date (0 if not done that day)
+    // A habit only contributes after its first entry date.
     val perDateStreakSum = IntArray(sortedDatesList.size)
     val perDateAntiStreakSum = IntArray(sortedDatesList.size)
     val perDateStreakCount = IntArray(sortedDatesList.size)
     val perDateAntiStreakCount = IntArray(sortedDatesList.size)
 
+    // Pre-parse dates for day calculations
+    val parsedDates = sortedDatesList.map { parseDate(it) }
+
     for ((habitName, entries) in db) {
         val divider = dividers[habitName] ?: 1
+        val habitFirstDate = entries.keys.minOrNull()
+        // Track the last date this habit had a non-zero value
+        var lastDoneDate: LocalDate? = null
         var streak = 0
-        var antiStrk = 0
+        var habitStarted = false
         for ((idx, dateStr) in sortedDatesList.withIndex()) {
+            // Skip dates before this habit's first entry
+            if (!habitStarted) {
+                if (habitFirstDate != null && dateStr >= habitFirstDate) {
+                    habitStarted = true
+                } else {
+                    continue
+                }
+            }
+
+            val currDate = parsedDates[idx] ?: continue
             val raw = entries[dateStr] ?: 0
             val pts = applyDivider(raw, divider)
+
             if (pts > 0) {
-                streak++
-                antiStrk = 0
-            } else {
-                antiStrk++
-                streak = 0
-            }
-            if (streak > 0) {
+                // Calculate streak: consecutive days done ending today
+                if (lastDoneDate != null && ChronoUnit.DAYS.between(lastDoneDate, currDate) == 1L) {
+                    streak++
+                } else {
+                    streak = 1
+                }
+                lastDoneDate = currDate
                 perDateStreakSum[idx] += streak
                 perDateStreakCount[idx]++
-            }
-            if (antiStrk > 0) {
-                perDateAntiStreakSum[idx] += antiStrk
-                perDateAntiStreakCount[idx]++
+                // Anti-streak is 0 when done today — don't add anything
+            } else {
+                streak = 0
+                // Anti-streak = days since last done
+                val antiStrk = if (lastDoneDate != null) {
+                    ChronoUnit.DAYS.between(lastDoneDate, currDate).toInt()
+                } else {
+                    // Never done — count from habit's first entry date
+                    val firstDate = parseDate(habitFirstDate ?: dateStr)
+                    if (firstDate != null) ChronoUnit.DAYS.between(firstDate, currDate).toInt()
+                    else 0
+                }
+                if (antiStrk > 0) {
+                    perDateAntiStreakSum[idx] += antiStrk
+                    perDateAntiStreakCount[idx]++
+                }
             }
         }
     }
