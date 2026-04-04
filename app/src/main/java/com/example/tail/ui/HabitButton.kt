@@ -59,7 +59,9 @@ fun HabitButton(
     isMovePendingTarget: Boolean = false,
     customIconOverrides: Map<String, String> = emptyMap(),
     graphMode: Boolean = false,
-    isGraphSelected: Boolean = false
+    isGraphSelected: Boolean = false,
+    /** True when this habit is disabled (red ✕ overlay in top-left corner). */
+    isDisabled: Boolean = false
 ) {
     val bgColor = getHabitColor(habit.name, habit.todayCount)
     val iconRes = getHabitIconRes(habit.name, customIconOverrides)
@@ -106,6 +108,20 @@ fun HabitButton(
                 .align(Alignment.TopStart)
                 .padding(start = 1.dp, top = 0.dp)
         )
+
+        // Disabled overlay: red ✕ in top-right corner
+        if (isDisabled) {
+            Text(
+                text = "✕",
+                color = Color(0xFFFF2222),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.ExtraBold,
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 0.dp, top = 0.dp)
+            )
+        }
 
         // Top-right: move-pending indicator OR graph mode indicator OR edit mode handle OR info mode indicator OR custom input badge
         if (isGraphSelected) {

@@ -1,14 +1,17 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-04T00:01Z
+**Last updated:** 2026-04-04T13:08Z
 
 ## Current State
 
-The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional.
+The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional. Three new features were just added: hidden screens, screen reordering, and disabled habits.
 
-## Recent Changes (as of 2026-04-04)
+## Recent Changes (as of 2026-04-04 13:08)
 
-- **IPC Tasker file fix** (2026-04-04) — `HabitIncrementReceiver` now writes `total_habits.txt` immediately after incrementing a habit via IPC broadcast. Previously the Tasker stats file was only updated when a habit was incremented from inside the Tail app (via `HabitViewModel`). Added `writeTaskerFile()` helper directly in the receiver that reads the fresh DB from disk and writes `today=`, `avg7=`, `avg30=` stats.
+- **Hidden screens** (2026-04-04) — Screens can be toggled "hidden" via edit mode (no habit selected). A hidden screen's name is invisible in the tab bar when not active; when selected it shows normally. Persisted as `hiddenScreens: Set<String>` (screen IDs) in DataStore.
+- **Screen reorder** (2026-04-04) — In edit mode, ◀/▶ buttons appear around the active screen tab to move it left/right. Uses `reorderScreen(fromIndex, toIndex)` in ViewModel.
+- **Disabled habits** (2026-04-04) — Habits can be toggled "disabled" via edit mode (habit selected, in SETTINGS section). Disabled habits show a red ✕ overlay in the top-left corner of their grid cell. Their streak/anti-streak values are excluded from aggregate stats in AppStatsScreen. Anti-streak continues to grow even while disabled. A "Disabled habits" counter appears in the Overview section of App Stats when > 0.
+- **IPC Tasker file fix** (2026-04-04) — `HabitIncrementReceiver` now writes `total_habits.txt` immediately after incrementing a habit via IPC broadcast.
 
 ## Recent Changes (as of 2026-03-28)
 

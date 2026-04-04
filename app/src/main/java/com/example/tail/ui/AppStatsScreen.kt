@@ -83,9 +83,11 @@ fun AppStatsScreen(
     val settings by viewModel.settings.collectAsState()
     val dividers = settings.habitDividers
 
+    val disabledHabits = settings.disabledHabits
+
     // Compute all stats from the cached database
     val db = viewModel.getCachedDatabase()
-    val stats = remember(db, dividers) { computeAppStats(db, dividers) }
+    val stats = remember(db, dividers, disabledHabits) { computeAppStats(db, dividers, disabledHabits) }
 
     // State for the habit-list popup
     var popupTitle by remember { mutableStateOf("") }
@@ -160,6 +162,13 @@ fun AppStatsScreen(
                             )
                         }
                     )
+                    if (stats.disabledHabitsCount > 0) {
+                        StatRow(
+                            label = "Disabled habits",
+                            value = stats.disabledHabitsCount.toString(),
+                            valueColor = Color(0xFFFF6666)
+                        )
+                    }
                     StatRow("Total days with data (>0 pts)", stats.totalDaysWithData.toString())
                     StatRow("Days since first entry", stats.daysSinceFirstEntry.toString())
                     StatDateRow("First day with data", stats.firstDayWithData, onNavigateToDate)
@@ -1003,14 +1012,18 @@ private data class AppStats(
     val dayWithMostUniqueHabits: Pair<String?, Int> = Pair(null, 0),
 
     // Recent
-    val last7DaysBreakdown: List<Pair<String, Int>> = emptyList()
+    val last7DaysBreakdown: List<Pair<String, Int>> = emptyList(),
+
+    // Disabled habits
+    val disabledHabitsCount: Int = 0
 )
 
 // ── Stats computation ─────────────────────────────────────────────────────────
 
 private fun computeAppStats(
     db: HabitsDatabase,
-    dividers: Map<String, Int>
+    dividers: Map<String, Int>,
+    disabledHabits: Set<String> = emptySet()
 ): AppStats {
     if (db.isEmpty()) return AppStats()
 
@@ -1214,16 +1227,19 @@ private fun computeAppStats(
     }
 
     // ── Streak aggregate stats for Overview ─────────────────────────────
-    val totalStreakDays = habitStats.sumOf { it.currentStreak }
-    val totalAntiStreakDays = habitStats.sumOf { it.antiStreak }
-    val habitsWithStreakCount = habitStats.count { it.currentStreak > 0 }
-    val habitsWithAntiStreakCount = habitStats.count { it.antiStreak > 0 }
-    val habitsWithStreakList = habitStats.filter { it.currentStreak > 0 }
+    // Exclude disabled habits from streak/anti-streak aggregates
+    val enabledHabitStats = habitStats.filter { it.name !in disabledHabits }
+    val totalStreakDays = enabledHabitStats.sumOf { it.currentStreak }
+    val totalAntiStreakDays = enabledHabitStats.sumOf { it.antiStreak }
+    val habitsWithStreakCount = enabledHabitStats.count { it.currentStreak > 0 }
+    val habitsWithAntiStreakCount = enabledHabitStats.count { it.antiStreak > 0 }
+    val habitsWithStreakList = enabledHabitStats.filter { it.currentStreak > 0 }
         .sortedByDescending { it.currentStreak }
         .map { Pair(it.name, "${it.currentStreak} days") }
-    val habitsWithAntiStreakList = habitStats.filter { it.antiStreak > 0 }
+    val habitsWithAntiStreakList = enabledHabitStats.filter { it.antiStreak > 0 }
         .sortedByDescending { it.antiStreak }
         .map { Pair(it.name, "${it.antiStreak} days") }
+    val disabledHabitsCount = habitStats.count { it.name in disabledHabits }
 
     // ── Historical daily streak/anti-streak stats for graphing ──────────
     // For each habit on each date:
@@ -1239,6 +1255,8 @@ private fun computeAppStats(
     val parsedDates = sortedDatesList.map { parseDate(it) }
 
     for ((habitName, entries) in db) {
+        // Skip disabled habits in historical streak/anti-streak graphs
+        if (habitName in disabledHabits) continue
         val divider = dividers[habitName] ?: 1
         val habitFirstDate = entries.keys.minOrNull()
         // Track the last date this habit had a non-zero value
@@ -1437,7 +1455,8 @@ private fun computeAppStats(
         habitsNeverDoneList = habitsNeverDoneList,
         avgHabitsDonePerDay = avgHabitsDonePerDay,
         dayWithMostUniqueHabits = Pair(dayMostUnique?.key, dayMostUnique?.value ?: 0),
-        last7DaysBreakdown = last7Days
+        last7DaysBreakdown = last7Days,
+        disabledHabitsCount = disabledHabitsCount
     )
 }
 

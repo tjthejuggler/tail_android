@@ -210,7 +210,23 @@ data class AppSettings(
      * Maps habit name → SAF URI string for the per-habit timed data JSON file.
      * Format: { "2026-01-18 11:45:06": { "subtype": "chinups", "count": 5 }, ... }
      */
-    val timedDataFileUris: Map<String, String> = emptyMap()
+    val timedDataFileUris: Map<String, String> = emptyMap(),
+
+    /**
+     * Set of screen IDs that are "hidden". A hidden screen's name is not shown
+     * in the top tab bar when it is not the active screen. When selected, it
+     * shows its name normally in the active tab bubble.
+     */
+    val hiddenScreens: Set<String> = emptySet(),
+
+    /**
+     * Habits that are "disabled". A disabled habit shows a red ✕ overlay on its
+     * icon square and its current streak / anti-streak do NOT affect aggregate
+     * totals in the stats screen. The anti-streak continues to grow even while
+     * disabled. Disabling only means the habit can't be tapped and doesn't
+     * count toward stats.
+     */
+    val disabledHabits: Set<String> = emptySet()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

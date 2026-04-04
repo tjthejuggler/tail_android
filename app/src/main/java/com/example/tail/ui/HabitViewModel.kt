@@ -963,6 +963,55 @@ class HabitViewModel(
     }
 
     /**
+     * Toggles the "hidden" flag for the screen at [screenIndex].
+     * A hidden screen's name is not shown in the tab bar when it is not active.
+     */
+    fun toggleScreenHidden(screenIndex: Int) {
+        val screens = _habitScreens.value
+        if (screenIndex !in screens.indices) return
+        val screenId = screens[screenIndex].id
+        val current = _settings.value.hiddenScreens.toMutableSet()
+        if (screenId in current) current.remove(screenId) else current.add(screenId)
+        _settings.value = _settings.value.copy(hiddenScreens = current)
+        viewModelScope.launch { settingsRepo.saveHiddenScreens(current) }
+    }
+
+    /**
+     * Moves the screen at [fromIndex] to [toIndex] in the screen list.
+     * Used for reordering screens in the tab bar during edit mode.
+     */
+    fun reorderScreen(fromIndex: Int, toIndex: Int) {
+        val screens = _habitScreens.value.toMutableList()
+        if (fromIndex !in screens.indices || toIndex !in screens.indices) return
+        if (fromIndex == toIndex) return
+        val screen = screens.removeAt(fromIndex)
+        screens.add(toIndex, screen)
+        _habitScreens.value = screens
+        // Keep the active screen pointing at the same screen after reorder
+        val currentActive = _activeScreenIndex.value
+        val newActive = when (currentActive) {
+            fromIndex -> toIndex
+            in (minOf(fromIndex, toIndex)..maxOf(fromIndex, toIndex)) -> {
+                if (fromIndex < toIndex) currentActive - 1 else currentActive + 1
+            }
+            else -> currentActive
+        }
+        _activeScreenIndex.value = newActive
+        persistScreens(screens, newActive)
+    }
+
+    /**
+     * Toggles the "disabled" flag for [habitName].
+     * A disabled habit shows a red ✕ overlay and is excluded from stats aggregates.
+     */
+    fun toggleDisabledHabit(habitName: String) {
+        val current = _settings.value.disabledHabits.toMutableSet()
+        if (habitName in current) current.remove(habitName) else current.add(habitName)
+        _settings.value = _settings.value.copy(disabledHabits = current)
+        viewModelScope.launch { settingsRepo.saveDisabledHabits(current) }
+    }
+
+    /**
      * Moves the currently selected habit to [targetScreenIndex].
      * Removes it from its current screen and appends it to the target screen.
      * Clears the selection after moving.

@@ -320,13 +320,20 @@ fun HabitGridScreen(
                     screens = habitScreens,
                     activeIndex = activeScreenIndex,
                     editMode = editMode,
+                    hiddenScreenIds = settings.hiddenScreens,
                     onTabClick = { idx ->
                         if (editMode && idx == activeScreenIndex) {
                             renamingScreenIndex = idx
                         } else {
                             viewModel.switchScreen(idx)
                         }
-                    }
+                    },
+                    onMoveScreenLeft = if (editMode) { idx ->
+                        viewModel.reorderScreen(idx, idx - 1)
+                    } else null,
+                    onMoveScreenRight = if (editMode) { idx ->
+                        viewModel.reorderScreen(idx, idx + 1)
+                    } else null
                 )
             }
 
@@ -366,6 +373,7 @@ fun HabitGridScreen(
                         selectedEditIndex = selectedEditIndex,
                         movePendingSourceIndex = movePendingSourceIndex,
                         customIconOverrides = settings.habitIcons,
+                        disabledHabits = settings.disabledHabits,
                         onHabitClick = { habit, index ->
                             when {
                                 graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
@@ -499,7 +507,11 @@ fun HabitGridScreen(
                         onPickSubtypeDataFile = { name ->
                             subtypeDataPickerHabit = name
                             subtypeDataFilePicker.launch(arrayOf("application/json", "*/*"))
-                        }
+                        },
+                        hiddenScreenIds = settings.hiddenScreens,
+                        onToggleScreenHidden = { viewModel.toggleScreenHidden(activeScreenIndex) },
+                        disabledHabits = settings.disabledHabits,
+                        onToggleDisabled = { name -> viewModel.toggleDisabledHabit(name) }
                     )
                 }
             }
@@ -647,31 +659,85 @@ private fun ScreenTabRow(
     screens: List<HabitScreen>,
     activeIndex: Int,
     editMode: Boolean,
-    onTabClick: (Int) -> Unit
+    hiddenScreenIds: Set<String>,
+    onTabClick: (Int) -> Unit,
+    onMoveScreenLeft: ((Int) -> Unit)? = null,
+    onMoveScreenRight: ((Int) -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF111111))
             .padding(horizontal = 4.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         screens.forEachIndexed { index, screen ->
             val isActive = index == activeIndex
-            val label = if (editMode && isActive) "✎ ${screen.name}" else screen.name
+            val isHidden = screen.id in hiddenScreenIds
+            // Hidden screens: show a small blank clickable area when not active and not in edit mode
+            if (!isActive && isHidden && !editMode) {
+                TextButton(
+                    onClick = { onTabClick(index) },
+                    colors = ButtonDefaults.textButtonColors(
+                        containerColor = Color.Transparent,
+                        contentColor = Color.Transparent
+                    ),
+                    modifier = Modifier.height(32.dp).width(24.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                ) {
+                    // Blank — no text, just a clickable area
+                }
+                return@forEachIndexed
+            }
+            if (editMode && isActive && onMoveScreenLeft != null && index > 0) {
+                TextButton(
+                    onClick = { onMoveScreenLeft(index) },
+                    colors = ButtonDefaults.textButtonColors(
+                        containerColor = Color(0xFF333300),
+                        contentColor = Color(0xFFFFAA00)
+                    ),
+                    modifier = Modifier.height(28.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                ) {
+                    Text("◀", fontSize = 12.sp)
+                }
+            }
+            val label = when {
+                editMode && isActive -> "✎ ${screen.name}"
+                isHidden && isActive -> screen.name  // show name when active even if hidden
+                else -> screen.name
+            }
             TextButton(
                 onClick = { onTabClick(index) },
                 colors = ButtonDefaults.textButtonColors(
-                    containerColor = if (isActive) Color(0xFF555555) else Color.Transparent,
-                    contentColor = if (isActive) Color.White else Color(0xFF888888)
+                    containerColor = if (isActive) Color(0xFF555555)
+                        else if (editMode && isHidden) Color(0xFF1A1A1A)
+                        else Color.Transparent,
+                    contentColor = if (isActive) Color.White
+                        else if (editMode && isHidden) Color(0xFF555555)
+                        else Color(0xFF888888)
                 ),
                 modifier = Modifier.height(32.dp)
             ) {
                 Text(
-                    text = label,
+                    text = if (editMode && isHidden && !isActive) "👁‍🗨 ${screen.name}" else label,
                     fontSize = 12.sp,
                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
                 )
+            }
+            if (editMode && isActive && onMoveScreenRight != null && index < screens.size - 1) {
+                TextButton(
+                    onClick = { onMoveScreenRight(index) },
+                    colors = ButtonDefaults.textButtonColors(
+                        containerColor = Color(0xFF333300),
+                        contentColor = Color(0xFFFFAA00)
+                    ),
+                    modifier = Modifier.height(28.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                ) {
+                    Text("▶", fontSize = 12.sp)
+                }
             }
         }
     }
@@ -694,6 +760,7 @@ private fun HabitGrid(
     selectedEditIndex: Int,
     movePendingSourceIndex: Int = -1,
     customIconOverrides: Map<String, String> = emptyMap(),
+    disabledHabits: Set<String> = emptySet(),
     onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit,
     onPlaceholderClick: (Int) -> Unit
@@ -732,7 +799,8 @@ private fun HabitGrid(
                     isMovePendingTarget = isMovePending && !isMovePendingSource && editMode,
                     customIconOverrides = customIconOverrides,
                     graphMode = graphMode,
-                    isGraphSelected = isGraphSelected
+                    isGraphSelected = isGraphSelected,
+                    isDisabled = habit.name in disabledHabits
                 )
             } else if (editMode) {
                 // In edit mode, placeholders are selectable cells
@@ -856,7 +924,11 @@ private fun EditModeControlBar(
     onSetConditionalLinks: (String) -> Unit,
     onToggleSubtyped: (String) -> Unit,
     onSetSubtypes: (String, List<String>) -> Unit,
-    onPickSubtypeDataFile: (String) -> Unit
+    onPickSubtypeDataFile: (String) -> Unit,
+    hiddenScreenIds: Set<String> = emptySet(),
+    onToggleScreenHidden: () -> Unit = {},
+    disabledHabits: Set<String> = emptySet(),
+    onToggleDisabled: (String) -> Unit = {}
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -934,6 +1006,36 @@ private fun EditModeControlBar(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Add Screen", fontSize = 11.sp, color = Color(0xFF88FF88))
                         }
+                    }
+                }
+                // Hide Screen toggle — only when screens exist
+                if (habitScreens.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val activeScreen = habitScreens.getOrNull(activeScreenIndex)
+                    val isHidden = activeScreen != null && activeScreen.id in hiddenScreenIds
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "Hide screen", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isHidden) "Name hidden in tab bar when not selected"
+                                       else "Name always visible in tab bar",
+                                color = Color(0xFF888888), fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isHidden,
+                            onCheckedChange = { onToggleScreenHidden() },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFFAA88FF),
+                                checkedTrackColor = Color(0xFF2A1A4A),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
                     }
                 }
             }
@@ -1568,6 +1670,36 @@ private fun EditModeControlBar(
                                 )
                             }
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // ── Disabled toggle ────────────────────────────────────
+                    val isDisabled = selectedHabitName in disabledHabits
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "Disabled", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isDisabled) "Red ✕ shown, excluded from stats"
+                                       else "Habit is active",
+                                color = if (isDisabled) Color(0xFFFF6666) else Color(0xFF888888),
+                                fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isDisabled,
+                            onCheckedChange = { onToggleDisabled(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFFFF4444),
+                                checkedTrackColor = Color(0xFF4A0000),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
                     }
                 }
             }

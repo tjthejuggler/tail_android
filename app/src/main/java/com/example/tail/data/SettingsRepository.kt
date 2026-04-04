@@ -48,6 +48,10 @@ private val KEY_SUBTYPE_DATA_FILE_URIS = stringPreferencesKey("subtype_data_file
 // Timed habit type keys
 private val KEY_TIMED_HABITS = stringSetPreferencesKey("timed_habits")
 private val KEY_TIMED_DATA_FILE_URIS = stringPreferencesKey("timed_data_file_uris")
+// Hidden screens (set of screen IDs)
+private val KEY_HIDDEN_SCREENS = stringSetPreferencesKey("hidden_screens")
+// Disabled habits (set of habit names)
+private val KEY_DISABLED_HABITS = stringSetPreferencesKey("disabled_habits")
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
@@ -357,7 +361,9 @@ class SettingsRepository(private val context: Context) {
             habitSubtypes = decodeSubtypesMap(habitSubtypesRaw),
             subtypeDataFileUris = decodeFileUriMap(subtypeDataFileUrisRaw),
             timedHabits = prefs[KEY_TIMED_HABITS] ?: emptySet(),
-            timedDataFileUris = decodeFileUriMap(timedDataFileUrisRaw)
+            timedDataFileUris = decodeFileUriMap(timedDataFileUrisRaw),
+            hiddenScreens = prefs[KEY_HIDDEN_SCREENS] ?: emptySet(),
+            disabledHabits = prefs[KEY_DISABLED_HABITS] ?: emptySet()
         )
     }
 
@@ -514,5 +520,15 @@ class SettingsRepository(private val context: Context) {
     /** Saves the map of habit name → SAF URI for the timed data file. */
     suspend fun saveTimedDataFileUris(uris: Map<String, String>) {
         context.dataStore.edit { prefs -> prefs[KEY_TIMED_DATA_FILE_URIS] = encodeFileUriMap(uris) }
+    }
+
+    /** Saves the set of screen IDs that are hidden. */
+    suspend fun saveHiddenScreens(screenIds: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_HIDDEN_SCREENS] = screenIds }
+    }
+
+    /** Saves the set of habits that are disabled. */
+    suspend fun saveDisabledHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_DISABLED_HABITS] = habits }
     }
 }

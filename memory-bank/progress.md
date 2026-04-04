@@ -1,5 +1,10 @@
 # Progress — Tail
 
+## 2026-04-04 13:08
+- [x] Hidden screens feature: screens can be toggled "hidden" in edit mode (no habit selected). Hidden screen names are invisible in the tab bar when not active. Persisted as `hiddenScreens: Set<String>` in DataStore.
+- [x] Screen reorder feature: ◀/▶ buttons in edit mode to move screens left/right in the tab bar. Uses `reorderScreen()` in ViewModel.
+- [x] Disabled habits feature: habits can be toggled "disabled" in edit mode (habit selected, SETTINGS section). Disabled habits show red ✕ overlay. Excluded from streak/anti-streak aggregates in stats. Anti-streak continues growing while disabled. "Disabled habits" counter in App Stats Overview.
+
 ## 2026-04-04
 - [x] Fixed: IPC habit increments (via `HabitIncrementReceiver`) now immediately update `total_habits.txt` (Tasker stats file). Root cause: `writeTaskerFile()` only existed in `HabitViewModel` and was never called from the broadcast receiver. Fix: added `writeTaskerFile()` helper directly in `HabitIncrementReceiver` that reads fresh DB from disk after increment and writes the stats file.
 
