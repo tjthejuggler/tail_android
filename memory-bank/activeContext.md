@@ -1,10 +1,14 @@
 # Active Context — Tail
 
-**Last updated:** 2026-03-28T15:47Z
+**Last updated:** 2026-04-04T00:01Z
 
 ## Current State
 
 The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional.
+
+## Recent Changes (as of 2026-04-04)
+
+- **IPC Tasker file fix** (2026-04-04) — `HabitIncrementReceiver` now writes `total_habits.txt` immediately after incrementing a habit via IPC broadcast. Previously the Tasker stats file was only updated when a habit was incremented from inside the Tail app (via `HabitViewModel`). Added `writeTaskerFile()` helper directly in the receiver that reads the fresh DB from disk and writes `today=`, `avg7=`, `avg30=` stats.
 
 ## Recent Changes (as of 2026-03-28)
 

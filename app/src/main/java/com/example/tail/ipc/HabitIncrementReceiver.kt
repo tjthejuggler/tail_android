@@ -7,11 +7,14 @@ import android.net.Uri
 import android.util.Log
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.applyDivider
+import com.example.tail.data.dateString
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 private const val TAG = "HabitIncrementReceiver"
 
@@ -118,11 +121,66 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                         Log.i(TAG, "Incremented linked habit '$linkedName' (conditional on '$habitName')")
                     }
                 }
+
+                // Update the Tasker stats file so external apps see the new total immediately
+                val taskerUri = settings.taskerFileUri
+                if (taskerUri.isNotEmpty()) {
+                    writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to increment habit '$habitId': ${e.message}", e)
             } finally {
                 pendingResult.finish()
             }
+        }
+    }
+
+    /**
+     * Writes today's habit totals to the Tasker relay txt file.
+     * Mirrors the logic in HabitViewModel.writeTaskerFile() so external apps
+     * (e.g. Tasker) see an up-to-date count immediately after an IPC increment.
+     */
+    private suspend fun writeTaskerFile(
+        context: Context,
+        habitsRepo: HabitsRepository,
+        habitsUri: Uri,
+        taskerUriString: String,
+        dividers: Map<String, Int>
+    ) {
+        try {
+            val db = habitsRepo.loadDatabase(habitsUri, context)
+            val today = LocalDate.now()
+            val todayStr = dateString(today)
+
+            val todayCount = db.entries.sumOf { (habitName, entries) ->
+                val raw = entries[todayStr] ?: 0
+                applyDivider(raw, dividers[habitName] ?: 1)
+            }
+
+            fun avgOverDays(days: Int): Double {
+                var total = 0
+                for (i in 0 until days) {
+                    val ds = dateString(today.minusDays(i.toLong()))
+                    total += db.entries.sumOf { (habitName, entries) ->
+                        val raw = entries[ds] ?: 0
+                        applyDivider(raw, dividers[habitName] ?: 1)
+                    }
+                }
+                return total.toDouble() / days
+            }
+
+            val avg7 = avgOverDays(7)
+            val avg30 = avgOverDays(30)
+
+            val content = "today=$todayCount\navg7=${"%.2f".format(avg7)}\navg30=${"%.2f".format(avg30)}\n"
+
+            val taskerUri = Uri.parse(taskerUriString)
+            context.contentResolver.openOutputStream(taskerUri, "wt")?.use { stream ->
+                stream.bufferedWriter().use { it.write(content) }
+            }
+            Log.i(TAG, "Tasker file updated: today=$todayCount")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write Tasker file: ${e.message}")
         }
     }
 

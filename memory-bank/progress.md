@@ -1,5 +1,9 @@
 # Progress — Tail
 
+## 2026-04-04
+- [x] Fixed: IPC habit increments (via `HabitIncrementReceiver`) now immediately update `total_habits.txt` (Tasker stats file). Root cause: `writeTaskerFile()` only existed in `HabitViewModel` and was never called from the broadcast receiver. Fix: added `writeTaskerFile()` helper directly in `HabitIncrementReceiver` that reads fresh DB from disk after increment and writes the stats file.
+
+
 **Last updated:** 2026-03-31T18:57Z
 
 ## What Works
