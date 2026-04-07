@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import com.example.tail.ui.ACTION_HABIT_INCREMENTED
+import com.example.tail.ui.EXTRA_HABIT_NAME
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.applyDivider
@@ -126,6 +128,20 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                 val taskerUri = settings.taskerFileUri
                 if (taskerUri.isNotEmpty()) {
                     writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers)
+                }
+
+                // Broadcast a generic "habit incremented" event for same-keystore listeners
+                try {
+                    val broadcastIntent = Intent(ACTION_HABIT_INCREMENTED).apply {
+                        putExtra(EXTRA_HABIT_NAME, habitName)
+                    }
+                    appContext.sendBroadcast(
+                        broadcastIntent,
+                        "com.example.tail.permission.TAIL_INTEGRATION"
+                    )
+                    Log.d(TAG, "Sent ACTION_HABIT_INCREMENTED broadcast for '$habitName'")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to increment habit '$habitId': ${e.message}", e)

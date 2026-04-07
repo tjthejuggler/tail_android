@@ -1,6 +1,7 @@
 package com.example.tail.ui
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -37,6 +38,14 @@ private const val TAG = "HabitVM"
 
 /** Total cells in the 8×10 habit grid — matches TOTAL_CELLS in HabitGridScreen. */
 private const val TOTAL_GRID_CELLS = 80
+
+// ── IPC broadcast constants ──────────────────────────────────────────────────
+/** Broadcast action sent after every successful habit increment. */
+const val ACTION_HABIT_INCREMENTED = "com.example.tail.ACTION_HABIT_INCREMENTED"
+/** String extra: the name of the habit that was incremented. */
+const val EXTRA_HABIT_NAME = "EXTRA_HABIT_NAME"
+/** Signature permission required to receive the broadcast. */
+private const val PERMISSION_TAIL_INTEGRATION = "com.example.tail.permission.TAIL_INTEGRATION"
 
 /**
  * Main ViewModel: owns habits list + settings state, delegates I/O to repositories.
@@ -307,6 +316,23 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Sends a generic broadcast announcing that a habit was incremented.
+     * Protected by the TAIL_INTEGRATION signature permission so only same-keystore
+     * apps (e.g. VILD) can receive it. The broadcast is fire-and-forget — if no
+     * receiver is registered, it's silently dropped.
+     */
+    private fun sendHabitIncrementedBroadcast(habitName: String) {
+        try {
+            val intent = Intent(ACTION_HABIT_INCREMENTED).apply {
+                putExtra(EXTRA_HABIT_NAME, habitName)
+            }
+            context.sendBroadcast(intent, PERMISSION_TAIL_INTEGRATION)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
+        }
+    }
+
     fun setScreensRelayFileUri(uri: Uri) {
         viewModelScope.launch {
             val uriString = uri.toString()
@@ -464,6 +490,10 @@ class HabitViewModel(
                 }
             }
         }
+
+        // Step 5: broadcast a generic "habit incremented" event so same-keystore apps
+        // (e.g. VILD) can react — e.g. auto-switch from night to day mode on wake-up.
+        sendHabitIncrementedBroadcast(habitName)
     }
 
     /**
