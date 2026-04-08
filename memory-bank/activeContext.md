@@ -6,7 +6,12 @@
 
 The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional. AI icon generation was just added as an opt-in feature.
 
-## Recent Changes (as of 2026-04-08 19:59)
+## Recent Changes (as of 2026-04-08 21:26)
+
+- **AI Icon Auto-Trim** (2026-04-08 21:26) — Added auto-trim to post-processing so generated icons fill the available space:
+  - After converting to white-on-transparent, finds bounding box of non-transparent pixels
+  - Crops to that bounding box with ~4% padding, makes it square to avoid distortion
+  - Then scales to 64x64 — icons now appear much larger and more visible
 
 - **AI Icon Background Fix** (2026-04-08 19:59) — Fixed white background issue on AI-generated icons:
   - Strengthened prompt to heavily emphasize pure black (#000000) background with explicit hex codes

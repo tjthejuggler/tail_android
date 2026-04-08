@@ -1,5 +1,8 @@
 # Progress — Tail
 
+## 2026-04-08 21:26
+- [x] Added auto-trim to AI icon post-processing: finds bounding box of non-transparent pixels, crops with ~4% padding, makes square, then scales to 64x64. Icons now fill the available space instead of being tiny with large margins.
+
 ## 2026-04-08 19:59
 - [x] Fixed AI icon white background issue: strengthened prompt with explicit #000000 background emphasis, added auto-detection in post-processing that samples edge pixels to determine if background is light or dark, inverts logic accordingly so icons always come out white-on-transparent
 

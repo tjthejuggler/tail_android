@@ -274,12 +274,73 @@ class AiIconGeneratorService {
             val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             output.setPixels(result, 0, width, 0, 0, width, height)
 
-            // Scale down to 64x64 for consistency with existing icons
-            val scaled = Bitmap.createScaledBitmap(output, 64, 64, true)
-            if (scaled !== output) output.recycle()
+            // Auto-trim: find bounding box of non-transparent pixels and crop
+            val trimmed = trimTransparent(output)
+            if (trimmed !== output) output.recycle()
+
+            // Scale to 64x64 for consistency with existing icons
+            val scaled = Bitmap.createScaledBitmap(trimmed, 64, 64, true)
+            if (scaled !== trimmed) trimmed.recycle()
             source.recycle()
 
             return scaled
+        }
+
+        /**
+         * Crops a bitmap to the bounding box of its non-transparent pixels,
+         * keeping the content square and adding a small padding margin.
+         * Returns the original bitmap unchanged if it's fully transparent.
+         */
+        private fun trimTransparent(src: Bitmap): Bitmap {
+            val w = src.width
+            val h = src.height
+            val pixels = IntArray(w * h)
+            src.getPixels(pixels, 0, w, 0, 0, w, h)
+
+            var minX = w
+            var minY = h
+            var maxX = 0
+            var maxY = 0
+
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    if (Color.alpha(pixels[y * w + x]) > 10) {
+                        if (x < minX) minX = x
+                        if (x > maxX) maxX = x
+                        if (y < minY) minY = y
+                        if (y > maxY) maxY = y
+                    }
+                }
+            }
+
+            // No visible pixels found — return as-is
+            if (minX > maxX || minY > maxY) return src
+
+            // Add ~4% padding on each side (at least 1px)
+            val padX = ((maxX - minX) * 0.04).toInt().coerceAtLeast(1)
+            val padY = ((maxY - minY) * 0.04).toInt().coerceAtLeast(1)
+            val cropLeft = (minX - padX).coerceAtLeast(0)
+            val cropTop = (minY - padY).coerceAtLeast(0)
+            val cropRight = (maxX + padX).coerceAtMost(w - 1)
+            val cropBottom = (maxY + padY).coerceAtMost(h - 1)
+
+            val cropW = cropRight - cropLeft + 1
+            val cropH = cropBottom - cropTop + 1
+
+            // Make it square (use the larger dimension) so the icon doesn't get distorted
+            val side = maxOf(cropW, cropH)
+            val centerX = cropLeft + cropW / 2
+            val centerY = cropTop + cropH / 2
+            val sqLeft = (centerX - side / 2).coerceAtLeast(0)
+            val sqTop = (centerY - side / 2).coerceAtLeast(0)
+            val sqRight = (sqLeft + side).coerceAtMost(w)
+            val sqBottom = (sqTop + side).coerceAtMost(h)
+
+            val finalW = sqRight - sqLeft
+            val finalH = sqBottom - sqTop
+            if (finalW <= 0 || finalH <= 0) return src
+
+            return Bitmap.createBitmap(src, sqLeft, sqTop, finalW, finalH)
         }
     }
 }
