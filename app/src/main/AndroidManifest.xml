@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Required for AI icon generation API calls -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!--
         Custom signature permission for IPC.
         Only apps signed with the same keystore can use the ContentProvider or

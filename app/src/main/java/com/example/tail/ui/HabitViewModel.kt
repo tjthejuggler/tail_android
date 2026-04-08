@@ -7,6 +7,9 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.tail.data.AiIcon
+import com.example.tail.data.AiIconGeneratorService
+import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.SubtypeDataRepository
@@ -120,6 +123,22 @@ class HabitViewModel(
     private val _activeScreenIndex = MutableStateFlow(0)
     val activeScreenIndex: StateFlow<Int> = _activeScreenIndex.asStateFlow()
 
+    // ── AI Icon Generation ───────────────────────────────────────────────────
+    private val aiIconRepo = AiIconRepository(context)
+    private val aiIconGenService = AiIconGeneratorService()
+
+    /** List of AI-generated icon metadata, refreshed after generate/delete. */
+    private val _aiIcons = MutableStateFlow<List<AiIcon>>(emptyList())
+    val aiIcons: StateFlow<List<AiIcon>> = _aiIcons.asStateFlow()
+
+    /** True while an AI icon generation request is in flight. */
+    private val _aiIconGenerating = MutableStateFlow(false)
+    val aiIconGenerating: StateFlow<Boolean> = _aiIconGenerating.asStateFlow()
+
+    /** Error message from the last AI icon generation attempt (null = no error). */
+    private val _aiIconError = MutableStateFlow<String?>(null)
+    val aiIconError: StateFlow<String?> = _aiIconError.asStateFlow()
+
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
 
@@ -138,6 +157,9 @@ class HabitViewModel(
     fun getCachedDatabase(): HabitsDatabase = cachedPhoneDb
 
     init {
+        // Load AI icons from disk on startup
+        refreshAiIcons()
+
         viewModelScope.launch {
             // One-time migration: rename legacy "Launch … Widget" habit names
             // in persisted DataStore settings before collecting the flow.
@@ -1214,6 +1236,103 @@ class HabitViewModel(
             }
         }
     }
+
+    // ── AI Icon Generation methods ───────────────────────────────────────────
+
+    /** Available models fetched from the API (or fallback). */
+    private val _aiModels = MutableStateFlow<List<com.example.tail.data.AiModelInfo>>(
+        com.example.tail.data.FALLBACK_IMAGE_MODELS
+    )
+    val aiModels: StateFlow<List<com.example.tail.data.AiModelInfo>> = _aiModels.asStateFlow()
+
+    /** Saves AI icon generation settings to DataStore. */
+    fun saveAiIconSettings(
+        enabled: Boolean, apiKey: String, baseUrl: String, endpoint: String,
+        model: String, quality: String = ""
+    ) {
+        viewModelScope.launch {
+            settingsRepo.saveAiIconSettings(enabled, apiKey, baseUrl, endpoint, model, quality)
+            _settings.value = _settings.value.copy(
+                aiIconsEnabled = enabled,
+                aiIconsApiKey = apiKey,
+                aiIconsBaseUrl = baseUrl,
+                aiIconsEndpoint = endpoint,
+                aiIconsModel = model,
+                aiIconsQuality = quality
+            )
+        }
+    }
+
+    /** Fetches available models from the API and updates the models list. */
+    fun fetchAiModels() {
+        val s = _settings.value
+        if (s.aiIconsApiKey.isEmpty() || s.aiIconsBaseUrl.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val models = aiIconGenService.fetchModels(s.aiIconsApiKey, s.aiIconsBaseUrl)
+                if (models.isNotEmpty()) _aiModels.value = models
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch AI models", e)
+                // Keep fallback models
+            }
+        }
+    }
+
+    /** Refreshes the list of stored AI icons from disk. */
+    fun refreshAiIcons() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _aiIcons.value = aiIconRepo.listIcons()
+        }
+    }
+
+    /**
+     * Generates a new AI icon from the given prompt, post-processes it to
+     * white-on-transparent, saves it to the local database, and refreshes the list.
+     */
+    fun generateAiIcon(prompt: String) {
+        val s = _settings.value
+        if (!s.aiIconsEnabled || s.aiIconsApiKey.isEmpty() || s.aiIconsBaseUrl.isEmpty()) {
+            _aiIconError.value = "AI icons not configured. Check Settings."
+            return
+        }
+        _aiIconGenerating.value = true
+        _aiIconError.value = null
+        viewModelScope.launch {
+            try {
+                val bitmap = aiIconGenService.generateIcon(
+                    prompt = prompt,
+                    apiKey = s.aiIconsApiKey,
+                    baseUrl = s.aiIconsBaseUrl,
+                    endpoint = s.aiIconsEndpoint.ifEmpty { "/v1/images/generations" },
+                    model = s.aiIconsModel.ifEmpty { "nano-banana-pro" },
+                    quality = s.aiIconsQuality
+                )
+                withContext(Dispatchers.IO) {
+                    aiIconRepo.saveIcon(bitmap, prompt)
+                }
+                refreshAiIcons()
+            } catch (e: Exception) {
+                Log.e(TAG, "AI icon generation failed", e)
+                _aiIconError.value = e.message ?: "Unknown error"
+            } finally {
+                _aiIconGenerating.value = false
+            }
+        }
+    }
+
+    /** Deletes an AI-generated icon by its id. */
+    fun deleteAiIcon(iconId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            aiIconRepo.deleteIcon(iconId)
+            _aiIcons.value = aiIconRepo.listIcons()
+        }
+    }
+
+    /** Returns the AiIconRepository for loading bitmaps in the UI. */
+    fun getAiIconRepo(): AiIconRepository = aiIconRepo
+
+    /** Clears the AI icon error message. */
+    fun clearAiIconError() { _aiIconError.value = null }
 
     private fun persistScreens(screens: List<HabitScreen>, activeIndex: Int = _activeScreenIndex.value) {
         isSavingOrder = true

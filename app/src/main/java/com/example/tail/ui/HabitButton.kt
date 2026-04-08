@@ -1,5 +1,6 @@
 package com.example.tail.ui
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -12,17 +13,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.data.AiIconRepository
 import com.example.tail.data.Habit
 
 // Shared style that strips the extra font padding Compose adds above/below text glyphs
@@ -61,10 +65,17 @@ fun HabitButton(
     graphMode: Boolean = false,
     isGraphSelected: Boolean = false,
     /** True when this habit is disabled (red ✕ overlay in top-left corner). */
-    isDisabled: Boolean = false
+    isDisabled: Boolean = false,
+    /** Optional AI icon repository for loading file-based AI icons. */
+    aiIconRepo: AiIconRepository? = null
 ) {
     val bgColor = getHabitColor(habit.name, habit.todayCount)
     val iconRes = getHabitIconRes(habit.name, customIconOverrides)
+    // Check if this habit uses an AI-generated icon (id starts with "ai_")
+    val aiIconId = customIconOverrides[habit.name]?.takeIf { it.startsWith("ai_") }
+    val aiIconBitmap: Bitmap? = remember(aiIconId) {
+        if (aiIconId != null && aiIconRepo != null) aiIconRepo.loadBitmap(aiIconId) else null
+    }
     val streakText = if (habit.currentStreak >= 0) "+${habit.currentStreak}" else "${habit.currentStreak}"
 
     val shape = RoundedCornerShape(6.dp)
@@ -192,8 +203,16 @@ fun HabitButton(
             )
         }
 
-        // Center: icon only
-        if (iconRes != null) {
+        // Center: icon — AI icon takes priority over drawable resource
+        if (aiIconBitmap != null) {
+            Image(
+                bitmap = aiIconBitmap.asImageBitmap(),
+                contentDescription = habit.name,
+                modifier = Modifier
+                    .size(20.dp)
+                    .align(Alignment.Center)
+            )
+        } else if (iconRes != null) {
             Image(
                 painter = painterResource(id = iconRes),
                 contentDescription = habit.name,

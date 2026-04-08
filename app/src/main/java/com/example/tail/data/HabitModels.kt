@@ -226,7 +226,21 @@ data class AppSettings(
      * disabled. Disabling only means the habit can't be tapped and doesn't
      * count toward stats.
      */
-    val disabledHabits: Set<String> = emptySet()
+    val disabledHabits: Set<String> = emptySet(),
+
+    // ── AI Icon Generation settings ──────────────────────────────────────
+    /** Whether AI icon generation is enabled (user must opt in via Settings). */
+    val aiIconsEnabled: Boolean = false,
+    /** API key for the image generation service. */
+    val aiIconsApiKey: String = "",
+    /** Base URL for the image generation API (e.g. "https://api.openai.com"). */
+    val aiIconsBaseUrl: String = "",
+    /** Endpoint path appended to the base URL (e.g. "/v1/images/generations"). */
+    val aiIconsEndpoint: String = "",
+    /** Model name to pass to the API (e.g. "dall-e-3"). */
+    val aiIconsModel: String = "",
+    /** Quality tier for the selected model (e.g. "standard", "1k", "medium"). */
+    val aiIconsQuality: String = ""
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

@@ -1,10 +1,21 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-04T13:08Z
+**Last updated:** 2026-04-08T19:25Z
 
 ## Current State
 
-The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional. Three new features were just added: hidden screens, screen reordering, and disabled habits.
+The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional. AI icon generation was just added as an opt-in feature.
+
+## Recent Changes (as of 2026-04-08 18:41)
+
+- **AI Icon Generation** (2026-04-08) — New opt-in feature allowing users to generate habit icons via an OpenAI-compatible image generation API. Includes:
+  - Settings screen section with toggle, API key, base URL, endpoint, and model fields
+  - `AiIconRepository` stores generated icons as white-on-transparent PNGs in internal storage with JSON index
+  - `AiIconGeneratorService` calls the API, post-processes images to white-on-transparent
+  - Icon picker dialog shows AI-generated icons in a separate "🤖 AI Generated Icons" section with inline prompt input
+  - `HabitButton` supports rendering file-based AI icons (icon IDs starting with "ai_")
+  - INTERNET permission added to AndroidManifest.xml
+  - All settings persisted in DataStore (enabled, apiKey, baseUrl, endpoint, model)
 
 ## Recent Changes (as of 2026-04-04 13:08)
 

@@ -80,11 +80,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.tail.data.AiIcon
+import com.example.tail.data.AiIconRepository
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.RollingHigh
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import android.graphics.BitmapFactory
+import androidx.compose.ui.graphics.asImageBitmap
 
 // Sentinel used to track which habit's text-input dialog is open
 private data class TextInputDialogState(
@@ -374,6 +378,7 @@ fun HabitGridScreen(
                         movePendingSourceIndex = movePendingSourceIndex,
                         customIconOverrides = settings.habitIcons,
                         disabledHabits = settings.disabledHabits,
+                        aiIconRepo = if (settings.aiIconsEnabled) viewModel.getAiIconRepo() else null,
                         onHabitClick = { habit, index ->
                             when {
                                 graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
@@ -633,7 +638,8 @@ fun HabitGridScreen(
                 viewModel.setHabitIcon(habitName, iconName)
                 iconPickerHabitName = null
             },
-            onDismiss = { iconPickerHabitName = null }
+            onDismiss = { iconPickerHabitName = null },
+            viewModel = viewModel
         )
     }
 
@@ -761,6 +767,7 @@ private fun HabitGrid(
     movePendingSourceIndex: Int = -1,
     customIconOverrides: Map<String, String> = emptyMap(),
     disabledHabits: Set<String> = emptySet(),
+    aiIconRepo: AiIconRepository? = null,
     onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit,
     onPlaceholderClick: (Int) -> Unit
@@ -800,7 +807,8 @@ private fun HabitGrid(
                     customIconOverrides = customIconOverrides,
                     graphMode = graphMode,
                     isGraphSelected = isGraphSelected,
-                    isDisabled = habit.name in disabledHabits
+                    isDisabled = habit.name in disabledHabits,
+                    aiIconRepo = aiIconRepo
                 )
             } else if (editMode) {
                 // In edit mode, placeholders are selectable cells
@@ -2131,8 +2139,17 @@ private fun IconPickerDialog(
     habitName: String,
     currentIconName: String?,
     onIconSelected: (String?) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    viewModel: HabitViewModel
 ) {
+    val settings by viewModel.settings.collectAsState()
+    val aiIcons by viewModel.aiIcons.collectAsState()
+    val aiIconGenerating by viewModel.aiIconGenerating.collectAsState()
+    val aiIconError by viewModel.aiIconError.collectAsState()
+    var aiPrompt by remember { mutableStateOf("") }
+    // AI icon pending delete confirmation (null = no confirmation pending)
+    var deleteConfirmAiIcon by remember { mutableStateOf<AiIcon?>(null) }
+
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -2178,7 +2195,7 @@ private fun IconPickerDialog(
                 columns = GridCells.Fixed(6),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(400.dp),
+                    .height(if (settings.aiIconsEnabled) 260.dp else 400.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
@@ -2216,6 +2233,149 @@ private fun IconPickerDialog(
                 }
             }
 
+            // ── AI Generated Icons section ───────────────────────────────────
+            if (settings.aiIconsEnabled) {
+                Spacer(modifier = Modifier.height(6.dp))
+                HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "🤖 AI Generated Icons",
+                        color = Color(0xFFAADDFF),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (aiIcons.isNotEmpty()) {
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text(
+                            text = "tap ✕ to delete",
+                            color = Color(0xFF666666),
+                            fontSize = 9.sp
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Show existing AI icons in a grid
+                if (aiIcons.isNotEmpty()) {
+                    val aiIconRepo = viewModel.getAiIconRepo()
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(6),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(80.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(aiIcons) { aiIcon ->
+                            val isSelected = aiIcon.id == currentIconName
+                            val bitmap = remember(aiIcon.id) {
+                                aiIconRepo.loadBitmap(aiIcon.id)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .aspectRatio(1f)
+                                    .background(
+                                        if (isSelected) Color(0xFF003A3A) else Color(0xFF2A2A2A),
+                                        RoundedCornerShape(4.dp)
+                                    )
+                                    .then(
+                                        if (isSelected) Modifier.border(1.dp, Color(0xFFAADDFF), RoundedCornerShape(4.dp))
+                                        else Modifier
+                                    )
+                                    .clickable(
+                                        indication = null,
+                                        interactionSource = remember { MutableInteractionSource() }
+                                    ) { onIconSelected(aiIcon.id) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (bitmap != null) {
+                                    Image(
+                                        bitmap = bitmap.asImageBitmap(),
+                                        contentDescription = aiIcon.prompt,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                } else {
+                                    Text("?", color = Color(0xFF666666), fontSize = 10.sp)
+                                }
+                                // Delete button overlay (top-right corner)
+                                Text(
+                                    text = "✕",
+                                    color = Color(0xFFFF4444),
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .clickable(
+                                            indication = null,
+                                            interactionSource = remember { MutableInteractionSource() }
+                                        ) { deleteConfirmAiIcon = aiIcon }
+                                        .padding(1.dp)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                // Generate new AI icon
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = aiPrompt,
+                        onValueChange = { aiPrompt = it },
+                        placeholder = { Text("Describe icon…", fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        textStyle = TextStyle(fontSize = 11.sp, color = Color.White),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFFAADDFF),
+                            unfocusedBorderColor = Color(0xFF444444),
+                            cursorColor = Color(0xFFAADDFF)
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Button(
+                        onClick = {
+                            if (aiPrompt.isNotBlank()) {
+                                viewModel.generateAiIcon(aiPrompt.trim())
+                            }
+                        },
+                        enabled = !aiIconGenerating && aiPrompt.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF1A4A5A)
+                        )
+                    ) {
+                        if (aiIconGenerating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color(0xFFAADDFF),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Generate", fontSize = 10.sp)
+                        }
+                    }
+                }
+
+                // Error message
+                aiIconError?.let { error ->
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = error,
+                        color = Color(0xFFFF6666),
+                        fontSize = 10.sp,
+                        maxLines = 2
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2223,6 +2383,73 @@ private fun IconPickerDialog(
             ) {
                 TextButton(onClick = onDismiss) {
                     Text("Cancel", color = Color(0xFF888888))
+                }
+            }
+        }
+    }
+
+    // Delete confirmation dialog for AI icons
+    deleteConfirmAiIcon?.let { aiIcon ->
+        val aiIconRepo = viewModel.getAiIconRepo()
+        val bitmap = remember(aiIcon.id) { aiIconRepo.loadBitmap(aiIcon.id) }
+        Dialog(onDismissRequest = { deleteConfirmAiIcon = null }) {
+            Column(
+                modifier = Modifier
+                    .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Delete AI Icon?",
+                    color = Color(0xFFFF6666),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Show the icon preview
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(Color(0xFF2A2A2A), RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = aiIcon.prompt,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Show the prompt
+                Text(
+                    text = "\"${aiIcon.prompt}\"",
+                    color = Color(0xFF888888),
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    TextButton(onClick = { deleteConfirmAiIcon = null }) {
+                        Text("Cancel", color = Color(0xFF888888))
+                    }
+                    Button(
+                        onClick = {
+                            viewModel.deleteAiIcon(aiIcon.id)
+                            deleteConfirmAiIcon = null
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF661111)
+                        )
+                    ) {
+                        Text("Delete", color = Color(0xFFFF6666))
+                    }
                 }
             }
         }

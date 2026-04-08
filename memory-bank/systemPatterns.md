@@ -14,7 +14,9 @@ app/src/main/java/com/example/tail/
 │   ├── HabitsRepository.kt   # JSON read/write via SAF URI (Gson)
 │   ├── SettingsRepository.kt  # DataStore Preferences
 │   ├── TextInputRepository.kt # Per-habit text-log JSON files
-│   └── DatedEntryRepository.kt # Dated entry file parsing (dream journal format)
+│   ├── DatedEntryRepository.kt # Dated entry file parsing (dream journal format)
+│   ├── AiIconRepository.kt   # AI-generated icon storage (PNG files + JSON index)
+│   └── AiIconGeneratorService.kt # AI image API client + post-processing
 ├── ipc/
 │   ├── HabitsContentProvider.kt  # Read-only ContentProvider for same-keystore apps
 │   └── HabitIncrementReceiver.kt # BroadcastReceiver for habit increments

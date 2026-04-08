@@ -52,6 +52,13 @@ private val KEY_TIMED_DATA_FILE_URIS = stringPreferencesKey("timed_data_file_uri
 private val KEY_HIDDEN_SCREENS = stringSetPreferencesKey("hidden_screens")
 // Disabled habits (set of habit names)
 private val KEY_DISABLED_HABITS = stringSetPreferencesKey("disabled_habits")
+// AI icon generation settings
+private val KEY_AI_ICONS_ENABLED = booleanPreferencesKey("ai_icons_enabled")
+private val KEY_AI_ICONS_API_KEY = stringPreferencesKey("ai_icons_api_key")
+private val KEY_AI_ICONS_BASE_URL = stringPreferencesKey("ai_icons_base_url")
+private val KEY_AI_ICONS_ENDPOINT = stringPreferencesKey("ai_icons_endpoint")
+private val KEY_AI_ICONS_MODEL = stringPreferencesKey("ai_icons_model")
+private val KEY_AI_ICONS_QUALITY = stringPreferencesKey("ai_icons_quality")
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
@@ -363,7 +370,13 @@ class SettingsRepository(private val context: Context) {
             timedHabits = prefs[KEY_TIMED_HABITS] ?: emptySet(),
             timedDataFileUris = decodeFileUriMap(timedDataFileUrisRaw),
             hiddenScreens = prefs[KEY_HIDDEN_SCREENS] ?: emptySet(),
-            disabledHabits = prefs[KEY_DISABLED_HABITS] ?: emptySet()
+            disabledHabits = prefs[KEY_DISABLED_HABITS] ?: emptySet(),
+            aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
+            aiIconsApiKey = prefs[KEY_AI_ICONS_API_KEY] ?: "",
+            aiIconsBaseUrl = prefs[KEY_AI_ICONS_BASE_URL] ?: "",
+            aiIconsEndpoint = prefs[KEY_AI_ICONS_ENDPOINT] ?: "",
+            aiIconsModel = prefs[KEY_AI_ICONS_MODEL] ?: "",
+            aiIconsQuality = prefs[KEY_AI_ICONS_QUALITY] ?: ""
         )
     }
 
@@ -530,5 +543,24 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that are disabled. */
     suspend fun saveDisabledHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_DISABLED_HABITS] = habits }
+    }
+
+    /** Saves all AI icon generation settings at once. */
+    suspend fun saveAiIconSettings(
+        enabled: Boolean,
+        apiKey: String,
+        baseUrl: String,
+        endpoint: String,
+        model: String,
+        quality: String = ""
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_AI_ICONS_ENABLED] = enabled
+            prefs[KEY_AI_ICONS_API_KEY] = apiKey
+            prefs[KEY_AI_ICONS_BASE_URL] = baseUrl
+            prefs[KEY_AI_ICONS_ENDPOINT] = endpoint
+            prefs[KEY_AI_ICONS_MODEL] = model
+            prefs[KEY_AI_ICONS_QUALITY] = quality
+        }
     }
 }

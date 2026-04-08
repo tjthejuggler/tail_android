@@ -1,5 +1,12 @@
 # Progress — Tail
 
+## 2026-04-08 18:41
+- [x] AI Icon Generation feature: opt-in feature for generating habit icons via OpenAI-compatible image generation API
+  - New files: `AiIconRepository.kt` (icon storage/retrieval), `AiIconGeneratorService.kt` (API calls + post-processing)
+  - Modified: `SettingsRepository.kt` (5 new DataStore keys), `HabitModels.kt` (5 new AppSettings fields), `SettingsScreen.kt` (AI settings section with toggle + config fields), `HabitViewModel.kt` (AI icon state + methods), `HabitGridScreen.kt` (icon picker with AI section + generate button), `HabitButton.kt` (file-based AI icon rendering), `AndroidManifest.xml` (INTERNET permission)
+  - Post-processing converts AI images to white-on-transparent PNGs (matching existing icon style)
+  - Icons stored in `files/ai_icons/` with JSON index, shown in icon picker under "🤖 AI Generated Icons" section
+
 ## 2026-04-04 13:08
 - [x] Hidden screens feature: screens can be toggled "hidden" in edit mode (no habit selected). Hidden screen names are invisible in the tab bar when not active. Persisted as `hiddenScreens: Set<String>` in DataStore.
 - [x] Screen reorder feature: ◀/▶ buttons in edit mode to move screens left/right in the tab bar. Uses `reorderScreen()` in ViewModel.
