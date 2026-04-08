@@ -69,12 +69,18 @@ class AiIconGeneratorService {
         Log.i("AiIconGen", "Requesting icon from $fullUrl model=$model")
 
         // Build the icon-specific prompt that asks for a simple white icon
-        // matching the existing clipart/silhouette style of the built-in icons
-        val iconPrompt = "A single solid white silhouette icon on a pure black background. " +
-                "Flat 2D clipart style, no gradients, no shading, no 3D effects, no perspective. " +
+        // matching the existing clipart/silhouette style of the built-in icons.
+        // CRITICAL: We emphasize pure black background (#000000) so post-processing
+        // can reliably strip it to transparent.
+        val iconPrompt = "Generate a single solid white (#FFFFFF) silhouette icon on a " +
+                "PURE BLACK (#000000) background. The ENTIRE background must be solid black " +
+                "with absolutely NO white, gray, or light areas in the background. " +
+                "Flat 2D clipart style, no gradients, no shading, no 3D effects, no perspective, " +
+                "no shadows, no glow, no reflections. " +
                 "Thick bold outlines filled solid white. No text, no labels, no watermarks. " +
-                "Centered in frame with padding around edges. " +
+                "Centered in frame with generous padding around edges. " +
                 "Simple recognizable shape like a classic toolbar icon or emoji. " +
+                "The icon must be WHITE and the background must be BLACK. " +
                 "Subject: $prompt"
 
         val requestBody = JSONObject().apply {
@@ -201,39 +207,65 @@ class AiIconGeneratorService {
      * Post-processes a raw AI-generated image into a white-on-transparent icon.
      *
      * Strategy:
-     * 1. Convert to grayscale
-     * 2. Determine a brightness threshold to separate foreground from background
-     * 3. Make bright pixels (background) transparent, dark pixels (foreground) white
-     *
-     * Since we asked for "white icon on black background", the white parts are the icon
-     * and the black parts are the background. We invert this: icon → white, background → transparent.
+     * 1. Sample edge pixels to auto-detect whether the background is light or dark
+     * 2. If background is dark (expected): bright pixels = icon → white, dark = transparent
+     * 3. If background is light (model ignored prompt): dark pixels = icon → white, light = transparent
+     * This ensures we always get a white-on-transparent result regardless of what the model produces.
      */
     companion object {
+        private fun luminance(pixel: Int): Int {
+            val r = Color.red(pixel)
+            val g = Color.green(pixel)
+            val b = Color.blue(pixel)
+            return (0.299 * r + 0.587 * g + 0.114 * b).toInt()
+        }
+
         fun postProcessToWhiteIcon(source: Bitmap): Bitmap {
             val width = source.width
             val height = source.height
             val pixels = IntArray(width * height)
             source.getPixels(pixels, 0, width, 0, 0, width, height)
 
+            // Sample edge pixels (top row, bottom row, left col, right col) to detect bg color
+            val edgeLuminances = mutableListOf<Int>()
+            for (x in 0 until width) {
+                edgeLuminances.add(luminance(pixels[x]))                          // top row
+                edgeLuminances.add(luminance(pixels[(height - 1) * width + x]))   // bottom row
+            }
+            for (y in 1 until height - 1) {
+                edgeLuminances.add(luminance(pixels[y * width]))                  // left col
+                edgeLuminances.add(luminance(pixels[y * width + width - 1]))      // right col
+            }
+            val avgEdgeLuminance = if (edgeLuminances.isNotEmpty()) {
+                edgeLuminances.sum() / edgeLuminances.size
+            } else 0
+
+            // If average edge luminance > 128, the background is light (model gave white bg)
+            // In that case, DARK pixels are the icon; we invert the logic
+            val bgIsLight = avgEdgeLuminance > 128
+
+            Log.i("AiIconGen", "Post-process: avgEdgeLuminance=$avgEdgeLuminance bgIsLight=$bgIsLight")
+
             val result = IntArray(width * height)
 
             for (i in pixels.indices) {
-                val pixel = pixels[i]
-                val r = Color.red(pixel)
-                val g = Color.green(pixel)
-                val b = Color.blue(pixel)
+                val lum = luminance(pixels[i])
 
-                // Luminance (perceived brightness)
-                val luminance = (0.299 * r + 0.587 * g + 0.114 * b).toInt()
-
-                // The prompt asks for white icon on black background.
-                // White/bright pixels = icon foreground → make them white with full alpha
-                // Dark pixels = background → make them transparent
-                // Use a threshold with smooth falloff for anti-aliasing
-                val alpha = when {
-                    luminance > 200 -> 255
-                    luminance > 80  -> ((luminance - 80) * 255 / 120).coerceIn(0, 255)
-                    else            -> 0
+                val alpha = if (bgIsLight) {
+                    // Background is light → dark pixels are the icon
+                    // Invert: low luminance = high alpha (icon), high luminance = transparent (bg)
+                    when {
+                        lum < 60  -> 255
+                        lum < 180 -> (255 - (lum - 60) * 255 / 120).coerceIn(0, 255)
+                        else      -> 0
+                    }
+                } else {
+                    // Background is dark (expected) → bright pixels are the icon
+                    when {
+                        lum > 200 -> 255
+                        lum > 80  -> ((lum - 80) * 255 / 120).coerceIn(0, 255)
+                        else      -> 0
+                    }
                 }
 
                 result[i] = Color.argb(alpha, 255, 255, 255)

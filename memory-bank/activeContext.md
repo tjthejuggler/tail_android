@@ -6,16 +6,26 @@
 
 The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional. AI icon generation was just added as an opt-in feature.
 
+## Recent Changes (as of 2026-04-08 19:59)
+
+- **AI Icon Background Fix** (2026-04-08 19:59) — Fixed white background issue on AI-generated icons:
+  - Strengthened prompt to heavily emphasize pure black (#000000) background with explicit hex codes
+  - Added auto-detection in post-processing: samples edge pixels to determine if background is light or dark
+  - If model ignores prompt and generates white/light background, post-processing inverts logic (dark pixels → icon, light → transparent)
+  - Result: white-on-transparent icons regardless of what the AI model produces
+
 ## Recent Changes (as of 2026-04-08 18:41)
 
 - **AI Icon Generation** (2026-04-08) — New opt-in feature allowing users to generate habit icons via an OpenAI-compatible image generation API. Includes:
-  - Settings screen section with toggle, API key, base URL, endpoint, and model fields
+  - Settings screen section with toggle, API key, base URL, endpoint, model dropdown, quality dropdown
   - `AiIconRepository` stores generated icons as white-on-transparent PNGs in internal storage with JSON index
   - `AiIconGeneratorService` calls the API, post-processes images to white-on-transparent
   - Icon picker dialog shows AI-generated icons in a separate "🤖 AI Generated Icons" section with inline prompt input
+  - Delete AI icons with confirmation popup showing icon preview
+  - Model/quality dropdowns in settings with API model fetching (GET /v1/media/models)
   - `HabitButton` supports rendering file-based AI icons (icon IDs starting with "ai_")
   - INTERNET permission added to AndroidManifest.xml
-  - All settings persisted in DataStore (enabled, apiKey, baseUrl, endpoint, model)
+  - All settings persisted in DataStore (enabled, apiKey, baseUrl, endpoint, model, quality)
 
 ## Recent Changes (as of 2026-04-04 13:08)
 
