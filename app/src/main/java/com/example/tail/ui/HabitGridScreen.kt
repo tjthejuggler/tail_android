@@ -7,7 +7,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -2134,6 +2136,7 @@ private fun DeleteHabitConfirmDialog(
 
 // ── Icon picker dialog ────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun IconPickerDialog(
     habitName: String,
@@ -2252,7 +2255,7 @@ private fun IconPickerDialog(
                     if (aiIcons.isNotEmpty()) {
                         Spacer(modifier = Modifier.weight(1f))
                         Text(
-                            text = "tap ✕ to delete",
+                            text = "long-press to delete",
                             color = Color(0xFF666666),
                             fontSize = 9.sp
                         )
@@ -2287,10 +2290,12 @@ private fun IconPickerDialog(
                                         if (isSelected) Modifier.border(1.dp, Color(0xFFAADDFF), RoundedCornerShape(4.dp))
                                         else Modifier
                                     )
-                                    .clickable(
+                                    .combinedClickable(
                                         indication = null,
-                                        interactionSource = remember { MutableInteractionSource() }
-                                    ) { onIconSelected(aiIcon.id) },
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        onClick = { onIconSelected(aiIcon.id) },
+                                        onLongClick = { deleteConfirmAiIcon = aiIcon }
+                                    ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (bitmap != null) {
@@ -2302,20 +2307,6 @@ private fun IconPickerDialog(
                                 } else {
                                     Text("?", color = Color(0xFF666666), fontSize = 10.sp)
                                 }
-                                // Delete button overlay (top-right corner)
-                                Text(
-                                    text = "✕",
-                                    color = Color(0xFFFF4444),
-                                    fontSize = 8.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .clickable(
-                                            indication = null,
-                                            interactionSource = remember { MutableInteractionSource() }
-                                        ) { deleteConfirmAiIcon = aiIcon }
-                                        .padding(1.dp)
-                                )
                             }
                         }
                     }

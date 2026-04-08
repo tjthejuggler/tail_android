@@ -6,7 +6,13 @@
 
 The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional. AI icon generation was just added as an opt-in feature.
 
-## Recent Changes (as of 2026-04-08 21:26)
+## Recent Changes (as of 2026-04-08 22:16)
+
+- **AI Icon Long-Press Delete** (2026-04-08 22:16) — Replaced red ✕ overlay with long-press gesture for deleting AI icons:
+  - AI icons now use `combinedClickable`: tap to select, long-press to trigger delete confirmation
+  - Removed red ✕ overlay from each AI icon tile
+  - Changed hint text from "tap ✕ to delete" to "long-press to delete"
+  - Delete confirmation dialog still shows icon preview and prompt text
 
 - **AI Icon Auto-Trim** (2026-04-08 21:26) — Added auto-trim to post-processing so generated icons fill the available space:
   - After converting to white-on-transparent, finds bounding box of non-transparent pixels

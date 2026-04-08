@@ -1,5 +1,8 @@
 # Progress — Tail
 
+## 2026-04-08 22:16
+- [x] Replaced red ✕ delete overlay with long-press gesture on AI icons. Tap selects, long-press triggers delete confirmation dialog. Removed "tap ✕ to delete" hint, replaced with "long-press to delete". Uses `combinedClickable` from `ExperimentalFoundationApi`.
+
 ## 2026-04-08 21:26
 - [x] Added auto-trim to AI icon post-processing: finds bounding box of non-transparent pixels, crops with ~4% padding, makes square, then scales to 64x64. Icons now fill the available space instead of being tiny with large margins.
 
