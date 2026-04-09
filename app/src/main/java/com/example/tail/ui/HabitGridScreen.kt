@@ -42,6 +42,8 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -84,6 +86,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconRepository
+import com.example.tail.data.ChessComType
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.RollingHigh
@@ -518,7 +521,10 @@ fun HabitGridScreen(
                         hiddenScreenIds = settings.hiddenScreens,
                         onToggleScreenHidden = { viewModel.toggleScreenHidden(activeScreenIndex) },
                         disabledHabits = settings.disabledHabits,
-                        onToggleDisabled = { name -> viewModel.toggleDisabledHabit(name) }
+                        onToggleDisabled = { name -> viewModel.toggleDisabledHabit(name) },
+                        chessComEnabled = settings.chessComEnabled,
+                        chessComHabitLinks = settings.chessComHabitLinks,
+                        onSetChessComLink = { name, type -> viewModel.setChessComHabitLink(name, type) }
                     )
                 }
             }
@@ -938,7 +944,10 @@ private fun EditModeControlBar(
     hiddenScreenIds: Set<String> = emptySet(),
     onToggleScreenHidden: () -> Unit = {},
     disabledHabits: Set<String> = emptySet(),
-    onToggleDisabled: (String) -> Unit = {}
+    onToggleDisabled: (String) -> Unit = {},
+    chessComEnabled: Boolean = false,
+    chessComHabitLinks: Map<String, String> = emptyMap(),
+    onSetChessComLink: (String, String?) -> Unit = { _, _ -> }
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -1710,6 +1719,80 @@ private fun EditModeControlBar(
                                 uncheckedTrackColor = Color(0xFF333333)
                             )
                         )
+                    }
+
+                    // ── Chess.com link toggle ────────────────────────────────
+                    if (chessComEnabled) {
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val currentChessLink = chessComHabitLinks[selectedHabitName]
+                        val isChessLinked = currentChessLink != null
+                        var chessDropdownExpanded by remember { mutableStateOf(false) }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(text = "♟ Chess.com", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                Text(
+                                    text = if (isChessLinked) {
+                                        val typeName = ChessComType.fromKey(currentChessLink)?.label ?: currentChessLink
+                                        "Linked to: $typeName"
+                                    } else "Not linked to chess.com",
+                                    color = if (isChessLinked) Color(0xFF66BB6A) else Color(0xFF888888),
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Switch(
+                                checked = isChessLinked,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        chessDropdownExpanded = true
+                                    } else {
+                                        onSetChessComLink(selectedHabitName, null)
+                                    }
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color(0xFF66BB6A),
+                                    checkedTrackColor = Color(0xFF1B5E20),
+                                    uncheckedThumbColor = Color(0xFF888888),
+                                    uncheckedTrackColor = Color(0xFF333333)
+                                )
+                            )
+                        }
+
+                        // Chess.com type picker dropdown
+                        if (isChessLinked || chessDropdownExpanded) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Box {
+                                Button(
+                                    onClick = { chessDropdownExpanded = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20)),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    val label = if (currentChessLink != null) {
+                                        ChessComType.fromKey(currentChessLink)?.label ?: "Select type"
+                                    } else "Select type"
+                                    Text(label, fontSize = 11.sp, color = Color(0xFF66BB6A))
+                                }
+                                DropdownMenu(
+                                    expanded = chessDropdownExpanded,
+                                    onDismissRequest = { chessDropdownExpanded = false }
+                                ) {
+                                    ChessComType.entries.forEach { type ->
+                                        DropdownMenuItem(
+                                            text = { Text(type.label) },
+                                            onClick = {
+                                                onSetChessComLink(selectedHabitName, type.name)
+                                                chessDropdownExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

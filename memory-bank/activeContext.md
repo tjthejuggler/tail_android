@@ -1,10 +1,23 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-08T19:25Z
+**Last updated:** 2026-04-09T00:07Z
 
 ## Current State
 
-The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional. AI icon generation was just added as an opt-in feature.
+The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional. AI icon generation and chess.com integration are opt-in features.
+
+## Recent Changes (as of 2026-04-09 00:07)
+
+- **Chess.com Integration** (2026-04-09) — New opt-in feature that links habits to chess.com activity data:
+  - Settings screen section with enable toggle, username input, minutes-per-increment for 5 activity types (Bullet, Blitz, Rapid, Puzzles Slow, Puzzles Rush)
+  - `ChessComService.kt` — Low-level API client for chess.com public API (archives, games, stats)
+  - `ChessComRepository.kt` — Data processing layer with monthly archive caching, per-day minutes computation, increment calculation
+  - Edit mode panel: chess.com toggle with dropdown to select which activity type a habit tracks
+  - Automatic polling every 15 minutes for current month data
+  - "Fetch Entire Backlog" button in settings to retroactively fill habit history from all chess.com archives
+  - Data cached in `files/chess_com_cache/` as JSON files per month
+  - Habit counts are set (not incremented) — chess.com data is authoritative for linked habits
+  - Uses `HttpURLConnection` with proper `User-Agent` header per chess.com API requirements
 
 ## Recent Changes (as of 2026-04-08 22:16)
 

@@ -1,6 +1,6 @@
 # System Patterns — Tail
 
-**Last updated:** 2026-03-28T15:47Z
+**Last updated:** 2026-04-09T00:07Z
 
 ## Architecture
 
@@ -16,7 +16,9 @@ app/src/main/java/com/example/tail/
 │   ├── TextInputRepository.kt # Per-habit text-log JSON files
 │   ├── DatedEntryRepository.kt # Dated entry file parsing (dream journal format)
 │   ├── AiIconRepository.kt   # AI-generated icon storage (PNG files + JSON index)
-│   └── AiIconGeneratorService.kt # AI image API client + post-processing
+│   ├── AiIconGeneratorService.kt # AI image API client + post-processing
+│   ├── ChessComService.kt    # Chess.com public API client (HttpURLConnection)
+│   └── ChessComRepository.kt # Chess.com data processing + monthly cache
 ├── ipc/
 │   ├── HabitsContentProvider.kt  # Read-only ContentProvider for same-keystore apps
 │   └── HabitIncrementReceiver.kt # BroadcastReceiver for habit increments

@@ -11,6 +11,8 @@ import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconGeneratorService
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
+import com.example.tail.data.ChessComRepository
+import com.example.tail.data.ChessComType
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.TimedDataRepository
@@ -139,6 +141,19 @@ class HabitViewModel(
     private val _aiIconError = MutableStateFlow<String?>(null)
     val aiIconError: StateFlow<String?> = _aiIconError.asStateFlow()
 
+    // ── Chess.com Integration ─────────────────────────────────────────────────
+    private val chessComRepo = ChessComRepository(context)
+
+    /** Status message for chess.com sync operations (shown in settings). */
+    private val _chessComSyncStatus = MutableStateFlow("")
+    val chessComSyncStatus: StateFlow<String> = _chessComSyncStatus.asStateFlow()
+
+    /** Job for the periodic chess.com polling loop. */
+    private var chessComPollingJob: Job? = null
+
+    /** Interval between chess.com polls (15 minutes). */
+    private val CHESS_COM_POLL_INTERVAL_MS = 15 * 60 * 1000L
+
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
 
@@ -189,6 +204,10 @@ class HabitViewModel(
                     // the latest screen layout AND icon assignments.
                     if (s.screensRelayFileUri.isNotEmpty() && s.habitScreens.isNotEmpty()) {
                         writeScreensRelayFile(s.habitScreens, s.activeScreenIndex, s.screensRelayFileUri)
+                    }
+                    // Start chess.com polling if enabled
+                    if (s.chessComEnabled && s.chessComUsername.isNotEmpty()) {
+                        startChessComPolling()
                     }
                 }
             }
@@ -1883,6 +1902,196 @@ class HabitViewModel(
             Log.d(TAG, "DatedEntry[$habitName]: synced ${parsedCounts.size} dates")
         } catch (e: Exception) {
             Log.e(TAG, "DatedEntry[$habitName]: sync failed: ${e.message}")
+        }
+    }
+    // ── Chess.com Integration Methods ─────────────────────────────────────────
+
+    /** Saves chess.com settings (enabled, username, minutes-per-increment). */
+    fun saveChessComSettings(enabled: Boolean, username: String, minutesPerIncrement: Map<String, Int>) {
+        viewModelScope.launch {
+            settingsRepo.saveChessComSettings(enabled, username, minutesPerIncrement)
+            _settings.value = _settings.value.copy(
+                chessComEnabled = enabled,
+                chessComUsername = username,
+                chessComMinutesPerIncrement = minutesPerIncrement
+            )
+            // Start or stop polling based on enabled state
+            if (enabled && username.isNotEmpty() && lastLoadedUri.isNotEmpty()) {
+                startChessComPolling()
+            } else {
+                stopChessComPolling()
+            }
+        }
+    }
+
+    /** Links or unlinks a habit to a chess.com activity type. */
+    fun setChessComHabitLink(habitName: String, chessComType: String?) {
+        viewModelScope.launch {
+            val links = _settings.value.chessComHabitLinks.toMutableMap()
+            if (chessComType != null) {
+                links[habitName] = chessComType
+            } else {
+                links.remove(habitName)
+            }
+            settingsRepo.saveChessComHabitLinks(links)
+            _settings.value = _settings.value.copy(chessComHabitLinks = links)
+        }
+    }
+
+    /** Starts the periodic chess.com polling loop. */
+    private fun startChessComPolling() {
+        // Cancel any existing polling job
+        chessComPollingJob?.cancel()
+        chessComPollingJob = viewModelScope.launch {
+            while (true) {
+                syncChessComCurrentMonth()
+                delay(CHESS_COM_POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** Stops the chess.com polling loop. */
+    private fun stopChessComPolling() {
+        chessComPollingJob?.cancel()
+        chessComPollingJob = null
+    }
+
+    /**
+     * Fetches current month chess.com data and applies increments to linked habits.
+     * Called periodically by the polling loop.
+     */
+    private suspend fun syncChessComCurrentMonth() {
+        val s = _settings.value
+        if (!s.chessComEnabled || s.chessComUsername.isEmpty()) return
+        if (s.chessComHabitLinks.isEmpty()) return
+        if (s.fileUri.isEmpty()) return
+
+        try {
+            _chessComSyncStatus.value = "Syncing chess.com data…"
+            val monthData = chessComRepo.fetchCurrentMonthData(s.chessComUsername)
+            applyChessComData(monthData, s)
+            _chessComSyncStatus.value = "Last sync: ${java.time.LocalTime.now().toString().take(5)}"
+        } catch (e: Exception) {
+            Log.e(TAG, "Chess.com sync failed: ${e.message}")
+            _chessComSyncStatus.value = "Sync failed: ${e.message?.take(50)}"
+        }
+    }
+
+    /**
+     * Fetches the entire chess.com game history and retroactively fills habit data.
+     * Called from the Settings screen "Fetch Entire Backlog" button.
+     */
+    fun fetchChessComBacklog() {
+        val s = _settings.value
+        if (!s.chessComEnabled || s.chessComUsername.isEmpty()) {
+            _chessComSyncStatus.value = "Enable chess.com and set username first"
+            return
+        }
+        if (s.fileUri.isEmpty()) {
+            _chessComSyncStatus.value = "Set habit database file first"
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                // Clear cache so we get completely fresh data
+                _chessComSyncStatus.value = "Clearing cache…"
+                chessComRepo.clearCache()
+
+                // Reset all chess.com-linked habits to 0 for all dates
+                _chessComSyncStatus.value = "Resetting linked habit data…"
+                resetChessComHabitData(s)
+
+                _chessComSyncStatus.value = "Fetching entire backlog…"
+                val allData = chessComRepo.fetchEntireBacklog(s.chessComUsername) { done, total ->
+                    _chessComSyncStatus.value = "Fetching archives: $done / $total months"
+                }
+                _chessComSyncStatus.value = "Applying backlog data to habits…"
+                applyChessComData(allData, s)
+                _chessComSyncStatus.value = "Backlog complete! Data applied to linked habits."
+            } catch (e: Exception) {
+                Log.e(TAG, "Chess.com backlog failed: ${e.message}")
+                _chessComSyncStatus.value = "Backlog failed: ${e.message?.take(80)}"
+            }
+        }
+    }
+
+    /**
+     * Resets all chess.com-linked habit entries to 0 for every date.
+     * Called before a full backlog re-fetch to ensure clean data.
+     */
+    private suspend fun resetChessComHabitData(s: AppSettings) {
+        val phoneUriStr = s.fileUri
+        if (phoneUriStr.isEmpty()) return
+
+        val mutableDb = cachedPhoneDb.toMutableMap()
+        var changed = false
+
+        for ((habitName, _) in s.chessComHabitLinks) {
+            val entries = mutableDb[habitName] ?: continue
+            val resetEntries = entries.mapValues { 0 }.toSortedMap()
+            if (resetEntries != entries) {
+                mutableDb[habitName] = resetEntries
+                changed = true
+            }
+        }
+
+        if (changed) {
+            cachedPhoneDb = mutableDb
+            rebuildHabitList()
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
+            }
+            Log.d(TAG, "Chess.com linked habits reset to 0")
+        }
+    }
+
+    /**
+     * Applies chess.com daily minutes data to linked habits in the database.
+     * For each linked habit, computes increments from minutes and sets the daily count.
+     * Chess.com data is authoritative — values are always overwritten (not max'd).
+     */
+    private suspend fun applyChessComData(
+        data: Map<ChessComType, Map<String, Double>>,
+        s: AppSettings
+    ) {
+        if (data.isEmpty() || s.chessComHabitLinks.isEmpty()) return
+
+        val phoneUriStr = s.fileUri
+        if (phoneUriStr.isEmpty()) return
+
+        var dbChanged = false
+        val mutableDb = cachedPhoneDb.toMutableMap()
+
+        for ((habitName, typeKey) in s.chessComHabitLinks) {
+            val type = ChessComType.fromKey(typeKey) ?: continue
+            val dailyMinutes = data[type] ?: continue
+            val minutesPerIncrement = s.chessComMinutesPerIncrement[typeKey] ?: continue
+            if (minutesPerIncrement <= 0) continue
+
+            val increments = chessComRepo.computeIncrements(dailyMinutes, minutesPerIncrement)
+            if (increments.isEmpty()) continue
+
+            val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap()
+            for ((dateStr, count) in increments) {
+                val existing = habitEntries[dateStr] ?: 0
+                if (count != existing) {
+                    habitEntries[dateStr] = count
+                    dbChanged = true
+                }
+            }
+            mutableDb[habitName] = habitEntries.toSortedMap()
+        }
+
+        if (dbChanged) {
+            cachedPhoneDb = mutableDb
+            rebuildHabitList()
+
+            // Persist to disk
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
+            }
+            Log.d(TAG, "Chess.com data applied to habits")
         }
     }
 }

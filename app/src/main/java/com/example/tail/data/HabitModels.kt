@@ -240,7 +240,25 @@ data class AppSettings(
     /** Model name to pass to the API (e.g. "dall-e-3"). */
     val aiIconsModel: String = "",
     /** Quality tier for the selected model (e.g. "standard", "1k", "medium"). */
-    val aiIconsQuality: String = ""
+    val aiIconsQuality: String = "",
+
+    // ── Chess.com Integration settings ───────────────────────────────────
+    /** Whether chess.com integration is enabled. */
+    val chessComEnabled: Boolean = false,
+    /** The user's chess.com username. */
+    val chessComUsername: String = "",
+    /**
+     * Minutes per increment for each chess.com game/puzzle type.
+     * Key is ChessComType.name (BULLET, BLITZ, RAPID, PUZZLE_SLOW, PUZZLE_RUSH).
+     * Value is the number of minutes of that activity that equals 1 habit increment.
+     * 0 means disabled for that type.
+     */
+    val chessComMinutesPerIncrement: Map<String, Int> = emptyMap(),
+    /**
+     * Maps habit name → ChessComType.name for habits linked to chess.com data.
+     * When a habit is in this map, its daily count is auto-set from chess.com data.
+     */
+    val chessComHabitLinks: Map<String, String> = emptyMap()
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

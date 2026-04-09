@@ -46,7 +46,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.KeyboardType
 import com.example.tail.data.AiModelInfo
+import com.example.tail.data.ChessComType
 
 /**
  * Settings screen: two file pickers only.
@@ -239,6 +243,14 @@ fun SettingsScreen(
             // ── AI Icon Generation ────────────────────────────────────────────
             item {
                 AiIconSettingsSection(viewModel = viewModel, settings = settings)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // ── Chess.com Integration ─────────────────────────────────────────
+            item {
+                ChessComSettingsSection(viewModel = viewModel, settings = settings)
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
@@ -474,6 +486,197 @@ private fun AiIconSettingsSection(
             Spacer(modifier = Modifier.height(8.dp))
             Button(onClick = { save() }) {
                 Text("Save AI Settings")
+            }
+        }
+    }
+}
+
+/**
+ * Chess.com Integration settings section — toggle, username, minutes-per-increment
+ * for each game/puzzle type, and a "Fetch Backlog" button.
+ */
+@Composable
+private fun ChessComSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    val chessComSyncStatus by viewModel.chessComSyncStatus.collectAsState()
+
+    var enabled by remember(settings.chessComEnabled) { mutableStateOf(settings.chessComEnabled) }
+    var username by remember(settings.chessComUsername) { mutableStateOf(settings.chessComUsername) }
+
+    // Minutes per increment for each type — individual mutableStateOf for recomposition
+    val types = ChessComType.entries
+    var bulletMin by remember(settings.chessComMinutesPerIncrement) {
+        mutableStateOf((settings.chessComMinutesPerIncrement["BULLET"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var blitzMin by remember(settings.chessComMinutesPerIncrement) {
+        mutableStateOf((settings.chessComMinutesPerIncrement["BLITZ"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var rapidMin by remember(settings.chessComMinutesPerIncrement) {
+        mutableStateOf((settings.chessComMinutesPerIncrement["RAPID"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var puzzleSlowMin by remember(settings.chessComMinutesPerIncrement) {
+        mutableStateOf((settings.chessComMinutesPerIncrement["PUZZLE_SLOW"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var puzzleRushMin by remember(settings.chessComMinutesPerIncrement) {
+        mutableStateOf((settings.chessComMinutesPerIncrement["PUZZLE_RUSH"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+
+    fun getMinFor(type: ChessComType): String = when (type) {
+        ChessComType.BULLET -> bulletMin
+        ChessComType.BLITZ -> blitzMin
+        ChessComType.RAPID -> rapidMin
+        ChessComType.PUZZLE_SLOW -> puzzleSlowMin
+        ChessComType.PUZZLE_RUSH -> puzzleRushMin
+    }
+
+    fun setMinFor(type: ChessComType, value: String) {
+        val filtered = value.filter { it.isDigit() }
+        when (type) {
+            ChessComType.BULLET -> bulletMin = filtered
+            ChessComType.BLITZ -> blitzMin = filtered
+            ChessComType.RAPID -> rapidMin = filtered
+            ChessComType.PUZZLE_SLOW -> puzzleSlowMin = filtered
+            ChessComType.PUZZLE_RUSH -> puzzleRushMin = filtered
+        }
+    }
+
+    fun save() {
+        val minutesMap = mutableMapOf<String, Int>()
+        types.forEach { type ->
+            val value = getMinFor(type).toIntOrNull() ?: 0
+            if (value > 0) minutesMap[type.name] = value
+        }
+        viewModel.saveChessComSettings(enabled, username, minutesMap)
+    }
+
+    Column {
+        Text("♟ Chess.com Integration", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Link habits to your chess.com activity. Games and puzzles are " +
+                   "automatically tracked and converted to habit increments.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Enable Chess.com", fontSize = 14.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            Switch(
+                checked = enabled,
+                onCheckedChange = { newVal ->
+                    enabled = newVal
+                    save()
+                }
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Username
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Chess.com Username") },
+                placeholder = { Text("e.g. hikaru") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Button(onClick = { save() }) {
+                Text("Save Username", fontSize = 12.sp)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Minutes per increment for each type
+            Text(
+                "Minutes per Increment",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Set how many minutes of each activity type equals one habit increment. " +
+                       "Leave blank or 0 to disable that type.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            types.forEach { type ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp)
+                ) {
+                    Text(
+                        text = type.label,
+                        fontSize = 13.sp,
+                        modifier = Modifier.width(120.dp)
+                    )
+                    OutlinedTextField(
+                        value = getMinFor(type),
+                        onValueChange = { newVal -> setMinFor(type, newVal) },
+                        placeholder = { Text("0") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp),
+                        textStyle = TextStyle(fontSize = 13.sp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("min", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = { save() }) {
+                Text("Save Chess.com Settings", fontSize = 12.sp)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Sync status
+            if (chessComSyncStatus.isNotEmpty()) {
+                Text(
+                    text = chessComSyncStatus,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+
+            // Backlog fetch button
+            Text(
+                "Backlog Sync",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Fetch your entire chess.com game history and retroactively " +
+                       "fill in habit data for all past days. This may take a while " +
+                       "for accounts with many games.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Button(
+                onClick = { viewModel.fetchChessComBacklog() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondary
+                )
+            ) {
+                Text("Fetch Entire Backlog", fontSize = 12.sp)
             }
         }
     }

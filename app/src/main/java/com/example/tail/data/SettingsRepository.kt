@@ -59,6 +59,13 @@ private val KEY_AI_ICONS_BASE_URL = stringPreferencesKey("ai_icons_base_url")
 private val KEY_AI_ICONS_ENDPOINT = stringPreferencesKey("ai_icons_endpoint")
 private val KEY_AI_ICONS_MODEL = stringPreferencesKey("ai_icons_model")
 private val KEY_AI_ICONS_QUALITY = stringPreferencesKey("ai_icons_quality")
+// Chess.com integration settings
+private val KEY_CHESS_COM_ENABLED = booleanPreferencesKey("chess_com_enabled")
+private val KEY_CHESS_COM_USERNAME = stringPreferencesKey("chess_com_username")
+// Stored as "TYPE\x00minutes|||TYPE\x00minutes" pairs
+private val KEY_CHESS_COM_MINUTES_PER_INCREMENT = stringPreferencesKey("chess_com_minutes_per_increment")
+// Stored as "habitName\x00TYPE|||habitName\x00TYPE" pairs
+private val KEY_CHESS_COM_HABIT_LINKS = stringPreferencesKey("chess_com_habit_links")
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
@@ -345,6 +352,8 @@ class SettingsRepository(private val context: Context) {
         val habitSubtypesRaw = prefs[KEY_HABIT_SUBTYPES] ?: ""
         val subtypeDataFileUrisRaw = prefs[KEY_SUBTYPE_DATA_FILE_URIS] ?: ""
         val timedDataFileUrisRaw = prefs[KEY_TIMED_DATA_FILE_URIS] ?: ""
+        val chessComMinutesRaw = prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] ?: ""
+        val chessComHabitLinksRaw = prefs[KEY_CHESS_COM_HABIT_LINKS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -376,7 +385,11 @@ class SettingsRepository(private val context: Context) {
             aiIconsBaseUrl = prefs[KEY_AI_ICONS_BASE_URL] ?: "",
             aiIconsEndpoint = prefs[KEY_AI_ICONS_ENDPOINT] ?: "",
             aiIconsModel = prefs[KEY_AI_ICONS_MODEL] ?: "",
-            aiIconsQuality = prefs[KEY_AI_ICONS_QUALITY] ?: ""
+            aiIconsQuality = prefs[KEY_AI_ICONS_QUALITY] ?: "",
+            chessComEnabled = prefs[KEY_CHESS_COM_ENABLED] ?: false,
+            chessComUsername = prefs[KEY_CHESS_COM_USERNAME] ?: "",
+            chessComMinutesPerIncrement = decodeIntMap(chessComMinutesRaw),
+            chessComHabitLinks = decodeFileUriMap(chessComHabitLinksRaw)
         )
     }
 
@@ -561,6 +574,45 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_AI_ICONS_ENDPOINT] = endpoint
             prefs[KEY_AI_ICONS_MODEL] = model
             prefs[KEY_AI_ICONS_QUALITY] = quality
+        }
+    }
+
+    // ── Chess.com Integration ────────────────────────────────────────────
+
+    /** Saves the chess.com enabled flag. */
+    suspend fun saveChessComEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_CHESS_COM_ENABLED] = enabled }
+    }
+
+    /** Saves the chess.com username. */
+    suspend fun saveChessComUsername(username: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_CHESS_COM_USERNAME] = username }
+    }
+
+    /** Saves the minutes-per-increment map for chess.com types. */
+    suspend fun saveChessComMinutesPerIncrement(minutes: Map<String, Int>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] = encodeIntMap(minutes)
+        }
+    }
+
+    /** Saves the map of habit name → chess.com type link. */
+    suspend fun saveChessComHabitLinks(links: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CHESS_COM_HABIT_LINKS] = encodeFileUriMap(links)
+        }
+    }
+
+    /** Saves all chess.com settings at once. */
+    suspend fun saveChessComSettings(
+        enabled: Boolean,
+        username: String,
+        minutesPerIncrement: Map<String, Int>
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CHESS_COM_ENABLED] = enabled
+            prefs[KEY_CHESS_COM_USERNAME] = username
+            prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] = encodeIntMap(minutesPerIncrement)
         }
     }
 }

@@ -1,5 +1,15 @@
 # Progress — Tail
 
+## 2026-04-09 00:07
+- [x] Chess.com Integration feature: opt-in feature linking habits to chess.com game/puzzle activity
+  - New files: `ChessComService.kt` (API client), `ChessComRepository.kt` (data processing + caching)
+  - Modified: `HabitModels.kt` (4 new AppSettings fields), `SettingsRepository.kt` (4 new DataStore keys + save methods), `SettingsScreen.kt` (chess.com settings section with enable/username/minutes-per-increment/backlog), `HabitGridScreen.kt` (chess.com toggle + type dropdown in edit mode), `HabitViewModel.kt` (chess.com state + polling + backlog + habit linking)
+  - 5 activity types: Bullet, Blitz, Rapid, Puzzles (Slow), Puzzles (Rush)
+  - Configurable minutes-per-increment for each type
+  - Automatic 15-minute polling for current month data
+  - "Fetch Entire Backlog" for retroactive history fill
+  - Monthly archive caching in `files/chess_com_cache/`
+
 ## 2026-04-08 22:16
 - [x] Replaced red ✕ delete overlay with long-press gesture on AI icons. Tap selects, long-press triggers delete confirmation dialog. Removed "tap ✕ to delete" hint, replaced with "long-press to delete". Uses `combinedClickable` from `ExperimentalFoundationApi`.
 
