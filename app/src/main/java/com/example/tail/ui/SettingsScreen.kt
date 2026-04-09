@@ -516,19 +516,11 @@ private fun ChessComSettingsSection(
     var rapidMin by remember(settings.chessComMinutesPerIncrement) {
         mutableStateOf((settings.chessComMinutesPerIncrement["RAPID"] ?: 0).let { if (it == 0) "" else it.toString() })
     }
-    var puzzleSlowMin by remember(settings.chessComMinutesPerIncrement) {
-        mutableStateOf((settings.chessComMinutesPerIncrement["PUZZLE_SLOW"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var puzzleRushMin by remember(settings.chessComMinutesPerIncrement) {
-        mutableStateOf((settings.chessComMinutesPerIncrement["PUZZLE_RUSH"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
 
     fun getMinFor(type: ChessComType): String = when (type) {
         ChessComType.BULLET -> bulletMin
         ChessComType.BLITZ -> blitzMin
         ChessComType.RAPID -> rapidMin
-        ChessComType.PUZZLE_SLOW -> puzzleSlowMin
-        ChessComType.PUZZLE_RUSH -> puzzleRushMin
     }
 
     fun setMinFor(type: ChessComType, value: String) {
@@ -537,8 +529,6 @@ private fun ChessComSettingsSection(
             ChessComType.BULLET -> bulletMin = filtered
             ChessComType.BLITZ -> blitzMin = filtered
             ChessComType.RAPID -> rapidMin = filtered
-            ChessComType.PUZZLE_SLOW -> puzzleSlowMin = filtered
-            ChessComType.PUZZLE_RUSH -> puzzleRushMin = filtered
         }
     }
 

@@ -248,8 +248,8 @@ data class AppSettings(
     /** The user's chess.com username. */
     val chessComUsername: String = "",
     /**
-     * Minutes per increment for each chess.com game/puzzle type.
-     * Key is ChessComType.name (BULLET, BLITZ, RAPID, PUZZLE_SLOW, PUZZLE_RUSH).
+     * Minutes per increment for each chess.com game type.
+     * Key is ChessComType.name (BULLET, BLITZ, RAPID).
      * Value is the number of minutes of that activity that equals 1 habit increment.
      * 0 means disabled for that type.
      */

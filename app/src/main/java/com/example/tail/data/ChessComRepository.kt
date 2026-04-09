@@ -14,14 +14,14 @@ import java.time.YearMonth
 private const val TAG = "ChessComRepo"
 
 /**
- * The 5 chess.com activity types that can be linked to habits.
+ * The 3 chess.com activity types that can be linked to habits.
+ * Note: Puzzle types (PUZZLE_SLOW, PUZZLE_RUSH) are not supported by the chess.com API
+ * for per-day history, so they are not available as linkable habit types.
  */
 enum class ChessComType(val label: String) {
     BULLET("Bullet"),
     BLITZ("Blitz"),
-    RAPID("Rapid"),
-    PUZZLE_SLOW("Puzzles (Slow)"),
-    PUZZLE_RUSH("Puzzles (Rush)");
+    RAPID("Rapid");
 
     companion object {
         fun fromKey(key: String): ChessComType? = entries.find { it.name == key }
