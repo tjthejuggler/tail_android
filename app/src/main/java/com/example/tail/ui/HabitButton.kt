@@ -69,7 +69,8 @@ fun HabitButton(
     /** Optional AI icon repository for loading file-based AI icons. */
     aiIconRepo: AiIconRepository? = null
 ) {
-    val bgColor = getHabitColor(habit.name, habit.todayCount)
+    val habitStyle = getHabitStyle(habit.todayCount)
+    val bgColor = habitStyle.background
     val iconRes = getHabitIconRes(habit.name, customIconOverrides)
     // Check if this habit uses an AI-generated icon (id starts with "ai_")
     val aiIconId = customIconOverrides[habit.name]?.takeIf { it.startsWith("ai_") }
@@ -79,7 +80,16 @@ fun HabitButton(
     val streakText = if (habit.currentStreak >= 0) "+${habit.currentStreak}" else "${habit.currentStreak}"
 
     val shape = RoundedCornerShape(6.dp)
-    val borderMod = when {
+
+    // Color-tier border (second pass through colors after reaching Glass)
+    val tierBorderMod = if (habitStyle.borderColor != null) {
+        Modifier.border(2.dp, habitStyle.borderColor, shape)
+    } else {
+        Modifier
+    }
+
+    // Mode-specific borders — these take visual priority over the tier border
+    val modeBorderMod = when {
         isMovePendingSource -> Modifier.border(2.dp, Color(0xFF44FFFF), shape)     // cyan border = "in flight"
         isGraphSelected -> Modifier.border(2.dp, Color(0xFF66DD66), shape)         // green border when selected for graph
         isSelected && editMode -> Modifier.border(2.dp, Color(0xFFFFAA00), shape)  // orange border when selected in edit mode
@@ -102,7 +112,8 @@ fun HabitButton(
             .aspectRatio(1f)
             .clip(shape)
             .background(effectiveBgColor)
-            .then(borderMod)
+            .then(tierBorderMod)
+            .then(modeBorderMod)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick

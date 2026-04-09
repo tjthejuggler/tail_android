@@ -12,20 +12,61 @@ val ColorPink   = Color(0xFF901060)   // semi-bright neon-ish magenta-pink     �
 val ColorYellow = Color(0xFFB8B000)   // bright neon-ish yellow                — count 5
 val ColorGlass  = Color(0xFFD0D0E0)   // bright near-white with faint blue     — count 6+
 
+// Brighter border variants — vivid enough to pop against the Glass/white background
+val BorderRed    = Color(0xFFCC3333)  // vivid red
+val BorderOrange = Color(0xFFE07020)  // vivid orange
+val BorderGreen  = Color(0xFF33AA55)  // vivid green
+val BorderBlue   = Color(0xFF3366DD)  // vivid blue
+val BorderPink   = Color(0xFFDD44AA)  // vivid magenta-pink
+val BorderYellow = Color(0xFFDDCC00)  // vivid yellow
+val BorderGlass  = Color(0xFFD0D0E0)  // same as Glass — final tier
+
+/** Background + optional color-tier border for a habit button. */
+data class HabitStyle(
+    val background: Color,
+    val borderColor: Color? = null   // null = no color-tier border
+)
+
+// Ordered list used for the second-pass border cycle (indices 0–6)
+private val borderColors = listOf(
+    BorderRed, BorderOrange, BorderGreen, BorderBlue, BorderPink, BorderYellow, BorderGlass
+)
+
 /**
  * Returns the background color for a habit button based on today's effective points count.
  * [count] is already the divided/adjusted value from [buildHabit] — no further transformation
  * is applied here. The color tier maps directly to the displayed number.
  */
 fun getHabitColor(habitName: String, count: Int): Color {
-    return when (count) {
-        0    -> ColorRed
-        1    -> ColorOrange
-        2    -> ColorGreen
-        3    -> ColorBlue
-        4    -> ColorPink
-        5    -> ColorYellow
-        else -> ColorGlass
+    return getHabitStyle(count).background
+}
+
+/**
+ * Returns the full [HabitStyle] (background + optional border) for a habit count.
+ *
+ * Tiers 0–5: solid color background, no color-tier border.
+ * Tier 6:    Glass (near-white) background, no border.
+ * Tiers 7–12: Glass background + border cycling through Red→Orange→Green→Blue→Pink→Yellow.
+ * Tier 13+:  Glass background + Glass border (stays here).
+ */
+fun getHabitStyle(count: Int): HabitStyle {
+    return when {
+        count <= 5 -> HabitStyle(
+            background = when (count) {
+                0 -> ColorRed
+                1 -> ColorOrange
+                2 -> ColorGreen
+                3 -> ColorBlue
+                4 -> ColorPink
+                else -> ColorYellow
+            }
+        )
+        count == 6 -> HabitStyle(background = ColorGlass)
+        else -> {
+            // Second pass: Glass bg + border cycling through the 7 border colors
+            val borderIndex = (count - 7).coerceIn(0, borderColors.lastIndex)
+            HabitStyle(background = ColorGlass, borderColor = borderColors[borderIndex])
+        }
     }
 }
 

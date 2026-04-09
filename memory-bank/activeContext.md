@@ -1,10 +1,20 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-09T00:07Z
+**Last updated:** 2026-04-09T11:23Z
 
 ## Current State
 
 The app is in active development with a mature feature set. The core habit grid, file I/O, IPC API, edit mode, and analytics screens are all implemented and functional. AI icon generation and chess.com integration are opt-in features.
+
+## Recent Changes (as of 2026-04-09 11:23)
+
+- **Color-tier border system** (2026-04-09 11:23) — Extended the habit color progression beyond the 7th tier (Glass/white):
+  - Counts 0–6: unchanged (Red → Orange → Green → Blue → Pink → Yellow → Glass)
+  - Counts 7–12: Glass background + vivid colored border cycling through Red → Orange → Green → Blue → Pink → Yellow
+  - Count 13+: Glass background + Glass border (stays permanently)
+  - Added `HabitStyle` data class (background + optional borderColor) and `getHabitStyle()` function in `HabitColors.kt`
+  - `HabitButton.kt` applies tier border as a base layer; mode-specific borders (edit, info, graph, etc.) overlay on top
+  - Bright border color variants defined separately from the dark background colors for visibility against Glass
 
 ## Recent Changes (as of 2026-04-09 00:07)
 

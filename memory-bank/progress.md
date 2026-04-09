@@ -1,5 +1,10 @@
 # Progress — Tail
 
+## 2026-04-09 11:23
+- [x] Color-tier border system: after reaching Glass (count 6), counts 7–12 show Glass bg + vivid colored border cycling through Red→Orange→Green→Blue→Pink→Yellow. Count 13+ stays Glass+Glass border.
+  - Modified: `HabitColors.kt` (added `HabitStyle` data class, `getHabitStyle()`, 7 bright border color constants)
+  - Modified: `HabitButton.kt` (uses `getHabitStyle()`, applies tier border as base layer under mode borders)
+
 ## 2026-04-09 00:07
 - [x] Chess.com Integration feature: opt-in feature linking habits to chess.com game/puzzle activity
   - New files: `ChessComService.kt` (API client), `ChessComRepository.kt` (data processing + caching)
