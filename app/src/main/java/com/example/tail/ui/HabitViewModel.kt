@@ -2050,6 +2050,10 @@ class HabitViewModel(
      * Applies chess.com daily minutes data to linked habits in the database.
      * For each linked habit, computes increments from minutes and sets the daily count.
      * Chess.com data is authoritative — values are always overwritten (not max'd).
+     *
+     * Also propagates to conditional linked habits: if a chess-linked habit is configured
+     * as a conditional habit, any date where its count goes from 0 → non-zero will also
+     * set each conditional linked habit to at least 1 for that date.
      */
     private suspend fun applyChessComData(
         data: Map<ChessComType, Map<String, Double>>,
@@ -2073,14 +2077,35 @@ class HabitViewModel(
             if (increments.isEmpty()) continue
 
             val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap()
+            // Track which dates transitioned from 0 → non-zero for conditional propagation
+            val datesActivated = mutableSetOf<String>()
+
             for ((dateStr, count) in increments) {
                 val existing = habitEntries[dateStr] ?: 0
                 if (count != existing) {
+                    if (existing == 0 && count > 0) datesActivated.add(dateStr)
                     habitEntries[dateStr] = count
                     dbChanged = true
                 }
             }
             mutableDb[habitName] = habitEntries.toSortedMap()
+
+            // Propagate to conditional linked habits for dates that became active
+            if (datesActivated.isNotEmpty() && habitName in s.conditionalHabits) {
+                val linkedHabits = s.conditionalLinkedHabits[habitName] ?: emptySet()
+                for (linkedName in linkedHabits) {
+                    val linkedEntries = (mutableDb[linkedName] ?: emptyMap()).toMutableMap()
+                    for (dateStr in datesActivated) {
+                        val existing = linkedEntries[dateStr] ?: 0
+                        val newVal = if (linkedName in s.maxOneHabits) 1 else existing + 1
+                        if (newVal != existing) {
+                            linkedEntries[dateStr] = newVal
+                            dbChanged = true
+                        }
+                    }
+                    mutableDb[linkedName] = linkedEntries.toSortedMap()
+                }
+            }
         }
 
         if (dbChanged) {

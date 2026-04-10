@@ -1,5 +1,15 @@
 # Active Context — Tail
 
+**Last updated:** 2026-04-10T12:42Z
+
+## Recent Changes (as of 2026-04-10 12:42)
+
+- **Chess.com + conditional habit bug fix** (2026-04-10 12:42) — Fixed `applyChessComData` in `HabitViewModel.kt` not triggering conditional linked habit increments when chess.com auto-updates a chess-type habit.
+  - Root cause: `applyChessComData` wrote counts directly to the DB for chess-linked habits but never checked `conditionalHabits`/`conditionalLinkedHabits`, so the general chess habit was never updated.
+  - Fix: after updating each chess-linked habit's count per date, track which dates transitioned from `0 → non-zero` (`datesActivated`). If the chess habit is a conditional habit, iterate its linked habits and increment each by 1 for those dates (respecting `maxOneHabits` cap).
+  - This works correctly for both regular 15-min polling and the full backlog fetch (since backlog resets chess habits to 0 first, all active dates become `0 → non-zero`).
+  - Modified: `HabitViewModel.kt` — `applyChessComData()` function only.
+
 **Last updated:** 2026-04-10T02:17Z
 
 ## Recent Changes (as of 2026-04-10 02:17)

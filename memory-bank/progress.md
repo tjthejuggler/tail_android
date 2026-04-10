@@ -1,5 +1,12 @@
 # Progress — Tail
 
+## 2026-04-10 12:42
+- [x] Bug fix: chess.com auto-increment not triggering conditional linked habits
+  - Root cause: `applyChessComData()` in `HabitViewModel.kt` bypassed the conditional habit logic entirely
+  - Fix: track `datesActivated` (dates where chess habit count went 0→non-zero), then propagate +1 to each conditional linked habit for those dates (respecting `maxOneHabits` cap)
+  - Works for both regular polling and full backlog fetch
+  - Modified: `HabitViewModel.kt` (`applyChessComData()` only)
+
 ## 2026-04-10 02:17
 - [x] Screen-move dropdown: replaced per-screen buttons in edit mode control bar with a single `→ Screen ▾` dropdown. All screen names are listed in a `DropdownMenu`; selecting one moves the habit there. Fixes overflow when many screens exist.
   - Modified: `HabitGridScreen.kt` (`EditModeControlBar` — added `moveToScreenExpanded` state, replaced button loop with `Box { Button + DropdownMenu }`)
