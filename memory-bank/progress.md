@@ -1,5 +1,9 @@
 # Progress — Tail
 
+## 2026-04-10 02:17
+- [x] Screen-move dropdown: replaced per-screen buttons in edit mode control bar with a single `→ Screen ▾` dropdown. All screen names are listed in a `DropdownMenu`; selecting one moves the habit there. Fixes overflow when many screens exist.
+  - Modified: `HabitGridScreen.kt` (`EditModeControlBar` — added `moveToScreenExpanded` state, replaced button loop with `Box { Button + DropdownMenu }`)
+
 ## 2026-04-09 11:23
 - [x] Color-tier border system: after reaching Glass (count 6), counts 7–12 show Glass bg + vivid colored border cycling through Red→Orange→Green→Blue→Pink→Yellow. Count 13+ stays Glass+Glass border.
   - Modified: `HabitColors.kt` (added `HabitStyle` data class, `getHabitStyle()`, 7 bright border color constants)

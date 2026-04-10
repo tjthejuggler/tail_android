@@ -957,6 +957,8 @@ private fun EditModeControlBar(
         habitScreens.indices.filter { it != currentScreen }
     } else emptyList()
 
+    var moveToScreenExpanded by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1165,15 +1167,30 @@ private fun EditModeControlBar(
                         Text("↕ Move", fontSize = 11.sp, color = Color(0xFF44FFFF))
                     }
 
-                    // Screen jump buttons
-                    otherScreenIndices.forEach { screenIdx ->
-                        val screenName = habitScreens[screenIdx].name
-                        Button(
-                            onClick = { onMoveToScreen(screenIdx) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text(screenName, fontSize = 11.sp, color = Color(0xFF88CCFF))
+                    // Screen dropdown — move habit to another screen
+                    if (otherScreenIndices.isNotEmpty()) {
+                        Box {
+                            Button(
+                                onClick = { moveToScreenExpanded = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("→ Screen ▾", fontSize = 11.sp, color = Color(0xFF88CCFF))
+                            }
+                            DropdownMenu(
+                                expanded = moveToScreenExpanded,
+                                onDismissRequest = { moveToScreenExpanded = false }
+                            ) {
+                                otherScreenIndices.forEach { screenIdx ->
+                                    DropdownMenuItem(
+                                        text = { Text(habitScreens[screenIdx].name, fontSize = 13.sp) },
+                                        onClick = {
+                                            moveToScreenExpanded = false
+                                            onMoveToScreen(screenIdx)
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }

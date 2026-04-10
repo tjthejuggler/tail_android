@@ -1,5 +1,12 @@
 # Active Context — Tail
 
+**Last updated:** 2026-04-10T02:17Z
+
+## Recent Changes (as of 2026-04-10 02:17)
+
+- **Screen-move dropdown** (2026-04-10 02:17) — Replaced the row of per-screen buttons in the edit mode control bar with a single `→ Screen ▾` dropdown (`DropdownMenu` / `DropdownMenuItem`). Tapping the button opens a scrollable list of all other screen names; selecting one moves the habit there. Eliminates the overflow problem when many screens exist.
+  - Modified: `HabitGridScreen.kt` — added `moveToScreenExpanded` state var, replaced `otherScreenIndices.forEach { Button(...) }` with a `Box { Button + DropdownMenu }`.
+
 **Last updated:** 2026-04-09T11:23Z
 
 ## Current State
