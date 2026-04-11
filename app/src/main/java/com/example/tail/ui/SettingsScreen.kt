@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -118,6 +119,11 @@ fun SettingsScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onNavigateToAppStats) {
+                        Icon(Icons.Filled.BarChart, contentDescription = "App Stats")
                     }
                 }
             )
@@ -222,23 +228,6 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // ── App Stats ─────────────────────────────────────────────────────
-            item {
-                Text("App Stats", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(
-                    text = "View comprehensive statistics about your habit tracking: " +
-                           "highest points, streaks, top habits, trends, and more.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = onNavigateToAppStats) {
-                    Text("View App Stats")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
 
             // ── AI Icon Generation ────────────────────────────────────────────
             item {

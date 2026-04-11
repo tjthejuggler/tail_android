@@ -1,5 +1,13 @@
 # Progress — Tail
 
+## 2026-04-11 16:07
+- [x] App Stats UX improvements:
+  - Moved "App Stats" button from settings body to a bar chart icon in the Settings TopAppBar
+  - Rewrote `StreakGraphPopup.kt`: fullscreen landscape, pinch-to-zoom (1×–20×), drag-to-pan, professional dark theme with gradient fill, glow line, gold 7-day MA legend, auto-formatting Y labels
+  - Made "Total habit points (all time)" clickable in AppStatsScreen Overview — shows cumulative points graph over time
+  - Added `dailyCumulativePoints` to `AppStats` data class (running sum of daily totals)
+  - Modified: `SettingsScreen.kt`, `StreakGraphPopup.kt`, `AppStatsScreen.kt`
+
 ## 2026-04-10 12:42
 - [x] Bug fix: chess.com auto-increment not triggering conditional linked habits
   - Root cause: `applyChessComData()` in `HabitViewModel.kt` bypassed the conditional habit logic entirely

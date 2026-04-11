@@ -35,6 +35,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,25 +95,57 @@ fun AppStatsScreen(
     var popupItems by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var showPopup by remember { mutableStateOf(false) }
 
-    // State for the streak graph popup
-    var graphPopupTitle by remember { mutableStateOf("") }
-    var graphPopupData by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
-    var graphPopupColor by remember { mutableStateOf(GreenValue) }
-    var graphPopupCurrentValue by remember { mutableStateOf<Int?>(null) }
-    var showGraphPopup by remember { mutableStateOf(false) }
+    // State for the streak graph popup — use rememberSaveable so it survives
+    // the configuration change triggered by forcing landscape orientation.
+    // We store a graph key (string) and derive data from stats on recomposition.
+    var graphPopupKey by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Derive graph data from the key + stats
+    data class GraphInfo(
+        val title: String,
+        val data: List<Pair<String, Int>>,
+        val color: Color,
+        val currentValue: Int?
+    )
+
+    val graphInfo: GraphInfo? = when (graphPopupKey) {
+        "total_streak_days" -> GraphInfo(
+            "Total Streak Days Over Time",
+            stats.dailyTotalStreakDays,
+            GreenValue,
+            stats.totalStreakDays
+        )
+        "total_anti_streak_days" -> GraphInfo(
+            "Total Anti-Streak Days Over Time",
+            stats.dailyTotalAntiStreakDays,
+            RedValue,
+            stats.totalAntiStreakDays
+        )
+        "habits_with_streak" -> GraphInfo(
+            "Habits With Streak Over Time",
+            stats.dailyHabitsWithStreak,
+            GreenValue,
+            stats.habitsWithStreak
+        )
+        "habits_with_anti_streak" -> GraphInfo(
+            "Habits With Anti-Streak Over Time",
+            stats.dailyHabitsWithAntiStreak,
+            RedValue,
+            stats.habitsWithAntiStreak
+        )
+        "cumulative_points" -> GraphInfo(
+            "Cumulative Habit Points Over Time",
+            stats.dailyCumulativePoints,
+            GoldValue,
+            stats.totalPointsAllTime.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        )
+        else -> null
+    }
 
     fun openPopup(title: String, items: List<Pair<String, String>>) {
         popupTitle = title
         popupItems = items
         showPopup = true
-    }
-
-    fun openGraphPopup(title: String, data: List<Pair<String, Int>>, color: Color, currentValue: Int? = null) {
-        graphPopupTitle = title
-        graphPopupData = data
-        graphPopupColor = color
-        graphPopupCurrentValue = currentValue
-        showGraphPopup = true
     }
 
     Scaffold(
@@ -173,7 +206,12 @@ fun AppStatsScreen(
                     StatRow("Days since first entry", stats.daysSinceFirstEntry.toString())
                     StatDateRow("First day with data", stats.firstDayWithData, onNavigateToDate)
                     StatDateRow("Most recent day with data", stats.lastDayWithData, onNavigateToDate)
-                    StatRow("Total habit points (all time)", formatLargeNumber(stats.totalPointsAllTime))
+                    StatGraphableRow(
+                        label = "Total habit points (all time)",
+                        value = formatLargeNumber(stats.totalPointsAllTime),
+                        valueColor = GoldValue,
+                        onClick = { graphPopupKey = "cumulative_points" }
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
                     HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
                     Spacer(modifier = Modifier.height(4.dp))
@@ -181,40 +219,19 @@ fun AppStatsScreen(
                         label = "Total streak days (all habits)",
                         value = stats.totalStreakDays.toString(),
                         valueColor = GreenValue,
-                        onClick = {
-                            openGraphPopup(
-                                "Total Streak Days Over Time",
-                                stats.dailyTotalStreakDays,
-                                GreenValue,
-                                stats.totalStreakDays
-                            )
-                        }
+                        onClick = { graphPopupKey = "total_streak_days" }
                     )
                     StatGraphableRow(
                         label = "Total anti-streak days (all habits)",
                         value = stats.totalAntiStreakDays.toString(),
                         valueColor = RedValue,
-                        onClick = {
-                            openGraphPopup(
-                                "Total Anti-Streak Days Over Time",
-                                stats.dailyTotalAntiStreakDays,
-                                RedValue,
-                                stats.totalAntiStreakDays
-                            )
-                        }
+                        onClick = { graphPopupKey = "total_anti_streak_days" }
                     )
                     StatGraphableCountRow(
                         label = "Habits with active streak",
                         count = stats.habitsWithStreak,
                         valueColor = GreenValue,
-                        onClickGraph = {
-                            openGraphPopup(
-                                "Habits With Streak Over Time",
-                                stats.dailyHabitsWithStreak,
-                                GreenValue,
-                                stats.habitsWithStreak
-                            )
-                        },
+                        onClickGraph = { graphPopupKey = "habits_with_streak" },
                         onClickList = {
                             openPopup(
                                 "Habits With Streak (${stats.habitsWithStreak})",
@@ -226,14 +243,7 @@ fun AppStatsScreen(
                         label = "Habits with active anti-streak",
                         count = stats.habitsWithAntiStreak,
                         valueColor = RedValue,
-                        onClickGraph = {
-                            openGraphPopup(
-                                "Habits With Anti-Streak Over Time",
-                                stats.dailyHabitsWithAntiStreak,
-                                RedValue,
-                                stats.habitsWithAntiStreak
-                            )
-                        },
+                        onClickGraph = { graphPopupKey = "habits_with_anti_streak" },
                         onClickList = {
                             openPopup(
                                 "Habits With Anti-Streak (${stats.habitsWithAntiStreak})",
@@ -530,13 +540,13 @@ fun AppStatsScreen(
     }
 
     // ── Streak graph popup ────────────────────────────────────────────────────
-    if (showGraphPopup) {
+    if (graphInfo != null) {
         StreakGraphPopup(
-            title = graphPopupTitle,
-            data = graphPopupData,
-            lineColor = graphPopupColor,
-            currentValue = graphPopupCurrentValue,
-            onDismiss = { showGraphPopup = false }
+            title = graphInfo.title,
+            data = graphInfo.data,
+            lineColor = graphInfo.color,
+            currentValue = graphInfo.currentValue,
+            onDismiss = { graphPopupKey = null }
         )
     }
 }
@@ -943,6 +953,7 @@ private data class AppStats(
     val firstDayWithData: String? = null,
     val lastDayWithData: String? = null,
     val totalPointsAllTime: Long = 0,
+    val dailyCumulativePoints: List<Pair<String, Int>> = emptyList(),
 
     // Streak aggregate stats (Overview section)
     val totalStreakDays: Int = 0,                // sum of all current streak values
@@ -1075,6 +1086,15 @@ private fun computeAppStats(
     val firstDayLocalDate = firstDayWithData?.let { parseDate(it) }
     val daysSinceFirst = if (firstDayLocalDate != null) ChronoUnit.DAYS.between(firstDayLocalDate, today) else 0L
     val totalPointsAllTime = dailyTotals.values.sumOf { it.toLong() }
+
+    // ── Cumulative points over time (for graph) ─────────────────────────
+    val dailyCumulativePoints = run {
+        var cumulative = 0L
+        dailyTotals.entries.sortedBy { it.key }.map { entry ->
+            cumulative += entry.value
+            Pair(entry.key, cumulative.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        }
+    }
 
     // ── Highest points day ────────────────────────────────────────────────
     val bestDay = dailyTotals.maxByOrNull { it.value }
@@ -1407,6 +1427,7 @@ private fun computeAppStats(
         firstDayWithData = firstDayWithData,
         lastDayWithData = lastDayWithData,
         totalPointsAllTime = totalPointsAllTime,
+        dailyCumulativePoints = dailyCumulativePoints,
         totalStreakDays = totalStreakDays,
         totalAntiStreakDays = totalAntiStreakDays,
         habitsWithStreak = habitsWithStreakCount,

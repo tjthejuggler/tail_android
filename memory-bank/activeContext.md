@@ -1,5 +1,24 @@
 # Active Context — Tail
 
+**Last updated:** 2026-04-11T16:07Z
+
+## Recent Changes (as of 2026-04-11 16:07)
+
+- **App Stats UX improvements** (2026-04-11 16:07) — Three related changes to the stats/graph experience:
+  1. **Settings screen**: Removed the "App Stats" button from the settings body. Added a bar chart icon (📊) to the Settings TopAppBar actions area for quick access.
+  2. **Graph popup overhaul** (`StreakGraphPopup.kt`): Completely rewritten for a professional look:
+     - Always forces fullscreen landscape orientation (restores on dismiss)
+     - Removed time period preset buttons (1M/3M/6M/1Y/Max) — replaced with pinch-to-zoom (1×–20×) and drag-to-pan
+     - Dark gradient background, glow effect on line, gradient fill under curve
+     - Chart border, improved axis labels with `sans-serif-light` typeface
+     - Y-axis labels auto-format large numbers (1K, 2.5K, 1.0M)
+     - 7-day moving average shown as gold dashed line with legend
+     - Data dots only shown when zoomed in enough (≤60 visible days)
+     - Close button as icon (X) in top-right corner
+     - Zoom level indicator shown when zoomed in
+  3. **Cumulative points graph** (`AppStatsScreen.kt`): "Total habit points (all time)" in the Overview section is now clickable (gold color with 📈 icon). Opens a graph showing cumulative points over time. Added `dailyCumulativePoints` field to `AppStats` data class, computed as running sum of daily totals.
+  - Modified: `SettingsScreen.kt`, `StreakGraphPopup.kt` (full rewrite), `AppStatsScreen.kt`
+
 **Last updated:** 2026-04-10T12:42Z
 
 ## Recent Changes (as of 2026-04-10 12:42)
