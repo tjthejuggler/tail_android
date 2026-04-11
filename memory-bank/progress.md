@@ -1,5 +1,12 @@
 # Progress — Tail
 
+## 2026-04-11 17:08
+- [x] Portrait orientation lock for main screens (grid, settings, app stats)
+  - Added `android:screenOrientation="portrait"` to `MainActivity` in `AndroidManifest.xml`
+  - Updated `StreakGraphPopup.kt` `onDispose` to restore `SCREEN_ORIENTATION_PORTRAIT` instead of `UNSPECIFIED`
+  - Graph popups still force landscape via `requestedOrientation` override, then return to portrait on dismiss
+  - Modified: `AndroidManifest.xml`, `StreakGraphPopup.kt`
+
 ## 2026-04-11 16:07
 - [x] App Stats UX improvements:
   - Moved "App Stats" button from settings body to a bar chart icon in the Settings TopAppBar

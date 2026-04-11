@@ -1,6 +1,13 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-11T16:07Z
+**Last updated:** 2026-04-11T17:08Z
+
+## Recent Changes (as of 2026-04-11 17:08)
+
+- **Portrait orientation lock** (2026-04-11 17:08) — Locked the main habits screen, app stats screen, and settings screen to portrait mode:
+  - Added `android:screenOrientation="portrait"` to `MainActivity` in `AndroidManifest.xml`
+  - Updated `StreakGraphPopup.kt` to restore to `SCREEN_ORIENTATION_PORTRAIT` (instead of `UNSPECIFIED`) on dismiss, so graphs still open in landscape but return to portrait when closed
+  - Modified: `AndroidManifest.xml`, `StreakGraphPopup.kt`
 
 ## Recent Changes (as of 2026-04-11 16:07)
 
