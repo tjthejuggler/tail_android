@@ -1,6 +1,39 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-11T17:08Z
+**Last updated:** 2026-04-13T21:11Z
+
+## Recent Changes (as of 2026-04-13 21:11)
+
+- **Fix: Voice activities use moveTaskToBack** (2026-04-13 21:11) — Activities now call `finish()` then `moveTaskToBack(true)` to push the empty task to the back immediately, preventing the current foreground app from being minimized. Combined with `taskAffinity=""`, `noHistory="true"`, and transparent theme in manifest.
+- **Fix: Ready vibration now 150ms** (2026-04-13 21:08) — Increased `vibrateReady()` pulse from 80ms to 150ms for better noticeability. Added explicit `VIBRATE` permission to manifest.
+
+## Recent Changes (as of 2026-04-13 20:44)
+
+- **Ready vibration for voice features** (2026-04-13 20:44) — Added `vibrateReady()` (short 150ms pulse) to both `VoiceHabitService` and `VoiceNoteService`, fired in `onReadyForSpeech` callback so the user knows when the recognizer is listening and they can start speaking. Distinct from the confirmation vibrations (200ms single pulse for voice trigger, double-pulse waveform for voice note).
+
+## Recent Changes (as of 2026-04-13 20:29)
+
+- **Voice Note Dictation** (2026-04-13 20:29) — New feature allowing voice-dictated notes to be prepended to a markdown file, triggered via Samsung Routines:
+  - **Settings section**: "📝 Voice Note Dictation" with enable toggle + SAF file picker for the notes.md file
+  - **VoiceNoteActivity** (`VoiceNoteActivity.kt`): Transparent activity launched by Samsung Routines via App Shortcuts
+  - **VoiceNoteService** (`ipc/VoiceNoteService.kt`): ForegroundService with SpeechRecognizer, 30-second timeout, prepends dictated text to file with `## YYYY-MM-DD HH:MM:SS` header, confirmation vibration (double pulse)
+  - **App Shortcut**: "Voice Note" in `shortcuts.xml` for Samsung Routines discovery
+  - **Data layer**: `voiceNoteEnabled`, `voiceNoteFileUri` in AppSettings + DataStore persistence
+  - New files: `VoiceNoteActivity.kt`, `VoiceNoteService.kt`
+  - Modified: `HabitModels.kt`, `SettingsRepository.kt`, `HabitViewModel.kt`, `SettingsScreen.kt`, `AndroidManifest.xml`, `shortcuts.xml`, `strings.xml`
+
+- **Voice Trigger Habit Increment** (2026-04-13 19:13) — New feature allowing habits to be incremented via voice trigger words, activated through Samsung Routines:
+  - **Global toggle** in Settings screen: "🎤 Voice Trigger" enable/disable section
+  - **Per-habit toggle** in Edit Mode SETTINGS: "🎤 Voice Trigger" with ℹ info button + comma-separated trigger words input
+  - **VoiceTriggerInfoDialog**: Complete step-by-step Samsung Routines setup instructions
+  - **VoiceHabitReceiver** (`ipc/VoiceHabitReceiver.kt`): BroadcastReceiver for `ACTION_VOICE_HABIT`, exported without permission (Samsung Routines compatibility)
+  - **VoiceHabitService** (`ipc/VoiceHabitService.kt`): ForegroundService with `FOREGROUND_SERVICE_TYPE_MICROPHONE`, SpeechRecognizer, wake lock, 8-second timeout, trigger word matching, habit increment with conditional propagation, Tasker file update, confirmation vibration
+  - **VoiceTriggerActivity** (`VoiceTriggerActivity.kt`): Transparent activity launched by Samsung Routines via App Shortcuts — immediately starts VoiceHabitService and finishes
+  - **App Shortcuts** (`res/xml/shortcuts.xml`): Static shortcut "Voice Trigger" so Samsung Routines can discover and use it as an app action
+  - **Data layer**: `voiceTriggerEnabled`, `voiceTriggerHabits`, `voiceTriggerWords` in AppSettings + DataStore persistence
+  - **Permissions**: `RECORD_AUDIO`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `WAKE_LOCK`
+  - New files: `VoiceHabitReceiver.kt`, `VoiceHabitService.kt`, `VoiceTriggerActivity.kt`, `res/xml/shortcuts.xml`
+  - Modified: `HabitModels.kt`, `SettingsRepository.kt`, `HabitViewModel.kt`, `SettingsScreen.kt`, `HabitGridScreen.kt`, `AndroidManifest.xml`, `strings.xml`
 
 ## Recent Changes (as of 2026-04-11 17:08)
 

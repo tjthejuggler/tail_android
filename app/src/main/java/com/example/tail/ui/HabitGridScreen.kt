@@ -78,6 +78,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -524,7 +525,12 @@ fun HabitGridScreen(
                         onToggleDisabled = { name -> viewModel.toggleDisabledHabit(name) },
                         chessComEnabled = settings.chessComEnabled,
                         chessComHabitLinks = settings.chessComHabitLinks,
-                        onSetChessComLink = { name, type -> viewModel.setChessComHabitLink(name, type) }
+                        onSetChessComLink = { name, type -> viewModel.setChessComHabitLink(name, type) },
+                        voiceTriggerEnabled = settings.voiceTriggerEnabled,
+                        voiceTriggerHabits = settings.voiceTriggerHabits,
+                        voiceTriggerWords = settings.voiceTriggerWords,
+                        onToggleVoiceTrigger = { name -> viewModel.toggleVoiceTrigger(name) },
+                        onSetVoiceTriggerWords = { name, words -> viewModel.setVoiceTriggerWords(name, words) }
                     )
                 }
             }
@@ -947,7 +953,12 @@ private fun EditModeControlBar(
     onToggleDisabled: (String) -> Unit = {},
     chessComEnabled: Boolean = false,
     chessComHabitLinks: Map<String, String> = emptyMap(),
-    onSetChessComLink: (String, String?) -> Unit = { _, _ -> }
+    onSetChessComLink: (String, String?) -> Unit = { _, _ -> },
+    voiceTriggerEnabled: Boolean = false,
+    voiceTriggerHabits: Set<String> = emptySet(),
+    voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
+    onToggleVoiceTrigger: (String) -> Unit = {},
+    onSetVoiceTriggerWords: (String, Set<String>) -> Unit = { _, _ -> }
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -962,6 +973,8 @@ private fun EditModeControlBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(max = 400.dp)
+            .verticalScroll(rememberScrollState())
             .background(if (movePending) Color(0xFF001A1A) else Color(0xFF1A1000))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
@@ -1736,6 +1749,91 @@ private fun EditModeControlBar(
                                 uncheckedTrackColor = Color(0xFF333333)
                             )
                         )
+                    }
+
+                    // ── Voice Trigger toggle ────────────────────────────────
+                    if (voiceTriggerEnabled) {
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val isVoiceTrigger = selectedHabitName in voiceTriggerHabits
+                        val currentTriggerWords = voiceTriggerWords[selectedHabitName] ?: emptySet()
+                        var triggerWordsText by remember(selectedHabitName) {
+                            mutableStateOf(currentTriggerWords.joinToString(", "))
+                        }
+                        var showVoiceTriggerInfo by remember { mutableStateOf(false) }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column {
+                                    Text(text = "🎤 Voice Trigger", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                    Text(
+                                        text = if (isVoiceTrigger) "${currentTriggerWords.size} trigger word(s)"
+                                               else "Say a word to increment",
+                                        color = Color(0xFF888888), fontSize = 10.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                IconButton(
+                                    onClick = { showVoiceTriggerInfo = true },
+                                    modifier = Modifier.size(20.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = "Voice Trigger setup info",
+                                        tint = Color(0xFF6699CC),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = isVoiceTrigger,
+                                onCheckedChange = { onToggleVoiceTrigger(selectedHabitName) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color(0xFF44BBFF),
+                                    checkedTrackColor = Color(0xFF003355),
+                                    uncheckedThumbColor = Color(0xFF888888),
+                                    uncheckedTrackColor = Color(0xFF333333)
+                                )
+                            )
+                        }
+
+                        if (isVoiceTrigger) {
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            OutlinedTextField(
+                                value = triggerWordsText,
+                                onValueChange = { newText ->
+                                    triggerWordsText = newText
+                                    val words = newText.split(",")
+                                        .map { it.trim().lowercase() }
+                                        .filter { it.isNotEmpty() }
+                                        .toSet()
+                                    onSetVoiceTriggerWords(selectedHabitName, words)
+                                },
+                                label = { Text("Trigger words (comma-separated)", fontSize = 10.sp) },
+                                singleLine = false,
+                                maxLines = 3,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color(0xFF44BBFF),
+                                    unfocusedTextColor = Color(0xFF44BBFF),
+                                    focusedBorderColor = Color(0xFF44BBFF),
+                                    unfocusedBorderColor = Color(0xFF225577)
+                                ),
+                                textStyle = TextStyle(fontSize = 12.sp)
+                            )
+                        }
+
+                        if (showVoiceTriggerInfo) {
+                            VoiceTriggerInfoDialog(onDismiss = { showVoiceTriggerInfo = false })
+                        }
                     }
 
                     // ── Chess.com link toggle ────────────────────────────────
@@ -2673,5 +2771,128 @@ private fun InfoRow(
             color = valueColor,
             fontSize = 11.sp
         )
+    }
+}
+
+// ── Voice Trigger info dialog ────────────────────────────────────────────────
+
+/**
+ * Info dialog explaining how to set up Samsung Routines for voice trigger.
+ * Follows the same pattern as [DatedEntryInfoDialog].
+ */
+@Composable
+private fun VoiceTriggerInfoDialog(onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF0A1A2A), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = "🎤 Voice Trigger Setup",
+                color = Color(0xFF44BBFF),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "When triggered, Tail listens for ~8 seconds through your microphone. " +
+                       "If it hears one of your configured trigger words, it increments the " +
+                       "matching habit — even with the screen off.",
+                color = Color(0xFFCCCCCC),
+                fontSize = 12.sp
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Samsung Routines Setup",
+                color = Color(0xFF44BBFF),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val steps = listOf(
+                "1. Open Settings → Modes and Routines\n   (or search \"Routines\" in Settings)",
+                "2. Tap \"+\" to create a new routine",
+                "3. Set your trigger (\"If\"):\n   • \"Button\" → choose a button combo\n     (e.g. double-press Side key)\n   • Or any other trigger you prefer",
+                "4. Set the action (\"Then\"):\n   • Tap \"Then\" → scroll to \"Apps\"\n   • Select \"tail\" from the app list\n   • Choose \"Voice Trigger\" as the action",
+                "5. Save the routine and test it!"
+            )
+            for (step in steps) {
+                Text(
+                    text = step,
+                    color = Color(0xFFAABBCC),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "How it appears in Routines",
+                color = Color(0xFF44BBFF),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Tail registers a \"Voice Trigger\" app shortcut.\n" +
+                       "In Samsung Routines under \"Then\" → \"Apps\",\n" +
+                       "you'll see Tail with the \"Voice Trigger\"\n" +
+                       "action available to select.",
+                color = Color(0xFF889999),
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Tips",
+                color = Color(0xFF44BBFF),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            val tips = listOf(
+                "• Speak clearly within ~8 seconds",
+                "• Trigger words are case-insensitive",
+                "• Partial matches work: saying \"I did pushups\" matches the trigger word \"pushups\"",
+                "• Multiple habits can share the same trigger word — all will be incremented",
+                "• A confirmation vibration means it matched"
+            )
+            for (tip in tips) {
+                Text(text = tip, color = Color(0xFFAABBCC), fontSize = 11.sp)
+                Spacer(modifier = Modifier.height(2.dp))
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Permissions",
+                color = Color(0xFF44BBFF),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Tail needs microphone permission to listen for trigger words. " +
+                       "You'll be prompted when the service first runs. " +
+                       "If denied, grant it in Settings → Apps → Tail → Permissions.",
+                color = Color(0xFF889999),
+                fontSize = 11.sp
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003355))
+                ) {
+                    Text("Got it", color = Color(0xFF44BBFF))
+                }
+            }
+        }
     }
 }

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Static shortcut for "Voice Trigger" — appears in Samsung Routines
+        under "Then" → "Apps" → "Tail" → "Voice Trigger".
+        Launches VoiceTriggerActivity which starts the VoiceHabitService.
+    -->
+    <shortcut
+        android:shortcutId="voice_trigger"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_voice_trigger_short"
+        android:shortcutLongLabel="@string/shortcut_voice_trigger_long"
+        android:icon="@android:drawable/ic_btn_speak_now">
+        <intent
+            android:action="com.example.tail.ACTION_VOICE_TRIGGER"
+            android:targetPackage="com.example.tail"
+            android:targetClass="com.example.tail.VoiceTriggerActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <!--
+        Static shortcut for "Voice Note" — appears in Samsung Routines
+        under "Then" → "Apps" → "Tail" → "Voice Note".
+        Launches VoiceNoteActivity which starts the VoiceNoteService.
+    -->
+    <shortcut
+        android:shortcutId="voice_note"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_voice_note_short"
+        android:shortcutLongLabel="@string/shortcut_voice_note_long"
+        android:icon="@android:drawable/ic_btn_speak_now">
+        <intent
+            android:action="com.example.tail.ACTION_VOICE_NOTE"
+            android:targetPackage="com.example.tail"
+            android:targetClass="com.example.tail.VoiceNoteActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+</shortcuts>

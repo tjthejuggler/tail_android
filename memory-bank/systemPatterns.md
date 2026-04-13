@@ -1,6 +1,6 @@
 # System Patterns — Tail
 
-**Last updated:** 2026-04-09T00:07Z
+**Last updated:** 2026-04-13T20:29Z
 
 ## Architecture
 
@@ -21,7 +21,10 @@ app/src/main/java/com/example/tail/
 │   └── ChessComRepository.kt # Chess.com data processing + monthly cache
 ├── ipc/
 │   ├── HabitsContentProvider.kt  # Read-only ContentProvider for same-keystore apps
-│   └── HabitIncrementReceiver.kt # BroadcastReceiver for habit increments
+│   ├── HabitIncrementReceiver.kt # BroadcastReceiver for habit increments
+│   ├── VoiceHabitReceiver.kt    # BroadcastReceiver for Samsung Routines voice trigger
+│   ├── VoiceHabitService.kt     # ForegroundService with SpeechRecognizer for voice trigger
+│   └── VoiceNoteService.kt     # ForegroundService with SpeechRecognizer for voice note dictation
 ├── ui/
 │   ├── HabitViewModel.kt     # Central ViewModel (1577 lines — largest file)
 │   ├── HabitColors.kt        # Color tiers, drawable icon map

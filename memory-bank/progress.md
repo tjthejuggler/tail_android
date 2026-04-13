@@ -1,5 +1,34 @@
 # Progress — Tail
 
+## 2026-04-13 21:11
+- [x] Fix: Voice activities now call `moveTaskToBack(true)` after `finish()` to prevent minimizing the current foreground app
+- [x] Fix: Ready vibration increased to 150ms, added explicit `VIBRATE` permission
+
+## 2026-04-13 20:44
+- [x] Ready vibration for voice features: added `vibrateReady()` method (80ms single pulse) to both `VoiceHabitService.kt` and `VoiceNoteService.kt`, called from `onReadyForSpeech` callback so user knows when to start speaking
+
+## 2026-04-13 20:29
+- [x] Voice Note Dictation feature: dictate notes by voice via Samsung Routines, prepended to a markdown file
+  - New files: `VoiceNoteActivity.kt` (transparent activity for Samsung Routines), `VoiceNoteService.kt` (ForegroundService with SpeechRecognizer, 30s timeout, prepend to file with timestamp header, double-pulse vibration)
+  - Modified: `HabitModels.kt` (2 new AppSettings fields: `voiceNoteEnabled`, `voiceNoteFileUri`)
+  - Modified: `SettingsRepository.kt` (2 new DataStore keys + save methods)
+  - Modified: `HabitViewModel.kt` (`saveVoiceNoteEnabled()`, `saveVoiceNoteFileUri()`)
+  - Modified: `SettingsScreen.kt` ("📝 Voice Note Dictation" section with enable toggle + SAF file picker)
+  - Modified: `AndroidManifest.xml` (VoiceNoteActivity + VoiceNoteService declarations)
+  - Modified: `shortcuts.xml` (added "Voice Note" shortcut), `strings.xml` (shortcut labels)
+
+## 2026-04-13 19:13
+- [x] Voice Trigger Habit Increment feature: increment habits by speaking trigger words via Samsung Routines
+  - New files: `VoiceHabitReceiver.kt` (BroadcastReceiver for `ACTION_VOICE_HABIT`), `VoiceHabitService.kt` (ForegroundService with SpeechRecognizer, 8s timeout, wake lock, trigger matching, confirmation vibration), `VoiceTriggerActivity.kt` (transparent activity for Samsung Routines app action), `res/xml/shortcuts.xml` (App Shortcuts for Samsung Routines discovery)
+  - Modified: `HabitModels.kt` (3 new AppSettings fields: `voiceTriggerEnabled`, `voiceTriggerHabits`, `voiceTriggerWords`)
+  - Modified: `SettingsRepository.kt` (3 new DataStore keys + migration + save methods)
+  - Modified: `HabitViewModel.kt` (`saveVoiceTriggerEnabled()`, `toggleVoiceTrigger()`, `setVoiceTriggerWords()`)
+  - Modified: `SettingsScreen.kt` (global "🎤 Voice Trigger" enable/disable section)
+  - Modified: `HabitGridScreen.kt` (per-habit toggle + trigger words input + ℹ info button + `VoiceTriggerInfoDialog` with Samsung Routines setup instructions)
+  - Modified: `AndroidManifest.xml` (`RECORD_AUDIO`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `WAKE_LOCK` permissions + service/receiver/activity declarations + shortcuts meta-data)
+  - Modified: `strings.xml` (shortcut label strings)
+  - Architecture plan: `plans/voice-trigger-habit-increment.md`
+
 ## 2026-04-11 17:08
 - [x] Portrait orientation lock for main screens (grid, settings, app stats)
   - Added `android:screenOrientation="portrait"` to `MainActivity` in `AndroidManifest.xml`

@@ -66,6 +66,14 @@ private val KEY_CHESS_COM_USERNAME = stringPreferencesKey("chess_com_username")
 private val KEY_CHESS_COM_MINUTES_PER_INCREMENT = stringPreferencesKey("chess_com_minutes_per_increment")
 // Stored as "habitName\x00TYPE|||habitName\x00TYPE" pairs
 private val KEY_CHESS_COM_HABIT_LINKS = stringPreferencesKey("chess_com_habit_links")
+// Voice trigger feature keys
+private val KEY_VOICE_TRIGGER_ENABLED = booleanPreferencesKey("voice_trigger_enabled")
+private val KEY_VOICE_TRIGGER_HABITS = stringSetPreferencesKey("voice_trigger_habits")
+// Stored as "habitName\x00word1,word2,word3|||habitName\x00word1" pairs (same as linked habits)
+private val KEY_VOICE_TRIGGER_WORDS = stringPreferencesKey("voice_trigger_words")
+// Voice note dictation settings
+private val KEY_VOICE_NOTE_ENABLED = booleanPreferencesKey("voice_note_enabled")
+private val KEY_VOICE_NOTE_FILE_URI = stringPreferencesKey("voice_note_file_uri")
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
@@ -290,6 +298,7 @@ class SettingsRepository(private val context: Context) {
             migrateStringSet(KEY_CONDITIONAL_HABITS)
             migrateStringSet(KEY_SUBTYPED_HABITS)
             migrateStringSet(KEY_TIMED_HABITS)
+            migrateStringSet(KEY_VOICE_TRIGGER_HABITS)
 
             // --- Delimited-string keys (habit order) ---
             val orderRaw = prefs[KEY_HABIT_ORDER] ?: ""
@@ -326,6 +335,13 @@ class SettingsRepository(private val context: Context) {
             if (linkedRaw.isNotBlank()) {
                 val migrated = migrateLinkedHabitsStr(linkedRaw)
                 if (migrated != linkedRaw) prefs[KEY_CONDITIONAL_LINKED_HABITS] = migrated
+            }
+
+            // --- Voice trigger words map: rename both keys and values ---
+            val voiceTriggerRaw = prefs[KEY_VOICE_TRIGGER_WORDS] ?: ""
+            if (voiceTriggerRaw.isNotBlank()) {
+                val migrated = migrateLinkedHabitsStr(voiceTriggerRaw)
+                if (migrated != voiceTriggerRaw) prefs[KEY_VOICE_TRIGGER_WORDS] = migrated
             }
 
             prefs[KEY_MIGRATION_LAUNCH_RENAME_DONE] = true
@@ -389,7 +405,12 @@ class SettingsRepository(private val context: Context) {
             chessComEnabled = prefs[KEY_CHESS_COM_ENABLED] ?: false,
             chessComUsername = prefs[KEY_CHESS_COM_USERNAME] ?: "",
             chessComMinutesPerIncrement = decodeIntMap(chessComMinutesRaw),
-            chessComHabitLinks = decodeFileUriMap(chessComHabitLinksRaw)
+            chessComHabitLinks = decodeFileUriMap(chessComHabitLinksRaw),
+            voiceTriggerEnabled = prefs[KEY_VOICE_TRIGGER_ENABLED] ?: false,
+            voiceTriggerHabits = prefs[KEY_VOICE_TRIGGER_HABITS] ?: emptySet(),
+            voiceTriggerWords = decodeLinkedHabitsMap(prefs[KEY_VOICE_TRIGGER_WORDS] ?: ""),
+            voiceNoteEnabled = prefs[KEY_VOICE_NOTE_ENABLED] ?: false,
+            voiceNoteFileUri = prefs[KEY_VOICE_NOTE_FILE_URI] ?: ""
         )
     }
 
@@ -614,5 +635,36 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_CHESS_COM_USERNAME] = username
             prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] = encodeIntMap(minutesPerIncrement)
         }
+    }
+
+    // ── Voice Trigger ────────────────────────────────────────────────────
+
+    /** Saves the global voice trigger enabled flag. */
+    suspend fun saveVoiceTriggerEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_VOICE_TRIGGER_ENABLED] = enabled }
+    }
+
+    /** Saves the set of habits that have voice trigger enabled. */
+    suspend fun saveVoiceTriggerHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_VOICE_TRIGGER_HABITS] = habits }
+    }
+
+    /** Saves the map of habit name → set of trigger words. */
+    suspend fun saveVoiceTriggerWords(words: Map<String, Set<String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_VOICE_TRIGGER_WORDS] = encodeLinkedHabitsMap(words)
+        }
+    }
+
+    // ── Voice Note Dictation ─────────────────────────────────────────────
+
+    /** Saves the global voice note enabled flag. */
+    suspend fun saveVoiceNoteEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_VOICE_NOTE_ENABLED] = enabled }
+    }
+
+    /** Saves the SAF URI for the voice note markdown file. */
+    suspend fun saveVoiceNoteFileUri(uri: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_VOICE_NOTE_FILE_URI] = uri }
     }
 }

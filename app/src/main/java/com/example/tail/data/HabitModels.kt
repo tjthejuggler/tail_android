@@ -258,7 +258,25 @@ data class AppSettings(
      * Maps habit name → ChessComType.name for habits linked to chess.com data.
      * When a habit is in this map, its daily count is auto-set from chess.com data.
      */
-    val chessComHabitLinks: Map<String, String> = emptyMap()
+    val chessComHabitLinks: Map<String, String> = emptyMap(),
+
+    // ── Voice Trigger settings ────────────────────────────────────────────
+    /** Global on/off for voice trigger feature (must be enabled in Settings). */
+    val voiceTriggerEnabled: Boolean = false,
+    /** Habits that have voice trigger enabled (per-habit toggle in edit mode). */
+    val voiceTriggerHabits: Set<String> = emptySet(),
+    /**
+     * Maps habit name → set of trigger words (stored lowercase).
+     * When the VoiceHabitService hears speech containing any of these words,
+     * the corresponding habit is incremented.
+     */
+    val voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
+
+    // ── Voice Note Dictation settings ─────────────────────────────────────
+    /** Global on/off for voice note dictation feature. */
+    val voiceNoteEnabled: Boolean = false,
+    /** SAF URI for the notes markdown file to prepend dictated notes to. */
+    val voiceNoteFileUri: String = ""
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

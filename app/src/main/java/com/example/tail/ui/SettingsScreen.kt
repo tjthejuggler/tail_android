@@ -245,6 +245,22 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // ── Voice Trigger ────────────────────────────────────────────────
+            item {
+                VoiceTriggerSettingsSection(viewModel = viewModel, settings = settings)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // ── Voice Note Dictation ─────────────────────────────────────────
+            item {
+                VoiceNoteSettingsSection(viewModel = viewModel, settings = settings)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // ── Per-habit settings hint ──────────────────────────────────────
             item {
                 Text(
@@ -657,6 +673,140 @@ private fun ChessComSettingsSection(
             ) {
                 Text("Fetch Entire Backlog", fontSize = 12.sp)
             }
+        }
+    }
+}
+
+/**
+ * Voice Trigger settings section — simple global enable/disable toggle.
+ * Per-habit trigger word configuration is done in edit mode.
+ */
+@Composable
+private fun VoiceTriggerSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    var enabled by remember(settings.voiceTriggerEnabled) { mutableStateOf(settings.voiceTriggerEnabled) }
+
+    Column {
+        Text("🎤 Voice Trigger", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Increment habits by speaking trigger words via Samsung Routines",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Text("Enable Voice Trigger", fontSize = 14.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    viewModel.saveVoiceTriggerEnabled(it)
+                }
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Configure trigger words per-habit in Edit Mode (tap ✏ on the main screen, " +
+                       "select a habit, scroll to \"🎤 Voice Trigger\" in SETTINGS).",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * Voice Note Dictation settings section — enable toggle + file picker for the notes.md file.
+ */
+@Composable
+private fun VoiceNoteSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    var enabled by remember(settings.voiceNoteEnabled) { mutableStateOf(settings.voiceNoteEnabled) }
+    val hasFile = settings.voiceNoteFileUri.isNotEmpty()
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            // Take persistent permission so we can access the file later from the service
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            viewModel.saveVoiceNoteFileUri(uri.toString())
+        }
+    }
+
+    Column {
+        Text("📝 Voice Note Dictation", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Dictate notes by voice via Samsung Routines — prepended to a markdown file",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Text("Enable Voice Note", fontSize = 14.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    viewModel.saveVoiceNoteEnabled(it)
+                }
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Notes file", fontSize = 14.sp)
+                    Text(
+                        text = if (hasFile) "✓ File selected" else "⚠ No file selected",
+                        color = if (hasFile) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.error,
+                        fontSize = 11.sp
+                    )
+                }
+                Button(
+                    onClick = {
+                        filePicker.launch(arrayOf("text/markdown", "text/plain", "*/*"))
+                    }
+                ) {
+                    Text(if (hasFile) "Change" else "Select File", fontSize = 12.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Dictated notes are prepended to the top of this file with a " +
+                       "\"## YYYY-MM-DD HH:MM:SS\" header. Set up a Samsung Routine with " +
+                       "\"Voice Note\" as the app action.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

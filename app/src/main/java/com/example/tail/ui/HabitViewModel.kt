@@ -2119,6 +2119,70 @@ class HabitViewModel(
             Log.d(TAG, "Chess.com data applied to habits")
         }
     }
+
+    // ── Voice Trigger Methods ────────────────────────────────────────────────
+
+    /** Saves the global voice trigger enabled flag (called from Settings screen). */
+    fun saveVoiceTriggerEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepo.saveVoiceTriggerEnabled(enabled)
+            _settings.value = _settings.value.copy(voiceTriggerEnabled = enabled)
+        }
+    }
+
+    /** Toggles the per-habit voice trigger on/off. */
+    fun toggleVoiceTrigger(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.voiceTriggerHabits.toMutableSet()
+            if (habitName in current) {
+                current.remove(habitName)
+                // Also clean up trigger words when disabling
+                val words = _settings.value.voiceTriggerWords.toMutableMap()
+                words.remove(habitName)
+                settingsRepo.saveVoiceTriggerWords(words)
+                _settings.value = _settings.value.copy(
+                    voiceTriggerHabits = current,
+                    voiceTriggerWords = words
+                )
+            } else {
+                current.add(habitName)
+                _settings.value = _settings.value.copy(voiceTriggerHabits = current)
+            }
+            settingsRepo.saveVoiceTriggerHabits(current)
+        }
+    }
+
+    /** Sets the trigger words for a specific habit. */
+    fun setVoiceTriggerWords(habitName: String, words: Set<String>) {
+        viewModelScope.launch {
+            val allWords = _settings.value.voiceTriggerWords.toMutableMap()
+            if (words.isEmpty()) {
+                allWords.remove(habitName)
+            } else {
+                allWords[habitName] = words
+            }
+            settingsRepo.saveVoiceTriggerWords(allWords)
+            _settings.value = _settings.value.copy(voiceTriggerWords = allWords)
+        }
+    }
+
+    // ── Voice Note Dictation Methods ─────────────────────────────────────────
+
+    /** Saves the global voice note enabled flag (called from Settings screen). */
+    fun saveVoiceNoteEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepo.saveVoiceNoteEnabled(enabled)
+            _settings.value = _settings.value.copy(voiceNoteEnabled = enabled)
+        }
+    }
+
+    /** Saves the SAF URI for the voice note markdown file. */
+    fun saveVoiceNoteFileUri(uri: String) {
+        viewModelScope.launch {
+            settingsRepo.saveVoiceNoteFileUri(uri)
+            _settings.value = _settings.value.copy(voiceNoteFileUri = uri)
+        }
+    }
 }
 
 class HabitViewModelFactory(
