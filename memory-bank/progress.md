@@ -1,5 +1,16 @@
 # Progress — Tail
 
+## 2026-04-13 21:37
+- [x] Habit Increment Timestamps feature: record the time habits are incremented
+  - New file: `HabitTimestampRepository.kt` — internal JSON storage for per-habit, per-day timestamp lists (`files/habit_timestamps.json`)
+  - New file: `TimestampEditorDialog.kt` — Compose dialog for viewing/editing/deleting/adding timestamps with 12-hour AM/PM display
+  - Modified: `HabitViewModel.kt` — added `timestampRepo` field, `recordTimestamp` parameter on `incrementHabit()`, chess.com timestamp recording in `applyChessComData()`
+  - Modified: `HabitGridScreen.kt` — tap records timestamp, long-press increments without timestamp, edit mode "🕐 Timestamps (N)" button, LaunchedEffect for timestamp count, TimestampEditorDialog rendering
+  - Modified: `VoiceHabitService.kt` — records timestamp after voice-triggered increment
+  - Modified: `HabitIncrementReceiver.kt` — records timestamp after IPC-triggered increment
+  - Behavior: tap=timestamp, long-press=no timestamp, voice/IPC/chess.com=timestamp, edit mode counter +/-=no timestamp
+  - No changes to charts/graphs/stats — timestamps are supplemental metadata
+
 ## 2026-04-13 21:11
 - [x] Fix: Voice activities now call `moveTaskToBack(true)` after `finish()` to prevent minimizing the current foreground app
 - [x] Fix: Ready vibration increased to 150ms, added explicit `VIBRATE` permission

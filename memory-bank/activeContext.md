@@ -1,6 +1,22 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-13T21:11Z
+**Last updated:** 2026-04-13T21:37Z
+
+## Recent Changes (as of 2026-04-13 21:37)
+
+- **Habit Increment Timestamps** (2026-04-13 21:37) — New feature recording the time habits are incremented:
+  - **New file: `HabitTimestampRepository.kt`** — Internal JSON storage (`files/habit_timestamps.json`) for per-habit, per-day timestamp lists. Format: `{ "Habit": { "2026-04-13": ["17:30:45", "18:15:22"] } }`. Supports add, delete, update, batch add, and full day replacement.
+  - **New file: `TimestampEditorDialog.kt`** — Compose dialog for viewing, editing, deleting, and adding timestamps. Shows timestamps in 12-hour AM/PM format, inline edit with time validation, add new times, delete individual entries. Changes sync with habit count (add/delete timestamps adjusts the habit's raw count).
+  - **Tap behavior changed**: Normal tap on a habit now records a timestamp (via `incrementHabit(recordTimestamp=true)` default). Long-press on a habit increments WITHOUT recording a timestamp (silent increment, like the old behavior).
+  - **Edit mode**: When a habit is selected in edit mode and has timestamps for the current day, a "🕐 Timestamps (N)" button appears below the count adjuster. Tapping it opens the `TimestampEditorDialog`.
+  - **Voice trigger**: `VoiceHabitService` now records timestamps when habits are incremented via voice.
+  - **IPC broadcast**: `HabitIncrementReceiver` now records timestamps when habits are incremented via IPC from other apps.
+  - **Chess.com integration**: `applyChessComData()` in `HabitViewModel` now records timestamps for today's chess.com auto-increments.
+  - **No changes to charts/graphs/stats** — timestamps are purely supplemental metadata for future analysis.
+  - Modified: `HabitViewModel.kt` (added `timestampRepo`, `recordTimestamp` param on `incrementHabit`, chess.com timestamp recording)
+  - Modified: `HabitGridScreen.kt` (timestamp state, LaunchedEffect for count, dialog rendering, long-press → silent increment, EditModeControlBar new params)
+  - Modified: `VoiceHabitService.kt` (timestamp recording after voice increment)
+  - Modified: `HabitIncrementReceiver.kt` (timestamp recording after IPC increment)
 
 ## Recent Changes (as of 2026-04-13 21:11)
 

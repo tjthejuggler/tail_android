@@ -21,6 +21,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import android.widget.Toast
+import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.applyDivider
@@ -260,6 +261,14 @@ class VoiceHabitService : Service() {
 
                     habitsRepo.incrementHabit(uri, applicationContext, habitName, 1)
                     Log.i(TAG, "Incremented habit '$habitName' via voice trigger")
+
+                    // Record timestamp for voice-triggered increment
+                    try {
+                        val tsRepo = HabitTimestampRepository(applicationContext)
+                        tsRepo.addTimestamp(habitName)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
+                    }
 
                     // Conditional habit propagation
                     if (habitName in settings.conditionalHabits) {

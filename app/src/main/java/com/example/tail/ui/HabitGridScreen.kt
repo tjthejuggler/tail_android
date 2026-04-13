@@ -67,8 +67,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -91,6 +93,7 @@ import com.example.tail.data.ChessComType
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.RollingHigh
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import android.graphics.BitmapFactory
@@ -161,6 +164,13 @@ fun HabitGridScreen(
 
     // Text-input dialog state: non-null when the dialog should be shown
     var textInputDialogState by remember { mutableStateOf<TextInputDialogState?>(null) }
+
+    // Timestamp editor dialog state
+    var timestampEditorHabitName by remember { mutableStateOf<String?>(null) }
+    var timestampEditorList by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Timestamp count for the currently selected edit-mode habit (for showing the button)
+    var selectedHabitTimestampCount by remember { mutableIntStateOf(0) }
+    val timestampScope = rememberCoroutineScope()
 
     // File picker for per-habit text log files (used from EditModeControlBar)
     var textInputPickerHabit by remember { mutableStateOf<String?>(null) }
@@ -420,7 +430,8 @@ fun HabitGridScreen(
                         },
                         onHabitLongClick = { habit ->
                             if (!infoMode && !editMode && !graphMode) {
-                                viewModel.toggleCustomInput(habit.name)
+                                // Long-press increments without recording a timestamp
+                                viewModel.incrementHabit(habit.name, 1, recordTimestamp = false)
                             }
                         },
                         onPlaceholderClick = { index ->
@@ -530,11 +541,73 @@ fun HabitGridScreen(
                         voiceTriggerHabits = settings.voiceTriggerHabits,
                         voiceTriggerWords = settings.voiceTriggerWords,
                         onToggleVoiceTrigger = { name -> viewModel.toggleVoiceTrigger(name) },
-                        onSetVoiceTriggerWords = { name, words -> viewModel.setVoiceTriggerWords(name, words) }
+                        onSetVoiceTriggerWords = { name, words -> viewModel.setVoiceTriggerWords(name, words) },
+                        selectedHabitTimestampCount = selectedHabitTimestampCount,
+                        onShowTimestamps = { name ->
+                            timestampScope.launch {
+                                timestampEditorList = viewModel.timestampRepo.getTimestampsForDay(name, selectedDate)
+                                timestampEditorHabitName = name
+                            }
+                        }
                     )
                 }
             }
         }
+    }
+
+    // Load timestamp count when selected edit habit changes
+    LaunchedEffect(selectedEditIndex, editMode, habits) {
+        if (editMode && selectedEditIndex >= 0 && selectedEditIndex < habits.size) {
+            val name = habits[selectedEditIndex].name
+            if (name.isNotEmpty()) {
+                val timestamps = viewModel.timestampRepo.getTimestampsForDay(name, selectedDate)
+                selectedHabitTimestampCount = timestamps.size
+            } else {
+                selectedHabitTimestampCount = 0
+            }
+        } else {
+            selectedHabitTimestampCount = 0
+        }
+    }
+
+    // Timestamp editor dialog
+    timestampEditorHabitName?.let { habitName ->
+        TimestampEditorDialog(
+            habitName = habitName,
+            timestamps = timestampEditorList,
+            onUpdateTimestamp = { index, newTime ->
+                timestampScope.launch {
+                    timestampEditorList = viewModel.timestampRepo.updateTimestamp(habitName, selectedDate, index, newTime)
+                    selectedHabitTimestampCount = timestampEditorList.size
+                    // Sync the habit count with the number of timestamps
+                    // (user may have edited timestamps, so count should match)
+                }
+            },
+            onDeleteTimestamp = { index ->
+                timestampScope.launch {
+                    timestampEditorList = viewModel.timestampRepo.deleteTimestamp(habitName, selectedDate, index)
+                    selectedHabitTimestampCount = timestampEditorList.size
+                    // Decrement the habit count to match
+                    val currentHabit = habits.find { it.name == habitName }
+                    if (currentHabit != null && currentHabit.rawTodayCount > timestampEditorList.size) {
+                        viewModel.setHabitCount(habitName, currentHabit.rawTodayCount - 1)
+                    }
+                }
+            },
+            onAddTimestamp = { time ->
+                timestampScope.launch {
+                    viewModel.timestampRepo.addTimestamp(habitName, selectedDate, time)
+                    timestampEditorList = viewModel.timestampRepo.getTimestampsForDay(habitName, selectedDate)
+                    selectedHabitTimestampCount = timestampEditorList.size
+                    // Increment the habit count to match
+                    val currentHabit = habits.find { it.name == habitName }
+                    if (currentHabit != null) {
+                        viewModel.setHabitCount(habitName, currentHabit.rawTodayCount + 1)
+                    }
+                }
+            },
+            onDismiss = { timestampEditorHabitName = null }
+        )
     }
 
     // Calendar picker dialog
@@ -958,7 +1031,11 @@ private fun EditModeControlBar(
     voiceTriggerHabits: Set<String> = emptySet(),
     voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
     onToggleVoiceTrigger: (String) -> Unit = {},
-    onSetVoiceTriggerWords: (String, Set<String>) -> Unit = { _, _ -> }
+    onSetVoiceTriggerWords: (String, Set<String>) -> Unit = { _, _ -> },
+    /** Number of timestamps for the selected habit on the current day. */
+    selectedHabitTimestampCount: Int = 0,
+    /** Called when the user taps the timestamps button. */
+    onShowTimestamps: (String) -> Unit = {}
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -1162,6 +1239,17 @@ private fun EditModeControlBar(
                                 Text("+", fontSize = 14.sp, color = Color(0xFF88FF88))
                             }
                         }
+                    }
+                }
+                // Timestamps button — shown when the habit has timestamps for today
+                if (selectedHabitName != null && selectedHabitTimestampCount > 0) {
+                    Button(
+                        onClick = { onShowTimestamps(selectedHabitName) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A3A)),
+                        modifier = Modifier.height(28.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Text("🕐 Timestamps ($selectedHabitTimestampCount)", fontSize = 10.sp, color = Color(0xFFBBBBFF))
                     }
                 }
                 Spacer(modifier = Modifier.height(6.dp))

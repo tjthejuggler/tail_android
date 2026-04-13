@@ -1,6 +1,6 @@
 # System Patterns — Tail
 
-**Last updated:** 2026-04-13T20:29Z
+**Last updated:** 2026-04-13T21:37Z
 
 ## Architecture
 
@@ -18,7 +18,8 @@ app/src/main/java/com/example/tail/
 │   ├── AiIconRepository.kt   # AI-generated icon storage (PNG files + JSON index)
 │   ├── AiIconGeneratorService.kt # AI image API client + post-processing
 │   ├── ChessComService.kt    # Chess.com public API client (HttpURLConnection)
-│   └── ChessComRepository.kt # Chess.com data processing + monthly cache
+│   ├── ChessComRepository.kt # Chess.com data processing + monthly cache
+│   └── HabitTimestampRepository.kt # Per-habit increment timestamps (internal JSON)
 ├── ipc/
 │   ├── HabitsContentProvider.kt  # Read-only ContentProvider for same-keystore apps
 │   ├── HabitIncrementReceiver.kt # BroadcastReceiver for habit increments
@@ -34,6 +35,7 @@ app/src/main/java/com/example/tail/
 │   ├── AppStatsScreen.kt     # Analytics/stats screen (1400 lines)
 │   ├── GraphsScreen.kt       # Graph visualizations (941 lines)
 │   ├── IncrementDialog.kt    # Custom amount dialog
+│   ├── TimestampEditorDialog.kt # Timestamp viewer/editor dialog
 │   ├── CalendarPickerDialog.kt # Date picker
 │   ├── StreakGraphPopup.kt   # Streak visualization popup
 │   ├── TextInputDialog.kt    # Text entry dialog

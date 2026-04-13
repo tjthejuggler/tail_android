@@ -14,6 +14,7 @@ import com.example.tail.data.AppSettings
 import com.example.tail.data.ChessComRepository
 import com.example.tail.data.ChessComType
 import com.example.tail.data.DatedEntryRepository
+import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.Habit
@@ -66,6 +67,9 @@ class HabitViewModel(
     private val timedDataRepo: TimedDataRepository,
     private val context: Context
 ) : ViewModel() {
+
+    /** Repository for recording habit increment timestamps (internal storage). */
+    val timestampRepo = HabitTimestampRepository(context)
 
     private val _habits = MutableStateFlow<List<Habit>>(emptyList())
     val habits: StateFlow<List<Habit>> = _habits.asStateFlow()
@@ -454,7 +458,12 @@ class HabitViewModel(
         return result
     }
 
-    fun incrementHabit(habitName: String, amount: Int = 1) {
+    /**
+     * Increments a habit's count. When [recordTimestamp] is true (default), also
+     * records the current time in the timestamp repository. Set to false for
+     * "silent" increments (e.g. long-press, edit-mode counter adjustments).
+     */
+    fun incrementHabit(habitName: String, amount: Int = 1, recordTimestamp: Boolean = true) {
         val uriString = _settings.value.fileUri
         if (uriString.isEmpty()) {
             _errorMessage.value = "No file selected. Please pick a file in Settings."
@@ -532,7 +541,14 @@ class HabitViewModel(
             }
         }
 
-        // Step 5: broadcast a generic "habit incremented" event so same-keystore apps
+        // Step 5: record timestamp(s) if requested
+        if (recordTimestamp && amount > 0) {
+            viewModelScope.launch {
+                timestampRepo.addTimestamps(habitName, amount, _selectedDate.value)
+            }
+        }
+
+        // Step 6: broadcast a generic "habit incremented" event so same-keystore apps
         // (e.g. VILD) can react — e.g. auto-switch from night to day mode on wake-up.
         sendHabitIncrementedBroadcast(habitName)
     }
@@ -2116,6 +2132,23 @@ class HabitViewModel(
             withContext(Dispatchers.IO) {
                 habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
             }
+
+            // Record timestamps for chess.com auto-increments
+            val now = HabitTimestampRepository.nowTime()
+            val today = LocalDate.now()
+            for ((habitName, typeKey) in s.chessComHabitLinks) {
+                val type = ChessComType.fromKey(typeKey) ?: continue
+                val dailyMinutes = data[type] ?: continue
+                val minutesPerIncrement = s.chessComMinutesPerIncrement[typeKey] ?: continue
+                if (minutesPerIncrement <= 0) continue
+                val increments = chessComRepo.computeIncrements(dailyMinutes, minutesPerIncrement)
+                val todayStr = dateString(today)
+                val todayCount = increments[todayStr] ?: 0
+                if (todayCount > 0) {
+                    timestampRepo.addTimestamps(habitName, todayCount, today, now)
+                }
+            }
+
             Log.d(TAG, "Chess.com data applied to habits")
         }
     }

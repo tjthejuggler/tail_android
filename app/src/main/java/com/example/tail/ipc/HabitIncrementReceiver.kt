@@ -7,6 +7,7 @@ import android.net.Uri
 import android.util.Log
 import com.example.tail.ui.ACTION_HABIT_INCREMENTED
 import com.example.tail.ui.EXTRA_HABIT_NAME
+import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.applyDivider
@@ -104,6 +105,14 @@ class HabitIncrementReceiver : BroadcastReceiver() {
 
                 habitsRepo.incrementHabit(uri, appContext, habitName, 1)
                 Log.i(TAG, "Incremented habit '$habitName' via IPC broadcast")
+
+                // Record timestamp for IPC-triggered increment
+                try {
+                    val tsRepo = HabitTimestampRepository(appContext)
+                    tsRepo.addTimestamp(habitName)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
+                }
 
                 // Also increment any conditional linked habits (mirrors HabitViewModel logic)
                 if (habitName in settings.conditionalHabits) {
