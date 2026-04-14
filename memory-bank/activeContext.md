@@ -1,6 +1,17 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-13T21:37Z
+**Last updated:** 2026-04-14T11:26Z
+
+## Recent Changes (as of 2026-04-14 11:26)
+
+- **Tasker text passthrough for voice shortcuts** (2026-04-14 11:26) — Modified voice shortcuts to accept pre-recognized text from Tasker, eliminating the need for a second listening phase:
+  - Both `VoiceTriggerActivity` and `VoiceNoteActivity` now extract `Intent.EXTRA_TEXT` from the incoming intent and forward it to their respective services.
+  - `VoiceHabitService` checks for `EXTRA_TEXT` in `onStartCommand()`. If present, it skips `SpeechRecognizer` entirely and passes the text directly to `handleSpeechResults()` for trigger word matching.
+  - `VoiceNoteService` checks for `EXTRA_TEXT` in `onStartCommand()`. If present, it skips `SpeechRecognizer` entirely and passes the text directly to `prependNoteToFile()`.
+  - `VoiceHabitReceiver` now forwards any `EXTRA_TEXT` from the broadcast intent to the service intent.
+  - When no `EXTRA_TEXT` is provided, both services fall back to the original `SpeechRecognizer` behavior — fully backward compatible.
+  - Notification text adapts: shows "Processing: <text>" when text is supplied, "Listening…" when using voice.
+  - Modified: `VoiceTriggerActivity.kt`, `VoiceNoteActivity.kt`, `VoiceHabitService.kt`, `VoiceNoteService.kt`, `VoiceHabitReceiver.kt`
 
 ## Recent Changes (as of 2026-04-13 21:37)
 

@@ -38,8 +38,15 @@ private const val NOTIFICATION_ID = 9002
 private const val LISTEN_TIMEOUT_MS = 30_000L // 30 seconds for longer dictation
 
 /**
- * Foreground service that uses Android's [SpeechRecognizer] to listen for
- * dictated speech and prepend it as a timestamped note to a markdown file.
+ * Foreground service that writes dictated text as a timestamped note to a
+ * markdown file.
+ *
+ * Two modes of operation:
+ *  1. **Text supplied** — If the launching intent contains [Intent.EXTRA_TEXT]
+ *     (e.g. from Tasker voice recognition), the text is written directly to
+ *     the notes file without starting the SpeechRecognizer.
+ *  2. **Voice listening** — If no text is supplied, the service uses Android's
+ *     [SpeechRecognizer] to listen for up to [LISTEN_TIMEOUT_MS] ms.
  *
  * The note is prepended (added to the top) with a date/time header like:
  * ```
@@ -65,7 +72,12 @@ class VoiceNoteService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification("📝 Listening for voice note…")
+        val suppliedText = com.example.tail.VoiceTriggerActivity.extractText(intent)
+        val notificationText = if (!suppliedText.isNullOrEmpty())
+            "📝 Saving note: \"$suppliedText\""
+        else
+            "📝 Listening for voice note…"
+        val notification = buildNotification(notificationText)
         startForeground(NOTIFICATION_ID, notification)
 
         scope.launch {
@@ -86,9 +98,17 @@ class VoiceNoteService : Service() {
                 return@launch
             }
 
-            Log.i(TAG, "Starting voice note dictation")
-            handler.post { Toast.makeText(applicationContext, "📝 Listening for note…", Toast.LENGTH_SHORT).show() }
-            startListening(settings.voiceNoteFileUri)
+            if (!suppliedText.isNullOrEmpty()) {
+                // ── Direct text mode (from Tasker / external automation) ────
+                Log.i(TAG, "Processing supplied text: \"$suppliedText\"")
+                handler.post { Toast.makeText(applicationContext, "📝 Saving note: \"$suppliedText\"", Toast.LENGTH_SHORT).show() }
+                prependNoteToFile(suppliedText, settings.voiceNoteFileUri)
+            } else {
+                // ── Voice listening mode ───────────────────────────────────
+                Log.i(TAG, "Starting voice note dictation")
+                handler.post { Toast.makeText(applicationContext, "📝 Listening for note…", Toast.LENGTH_SHORT).show() }
+                startListening(settings.voiceNoteFileUri)
+            }
         }
 
         // Safety timeout

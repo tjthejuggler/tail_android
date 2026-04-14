@@ -1,5 +1,14 @@
 # Progress — Tail
 
+## 2026-04-14 11:26
+- [x] Tasker text passthrough for voice shortcuts: accept pre-recognized text from Tasker via `Intent.EXTRA_TEXT`, skip SpeechRecognizer when text is provided
+  - Modified: `VoiceTriggerActivity.kt` — extracts `EXTRA_TEXT` from intent, forwards to `VoiceHabitService`
+  - Modified: `VoiceNoteActivity.kt` — extracts `EXTRA_TEXT` from intent, forwards to `VoiceNoteService`
+  - Modified: `VoiceHabitService.kt` — checks for `EXTRA_TEXT` in `onStartCommand()`, if present skips SpeechRecognizer and passes text directly to `handleSpeechResults()` for trigger word matching
+  - Modified: `VoiceNoteService.kt` — checks for `EXTRA_TEXT` in `onStartCommand()`, if present skips SpeechRecognizer and passes text directly to `prependNoteToFile()`
+  - Modified: `VoiceHabitReceiver.kt` — forwards any `EXTRA_TEXT` from broadcast intent to service intent
+  - Fully backward compatible: when no `EXTRA_TEXT` is provided, both services fall back to SpeechRecognizer behavior
+
 ## 2026-04-13 21:37
 - [x] Habit Increment Timestamps feature: record the time habits are incremented
   - New file: `HabitTimestampRepository.kt` — internal JSON storage for per-habit, per-day timestamp lists (`files/habit_timestamps.json`)

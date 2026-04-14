@@ -42,15 +42,21 @@ private const val NOTIFICATION_ID = 9001
 private const val LISTEN_TIMEOUT_MS = 8_000L
 
 /**
- * Foreground service that uses Android's [SpeechRecognizer] to listen for
- * voice trigger words and increment the matching habit(s).
+ * Foreground service that increments habits based on trigger word matching.
+ *
+ * Two modes of operation:
+ *  1. **Text supplied** — If the launching intent contains [Intent.EXTRA_TEXT]
+ *     (e.g. from Tasker voice recognition), the text is matched against trigger
+ *     words directly without starting the SpeechRecognizer.
+ *  2. **Voice listening** — If no text is supplied, the service uses Android's
+ *     [SpeechRecognizer] to listen for up to [LISTEN_TIMEOUT_MS] ms.
  *
  * Lifecycle:
- *  1. Started by [VoiceHabitReceiver] via `startForegroundService`
- *  2. Shows a foreground notification ("Listening for habit trigger…")
+ *  1. Started by [VoiceHabitReceiver] or [VoiceTriggerActivity] via `startForegroundService`
+ *  2. Shows a foreground notification
  *  3. Acquires a partial wake lock (CPU stays on while screen is off)
  *  4. Loads trigger words from [SettingsRepository]
- *  5. Starts speech recognition for up to [LISTEN_TIMEOUT_MS] ms
+ *  5. Either processes supplied text or starts speech recognition
  *  6. On match → increments habit, vibrates, stops self
  *  7. On timeout / error → stops self
  */
@@ -73,7 +79,12 @@ class VoiceHabitService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification("🎤 Listening for habit trigger…")
+        val suppliedText = com.example.tail.VoiceTriggerActivity.extractText(intent)
+        val notificationText = if (!suppliedText.isNullOrEmpty())
+            "🎤 Processing: \"$suppliedText\""
+        else
+            "🎤 Listening for habit trigger…"
+        val notification = buildNotification(notificationText)
         startForeground(NOTIFICATION_ID, notification)
 
         scope.launch {
@@ -106,9 +117,17 @@ class VoiceHabitService : Service() {
                 return@launch
             }
 
-            Log.i(TAG, "Loaded ${wordToHabits.size} trigger words for ${settings.voiceTriggerHabits.size} habits")
-            handler.post { Toast.makeText(applicationContext, "🎤 Listening...", Toast.LENGTH_SHORT).show() }
-            startListening(wordToHabits, settings)
+            if (!suppliedText.isNullOrEmpty()) {
+                // ── Direct text mode (from Tasker / external automation) ────
+                Log.i(TAG, "Processing supplied text: \"$suppliedText\"")
+                handler.post { Toast.makeText(applicationContext, "🎤 Processing: \"$suppliedText\"", Toast.LENGTH_SHORT).show() }
+                handleSpeechResults(listOf(suppliedText), wordToHabits, settings)
+            } else {
+                // ── Voice listening mode ───────────────────────────────────
+                Log.i(TAG, "Loaded ${wordToHabits.size} trigger words for ${settings.voiceTriggerHabits.size} habits")
+                handler.post { Toast.makeText(applicationContext, "🎤 Listening...", Toast.LENGTH_SHORT).show() }
+                startListening(wordToHabits, settings)
+            }
         }
 
         // Safety timeout — stop no matter what after LISTEN_TIMEOUT_MS
