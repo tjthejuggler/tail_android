@@ -93,6 +93,7 @@ import com.example.tail.data.ChessComType
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.RollingHigh
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -172,6 +173,14 @@ fun HabitGridScreen(
     var selectedHabitTimestampCount by remember { mutableIntStateOf(0) }
     val timestampScope = rememberCoroutineScope()
 
+    // Increment toast state — shows briefly after tapping a habit
+    var incrementToastHabit by remember { mutableStateOf<String?>(null) }
+    var incrementToastOriginalTime by remember { mutableStateOf("") }
+    // Quick timestamp editor dialog state
+    var quickEditHabitName by remember { mutableStateOf<String?>(null) }
+    var quickEditOriginalTime by remember { mutableStateOf("") }
+    val toastScope = rememberCoroutineScope()
+
     // File picker for per-habit text log files (used from EditModeControlBar)
     var textInputPickerHabit by remember { mutableStateOf<String?>(null) }
     val textInputFilePicker = rememberLauncherForActivityResult(
@@ -230,6 +239,7 @@ fun HabitGridScreen(
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -425,7 +435,16 @@ fun HabitGridScreen(
                                     }
                                 }
                                 habit.useCustomInput -> dialogHabit = habit
-                                else -> viewModel.incrementHabit(habit.name, 1)
+                                else -> {
+                                    viewModel.incrementHabit(habit.name, 1)
+                                    // Show increment toast with edit-time option
+                                    incrementToastHabit = habit.name
+                                    incrementToastOriginalTime = com.example.tail.data.HabitTimestampRepository.nowTime()
+                                    toastScope.launch {
+                                        delay(3500)
+                                        incrementToastHabit = null
+                                    }
+                                }
                             }
                         },
                         onHabitLongClick = { habit ->
@@ -554,6 +573,27 @@ fun HabitGridScreen(
             }
         }
     }
+
+    // Increment toast overlay at bottom of screen
+    incrementToastHabit?.let { toastHabit ->
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 48.dp)
+        ) {
+            HabitIncrementToast(
+                habitName = toastHabit,
+                visible = true,
+                onEditTime = {
+                    // Dismiss toast and open quick editor
+                    quickEditHabitName = toastHabit
+                    quickEditOriginalTime = incrementToastOriginalTime
+                    incrementToastHabit = null
+                }
+            )
+        }
+    }
+    } // end Box
 
     // Load timestamp count when selected edit habit changes
     LaunchedEffect(selectedEditIndex, editMode, habits) {
@@ -741,6 +781,21 @@ fun HabitGridScreen(
                 conditionalLinksPickerHabit = null
             },
             onDismiss = { conditionalLinksPickerHabit = null }
+        )
+    }
+
+    // Quick timestamp editor dialog — opened from increment toast
+    quickEditHabitName?.let { habitName ->
+        QuickTimestampEditorDialog(
+            habitName = habitName,
+            originalTime = quickEditOriginalTime,
+            onConfirm = { newTime ->
+                timestampScope.launch {
+                    viewModel.timestampRepo.updateLastTimestamp(habitName, selectedDate, newTime)
+                }
+                quickEditHabitName = null
+            },
+            onDismiss = { quickEditHabitName = null }
         )
     }
 }

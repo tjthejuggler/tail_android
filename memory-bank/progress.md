@@ -1,5 +1,12 @@
 # Progress — Tail
 
+## 2026-04-14 19:16
+- [x] Increment toast with quick timestamp editing: brief toast on habit tap with "Edit Time" button, opens quick timestamp adjuster
+  - New file: `QuickTimestampEditorDialog.kt` — compact dialog with +/- hour/minute offset buttons for fast timestamp adjustment
+  - New file: `HabitIncrementToast.kt` — animated toast composable with "✓ HabitName" + "🕐 Edit Time" button
+  - Modified: `HabitTimestampRepository.kt` — added `updateLastTimestamp()` method
+  - Modified: `HabitGridScreen.kt` — toast overlay on tap increment, quick editor dialog integration
+
 ## 2026-04-14 11:26
 - [x] Tasker text passthrough for voice shortcuts: accept pre-recognized text from Tasker via `Intent.EXTRA_TEXT`, skip SpeechRecognizer when text is provided
   - Modified: `VoiceTriggerActivity.kt` — extracts `EXTRA_TEXT` from intent, forwards to `VoiceHabitService`

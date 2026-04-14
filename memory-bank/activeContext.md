@@ -1,6 +1,14 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-14T11:26Z
+**Last updated:** 2026-04-14T19:16Z
+
+## Recent Changes (as of 2026-04-14 19:16)
+
+- **Increment toast with quick timestamp editing** (2026-04-14 19:16) — When a habit is tapped (normal increment with timestamp), a brief toast now appears at the bottom of the screen showing "✓ HabitName" with an "🕐 Edit Time" button. The toast auto-dismisses after 3.5 seconds. Tapping "Edit Time" opens a `QuickTimestampEditorDialog` — a popup with +/- hour and minute offset buttons for quickly adjusting the recorded timestamp to an earlier/later time.
+  - **New file: `QuickTimestampEditorDialog.kt`** — Compact dialog with large time display, hour offset buttons (-3h, -2h, -1h, +1h, +2h, +3h), minute offset buttons (-30m, -15m, -5m, +5m, +15m, +30m), reset/cancel/done actions. Shows current offset from original time.
+  - **New file: `HabitIncrementToast.kt`** — Animated toast composable with fade+slide animation, green "✓ HabitName" text, blue "🕐 Edit Time" button.
+  - **Modified: `HabitTimestampRepository.kt`** — Added `updateLastTimestamp()` method to update the most recently added timestamp for a habit on a given date.
+  - **Modified: `HabitGridScreen.kt`** — Wrapped Scaffold in Box for toast overlay, added toast state variables (incrementToastHabit, incrementToastOriginalTime, quickEditHabitName, quickEditOriginalTime), toast appears on normal tap increment, "Edit Time" opens QuickTimestampEditorDialog which calls updateLastTimestamp on confirm.
 
 ## Recent Changes (as of 2026-04-14 11:26)
 

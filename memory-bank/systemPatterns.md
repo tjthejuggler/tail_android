@@ -1,6 +1,6 @@
 # System Patterns — Tail
 
-**Last updated:** 2026-04-13T21:37Z
+**Last updated:** 2026-04-14T19:16Z
 
 ## Architecture
 
@@ -20,6 +20,7 @@ app/src/main/java/com/example/tail/
 │   ├── ChessComService.kt    # Chess.com public API client (HttpURLConnection)
 │   ├── ChessComRepository.kt # Chess.com data processing + monthly cache
 │   └── HabitTimestampRepository.kt # Per-habit increment timestamps (internal JSON)
+│       # - updateLastTimestamp() for quick toast-based editing
 ├── ipc/
 │   ├── HabitsContentProvider.kt  # Read-only ContentProvider for same-keystore apps
 │   ├── HabitIncrementReceiver.kt # BroadcastReceiver for habit increments
@@ -36,6 +37,8 @@ app/src/main/java/com/example/tail/
 │   ├── GraphsScreen.kt       # Graph visualizations (941 lines)
 │   ├── IncrementDialog.kt    # Custom amount dialog
 │   ├── TimestampEditorDialog.kt # Timestamp viewer/editor dialog
+│   ├── QuickTimestampEditorDialog.kt # Quick +/- hours/minutes timestamp adjuster
+│   ├── HabitIncrementToast.kt # Brief toast shown after habit increment
 │   ├── CalendarPickerDialog.kt # Date picker
 │   ├── StreakGraphPopup.kt   # Streak visualization popup
 │   ├── TextInputDialog.kt    # Text entry dialog

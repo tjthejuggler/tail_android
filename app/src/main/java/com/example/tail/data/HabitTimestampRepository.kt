@@ -185,6 +185,27 @@ class HabitTimestampRepository(private val context: Context) {
         return dayList.toList()
     }
 
+    /**
+     * Update the last (most recent) timestamp for [habitName] on [date] to [newTime].
+     * Returns the updated list of timestamps, or empty list if none exist.
+     */
+    suspend fun updateLastTimestamp(
+        habitName: String,
+        date: LocalDate,
+        newTime: String
+    ): List<String> {
+        val data = loadMutable()
+        val dateStr = dateString(date)
+        val habitMap = data[habitName] ?: return emptyList()
+        val dayList = habitMap[dateStr] ?: return emptyList()
+        if (dayList.isEmpty()) return emptyList()
+        // The last timestamp is the one most recently added (last in sorted order)
+        dayList[dayList.lastIndex] = newTime
+        dayList.sort()
+        saveAll(data)
+        return dayList.toList()
+    }
+
     private suspend fun loadMutable(): MutableMap<String, MutableMap<String, MutableList<String>>> =
         withContext(Dispatchers.IO) {
             try {
