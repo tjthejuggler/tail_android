@@ -2,6 +2,14 @@
 
 **Last updated:** 2026-04-14T19:33Z
 
+## Recent Changes (as of 2026-04-14 19:45)
+
+- **TTS confirmation + note notification for voice/text shortcuts** (2026-04-14 19:45) — Added auditory and visual feedback for habit triggers and note saves:
+  - **VoiceHabitService**: After a habit is incremented via voice or text trigger, the service now speaks a TTS confirmation (e.g. "Heard meditate. Incremented Meditate.") and shows a toast with the trigger word and habit name. The service waits for TTS to finish before stopping itself (using `onUtteranceCompleted` callback), with a 500ms fallback delay if TTS isn't ready.
+  - **VoiceNoteService**: After a note is saved, a high-priority notification is posted showing the full note text (using `BigTextStyle` so long notes are fully visible). The notification title includes the timestamp. This lets the user verify the entire note was captured correctly.
+  - Modified: `VoiceHabitService.kt` (added TTS init/shutdown, `speakAndThenStop()`, improved toast messages, `matchedTriggers` tracking)
+  - Modified: `VoiceNoteService.kt` (added `showNoteSavedNotification()` with `BigTextStyle`)
+
 ## Recent Changes (as of 2026-04-14 19:33)
 
 - **Split voice shortcuts into voice-listening and text-passthrough variants** (2026-04-14 19:33) — Previously, `VoiceTriggerActivity` and `VoiceNoteActivity` handled both modes (voice listening when no text supplied, text passthrough when text was supplied). Now there are four separate shortcuts, each with a dedicated activity:

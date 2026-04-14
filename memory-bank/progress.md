@@ -1,5 +1,10 @@
 # Progress — Tail
 
+## 2026-04-14 19:45
+- [x] TTS confirmation + note notification for voice/text shortcuts
+  - Modified: `VoiceHabitService.kt` — added TTS (TextToSpeech) init/shutdown, `speakAndThenStop()` method that speaks confirmation then stops service after utterance completes, improved toast to show trigger word + habit name, tracks `matchedTriggers` set
+  - Modified: `VoiceNoteService.kt` — added `showNoteSavedNotification()` with high-priority notification channel and `BigTextStyle` to show full note text
+
 ## 2026-04-14 19:33
 - [x] Split voice shortcuts into voice-listening and text-passthrough variants (4 total shortcuts)
   - New files: `TextTriggerActivity.kt` (text-passthrough habit trigger), `TextNoteActivity.kt` (text-passthrough note)

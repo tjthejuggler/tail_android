@@ -19,6 +19,7 @@ import android.os.VibratorManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.widget.Toast
 import com.example.tail.data.HabitTimestampRepository
@@ -35,6 +36,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.util.Locale
 
 private const val TAG = "VoiceHabitService"
 private const val CHANNEL_ID = "voice_habit_channel"
@@ -67,6 +69,8 @@ class VoiceHabitService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
     private var stopped = false
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
 
     // ── Service lifecycle ────────────────────────────────────────────────
 
@@ -76,6 +80,7 @@ class VoiceHabitService : Service() {
         super.onCreate()
         createNotificationChannel()
         acquireWakeLock()
+        initTts()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -144,6 +149,8 @@ class VoiceHabitService : Service() {
         handler.removeCallbacksAndMessages(null)
         try { speechRecognizer?.destroy() } catch (_: Exception) {}
         speechRecognizer = null
+        try { tts?.shutdown() } catch (_: Exception) {}
+        tts = null
         releaseWakeLock()
         scope.cancel()
         super.onDestroy()
@@ -236,11 +243,13 @@ class VoiceHabitService : Service() {
         // Combine all recognized alternatives into one lowercase search string
         val spokenText = matches.joinToString(" ") { it.lowercase() }
 
-        // Find all matching trigger words
+        // Find all matching trigger words and their associated habits
         val matchedHabits = mutableSetOf<String>()
+        val matchedTriggers = mutableSetOf<String>()
         for ((triggerWord, habitNames) in wordToHabits) {
             if (spokenText.contains(triggerWord)) {
                 matchedHabits.addAll(habitNames)
+                matchedTriggers.add(triggerWord)
                 Log.i(TAG, "Trigger word '$triggerWord' matched → habits: $habitNames")
             }
         }
@@ -252,7 +261,9 @@ class VoiceHabitService : Service() {
             return
         }
 
-        handler.post { Toast.makeText(applicationContext, "🎤 Matched: ${matchedHabits.joinToString(", ")}", Toast.LENGTH_SHORT).show() }
+        val triggerWordsStr = matchedTriggers.joinToString(", ")
+        val habitsStr = matchedHabits.joinToString(", ")
+        handler.post { Toast.makeText(applicationContext, "🎤 Heard \"$triggerWordsStr\" → $habitsStr", Toast.LENGTH_SHORT).show() }
 
         // Increment all matched habits
         scope.launch(Dispatchers.IO) {
@@ -329,10 +340,15 @@ class VoiceHabitService : Service() {
                 // Confirmation vibration
                 vibrateConfirmation()
 
+                // TTS confirmation: speak just the trigger word(s) that matched
+                val ttsText = matchedTriggers.joinToString(", ")
+
                 Log.i(TAG, "Voice trigger complete — incremented ${matchedHabits.size} habit(s)")
+
+                // Speak confirmation and stop service after TTS finishes
+                speakAndThenStop(ttsText)
             } catch (e: Exception) {
                 Log.e(TAG, "Error incrementing habits: ${e.message}", e)
-            } finally {
                 handler.post { stopSelfCleanly() }
             }
         }
@@ -380,6 +396,54 @@ class VoiceHabitService : Service() {
             Log.i(TAG, "Tasker file updated: today=$todayCount")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to write Tasker file: ${e.message}")
+        }
+    }
+
+    // ── TTS ──────────────────────────────────────────────────────────────
+
+    private fun initTts() {
+        tts = TextToSpeech(applicationContext) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val result = tts?.setLanguage(Locale.US)
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    Log.w(TAG, "TTS language not supported")
+                } else {
+                    ttsReady = true
+                    Log.d(TAG, "TTS initialized")
+                }
+            } else {
+                Log.w(TAG, "TTS initialization failed: $status")
+            }
+        }
+    }
+
+    /**
+     * Speak the confirmation text via TTS, then stop the service after
+     * the utterance completes. Falls back to a delayed stop if TTS is
+     * not ready.
+     */
+    private fun speakAndThenStop(text: String) {
+        if (ttsReady && tts != null) {
+            val utteranceId = "tts_confirm_${System.currentTimeMillis()}"
+            tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {
+                    Log.d(TAG, "TTS started speaking")
+                }
+                override fun onDone(utteranceId: String?) {
+                    Log.d(TAG, "TTS finished speaking — stopping service")
+                    handler.post { stopSelfCleanly() }
+                }
+                override fun onError(utteranceId: String?) {
+                    Log.w(TAG, "TTS error — stopping service")
+                    handler.post { stopSelfCleanly() }
+                }
+            })
+            tts?.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
+            Log.d(TAG, "TTS speaking: \"$text\"")
+        } else {
+            Log.w(TAG, "TTS not ready — stopping with delay")
+            // Fallback: give a short delay then stop
+            handler.postDelayed({ stopSelfCleanly() }, 500)
         }
     }
 

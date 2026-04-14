@@ -241,6 +241,9 @@ class VoiceNoteService : Service() {
                     Toast.makeText(applicationContext, "📝 Note saved: \"$preview\"", Toast.LENGTH_SHORT).show()
                 }
 
+                // Show a notification with the full note text so the user can verify it
+                showNoteSavedNotification(text, timestamp)
+
                 vibrateConfirmation()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to write note: ${e.message}", e)
@@ -249,6 +252,33 @@ class VoiceNoteService : Service() {
                 handler.post { stopSelfCleanly() }
             }
         }
+    }
+
+    // ── Note saved notification ──────────────────────────────────────────
+
+    private fun showNoteSavedNotification(noteText: String, timestamp: String) {
+        val noteChannelId = "voice_note_saved_channel"
+        val channel = NotificationChannel(
+            noteChannelId,
+            "Voice Note Saved",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Shows the full text of saved voice notes"
+            enableVibration(false)
+        }
+        val mgr = getSystemService(NotificationManager::class.java)
+        mgr.createNotificationChannel(channel)
+
+        val notification = Notification.Builder(this, noteChannelId)
+            .setContentTitle("📝 Note saved — $timestamp")
+            .setContentText(noteText)
+            .setStyle(Notification.BigTextStyle().bigText(noteText))
+            .setSmallIcon(android.R.drawable.ic_menu_edit)
+            .setAutoCancel(true)
+            .build()
+
+        mgr.notify(NOTIFICATION_ID + 1000, notification)
+        Log.d(TAG, "Note saved notification shown")
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
