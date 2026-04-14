@@ -79,7 +79,7 @@ class VoiceHabitService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val suppliedText = com.example.tail.VoiceTriggerActivity.extractText(intent)
+        val suppliedText = com.example.tail.TextTriggerActivity.extractText(intent)
         val notificationText = if (!suppliedText.isNullOrEmpty())
             "🎤 Processing: \"$suppliedText\""
         else

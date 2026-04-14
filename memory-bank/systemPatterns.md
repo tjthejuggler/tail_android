@@ -1,6 +1,6 @@
 # System Patterns — Tail
 
-**Last updated:** 2026-04-14T19:16Z
+**Last updated:** 2026-04-14T19:33Z
 
 ## Architecture
 
@@ -27,6 +27,10 @@ app/src/main/java/com/example/tail/
 │   ├── VoiceHabitReceiver.kt    # BroadcastReceiver for Samsung Routines voice trigger
 │   ├── VoiceHabitService.kt     # ForegroundService with SpeechRecognizer for voice trigger
 │   └── VoiceNoteService.kt     # ForegroundService with SpeechRecognizer for voice note dictation
+├── VoiceTriggerActivity.kt      # Voice-listening shortcut → VoiceHabitService (no EXTRA_TEXT)
+├── TextTriggerActivity.kt       # Text-passthrough shortcut → VoiceHabitService (with EXTRA_TEXT)
+├── VoiceNoteActivity.kt         # Voice-listening shortcut → VoiceNoteService (no EXTRA_TEXT)
+└── TextNoteActivity.kt          # Text-passthrough shortcut → VoiceNoteService (with EXTRA_TEXT)
 ├── ui/
 │   ├── HabitViewModel.kt     # Central ViewModel (1577 lines — largest file)
 │   ├── HabitColors.kt        # Color tiers, drawable icon map

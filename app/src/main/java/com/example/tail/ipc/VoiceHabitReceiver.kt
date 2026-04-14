@@ -44,7 +44,7 @@ class VoiceHabitReceiver : BroadcastReceiver() {
         val serviceIntent = Intent(context, VoiceHabitService::class.java)
 
         // Forward any text supplied by Tasker / external automation
-        val suppliedText = com.example.tail.VoiceTriggerActivity.extractText(intent)
+        val suppliedText = com.example.tail.TextTriggerActivity.extractText(intent)
         if (!suppliedText.isNullOrEmpty()) {
             serviceIntent.putExtra(Intent.EXTRA_TEXT, suppliedText)
             Log.i(TAG, "Forwarding supplied text: \"$suppliedText\"")

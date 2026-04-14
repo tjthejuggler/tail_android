@@ -1,5 +1,14 @@
 # Progress — Tail
 
+## 2026-04-14 19:33
+- [x] Split voice shortcuts into voice-listening and text-passthrough variants (4 total shortcuts)
+  - New files: `TextTriggerActivity.kt` (text-passthrough habit trigger), `TextNoteActivity.kt` (text-passthrough note)
+  - Modified: `VoiceTriggerActivity.kt` (simplified to pure voice mode, removed extractText), `VoiceNoteActivity.kt` (simplified to pure voice mode)
+  - Modified: `VoiceHabitService.kt`, `VoiceNoteService.kt`, `VoiceHabitReceiver.kt` — reference `TextTriggerActivity.extractText()` instead of `VoiceTriggerActivity.extractText()`
+  - Modified: `shortcuts.xml` — added `text_trigger` and `text_note` shortcuts with edit icon
+  - Modified: `AndroidManifest.xml` — registered `TextTriggerActivity` and `TextNoteActivity` with transparent theme
+  - Modified: `strings.xml` — added shortcut labels for Text Trigger and Text Note
+
 ## 2026-04-14 19:16
 - [x] Increment toast with quick timestamp editing: brief toast on habit tap with "Edit Time" button, opens quick timestamp adjuster
   - New file: `QuickTimestampEditorDialog.kt` — compact dialog with +/- hour/minute offset buttons for fast timestamp adjustment

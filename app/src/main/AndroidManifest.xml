@@ -58,8 +58,9 @@
         </activity>
 
         <!--
-            VoiceTriggerActivity: transparent activity launched by Samsung Routines
-            via App Shortcuts. Immediately starts VoiceHabitService and finishes.
+            VoiceTriggerActivity: transparent activity for the voice-listening
+            habit trigger shortcut. Starts VoiceHabitService without EXTRA_TEXT
+            so it uses SpeechRecognizer.
         -->
         <activity
             android:name=".VoiceTriggerActivity"
@@ -70,6 +71,24 @@
             android:theme="@style/Theme.Tail.Transparent">
             <intent-filter>
                 <action android:name="com.example.tail.ACTION_VOICE_TRIGGER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            TextTriggerActivity: transparent activity for the text-passthrough
+            habit trigger shortcut. Extracts text from the intent and starts
+            VoiceHabitService with EXTRA_TEXT so it skips SpeechRecognizer.
+        -->
+        <activity
+            android:name=".TextTriggerActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Tail.Transparent">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_TEXT_TRIGGER" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
@@ -141,8 +160,9 @@
             android:foregroundServiceType="microphone" />
 
         <!--
-            VoiceNoteActivity: transparent activity launched by Samsung Routines
-            via App Shortcuts. Immediately starts VoiceNoteService and finishes.
+            VoiceNoteActivity: transparent activity for the voice-listening
+            note shortcut. Starts VoiceNoteService without EXTRA_TEXT
+            so it uses SpeechRecognizer.
         -->
         <activity
             android:name=".VoiceNoteActivity"
@@ -153,6 +173,24 @@
             android:theme="@style/Theme.Tail.Transparent">
             <intent-filter>
                 <action android:name="com.example.tail.ACTION_VOICE_NOTE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            TextNoteActivity: transparent activity for the text-passthrough
+            note shortcut. Extracts text from the intent and starts
+            VoiceNoteService with EXTRA_TEXT so it skips SpeechRecognizer.
+        -->
+        <activity
+            android:name=".TextNoteActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Tail.Transparent">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_TEXT_NOTE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

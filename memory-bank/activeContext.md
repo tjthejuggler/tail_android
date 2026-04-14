@@ -1,6 +1,21 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-14T19:16Z
+**Last updated:** 2026-04-14T19:33Z
+
+## Recent Changes (as of 2026-04-14 19:33)
+
+- **Split voice shortcuts into voice-listening and text-passthrough variants** (2026-04-14 19:33) — Previously, `VoiceTriggerActivity` and `VoiceNoteActivity` handled both modes (voice listening when no text supplied, text passthrough when text was supplied). Now there are four separate shortcuts, each with a dedicated activity:
+  - **Voice Trigger** → `VoiceTriggerActivity` — always starts `VoiceHabitService` without `EXTRA_TEXT`, so it uses `SpeechRecognizer`
+  - **Text Trigger** → `TextTriggerActivity` (new) — always extracts text from intent and passes `EXTRA_TEXT` to `VoiceHabitService`, skipping `SpeechRecognizer`. Shows warning if no text supplied.
+  - **Voice Note** → `VoiceNoteActivity` — always starts `VoiceNoteService` without `EXTRA_TEXT`, so it uses `SpeechRecognizer`
+  - **Text Note** → `TextNoteActivity` (new) — always extracts text from intent and passes `EXTRA_TEXT` to `VoiceNoteService`, skipping `SpeechRecognizer`. Shows warning if no text supplied.
+  - `extractText()` utility moved from `VoiceTriggerActivity` to `TextTriggerActivity` (shared companion object)
+  - Services (`VoiceHabitService`, `VoiceNoteService`) and `VoiceHabitReceiver` updated to reference `TextTriggerActivity.extractText()` instead of `VoiceTriggerActivity.extractText()`
+  - New shortcuts in `shortcuts.xml`: `text_trigger` (ACTION_TEXT_TRIGGER) and `text_note` (ACTION_TEXT_NOTE)
+  - New activities registered in `AndroidManifest.xml` with transparent theme, noHistory, excludeFromRecents
+  - New string resources for shortcut labels
+  - New files: `TextTriggerActivity.kt`, `TextNoteActivity.kt`
+  - Modified: `VoiceTriggerActivity.kt`, `VoiceNoteActivity.kt`, `VoiceHabitService.kt`, `VoiceNoteService.kt`, `VoiceHabitReceiver.kt`, `shortcuts.xml`, `AndroidManifest.xml`, `strings.xml`
 
 ## Recent Changes (as of 2026-04-14 19:16)
 
