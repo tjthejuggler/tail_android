@@ -206,6 +206,31 @@ class HabitTimestampRepository(private val context: Context) {
         return dayList.toList()
     }
 
+    /**
+     * Delete the last (most recent) timestamp for [habitName] on [date].
+     * Used by the "Timeless" button on the increment toast to remove a just-recorded timestamp.
+     * Returns the updated list of timestamps, or empty list if none exist.
+     */
+    suspend fun deleteLastTimestamp(
+        habitName: String,
+        date: LocalDate
+    ): List<String> {
+        val data = loadMutable()
+        val dateStr = dateString(date)
+        val habitMap = data[habitName] ?: return emptyList()
+        val dayList = habitMap[dateStr] ?: return emptyList()
+        if (dayList.isEmpty()) return emptyList()
+        dayList.removeAt(dayList.lastIndex)
+        if (dayList.isEmpty()) {
+            habitMap.remove(dateStr)
+        }
+        if (habitMap.isEmpty()) {
+            data.remove(habitName)
+        }
+        saveAll(data)
+        return dayList.toList()
+    }
+
     private suspend fun loadMutable(): MutableMap<String, MutableMap<String, MutableList<String>>> =
         withContext(Dispatchers.IO) {
             try {

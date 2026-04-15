@@ -1,5 +1,12 @@
 # Progress — Tail
 
+## 2026-04-15 16:59
+- [x] Timeless increment button + default timeless for past/future days
+  - New method: `HabitTimestampRepository.deleteLastTimestamp()` — removes the most recent timestamp for a habit on a date
+  - Modified: `HabitIncrementToast.kt` — added `isTimeless`/`onTimeless` params; "⏰ Timeless" button next to "🕐 Edit Time"; shows "(timeless)" label when timeless
+  - Modified: `HabitGridScreen.kt` — `incrementToastIsTimeless` state; `!isToday` → `recordTimestamp=false`; `onTimeless` calls `deleteLastTimestamp()`
+  - Modified: `HabitTimestampRepository.kt` — added `deleteLastTimestamp()` method
+
 ## 2026-04-15 00:14
 - [x] Fix: Chess.com duplicate timestamps — `applyChessComData()` was adding `todayCount` timestamps every poll cycle (total count, not delta). Now tracks per-habit today-delta and only adds new timestamps.
 - [x] Fix: Conditional habits not always incrementing on chess.com auto-increment — conditional propagation only fired on 0→non-zero transitions. Now tracks per-date deltas (any count increase) and propagates delta to conditional linked habits.

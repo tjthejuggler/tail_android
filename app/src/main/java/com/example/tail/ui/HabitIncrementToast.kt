@@ -25,19 +25,24 @@ import androidx.compose.ui.unit.sp
 
 /**
  * A brief toast-like notification shown at the bottom of the screen when a habit
- * is incremented. Displays the habit name and an "Edit Time" button that opens
- * the quick timestamp editor.
+ * is incremented. Displays the habit name and action buttons:
+ * - When [isTimeless] is false: shows "Edit Time" and "Timeless" buttons
+ * - When [isTimeless] is true: shows "(timeless)" label, no action buttons
  *
  * @param habitName The name of the habit that was incremented
  * @param visible Whether the toast is currently showing
+ * @param isTimeless Whether the increment was recorded without a timestamp
  * @param onEditTime Called when the user taps "Edit Time"
+ * @param onTimeless Called when the user taps "Timeless" to remove the timestamp
  * @param modifier Optional modifier for positioning (e.g. alignment in a Box)
  */
 @Composable
 fun HabitIncrementToast(
     habitName: String,
     visible: Boolean,
-    onEditTime: () -> Unit,
+    isTimeless: Boolean = false,
+    onEditTime: () -> Unit = {},
+    onTimeless: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -56,25 +61,50 @@ fun HabitIncrementToast(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "✓ $habitName",
+                    text = if (isTimeless) "✓ $habitName" else "✓ $habitName",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Color(0xFF88FF88),
+                    color = if (isTimeless) Color(0xFF88CCFF) else Color(0xFF88FF88),
                     maxLines = 1
                 )
-                Spacer(modifier = Modifier.width(12.dp))
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF004488), RoundedCornerShape(6.dp))
-                        .clickable(onClick = onEditTime)
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                ) {
+                if (isTimeless) {
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "🕐 Edit Time",
+                        text = "(timeless)",
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
+                        fontWeight = FontWeight.Normal,
+                        color = Color(0xFF888888),
+                        maxLines = 1
                     )
+                } else {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xFF004488), RoundedCornerShape(6.dp))
+                            .clickable(onClick = onEditTime)
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "🕐 Edit Time",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xFF554400), RoundedCornerShape(6.dp))
+                            .clickable(onClick = onTimeless)
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "⏰ Timeless",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFFFDD88)
+                        )
+                    }
                 }
             }
         }

@@ -176,6 +176,7 @@ fun HabitGridScreen(
     // Increment toast state — shows briefly after tapping a habit
     var incrementToastHabit by remember { mutableStateOf<String?>(null) }
     var incrementToastOriginalTime by remember { mutableStateOf("") }
+    var incrementToastIsTimeless by remember { mutableStateOf(false) }
     // Quick timestamp editor dialog state
     var quickEditHabitName by remember { mutableStateOf<String?>(null) }
     var quickEditOriginalTime by remember { mutableStateOf("") }
@@ -436,10 +437,13 @@ fun HabitGridScreen(
                                 }
                                 habit.useCustomInput -> dialogHabit = habit
                                 else -> {
-                                    viewModel.incrementHabit(habit.name, 1)
+                                    // When viewing a different day, increment without timestamp (timeless by default)
+                                    val timeless = !isToday
+                                    viewModel.incrementHabit(habit.name, 1, recordTimestamp = !timeless)
                                     // Show increment toast with edit-time option
                                     incrementToastHabit = habit.name
-                                    incrementToastOriginalTime = com.example.tail.data.HabitTimestampRepository.nowTime()
+                                    incrementToastIsTimeless = timeless
+                                    incrementToastOriginalTime = if (!timeless) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
                                     toastScope.launch {
                                         delay(3500)
                                         incrementToastHabit = null
@@ -584,11 +588,19 @@ fun HabitGridScreen(
             HabitIncrementToast(
                 habitName = toastHabit,
                 visible = true,
+                isTimeless = incrementToastIsTimeless,
                 onEditTime = {
                     // Dismiss toast and open quick editor
                     quickEditHabitName = toastHabit
                     quickEditOriginalTime = incrementToastOriginalTime
                     incrementToastHabit = null
+                },
+                onTimeless = {
+                    // Remove the just-recorded timestamp and mark as timeless
+                    toastScope.launch {
+                        viewModel.timestampRepo.deleteLastTimestamp(toastHabit, selectedDate)
+                    }
+                    incrementToastIsTimeless = true
                 }
             )
         }

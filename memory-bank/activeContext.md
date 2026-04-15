@@ -1,6 +1,16 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-15T00:14Z
+**Last updated:** 2026-04-15T16:59Z
+
+## Recent Changes (as of 2026-04-15 16:59)
+
+- **Timeless increment button + default timeless for past/future days** (2026-04-15 16:59) — Two UX improvements to the increment toast:
+  - **"⏰ Timeless" button**: The increment toast (shown after tapping a habit) now has a "Timeless" button next to "Edit Time". Tapping it removes the just-recorded timestamp, making the increment timeless. The toast then shows "(timeless)" in gray with blue habit name instead of green.
+  - **Timeless by default on different days**: When viewing a past or future day (not today), tapping a habit increments WITHOUT recording a timestamp by default. The toast shows the "(timeless)" state immediately.
+  - New method: `HabitTimestampRepository.deleteLastTimestamp()` — removes the most recent timestamp for a habit on a given date
+  - Modified: `HabitIncrementToast.kt` — added `isTimeless`, `onTimeless` params; shows "Edit Time" + "Timeless" buttons when timestamped, shows "(timeless)" label when timeless
+  - Modified: `HabitGridScreen.kt` — added `incrementToastIsTimeless` state; checks `isToday` before increment to decide `recordTimestamp`; `onTimeless` handler calls `deleteLastTimestamp()`
+  - Modified: `HabitTimestampRepository.kt` — added `deleteLastTimestamp()` method
 
 ## Recent Changes (as of 2026-04-15 00:14)
 
