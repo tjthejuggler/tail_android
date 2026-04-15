@@ -1,6 +1,20 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-15T16:59Z
+**Last updated:** 2026-04-15T18:34Z
+
+## Recent Changes (as of 2026-04-15 18:34)
+
+- **Smart Voice shortcut** (2026-04-15 18:34) — New 5th shortcut that combines voice habit and voice note into one smart shortcut:
+  - **SmartVoiceService** (`ipc/SmartVoiceService.kt`): ForegroundService with SpeechRecognizer that routes recognized text based on trigger word density. If >50% of words match habit trigger words → habit mode (increment matched habits with TTS confirmation). If ≤50% → note mode (prepend to notes file with notification). Uses 30s listen timeout.
+  - **SmartVoiceActivity** (`SmartVoiceActivity.kt`): Zero-UI trampoline activity for the voice-listening smart shortcut.
+  - Routing algorithm: split text into words, count matches against trigger word map, compare ratio to 0.5 threshold.
+  - Habit mode mirrors VoiceHabitService (increment, timestamps, conditional propagation, Tasker file, TTS confirmation, single-pulse vibration).
+  - Note mode mirrors VoiceNoteService (prepend to file with timestamp header, BigTextStyle notification, double-pulse vibration).
+  - New shortcut `smart_voice` in shortcuts.xml with action `ACTION_SMART_VOICE`.
+  - New activity + service registered in AndroidManifest.xml.
+  - Existing 4 shortcuts (Voice Trigger, Text Trigger, Voice Note, Text Note) are unchanged.
+  - New files: `SmartVoiceService.kt`, `SmartVoiceActivity.kt`
+  - Modified: `AndroidManifest.xml`, `shortcuts.xml`, `strings.xml`
 
 ## Recent Changes (as of 2026-04-15 16:59)
 

@@ -1,5 +1,14 @@
 # Progress — Tail
 
+## 2026-04-15 18:34
+- [x] Smart Voice shortcut: 5th shortcut that smartly routes voice input to habits or notes
+  - New file: `SmartVoiceService.kt` — ForegroundService with SpeechRecognizer + smart routing (trigger word density >50% → habits, ≤50% → notes)
+  - New file: `SmartVoiceActivity.kt` — Zero-UI trampoline activity for voice-listening smart shortcut
+  - Modified: `AndroidManifest.xml` — registered SmartVoiceActivity + SmartVoiceService
+  - Modified: `shortcuts.xml` — added `smart_voice` shortcut with ACTION_SMART_VOICE
+  - Modified: `strings.xml` — added shortcut labels for Smart Voice
+  - Existing 4 shortcuts unchanged (Voice Trigger, Text Trigger, Voice Note, Text Note)
+
 ## 2026-04-15 16:59
 - [x] Timeless increment button + default timeless for past/future days
   - New method: `HabitTimestampRepository.deleteLastTimestamp()` — removes the most recent timestamp for a habit on a date

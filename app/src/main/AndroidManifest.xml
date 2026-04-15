@@ -196,11 +196,40 @@
         </activity>
 
         <!--
+            SmartVoiceActivity: transparent activity for the smart voice shortcut.
+            Starts SmartVoiceService without EXTRA_TEXT so it uses SpeechRecognizer.
+            The service routes recognized text to either habit incrementing or
+            note saving based on trigger word density.
+        -->
+        <activity
+            android:name=".SmartVoiceActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Tail.Transparent">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_SMART_VOICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
             VoiceNoteService: foreground service that uses SpeechRecognizer to
             listen for dictated speech and prepend it to a notes markdown file.
         -->
         <service
             android:name=".ipc.VoiceNoteService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!--
+            SmartVoiceService: foreground service that uses SpeechRecognizer to
+            listen for voice input, then smartly routes it to either habit
+            incrementing (if most words match trigger words) or note saving.
+        -->
+        <service
+            android:name=".ipc.SmartVoiceService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 

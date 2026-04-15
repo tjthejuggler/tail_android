@@ -79,4 +79,25 @@
         <categories android:name="android.shortcut.conversation" />
     </shortcut>
 
+    <!--
+        Static shortcut for "Smart Voice" — appears in Samsung Routines
+        under "Then" → "Apps" → "Tail" → "Smart Voice".
+        Launches SmartVoiceActivity which starts SmartVoiceService in
+        voice-listening mode. The service smartly routes recognized text
+        to habit incrementing (if most words match trigger words) or
+        note saving (if not).
+    -->
+    <shortcut
+        android:shortcutId="smart_voice"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_smart_voice_short"
+        android:shortcutLongLabel="@string/shortcut_smart_voice_long"
+        android:icon="@android:drawable/ic_btn_speak_now">
+        <intent
+            android:action="com.example.tail.ACTION_SMART_VOICE"
+            android:targetPackage="com.example.tail"
+            android:targetClass="com.example.tail.SmartVoiceActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
 </shortcuts>
