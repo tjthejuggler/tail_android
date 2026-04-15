@@ -2082,6 +2082,9 @@ class HabitViewModel(
 
         var dbChanged = false
         val mutableDb = cachedPhoneDb.toMutableMap()
+        // Track per-habit today-delta for timestamp recording (only add NEW timestamps)
+        val todayStr = dateString(LocalDate.now())
+        val todayDeltas = mutableMapOf<String, Int>()
 
         for ((habitName, typeKey) in s.chessComHabitLinks) {
             val type = ChessComType.fromKey(typeKey) ?: continue
@@ -2093,27 +2096,39 @@ class HabitViewModel(
             if (increments.isEmpty()) continue
 
             val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap()
-            // Track which dates transitioned from 0 → non-zero for conditional propagation
-            val datesActivated = mutableSetOf<String>()
+            // Track per-date deltas for conditional propagation
+            // (any date where count increased, not just 0→non-zero)
+            val dateDeltas = mutableMapOf<String, Int>()
 
             for ((dateStr, count) in increments) {
                 val existing = habitEntries[dateStr] ?: 0
                 if (count != existing) {
-                    if (existing == 0 && count > 0) datesActivated.add(dateStr)
+                    val delta = count - existing
+                    if (delta > 0) dateDeltas[dateStr] = delta
                     habitEntries[dateStr] = count
                     dbChanged = true
                 }
             }
             mutableDb[habitName] = habitEntries.toSortedMap()
 
-            // Propagate to conditional linked habits for dates that became active
-            if (datesActivated.isNotEmpty() && habitName in s.conditionalHabits) {
+            // Track today's delta for timestamp recording
+            val todayDelta = dateDeltas[todayStr]
+            if (todayDelta != null && todayDelta > 0) {
+                todayDeltas[habitName] = todayDelta
+            }
+
+            // Propagate to conditional linked habits for dates where count increased
+            if (dateDeltas.isNotEmpty() && habitName in s.conditionalHabits) {
                 val linkedHabits = s.conditionalLinkedHabits[habitName] ?: emptySet()
                 for (linkedName in linkedHabits) {
                     val linkedEntries = (mutableDb[linkedName] ?: emptyMap()).toMutableMap()
-                    for (dateStr in datesActivated) {
+                    for ((dateStr, delta) in dateDeltas) {
                         val existing = linkedEntries[dateStr] ?: 0
-                        val newVal = if (linkedName in s.maxOneHabits) 1 else existing + 1
+                        val newVal = if (linkedName in s.maxOneHabits) {
+                            1
+                        } else {
+                            existing + delta
+                        }
                         if (newVal != existing) {
                             linkedEntries[dateStr] = newVal
                             dbChanged = true
@@ -2133,19 +2148,12 @@ class HabitViewModel(
                 habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
             }
 
-            // Record timestamps for chess.com auto-increments
-            val now = HabitTimestampRepository.nowTime()
-            val today = LocalDate.now()
-            for ((habitName, typeKey) in s.chessComHabitLinks) {
-                val type = ChessComType.fromKey(typeKey) ?: continue
-                val dailyMinutes = data[type] ?: continue
-                val minutesPerIncrement = s.chessComMinutesPerIncrement[typeKey] ?: continue
-                if (minutesPerIncrement <= 0) continue
-                val increments = chessComRepo.computeIncrements(dailyMinutes, minutesPerIncrement)
-                val todayStr = dateString(today)
-                val todayCount = increments[todayStr] ?: 0
-                if (todayCount > 0) {
-                    timestampRepo.addTimestamps(habitName, todayCount, today, now)
+            // Record timestamps only for the NEW increments (delta), not the total count
+            if (todayDeltas.isNotEmpty()) {
+                val now = HabitTimestampRepository.nowTime()
+                val today = LocalDate.now()
+                for ((habitName, delta) in todayDeltas) {
+                    timestampRepo.addTimestamps(habitName, delta, today, now)
                 }
             }
 

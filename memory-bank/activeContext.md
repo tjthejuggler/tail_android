@@ -1,6 +1,13 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-14T19:33Z
+**Last updated:** 2026-04-15T00:14Z
+
+## Recent Changes (as of 2026-04-15 00:14)
+
+- **Fix: Chess.com duplicate timestamps + conditional habit propagation** (2026-04-15 00:14) — Two bugs fixed in `applyChessComData()` in `HabitViewModel.kt`:
+  - **Duplicate timestamps**: Every poll cycle was adding `todayCount` timestamps (the total count) instead of only the delta (new increments since last poll). Fix: track per-habit today-delta and only call `addTimestamps()` with the delta.
+  - **Conditional habits not always incrementing**: Conditional propagation only fired on 0→non-zero transitions (`datesActivated`). If the chess habit count increased but was already non-zero, conditionals were skipped. Fix: track per-date deltas (any increase, not just 0→non-zero) and propagate the delta to conditional linked habits.
+  - Modified: `HabitViewModel.kt` (`applyChessComData()` only)
 
 ## Recent Changes (as of 2026-04-14 19:45)
 

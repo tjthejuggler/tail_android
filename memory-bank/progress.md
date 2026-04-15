@@ -1,5 +1,10 @@
 # Progress — Tail
 
+## 2026-04-15 00:14
+- [x] Fix: Chess.com duplicate timestamps — `applyChessComData()` was adding `todayCount` timestamps every poll cycle (total count, not delta). Now tracks per-habit today-delta and only adds new timestamps.
+- [x] Fix: Conditional habits not always incrementing on chess.com auto-increment — conditional propagation only fired on 0→non-zero transitions. Now tracks per-date deltas (any count increase) and propagates delta to conditional linked habits.
+  - Modified: `HabitViewModel.kt` (`applyChessComData()` only)
+
 ## 2026-04-14 19:45
 - [x] TTS confirmation + note notification for voice/text shortcuts
   - Modified: `VoiceHabitService.kt` — added TTS (TextToSpeech) init/shutdown, `speakAndThenStop()` method that speaks confirmation then stops service after utterance completes, improved toast to show trigger word + habit name, tracks `matchedTriggers` set
