@@ -1,6 +1,11 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-15T18:34Z
+**Last updated:** 2026-04-15T20:39Z
+
+## Recent Changes (as of 2026-04-15 20:39)
+
+- **Voice Note settings: show notes file name** (2026-04-15 20:39) — The Voice Note Dictation section in Settings now displays the actual file name (e.g. "✓ notes.md") instead of just "✓ File selected". The file name is resolved from the content URI using `OpenableColumns.DISPLAY_NAME` with a fallback to the URI's last path segment.
+  - Modified: `SettingsScreen.kt` (`VoiceNoteSettingsSection`) — added `notesFileName` computed via `contentResolver.query()`, updated display text from `"✓ File selected"` to `"✓ $notesFileName"`, added `maxLines` and `overflow` for long names.
 
 ## Recent Changes (as of 2026-04-15 18:34)
 

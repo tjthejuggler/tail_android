@@ -736,6 +736,34 @@ private fun VoiceNoteSettingsSection(
     val hasFile = settings.voiceNoteFileUri.isNotEmpty()
 
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    // Resolve the display name from the content URI
+    val notesFileName = remember(settings.voiceNoteFileUri) {
+        if (settings.voiceNoteFileUri.isEmpty()) ""
+        else {
+            try {
+                val cursor = context.contentResolver.query(
+                    android.net.Uri.parse(settings.voiceNoteFileUri),
+                    null, null, null, null
+                )
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex >= 0) it.getString(nameIndex) else null
+                    } else null
+                } ?: run {
+                    // Fallback: extract last path segment from URI
+                    android.net.Uri.parse(settings.voiceNoteFileUri).lastPathSegment
+                        ?.substringAfterLast("/")
+                        ?: ""
+                }
+            } catch (_: Exception) {
+                android.net.Uri.parse(settings.voiceNoteFileUri).lastPathSegment
+                    ?.substringAfterLast("/")
+                    ?: ""
+            }
+        }
+    }
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -784,10 +812,12 @@ private fun VoiceNoteSettingsSection(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Notes file", fontSize = 14.sp)
                     Text(
-                        text = if (hasFile) "✓ File selected" else "⚠ No file selected",
+                        text = if (hasFile) "✓ $notesFileName" else "⚠ No file selected",
                         color = if (hasFile) MaterialTheme.colorScheme.primary
                                else MaterialTheme.colorScheme.error,
-                        fontSize = 11.sp
+                        fontSize = 11.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Button(
