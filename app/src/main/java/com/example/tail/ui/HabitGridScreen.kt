@@ -180,6 +180,7 @@ fun HabitGridScreen(
     // Quick timestamp editor dialog state
     var quickEditHabitName by remember { mutableStateOf<String?>(null) }
     var quickEditOriginalTime by remember { mutableStateOf("") }
+    var quickEditWasTimeless by remember { mutableStateOf(false) }
     val toastScope = rememberCoroutineScope()
 
     // File picker for per-habit text log files (used from EditModeControlBar)
@@ -593,6 +594,7 @@ fun HabitGridScreen(
                     // Dismiss toast and open quick editor
                     quickEditHabitName = toastHabit
                     quickEditOriginalTime = incrementToastOriginalTime
+                    quickEditWasTimeless = incrementToastIsTimeless
                     incrementToastHabit = null
                 },
                 onTimeless = {
@@ -803,7 +805,12 @@ fun HabitGridScreen(
             originalTime = quickEditOriginalTime,
             onConfirm = { newTime ->
                 timestampScope.launch {
-                    viewModel.timestampRepo.updateLastTimestamp(habitName, selectedDate, newTime)
+                    if (quickEditWasTimeless) {
+                        // Was timeless — add a new timestamp instead of updating
+                        viewModel.timestampRepo.addTimestamp(habitName, selectedDate, newTime)
+                    } else {
+                        viewModel.timestampRepo.updateLastTimestamp(habitName, selectedDate, newTime)
+                    }
                 }
                 quickEditHabitName = null
             },

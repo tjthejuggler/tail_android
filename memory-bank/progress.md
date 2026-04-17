@@ -1,5 +1,10 @@
 # Progress — Tail
 
+## 2026-04-17 13:15
+- [x] Edit Time button on timeless increment toast: when incrementing a habit on a previous day (timeless by default), the toast now shows "🕐 Edit Time" button alongside "(timeless)" label
+  - Modified: `HabitIncrementToast.kt` — "Edit Time" button always shows; "Timeless" button only when timestamped
+  - Modified: `HabitGridScreen.kt` — added `quickEditWasTimeless` state; onConfirm uses `addTimestamp()` when timeless vs `updateLastTimestamp()` when timestamped
+
 ## 2026-04-15 18:34
 - [x] Smart Voice shortcut: 5th shortcut that smartly routes voice input to habits or notes
   - New file: `SmartVoiceService.kt` — ForegroundService with SpeechRecognizer + smart routing (trigger word density >50% → habits, ≤50% → notes)

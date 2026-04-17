@@ -1,6 +1,12 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-15T20:39Z
+**Last updated:** 2026-04-17T13:15Z
+
+## Recent Changes (as of 2026-04-17 13:15)
+
+- **Edit Time button on timeless increment toast** (2026-04-17 13:15) — When incrementing a habit on a previous day (timeless by default), the increment toast now shows the "🕐 Edit Time" button alongside the "(timeless)" label, so users can add a specific timestamp. Previously, the timeless toast only showed "(timeless)" with no action buttons.
+  - Modified: `HabitIncrementToast.kt` — "Edit Time" button now always shows (both timeless and timestamped states); "⏰ Timeless" button only shows when timestamped (redundant when already timeless)
+  - Modified: `HabitGridScreen.kt` — added `quickEditWasTimeless` state; `onEditTime` sets it; `QuickTimestampEditorDialog` onConfirm uses `addTimestamp()` when was timeless (no existing timestamp to update) vs `updateLastTimestamp()` when was timestamped
 
 ## Recent Changes (as of 2026-04-15 20:39)
 

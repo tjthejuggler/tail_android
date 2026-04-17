@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.sp
  * A brief toast-like notification shown at the bottom of the screen when a habit
  * is incremented. Displays the habit name and action buttons:
  * - When [isTimeless] is false: shows "Edit Time" and "Timeless" buttons
- * - When [isTimeless] is true: shows "(timeless)" label, no action buttons
+ * - When [isTimeless] is true: shows "(timeless)" label and "Edit Time" button
  *
  * @param habitName The name of the habit that was incremented
  * @param visible Whether the toast is currently showing
@@ -76,21 +76,22 @@ fun HabitIncrementToast(
                         color = Color(0xFF888888),
                         maxLines = 1
                     )
-                } else {
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Box(
-                        modifier = Modifier
-                            .background(Color(0xFF004488), RoundedCornerShape(6.dp))
-                            .clickable(onClick = onEditTime)
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "🕐 Edit Time",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
-                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF004488), RoundedCornerShape(6.dp))
+                        .clickable(onClick = onEditTime)
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "🕐 Edit Time",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                }
+                if (!isTimeless) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
