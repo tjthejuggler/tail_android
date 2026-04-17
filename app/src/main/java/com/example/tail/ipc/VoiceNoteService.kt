@@ -22,6 +22,8 @@ import android.speech.SpeechRecognizer
 import android.util.Log
 import android.widget.Toast
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.SpotifyDetector
+import com.example.tail.data.SpotifyTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -63,6 +65,9 @@ class VoiceNoteService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var stopped = false
 
+    /** Captured before SpeechRecognizer starts (which mutes Spotify). */
+    private var spotifyTrack: SpotifyTrack? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -72,6 +77,11 @@ class VoiceNoteService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Read Spotify track from intent extras (captured by Activity before mic activation)
+        // Fall back to direct detection if not provided (e.g. started from broadcast receiver)
+        spotifyTrack = SpotifyDetector.fromIntent(intent)
+            ?: SpotifyDetector.getCurrentSpotifyTrack(applicationContext)
+
         val suppliedText = com.example.tail.TextTriggerActivity.extractText(intent)
         val notificationText = if (!suppliedText.isNullOrEmpty())
             "📝 Saving note: \"$suppliedText\""
@@ -102,12 +112,12 @@ class VoiceNoteService : Service() {
                 // ── Direct text mode (from Tasker / external automation) ────
                 Log.i(TAG, "Processing supplied text: \"$suppliedText\"")
                 handler.post { Toast.makeText(applicationContext, "📝 Saving note: \"$suppliedText\"", Toast.LENGTH_SHORT).show() }
-                prependNoteToFile(suppliedText, settings.voiceNoteFileUri)
+                prependNoteToFile(suppliedText, settings.voiceNoteFileUri, spotifyTrack)
             } else {
                 // ── Voice listening mode ───────────────────────────────────
                 Log.i(TAG, "Starting voice note dictation")
                 handler.post { Toast.makeText(applicationContext, "📝 Listening for note…", Toast.LENGTH_SHORT).show() }
-                startListening(settings.voiceNoteFileUri)
+                startListening(settings.voiceNoteFileUri, spotifyTrack)
             }
         }
 
@@ -133,7 +143,7 @@ class VoiceNoteService : Service() {
 
     // ── Speech recognition ───────────────────────────────────────────────
 
-    private fun startListening(fileUri: String) {
+    private fun startListening(fileUri: String, capturedSpotifyTrack: SpotifyTrack? = null) {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Log.e(TAG, "Speech recognition not available")
             handler.post { Toast.makeText(applicationContext, "📝 Speech recognition not available", Toast.LENGTH_LONG).show() }
@@ -191,7 +201,7 @@ class VoiceNoteService : Service() {
                 // Use the best match (first result)
                 val dictatedText = matches.first()
                 Log.i(TAG, "Dictated text: \"$dictatedText\"")
-                prependNoteToFile(dictatedText, fileUri)
+                prependNoteToFile(dictatedText, fileUri, capturedSpotifyTrack)
             }
 
             override fun onPartialResults(partialResults: Bundle?) {}
@@ -209,13 +219,14 @@ class VoiceNoteService : Service() {
 
     // ── File writing ─────────────────────────────────────────────────────
 
-    private fun prependNoteToFile(text: String, fileUriString: String) {
+    private fun prependNoteToFile(text: String, fileUriString: String, capturedSpotifyTrack: SpotifyTrack? = null) {
         scope.launch(Dispatchers.IO) {
             try {
                 val uri = Uri.parse(fileUriString)
                 val now = LocalDateTime.now()
                 val timestamp = now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-                val newEntry = "## $timestamp\n$text\n\n"
+                val musicHeader = capturedSpotifyTrack?.let { "\nmusic\n${it.title} - ${it.artist}" } ?: ""
+                val newEntry = "## $timestamp$musicHeader\n$text\n\n"
 
                 // Read existing content
                 val existingContent = try {

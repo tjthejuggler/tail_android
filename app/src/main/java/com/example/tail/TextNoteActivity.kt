@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import com.example.tail.data.SpotifyDetector
 import com.example.tail.ipc.VoiceNoteService
 
 private const val TAG = "TextNoteActivity"
@@ -20,10 +21,18 @@ private const val TAG = "TextNoteActivity"
  * the service skips its own SpeechRecognizer and writes the text directly.
  *
  * If no text is supplied, a warning toast is shown and the service is not started.
+ *
+ * Captures Spotify playback state **before** starting the service.
  */
 class TextNoteActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Capture Spotify state BEFORE anything else
+        val spotifyTrack = SpotifyDetector.getCurrentSpotifyTrack(applicationContext)
+        if (spotifyTrack != null) {
+            Log.i(TAG, "Spotify detected: ${spotifyTrack.title} - ${spotifyTrack.artist}")
+        }
+
         // Finish before super.onCreate() to prevent window creation
         finish()
 
@@ -52,6 +61,8 @@ class TextNoteActivity : Activity() {
 
         val serviceIntent = Intent(this, VoiceNoteService::class.java)
         serviceIntent.putExtra(Intent.EXTRA_TEXT, suppliedText)
+        // Pass Spotify track info via extras
+        if (spotifyTrack != null) SpotifyDetector.putSpotifyTrack(serviceIntent, spotifyTrack)
         Log.i(TAG, "Forwarding supplied text: \"$suppliedText\"")
 
         ContextCompat.startForegroundService(this, serviceIntent)

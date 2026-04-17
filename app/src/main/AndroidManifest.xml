@@ -233,6 +233,21 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!--
+            MusicNotificationListenerService: required for MediaSessionManager.getActiveSessions()
+            to detect currently playing Spotify tracks. The user must enable this in
+            Android Settings → Apps → Special access → Notification access.
+            This service does not intercept or modify any notifications.
+        -->
+        <service
+            android:name=".ipc.MusicNotificationListenerService"
+            android:exported="false"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>

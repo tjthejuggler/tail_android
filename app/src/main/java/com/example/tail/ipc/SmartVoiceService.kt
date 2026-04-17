@@ -26,6 +26,8 @@ import com.example.tail.TextTriggerActivity
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.SpotifyDetector
+import com.example.tail.data.SpotifyTrack
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
 import com.example.tail.ui.ACTION_HABIT_INCREMENTED
@@ -74,6 +76,9 @@ class SmartVoiceService : Service() {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
 
+    /** Captured before SpeechRecognizer starts (which mutes Spotify). */
+    private var spotifyTrack: SpotifyTrack? = null
+
     // ── Service lifecycle ────────────────────────────────────────────────
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -86,6 +91,11 @@ class SmartVoiceService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Read Spotify track from intent extras (captured by Activity before mic activation)
+        // Fall back to direct detection if not provided (e.g. started from broadcast receiver)
+        spotifyTrack = SpotifyDetector.fromIntent(intent)
+            ?: SpotifyDetector.getCurrentSpotifyTrack(applicationContext)
+
         val suppliedText = TextTriggerActivity.extractText(intent)
         val notificationText = if (!suppliedText.isNullOrEmpty())
             "🧠 Processing: \"$suppliedText\""
@@ -113,11 +123,11 @@ class SmartVoiceService : Service() {
             if (!suppliedText.isNullOrEmpty()) {
                 Log.i(TAG, "Processing supplied text: \"$suppliedText\"")
                 handler.post { Toast.makeText(applicationContext, "🧠 Processing: \"$suppliedText\"", Toast.LENGTH_SHORT).show() }
-                routeText(suppliedText, wordToHabits, settings)
+                routeText(suppliedText, wordToHabits, settings, spotifyTrack)
             } else {
                 Log.i(TAG, "Starting voice listening (smart mode)")
                 handler.post { Toast.makeText(applicationContext, "🧠 Listening…", Toast.LENGTH_SHORT).show() }
-                startListening(wordToHabits, settings)
+                startListening(wordToHabits, settings, spotifyTrack)
             }
         }
 
@@ -147,7 +157,8 @@ class SmartVoiceService : Service() {
 
     private fun startListening(
         wordToHabits: Map<String, List<String>>,
-        settings: com.example.tail.data.AppSettings
+        settings: com.example.tail.data.AppSettings,
+        capturedSpotifyTrack: SpotifyTrack?
     ) {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Log.e(TAG, "Speech recognition not available on this device")
@@ -205,7 +216,7 @@ class SmartVoiceService : Service() {
 
                 Log.i(TAG, "Speech results: $matches")
                 // Use the best match for routing
-                routeText(matches.first(), wordToHabits, settings)
+                routeText(matches.first(), wordToHabits, settings, capturedSpotifyTrack)
             }
 
             override fun onPartialResults(partialResults: Bundle?) {}
@@ -236,7 +247,8 @@ class SmartVoiceService : Service() {
     private fun routeText(
         text: String,
         wordToHabits: Map<String, List<String>>,
-        settings: com.example.tail.data.AppSettings
+        settings: com.example.tail.data.AppSettings,
+        capturedSpotifyTrack: SpotifyTrack? = null
     ) {
         val words = text.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
 
@@ -269,7 +281,7 @@ class SmartVoiceService : Service() {
         if (isHabitMode) {
             handleAsHabit(text, matchedHabits, matchedTriggers, settings)
         } else {
-            handleAsNote(text, settings)
+            handleAsNote(text, settings, capturedSpotifyTrack)
         }
     }
 
@@ -378,7 +390,7 @@ class SmartVoiceService : Service() {
 
     // ── Note mode (mirrors VoiceNoteService) ─────────────────────────────
 
-    private fun handleAsNote(text: String, settings: com.example.tail.data.AppSettings) {
+    private fun handleAsNote(text: String, settings: com.example.tail.data.AppSettings, capturedSpotifyTrack: SpotifyTrack? = null) {
         if (settings.voiceNoteFileUri.isEmpty()) {
             Log.w(TAG, "No notes file configured — cannot save note")
             handler.post { Toast.makeText(applicationContext, "🧠 No notes file selected", Toast.LENGTH_SHORT).show() }
@@ -393,7 +405,8 @@ class SmartVoiceService : Service() {
                 val uri = Uri.parse(settings.voiceNoteFileUri)
                 val now = LocalDateTime.now()
                 val timestamp = now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-                val newEntry = "## $timestamp\n$text\n\n"
+                val musicHeader = capturedSpotifyTrack?.let { "\nmusic\n${it.title} - ${it.artist}" } ?: ""
+                val newEntry = "## $timestamp$musicHeader\n$text\n\n"
 
                 // Read existing content
                 val existingContent = try {

@@ -1,5 +1,20 @@
 # Progress — Tail
 
+## 2026-04-17 14:22
+- [x] Spotify music header in voice notes (v2 fix): moved Spotify detection to Activity level for earlier capture, accept PAUSED state, added notification listener check
+  - New file: `SpotifyDetector.kt` — detects Spotify track via MediaSessionManager; accepts PLAYING+PAUSED; includes `isNotificationListenerEnabled()`, `openNotificationListenerSettings()`, `putSpotifyTrack()`/`fromIntent()` for intent passing
+  - New file: `MusicNotificationListenerService.kt` — minimal NotificationListenerService required for MediaSessionManager API
+  - Modified: `SmartVoiceActivity.kt` — captures Spotify state before starting service, passes via intent extras, shows toast if notification listener not enabled
+  - Modified: `VoiceNoteActivity.kt` — same pattern
+  - Modified: `TextNoteActivity.kt` — same pattern
+  - Modified: `SmartVoiceService.kt` — reads Spotify from intent extras (falls back to direct detection), adds music header to notes
+  - Modified: `VoiceNoteService.kt` — reads Spotify from intent extras (falls back to direct detection), adds music header to notes
+  - Modified: `AndroidManifest.xml` — registered MusicNotificationListenerService
+  - Note format with music: `## timestamp\nmusic\nSong - Artist\nnote text`
+  - Note format without music: unchanged (`## timestamp\nnote text`)
+  - Time/date header is NOT affected
+  - **One-time setup:** User must enable Tail in Android Settings → Apps → Special access → Notification access
+
 ## 2026-04-17 13:15
 - [x] Edit Time button on timeless increment toast: when incrementing a habit on a previous day (timeless by default), the toast now shows "🕐 Edit Time" button alongside "(timeless)" label
   - Modified: `HabitIncrementToast.kt` — "Edit Time" button always shows; "Timeless" button only when timestamped

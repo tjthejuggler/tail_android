@@ -1,6 +1,22 @@
 # Active Context — Tail
 
-**Last updated:** 2026-04-17T13:15Z
+**Last updated:** 2026-04-17T13:41Z
+
+## Recent Changes (as of 2026-04-17 14:22)
+
+- **Spotify music header in voice notes** (2026-04-17 14:22) — When a note is created via SmartVoiceService or VoiceNoteService and Spotify is playing music, the note now includes a music header with the song name and artist. The Spotify state is captured in the **Activity** (before the service starts, before mic activation), then passed to the service via intent extras.
+  - New file: `SpotifyDetector.kt` — Uses `MediaSessionManager.getActiveSessions()` to detect Spotify tracks (title + artist). Accepts both PLAYING and PAUSED states (Spotify may pause before we check). Includes `isNotificationListenerEnabled()` check and `openNotificationListenerSettings()` helper. Provides `putSpotifyTrack()`/`fromIntent()` for passing track via intent extras.
+  - New file: `MusicNotificationListenerService.kt` — Minimal `NotificationListenerService` required by Android for `MediaSessionManager.getActiveSessions()` to work. User must enable it in Android Settings → Notification access.
+  - Modified: `SmartVoiceActivity.kt` — Captures Spotify state before starting service; passes via intent extras; shows toast if notification listener not enabled
+  - Modified: `VoiceNoteActivity.kt` — Same pattern as SmartVoiceActivity
+  - Modified: `TextNoteActivity.kt` — Same pattern (captures Spotify before starting VoiceNoteService)
+  - Modified: `SmartVoiceService.kt` — Reads Spotify track from intent extras (falls back to direct detection); passes through `routeText()` → `handleAsNote()`; note format: `## timestamp\nmusic\nSong - Artist\nnote text`
+  - Modified: `VoiceNoteService.kt` — Reads Spotify track from intent extras (falls back to direct detection); passes through `startListening()` → `prependNoteToFile()`; same music header format
+  - Modified: `AndroidManifest.xml` — Registered `MusicNotificationListenerService` with `BIND_NOTIFICATION_LISTENER_SERVICE` permission
+  - Note format with music: `## 2026-04-17 09:28:54\nmusic\nSong Name - Artist Name\nThe dictated text\n\n`
+  - Note format without music: `## 2026-04-17 09:28:54\nThe dictated text\n\n` (unchanged)
+  - Time/date header is NOT affected — music header goes between timestamp and note text
+  - **One-time setup:** User must enable Tail in Android Settings → Apps → Special access → Notification access
 
 ## Recent Changes (as of 2026-04-17 13:15)
 
