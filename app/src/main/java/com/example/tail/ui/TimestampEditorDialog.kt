@@ -1,7 +1,10 @@
 package com.example.tail.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,7 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -23,9 +26,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,14 +35,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 /**
  * Dialog for viewing, editing, deleting, and adding habit increment timestamps
  * for a specific habit on a specific day.
+ *
+ * When editing a timestamp, shows the same +/- hour/minute offset buttons
+ * as the QuickTimestampEditorDialog (increment toast "Edit Time" flow).
  *
  * @param habitName The habit being edited
  * @param timestamps Current list of "HH:mm:ss" timestamps for today
@@ -59,10 +65,16 @@ fun TimestampEditorDialog(
     onAddTimestamp: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // -1 = not editing; >= 0 = editing that index; Int.MAX_VALUE = adding new
     var editingIndex by remember { mutableStateOf(-1) }
-    var editingText by remember { mutableStateOf("") }
-    var showAddField by remember { mutableStateOf(false) }
-    var addText by remember { mutableStateOf("") }
+    var editingOffsetMinutes by remember { mutableStateOf(0) }
+    var editingOriginalTime by remember { mutableStateOf(LocalTime.MIDNIGHT) }
+
+    // For "add new" mode we start from current time
+    var addOffsetMinutes by remember { mutableStateOf(0) }
+    var addOriginalTime by remember { mutableStateOf(LocalTime.now()) }
+
+    val isAddingNew = editingIndex == Int.MAX_VALUE
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -82,7 +94,7 @@ fun TimestampEditorDialog(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                if (timestamps.isEmpty()) {
+                if (timestamps.isEmpty() && !isAddingNew) {
                     Text(
                         text = "No timestamps recorded for today.",
                         fontSize = 12.sp,
@@ -96,41 +108,18 @@ fun TimestampEditorDialog(
                     ) {
                         itemsIndexed(timestamps) { index, time ->
                             if (editingIndex == index) {
-                                // Inline edit mode
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = editingText,
-                                        onValueChange = { editingText = it },
-                                        label = { Text("HH:mm:ss", fontSize = 10.sp) },
-                                        singleLine = true,
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Button(
-                                        onClick = {
-                                            val validated = validateTimeString(editingText)
-                                            if (validated != null) {
-                                                onUpdateTimestamp(index, validated)
-                                                editingIndex = -1
-                                            }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A00)),
-                                        modifier = Modifier.height(36.dp)
-                                    ) {
-                                        Text("✓", fontSize = 12.sp, color = Color(0xFF88FF88))
-                                    }
-                                    TextButton(
-                                        onClick = { editingIndex = -1 }
-                                    ) {
-                                        Text("✕", fontSize = 12.sp, color = Color(0xFF888888))
-                                    }
-                                }
+                                // Inline offset-button edit mode
+                                TimestampOffsetEditor(
+                                    originalTime = editingOriginalTime,
+                                    offsetMinutes = editingOffsetMinutes,
+                                    onOffsetChange = { editingOffsetMinutes += it },
+                                    onConfirm = {
+                                        val adjusted = editingOriginalTime.plusMinutes(editingOffsetMinutes.toLong())
+                                        onUpdateTimestamp(index, adjusted.format(DateTimeFormatter.ofPattern("HH:mm:ss")))
+                                        editingIndex = -1
+                                    },
+                                    onCancel = { editingIndex = -1 }
+                                )
                             } else {
                                 // Display mode
                                 Row(
@@ -159,7 +148,10 @@ fun TimestampEditorDialog(
                                     IconButton(
                                         onClick = {
                                             editingIndex = index
-                                            editingText = time
+                                            editingOffsetMinutes = 0
+                                            editingOriginalTime = runCatching {
+                                                LocalTime.parse(time)
+                                            }.getOrDefault(LocalTime.now())
                                         },
                                         modifier = Modifier.size(28.dp)
                                     ) {
@@ -184,53 +176,36 @@ fun TimestampEditorDialog(
                                 }
                             }
                         }
+
+                        // "Add new" inline offset editor
+                        if (isAddingNew) {
+                            item {
+                                TimestampOffsetEditor(
+                                    originalTime = addOriginalTime,
+                                    offsetMinutes = addOffsetMinutes,
+                                    onOffsetChange = { addOffsetMinutes += it },
+                                    onConfirm = {
+                                        val adjusted = addOriginalTime.plusMinutes(addOffsetMinutes.toLong())
+                                        onAddTimestamp(adjusted.format(DateTimeFormatter.ofPattern("HH:mm:ss")))
+                                        editingIndex = -1
+                                    },
+                                    onCancel = { editingIndex = -1 }
+                                )
+                            }
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Add new timestamp
-                if (showAddField) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = addText,
-                            onValueChange = { addText = it },
-                            label = { Text("HH:mm:ss", fontSize = 10.sp) },
-                            placeholder = { Text("e.g. 14:30:00", fontSize = 10.sp) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Button(
-                            onClick = {
-                                val validated = validateTimeString(addText)
-                                if (validated != null) {
-                                    onAddTimestamp(validated)
-                                    addText = ""
-                                    showAddField = false
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A00)),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Text("Add", fontSize = 11.sp, color = Color(0xFF88FF88))
-                        }
-                        TextButton(
-                            onClick = {
-                                showAddField = false
-                                addText = ""
-                            }
-                        ) {
-                            Text("✕", fontSize = 12.sp, color = Color(0xFF888888))
-                        }
-                    }
-                } else {
+                // "Add Time" button — only when not already adding
+                if (!isAddingNew && editingIndex == -1) {
                     Button(
-                        onClick = { showAddField = true },
+                        onClick = {
+                            addOffsetMinutes = 0
+                            addOriginalTime = LocalTime.now()
+                            editingIndex = Int.MAX_VALUE
+                        },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A3A)),
                         modifier = Modifier.height(32.dp)
                     ) {
@@ -259,58 +234,137 @@ fun TimestampEditorDialog(
 }
 
 /**
- * Validates and normalizes a time string to "HH:mm:ss" format.
- * Accepts formats like "14:30", "14:30:00", "1430", "143000".
- * Returns null if the input is invalid.
+ * Inline offset-button editor for a single timestamp.
+ * Shows the current adjusted time, +/- hour and minute buttons, and confirm/cancel.
  */
-private fun validateTimeString(input: String): String? {
-    val trimmed = input.trim()
-    if (trimmed.isBlank()) return null
-
-    // Try HH:mm:ss
-    val colonFull = Regex("""^(\d{1,2}):(\d{2}):(\d{2})$""")
-    colonFull.matchEntire(trimmed)?.let { m ->
-        val h = m.groupValues[1].toIntOrNull() ?: return null
-        val min = m.groupValues[2].toIntOrNull() ?: return null
-        val s = m.groupValues[3].toIntOrNull() ?: return null
-        if (h in 0..23 && min in 0..59 && s in 0..59) {
-            return "%02d:%02d:%02d".format(h, min, s)
-        }
-        return null
+@Composable
+private fun TimestampOffsetEditor(
+    originalTime: LocalTime,
+    offsetMinutes: Int,
+    onOffsetChange: (Int) -> Unit,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val displayTime = remember(originalTime, offsetMinutes) {
+        val adjusted = originalTime.plusMinutes(offsetMinutes.toLong())
+        adjusted.format(DateTimeFormatter.ofPattern("h:mm a"))
     }
 
-    // Try HH:mm
-    val colonShort = Regex("""^(\d{1,2}):(\d{2})$""")
-    colonShort.matchEntire(trimmed)?.let { m ->
-        val h = m.groupValues[1].toIntOrNull() ?: return null
-        val min = m.groupValues[2].toIntOrNull() ?: return null
-        if (h in 0..23 && min in 0..59) {
-            return "%02d:%02d:00".format(h, min)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1C1C1E), RoundedCornerShape(10.dp))
+            .border(1.dp, Color(0xFF444444), RoundedCornerShape(10.dp))
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Time display
+        Box(
+            modifier = Modifier
+                .background(Color(0xFF2A2A2E), RoundedCornerShape(8.dp))
+                .border(1.dp, Color(0xFF555555), RoundedCornerShape(8.dp))
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = displayTime,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF88DDFF),
+                fontFamily = FontFamily.Monospace
+            )
         }
-        return null
-    }
 
-    // Try HHMM or HHMMSS (digits only)
-    val digitsOnly = Regex("""^(\d{4,6})$""")
-    digitsOnly.matchEntire(trimmed)?.let { m ->
-        val digits = m.groupValues[1]
-        return when (digits.length) {
-            4 -> {
-                val h = digits.substring(0, 2).toIntOrNull() ?: return null
-                val min = digits.substring(2, 4).toIntOrNull() ?: return null
-                if (h in 0..23 && min in 0..59) "%02d:%02d:00".format(h, min) else null
+        if (offsetMinutes != 0) {
+            val offsetHours = offsetMinutes / 60
+            val offsetMins = offsetMinutes % 60
+            val offsetText = buildString {
+                append("(")
+                if (offsetMinutes > 0) append("+")
+                if (offsetHours != 0) {
+                    append("${offsetHours}h")
+                    if (offsetMins != 0) append(" ")
+                }
+                if (offsetMins != 0) {
+                    if (offsetHours == 0 && offsetMinutes > 0) append("+")
+                    append("${offsetMins}m")
+                }
+                append(")")
             }
-            6 -> {
-                val h = digits.substring(0, 2).toIntOrNull() ?: return null
-                val min = digits.substring(2, 4).toIntOrNull() ?: return null
-                val s = digits.substring(4, 6).toIntOrNull() ?: return null
-                if (h in 0..23 && min in 0..59 && s in 0..59) "%02d:%02d:%02d".format(h, min, s) else null
+            Text(
+                text = offsetText,
+                fontSize = 11.sp,
+                color = Color(0xFF88AA88),
+                fontWeight = FontWeight.Medium
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Hours row
+        Text("Hours", fontSize = 10.sp, color = Color(0xFF888888))
+        Spacer(modifier = Modifier.height(3.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf(-3, -2, -1, 1, 2, 3).forEach { offset ->
+                OffsetButton(
+                    label = if (offset > 0) "+${offset}h" else "${offset}h",
+                    onClick = { onOffsetChange(offset * 60) },
+                    size = 34.dp,
+                    fontSize = 10.sp
+                )
             }
-            else -> null
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Minutes row
+        Text("Minutes", fontSize = 10.sp, color = Color(0xFF888888))
+        Spacer(modifier = Modifier.height(3.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf(-30, -15, -5, 5, 15, 30).forEach { offset ->
+                OffsetButton(
+                    label = if (offset > 0) "+${offset}m" else "${offset}m",
+                    onClick = { onOffsetChange(offset) },
+                    size = 34.dp,
+                    fontSize = 10.sp
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Confirm / Cancel
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF333333), RoundedCornerShape(6.dp))
+                    .clickable { onOffsetChange(-offsetMinutes) } // reset
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text("Reset", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF333333), RoundedCornerShape(6.dp))
+                        .clickable(onClick = onCancel)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text("Cancel", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                }
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF004488), RoundedCornerShape(6.dp))
+                        .clickable(onClick = onConfirm)
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text("Done", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
     }
-
-    return null
 }
 
 /**

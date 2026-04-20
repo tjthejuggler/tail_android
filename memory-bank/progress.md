@@ -1,5 +1,10 @@
 # Progress — Tail
 
+## 2026-04-20 10:24
+- [x] Timestamp editor offset buttons: editing a timestamp in the "🕐 Timestamps" dialog (edit mode) now uses the same +/- hour/minute offset buttons as the increment toast "Edit Time" flow
+  - Modified: `QuickTimestampEditorDialog.kt` — `OffsetButton` changed from `private` to `internal`
+  - Modified: `TimestampEditorDialog.kt` — replaced `OutlinedTextField` inline edit with `TimestampOffsetEditor` composable (offset buttons + Reset/Cancel/Done); same for "Add Time" flow; removed `validateTimeString()`
+
 ## 2026-04-17 14:22
 - [x] Spotify music header in voice notes (v2 fix): moved Spotify detection to Activity level for earlier capture, accept PAUSED state, added notification listener check
   - New file: `SpotifyDetector.kt` — detects Spotify track via MediaSessionManager; accepts PLAYING+PAUSED; includes `isNotificationListenerEnabled()`, `openNotificationListenerSettings()`, `putSpotifyTrack()`/`fromIntent()` for intent passing

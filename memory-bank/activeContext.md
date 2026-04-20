@@ -1,5 +1,13 @@
 # Active Context — Tail
 
+**Last updated:** 2026-04-20T14:24Z
+
+## Recent Changes (as of 2026-04-20 10:24)
+
+- **Timestamp editor offset buttons** (2026-04-20 10:24) — When editing a timestamp from the "🕐 Timestamps" button in habit edit mode, the inline editor now shows the same +/- hour and minute offset buttons as the `QuickTimestampEditorDialog` (increment toast "Edit Time" flow), instead of a raw text field.
+  - Modified: `QuickTimestampEditorDialog.kt` — `OffsetButton` composable changed from `private` to `internal` so it can be reused
+  - Modified: `TimestampEditorDialog.kt` — Replaced `OutlinedTextField` inline edit with new `TimestampOffsetEditor` composable (shows current adjusted time, +/- hour/minute offset buttons, Reset/Cancel/Done). Same pattern for "Add Time" flow (starts from current time). Removed `validateTimeString()` helper (no longer needed). Added `java.time.LocalTime` / `DateTimeFormatter` imports.
+
 **Last updated:** 2026-04-17T13:41Z
 
 ## Recent Changes (as of 2026-04-17 14:22)

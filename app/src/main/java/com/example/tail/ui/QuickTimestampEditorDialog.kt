@@ -218,7 +218,7 @@ fun QuickTimestampEditorDialog(
 }
 
 @Composable
-private fun OffsetButton(
+internal fun OffsetButton(
     label: String,
     onClick: () -> Unit,
     size: Dp = 38.dp,
