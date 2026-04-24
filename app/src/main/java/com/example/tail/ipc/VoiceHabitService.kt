@@ -25,6 +25,7 @@ import android.widget.Toast
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
 import com.example.tail.ui.ACTION_HABIT_INCREMENTED
@@ -235,21 +236,101 @@ class VoiceHabitService : Service() {
 
     // ── Trigger word matching + habit increment ──────────────────────────
 
+    /**
+     * Maps English number words to their integer values.
+     * Used to parse spoken numbers like "five" → 5 after a trigger word.
+     */
+    private val NUMBER_WORDS = mapOf(
+        "zero" to 0, "one" to 1, "two" to 2, "three" to 3, "four" to 4,
+        "five" to 5, "six" to 6, "seven" to 7, "eight" to 8, "nine" to 9,
+        "ten" to 10, "eleven" to 11, "twelve" to 12, "thirteen" to 13,
+        "fourteen" to 14, "fifteen" to 15, "sixteen" to 16, "seventeen" to 17,
+        "eighteen" to 18, "nineteen" to 19, "twenty" to 20, "thirty" to 30,
+        "forty" to 40, "fifty" to 50, "sixty" to 60, "seventy" to 70,
+        "eighty" to 80, "ninety" to 90, "hundred" to 100
+    )
+
+    /**
+     * Parses a number from the end of a spoken text fragment.
+     * Handles both digit strings ("5") and English number words ("five").
+     * Returns null if no number is found.
+     */
+    private fun parseTrailingNumber(text: String): Int? {
+        val words = text.trim().split(Regex("\\s+"))
+        if (words.isEmpty()) return null
+
+        // Try the last word as a digit string
+        val lastWord = words.last()
+        lastWord.toIntOrNull()?.let { return it }
+
+        // Try the last word as a number word
+        NUMBER_WORDS[lastWord]?.let { return it }
+
+        return null
+    }
+
+    /**
+     * Parses subtype and amount from spoken text for a voice-subtype habit.
+     * Returns a pair of (subtypeName, amount).
+     * - If a subtype name is found in the text after the trigger, uses that subtype.
+     * - If no subtype is found, defaults to the first subtype in the list.
+     * - If a number is found after the trigger (and optionally after the subtype), uses that amount.
+     * - If no number is found, defaults to 1.
+     */
+    private fun parseSubtypeAndAmount(
+        spokenText: String,
+        triggerWord: String,
+        subtypes: List<String>
+    ): Pair<String, Int> {
+        // Find the text after the trigger word
+        val triggerIndex = spokenText.indexOf(triggerWord)
+        val afterTrigger = if (triggerIndex >= 0) {
+            spokenText.substring(triggerIndex + triggerWord.length).trim()
+        } else {
+            spokenText
+        }
+
+        // Default subtype is the first one
+        var matchedSubtype = subtypes.first()
+        var remainingText = afterTrigger
+
+        // Check if any subtype name appears in the text after the trigger
+        for (subtype in subtypes) {
+            val subtypeLower = subtype.lowercase()
+            if (afterTrigger.contains(subtypeLower)) {
+                matchedSubtype = subtype
+                // Remove the subtype from the remaining text to find the number
+                val subtypeIndex = afterTrigger.indexOf(subtypeLower)
+                remainingText = afterTrigger.substring(subtypeIndex + subtypeLower.length).trim()
+                break
+            }
+        }
+
+        // Parse number from the remaining text
+        val amount = parseTrailingNumber(remainingText) ?: 1
+
+        return Pair(matchedSubtype, amount)
+    }
+
     private fun handleSpeechResults(
         matches: List<String>,
         wordToHabits: Map<String, List<String>>,
         settings: com.example.tail.data.AppSettings
     ) {
         // Combine all recognized alternatives into one lowercase search string
-        val spokenText = matches.joinToString(" ") { it.lowercase() }
+        // Strip hyphens so "pull-ups" matches "pullups"
+        val spokenText = matches.joinToString(" ") { it.lowercase().replace("-", "") }
 
         // Find all matching trigger words and their associated habits
         val matchedHabits = mutableSetOf<String>()
         val matchedTriggers = mutableSetOf<String>()
+        // Track which trigger word matched each habit (for subtype parsing)
+        val habitToTrigger = mutableMapOf<String, String>()
         for ((triggerWord, habitNames) in wordToHabits) {
             if (spokenText.contains(triggerWord)) {
                 matchedHabits.addAll(habitNames)
                 matchedTriggers.add(triggerWord)
+                for (name in habitNames) habitToTrigger[name] = triggerWord
                 Log.i(TAG, "Trigger word '$triggerWord' matched → habits: $habitNames")
             }
         }
@@ -269,6 +350,7 @@ class VoiceHabitService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
                 val habitsRepo = HabitsRepository()
+                val subtypeDataRepo = SubtypeDataRepository()
                 val fileUriString = settings.fileUri
                 if (fileUriString.isEmpty()) {
                     Log.w(TAG, "No habits file URI configured — cannot increment")
@@ -278,7 +360,44 @@ class VoiceHabitService : Service() {
                 val uri = Uri.parse(fileUriString)
                 val todayStr = LocalDate.now().toString()
 
+                // Build TTS confirmation parts
+                val ttsParts = mutableListOf<String>()
+
                 for (habitName in matchedHabits) {
+                    // Determine if this habit uses voice subtypes
+                    val useVoiceSubtypes = habitName in settings.voiceSubtypeHabits
+                            && habitName in settings.subtypedHabits
+                            && habitName in settings.voiceTriggerHabits
+
+                    var incrementAmount = 1
+                    var subtypeName: String? = null
+
+                    if (useVoiceSubtypes) {
+                        val subtypes = settings.habitSubtypes[habitName] ?: emptyList()
+                        if (subtypes.isNotEmpty()) {
+                            val triggerWord = habitToTrigger[habitName] ?: ""
+                            val (parsedSubtype, parsedAmount) = parseSubtypeAndAmount(
+                                spokenText, triggerWord, subtypes
+                            )
+                            subtypeName = parsedSubtype
+                            incrementAmount = parsedAmount
+                            Log.i(TAG, "Voice subtype parsed for '$habitName': subtype='$subtypeName', amount=$incrementAmount")
+                        }
+                    } else {
+                        // For all habits: parse a number after the trigger word, default to 1
+                        val triggerWord = habitToTrigger[habitName] ?: ""
+                        val triggerIndex = spokenText.indexOf(triggerWord)
+                        val afterTrigger = if (triggerIndex >= 0) {
+                            spokenText.substring(triggerIndex + triggerWord.length).trim()
+                        } else {
+                            spokenText
+                        }
+                        incrementAmount = parseTrailingNumber(afterTrigger) ?: 1
+                        if (incrementAmount != 1) {
+                            Log.i(TAG, "Parsed amount $incrementAmount for '$habitName' after trigger '$triggerWord'")
+                        }
+                    }
+
                     // Respect "max 1" cap
                     if (habitName in settings.maxOneHabits) {
                         val db = habitsRepo.loadDatabase(uri, applicationContext)
@@ -289,8 +408,24 @@ class VoiceHabitService : Service() {
                         }
                     }
 
-                    habitsRepo.incrementHabit(uri, applicationContext, habitName, 1)
-                    Log.i(TAG, "Incremented habit '$habitName' via voice trigger")
+                    habitsRepo.incrementHabit(uri, applicationContext, habitName, incrementAmount)
+                    Log.i(TAG, "Incremented habit '$habitName' by $incrementAmount via voice trigger")
+
+                    // Save subtype breakdown if applicable
+                    if (subtypeName != null) {
+                        val subtypeFileUri = settings.subtypeDataFileUris[habitName]
+                        if (subtypeFileUri != null) {
+                            try {
+                                subtypeDataRepo.addToDate(
+                                    Uri.parse(subtypeFileUri), applicationContext, todayStr,
+                                    mapOf(subtypeName to incrementAmount)
+                                )
+                                Log.i(TAG, "Saved subtype breakdown for '$habitName': $subtypeName → $incrementAmount")
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to save subtype data for '$habitName': ${e.message}")
+                            }
+                        }
+                    }
 
                     // Record timestamp for voice-triggered increment
                     try {
@@ -329,6 +464,18 @@ class VoiceHabitService : Service() {
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
                     }
+
+                    // Build TTS confirmation part for this habit
+                    val ttsPart = if (subtypeName != null && incrementAmount > 1) {
+                        "$subtypeName $incrementAmount"
+                    } else if (subtypeName != null) {
+                        subtypeName
+                    } else if (incrementAmount > 1) {
+                        "${habitToTrigger[habitName] ?: habitName} $incrementAmount"
+                    } else {
+                        habitToTrigger[habitName] ?: habitName
+                    }
+                    ttsParts.add(ttsPart)
                 }
 
                 // Update Tasker file
@@ -340,8 +487,8 @@ class VoiceHabitService : Service() {
                 // Confirmation vibration
                 vibrateConfirmation()
 
-                // TTS confirmation: speak just the trigger word(s) that matched
-                val ttsText = matchedTriggers.joinToString(", ")
+                // TTS confirmation
+                val ttsText = ttsParts.joinToString(", ")
 
                 Log.i(TAG, "Voice trigger complete — incremented ${matchedHabits.size} habit(s)")
 

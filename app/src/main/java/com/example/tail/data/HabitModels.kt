@@ -272,6 +272,16 @@ data class AppSettings(
      */
     val voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
 
+    /**
+     * Habits that have the "use subtypes voice" feature enabled.
+     * Only meaningful when the habit is also in [voiceTriggerHabits] AND [subtypedHabits].
+     * When enabled, the voice service also checks for subtype names in the spoken text
+     * after the trigger word, and parses an optional number for the increment amount.
+     * If no subtype is heard, the first subtype is used as default.
+     * If no number is heard, the amount defaults to 1.
+     */
+    val voiceSubtypeHabits: Set<String> = emptySet(),
+
     // ── Voice Note Dictation settings ─────────────────────────────────────
     /** Global on/off for voice note dictation feature. */
     val voiceNoteEnabled: Boolean = false,

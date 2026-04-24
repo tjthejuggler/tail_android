@@ -27,6 +27,7 @@ import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.SpotifyDetector
+import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.SpotifyTrack
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
@@ -250,7 +251,9 @@ class SmartVoiceService : Service() {
         settings: com.example.tail.data.AppSettings,
         capturedSpotifyTrack: SpotifyTrack? = null
     ) {
-        val words = text.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        // Strip hyphens so "pull-ups" matches "pullups"
+        val normalisedText = text.lowercase().replace("-", "")
+        val words = normalisedText.split(Regex("\\s+")).filter { it.isNotEmpty() }
 
         if (words.isEmpty()) {
             Log.i(TAG, "Empty text — stopping")
@@ -262,24 +265,44 @@ class SmartVoiceService : Service() {
         // Count how many words match trigger words
         val matchedHabits = mutableSetOf<String>()
         val matchedTriggers = mutableSetOf<String>()
+        // Track which trigger word matched each habit (for subtype parsing)
+        val habitToTrigger = mutableMapOf<String, String>()
         var matchedWordCount = 0
 
         for (word in words) {
             val matchingTrigger = wordToHabits.keys.find { trigger -> word.contains(trigger) || trigger.contains(word) }
             if (matchingTrigger != null) {
-                matchedHabits.addAll(wordToHabits[matchingTrigger]!!)
+                val habits = wordToHabits[matchingTrigger]!!
+                matchedHabits.addAll(habits)
                 matchedTriggers.add(matchingTrigger)
+                for (name in habits) habitToTrigger[name] = matchingTrigger
                 matchedWordCount++
             }
         }
 
-        val ratio = matchedWordCount.toDouble() / words.size
-        val isHabitMode = ratio > 0.5
+        // Exclude pure numbers and number words from the total word count for routing,
+        // since they are valid parts of a habit voice command (e.g. "pushups 25")
+        val numberWordSet = NUMBER_WORDS.keys
+        val nonNumberWords = words.count { word ->
+            word.toIntOrNull() == null && word !in numberWordSet
+        }
+        val effectiveTotal = if (nonNumberWords > 0) nonNumberWords else words.size
+
+        // If any matched habit has voice subtypes enabled, always route to habit mode
+        // because the extra words (subtype names, numbers) are expected parts of the command
+        val hasVoiceSubtypeHabit = matchedHabits.any { habitName ->
+            habitName in settings.voiceSubtypeHabits
+                    && habitName in settings.subtypedHabits
+                    && habitName in settings.voiceTriggerHabits
+        }
+
+        val ratio = matchedWordCount.toDouble() / effectiveTotal
+        val isHabitMode = ratio > 0.5 || hasVoiceSubtypeHabit
 
         Log.i(TAG, "Routing: $matchedWordCount/${words.size} words matched triggers (ratio=${"%.2f".format(ratio)}) → ${if (isHabitMode) "HABIT" else "NOTE"} mode")
 
         if (isHabitMode) {
-            handleAsHabit(text, matchedHabits, matchedTriggers, settings)
+            handleAsHabit(normalisedText, matchedHabits, matchedTriggers, habitToTrigger, settings)
         } else {
             handleAsNote(text, settings, capturedSpotifyTrack)
         }
@@ -287,10 +310,60 @@ class SmartVoiceService : Service() {
 
     // ── Habit mode (mirrors VoiceHabitService) ───────────────────────────
 
+    /**
+     * Maps English number words to their integer values.
+     * Used to parse spoken numbers like "five" → 5 after a trigger word.
+     */
+    private val NUMBER_WORDS = mapOf(
+        "zero" to 0, "one" to 1, "two" to 2, "three" to 3, "four" to 4,
+        "five" to 5, "six" to 6, "seven" to 7, "eight" to 8, "nine" to 9,
+        "ten" to 10, "eleven" to 11, "twelve" to 12, "thirteen" to 13,
+        "fourteen" to 14, "fifteen" to 15, "sixteen" to 16, "seventeen" to 17,
+        "eighteen" to 18, "nineteen" to 19, "twenty" to 20, "thirty" to 30,
+        "forty" to 40, "fifty" to 50, "sixty" to 60, "seventy" to 70,
+        "eighty" to 80, "ninety" to 90, "hundred" to 100
+    )
+
+    private fun parseTrailingNumber(text: String): Int? {
+        val words = text.trim().split(Regex("\\s+"))
+        if (words.isEmpty()) return null
+        val lastWord = words.last()
+        lastWord.toIntOrNull()?.let { return it }
+        NUMBER_WORDS[lastWord]?.let { return it }
+        return null
+    }
+
+    private fun parseSubtypeAndAmount(
+        spokenText: String,
+        triggerWord: String,
+        subtypes: List<String>
+    ): Pair<String, Int> {
+        val triggerIndex = spokenText.indexOf(triggerWord)
+        val afterTrigger = if (triggerIndex >= 0) {
+            spokenText.substring(triggerIndex + triggerWord.length).trim()
+        } else {
+            spokenText
+        }
+        var matchedSubtype = subtypes.first()
+        var remainingText = afterTrigger
+        for (subtype in subtypes) {
+            val subtypeLower = subtype.lowercase()
+            if (afterTrigger.contains(subtypeLower)) {
+                matchedSubtype = subtype
+                val subtypeIndex = afterTrigger.indexOf(subtypeLower)
+                remainingText = afterTrigger.substring(subtypeIndex + subtypeLower.length).trim()
+                break
+            }
+        }
+        val amount = parseTrailingNumber(remainingText) ?: 1
+        return Pair(matchedSubtype, amount)
+    }
+
     private fun handleAsHabit(
         spokenText: String,
         matchedHabits: Set<String>,
         matchedTriggers: Set<String>,
+        habitToTrigger: Map<String, String>,
         settings: com.example.tail.data.AppSettings
     ) {
         if (matchedHabits.isEmpty()) {
@@ -307,6 +380,7 @@ class SmartVoiceService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
                 val habitsRepo = HabitsRepository()
+                val subtypeDataRepo = SubtypeDataRepository()
                 val fileUriString = settings.fileUri
                 if (fileUriString.isEmpty()) {
                     Log.w(TAG, "No habits file URI configured — cannot increment")
@@ -316,7 +390,43 @@ class SmartVoiceService : Service() {
                 val uri = Uri.parse(fileUriString)
                 val todayStr = LocalDate.now().toString()
 
+                val ttsParts = mutableListOf<String>()
+
                 for (habitName in matchedHabits) {
+                    // Determine if this habit uses voice subtypes
+                    val useVoiceSubtypes = habitName in settings.voiceSubtypeHabits
+                            && habitName in settings.subtypedHabits
+                            && habitName in settings.voiceTriggerHabits
+
+                    var incrementAmount = 1
+                    var subtypeName: String? = null
+
+                    if (useVoiceSubtypes) {
+                        val subtypes = settings.habitSubtypes[habitName] ?: emptyList()
+                        if (subtypes.isNotEmpty()) {
+                            val triggerWord = habitToTrigger[habitName] ?: ""
+                            val (parsedSubtype, parsedAmount) = parseSubtypeAndAmount(
+                                spokenText, triggerWord, subtypes
+                            )
+                            subtypeName = parsedSubtype
+                            incrementAmount = parsedAmount
+                            Log.i(TAG, "Voice subtype parsed for '$habitName': subtype='$subtypeName', amount=$incrementAmount")
+                        }
+                    } else {
+                        // For all habits: parse a number after the trigger word, default to 1
+                        val triggerWord = habitToTrigger[habitName] ?: ""
+                        val triggerIndex = spokenText.indexOf(triggerWord)
+                        val afterTrigger = if (triggerIndex >= 0) {
+                            spokenText.substring(triggerIndex + triggerWord.length).trim()
+                        } else {
+                            spokenText
+                        }
+                        incrementAmount = parseTrailingNumber(afterTrigger) ?: 1
+                        if (incrementAmount != 1) {
+                            Log.i(TAG, "Parsed amount $incrementAmount for '$habitName' after trigger '$triggerWord'")
+                        }
+                    }
+
                     if (habitName in settings.maxOneHabits) {
                         val db = habitsRepo.loadDatabase(uri, applicationContext)
                         val currentCount = db[habitName]?.get(todayStr) ?: 0
@@ -326,8 +436,24 @@ class SmartVoiceService : Service() {
                         }
                     }
 
-                    habitsRepo.incrementHabit(uri, applicationContext, habitName, 1)
-                    Log.i(TAG, "Incremented habit '$habitName' via smart voice")
+                    habitsRepo.incrementHabit(uri, applicationContext, habitName, incrementAmount)
+                    Log.i(TAG, "Incremented habit '$habitName' by $incrementAmount via smart voice")
+
+                    // Save subtype breakdown if applicable
+                    if (subtypeName != null) {
+                        val subtypeFileUri = settings.subtypeDataFileUris[habitName]
+                        if (subtypeFileUri != null) {
+                            try {
+                                subtypeDataRepo.addToDate(
+                                    Uri.parse(subtypeFileUri), applicationContext, todayStr,
+                                    mapOf(subtypeName to incrementAmount)
+                                )
+                                Log.i(TAG, "Saved subtype breakdown for '$habitName': $subtypeName → $incrementAmount")
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to save subtype data for '$habitName': ${e.message}")
+                            }
+                        }
+                    }
 
                     // Record timestamp
                     try {
@@ -366,6 +492,18 @@ class SmartVoiceService : Service() {
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
                     }
+
+                    // Build TTS confirmation part for this habit
+                    val ttsPart = if (subtypeName != null && incrementAmount > 1) {
+                        "$subtypeName $incrementAmount"
+                    } else if (subtypeName != null) {
+                        subtypeName
+                    } else if (incrementAmount > 1) {
+                        "${habitToTrigger[habitName] ?: habitName} $incrementAmount"
+                    } else {
+                        habitToTrigger[habitName] ?: habitName
+                    }
+                    ttsParts.add(ttsPart)
                 }
 
                 // Update Tasker file
@@ -378,7 +516,7 @@ class SmartVoiceService : Service() {
                 vibrateConfirmation()
 
                 // TTS confirmation
-                val ttsText = matchedTriggers.joinToString(", ")
+                val ttsText = ttsParts.joinToString(", ")
                 Log.i(TAG, "Smart voice (habit mode) complete — incremented ${matchedHabits.size} habit(s)")
                 speakAndThenStop(ttsText)
             } catch (e: Exception) {

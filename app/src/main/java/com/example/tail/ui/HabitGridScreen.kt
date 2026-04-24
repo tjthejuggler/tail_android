@@ -568,6 +568,8 @@ fun HabitGridScreen(
                         voiceTriggerWords = settings.voiceTriggerWords,
                         onToggleVoiceTrigger = { name -> viewModel.toggleVoiceTrigger(name) },
                         onSetVoiceTriggerWords = { name, words -> viewModel.setVoiceTriggerWords(name, words) },
+                        voiceSubtypeHabits = settings.voiceSubtypeHabits,
+                        onToggleVoiceSubtype = { name -> viewModel.toggleVoiceSubtype(name) },
                         selectedHabitTimestampCount = selectedHabitTimestampCount,
                         onShowTimestamps = { name ->
                             timestampScope.launch {
@@ -1108,6 +1110,8 @@ private fun EditModeControlBar(
     voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
     onToggleVoiceTrigger: (String) -> Unit = {},
     onSetVoiceTriggerWords: (String, Set<String>) -> Unit = { _, _ -> },
+    voiceSubtypeHabits: Set<String> = emptySet(),
+    onToggleVoiceSubtype: (String) -> Unit = {},
     /** Number of timestamps for the selected habit on the current day. */
     selectedHabitTimestampCount: Int = 0,
     /** Called when the user taps the timestamps button. */
@@ -1993,6 +1997,39 @@ private fun EditModeControlBar(
                                 ),
                                 textStyle = TextStyle(fontSize = 12.sp)
                             )
+                        }
+
+                        // ── Use Subtypes Voice toggle ────────────────────────
+                        if (isVoiceTrigger && selectedHabitName in subtypedHabits) {
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            val isVoiceSubtype = selectedHabitName in voiceSubtypeHabits
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(text = "🎤 Use Subtypes Voice", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                    Text(
+                                        text = if (isVoiceSubtype) "Hear subtype + number after trigger"
+                                               else "Parse subtypes & numbers from voice",
+                                        color = if (isVoiceSubtype) Color(0xFF66BB6A) else Color(0xFF888888),
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = isVoiceSubtype,
+                                    onCheckedChange = { onToggleVoiceSubtype(selectedHabitName) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFF44BBFF),
+                                        checkedTrackColor = Color(0xFF003355),
+                                        uncheckedThumbColor = Color(0xFF888888),
+                                        uncheckedTrackColor = Color(0xFF333333)
+                                    )
+                                )
+                            }
                         }
 
                         if (showVoiceTriggerInfo) {

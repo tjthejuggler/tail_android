@@ -71,6 +71,8 @@ private val KEY_VOICE_TRIGGER_ENABLED = booleanPreferencesKey("voice_trigger_ena
 private val KEY_VOICE_TRIGGER_HABITS = stringSetPreferencesKey("voice_trigger_habits")
 // Stored as "habitName\x00word1,word2,word3|||habitName\x00word1" pairs (same as linked habits)
 private val KEY_VOICE_TRIGGER_WORDS = stringPreferencesKey("voice_trigger_words")
+// Voice subtype habits (habits that use subtypes in voice commands)
+private val KEY_VOICE_SUBTYPE_HABITS = stringSetPreferencesKey("voice_subtype_habits")
 // Voice note dictation settings
 private val KEY_VOICE_NOTE_ENABLED = booleanPreferencesKey("voice_note_enabled")
 private val KEY_VOICE_NOTE_FILE_URI = stringPreferencesKey("voice_note_file_uri")
@@ -409,6 +411,7 @@ class SettingsRepository(private val context: Context) {
             voiceTriggerEnabled = prefs[KEY_VOICE_TRIGGER_ENABLED] ?: false,
             voiceTriggerHabits = prefs[KEY_VOICE_TRIGGER_HABITS] ?: emptySet(),
             voiceTriggerWords = decodeLinkedHabitsMap(prefs[KEY_VOICE_TRIGGER_WORDS] ?: ""),
+            voiceSubtypeHabits = prefs[KEY_VOICE_SUBTYPE_HABITS] ?: emptySet(),
             voiceNoteEnabled = prefs[KEY_VOICE_NOTE_ENABLED] ?: false,
             voiceNoteFileUri = prefs[KEY_VOICE_NOTE_FILE_URI] ?: ""
         )
@@ -654,6 +657,11 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[KEY_VOICE_TRIGGER_WORDS] = encodeLinkedHabitsMap(words)
         }
+    }
+
+    /** Saves the set of habits that have "use subtypes voice" enabled. */
+    suspend fun saveVoiceSubtypeHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_VOICE_SUBTYPE_HABITS] = habits }
     }
 
     // ── Voice Note Dictation ─────────────────────────────────────────────

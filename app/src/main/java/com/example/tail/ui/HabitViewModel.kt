@@ -2207,6 +2207,16 @@ class HabitViewModel(
         }
     }
 
+    /** Toggles the "use subtypes voice" feature on/off for [habitName]. */
+    fun toggleVoiceSubtype(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.voiceSubtypeHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveVoiceSubtypeHabits(current)
+            _settings.value = _settings.value.copy(voiceSubtypeHabits = current)
+        }
+    }
+
     // ── Voice Note Dictation Methods ─────────────────────────────────────────
 
     /** Saves the global voice note enabled flag (called from Settings screen). */
