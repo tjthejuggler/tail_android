@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,11 +14,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -31,6 +34,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -41,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -53,6 +58,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.tail.data.AiModelInfo
 import com.example.tail.data.ChessComType
+import com.example.tail.data.debug.DebugPreferences
 
 /**
  * Settings screen: two file pickers only.
@@ -65,10 +71,12 @@ import com.example.tail.data.ChessComType
 @Composable
 fun SettingsScreen(
     viewModel: HabitViewModel,
+    debugPrefs: DebugPreferences,
     onNavigateBack: () -> Unit,
     onNavigateToAppStats: () -> Unit = {}
 ) {
     val settings by viewModel.settings.collectAsState()
+    val debugSnapshot by debugPrefs.snapshot.collectAsState()
     val context = LocalContext.current
 
     // Picker for habitsdb.txt — needs read+write so the app can increment habits
@@ -110,6 +118,20 @@ fun SettingsScreen(
                         android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
             viewModel.setScreensRelayFileUri(uri)
+        }
+    }
+
+    // Picker for debug output directory — needs read+write for debug_tail.json
+    val debugDirLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            debugPrefs.debugFileDirUri = uri.toString()
         }
     }
 
@@ -258,6 +280,20 @@ fun SettingsScreen(
             // ── Voice Note Dictation ─────────────────────────────────────────
             item {
                 VoiceNoteSettingsSection(viewModel = viewModel, settings = settings)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // ── Debug Mode ───────────────────────────────────────────────────
+            item {
+                DebugModeCard(
+                    debugModeEnabled = debugSnapshot.debugModeEnabled,
+                    debugFileDirUri = debugSnapshot.debugFileDirUri,
+                    onToggleDebugMode = { debugPrefs.debugModeEnabled = it },
+                    onChooseDirectory = { debugDirLauncher.launch(null) },
+                    onClearDirectory = { debugPrefs.debugFileDirUri = "" }
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
@@ -839,6 +875,109 @@ private fun VoiceNoteSettingsSection(
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+// ── Debug Mode card ──────────────────────────────────────────────────────────
+
+private val DebugGreen = Color(0xFF4CAF50)
+
+@Composable
+private fun DebugModeCard(
+    debugModeEnabled: Boolean,
+    debugFileDirUri: String,
+    onToggleDebugMode: (Boolean) -> Unit,
+    onChooseDirectory: () -> Unit,
+    onClearDirectory: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text("🐛 Debug Mode", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            "Show a floating bubble on every screen. Tap it to log bugs, features, or notes " +
+                "that are saved with the current screen's source file info to debug_tail.json.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Enable toggle
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Enable Debug Bubble", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (debugModeEnabled) "Bubble is visible" else "Bubble is hidden",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (debugModeEnabled) DebugGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = debugModeEnabled,
+                onCheckedChange = onToggleDebugMode,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = DebugGreen,
+                    checkedThumbColor = Color.White
+                )
+            )
+        }
+
+        // File directory (only shown when debug mode is on)
+        if (debugModeEnabled) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "Choose the folder where debug_tail.json will be written.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    if (debugFileDirUri.isNotBlank()) {
+                        val displayPath = try {
+                            Uri.parse(debugFileDirUri).lastPathSegment ?: debugFileDirUri
+                        } catch (_: Exception) { debugFileDirUri }
+                        Text(
+                            text = "📁 $displayPath",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DebugGreen,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    } else {
+                        Text(
+                            text = "Using internal storage (default)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (debugFileDirUri.isNotBlank()) {
+                        IconButton(onClick = onClearDirectory, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                    Button(
+                        onClick = onChooseDirectory,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            if (debugFileDirUri.isNotBlank()) "Change" else "Choose Folder",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
         }
     }
 }
