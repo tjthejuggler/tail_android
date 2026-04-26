@@ -79,15 +79,16 @@ class DebugNoteRepository(
     private val context: Context,
     private val debugPrefs: DebugPreferences
 ) {
-    // ── Drafts (per-screen, in-memory) ────────────────────────────────────────
+    // ── Drafts (per-screen, persisted to SharedPreferences) ──────────────────
 
-    private val _drafts = MutableStateFlow<Map<String, DebugDraft>>(emptyMap())
+    private val _drafts = MutableStateFlow<Map<String, DebugDraft>>(debugPrefs.loadDrafts())
     val drafts: StateFlow<Map<String, DebugDraft>> = _drafts.asStateFlow()
 
     fun saveDraft(screenRoute: String, noteType: NoteType, noteText: String) {
         val current = _drafts.value.toMutableMap()
         current[screenRoute] = DebugDraft(screenRoute, noteType, noteText)
         _drafts.value = current
+        debugPrefs.saveDrafts(current)
     }
 
     fun getDraft(screenRoute: String): DebugDraft? = _drafts.value[screenRoute]
@@ -119,6 +120,7 @@ class DebugNoteRepository(
         val current = _drafts.value.toMutableMap()
         current.remove(screenRoute)
         _drafts.value = current
+        debugPrefs.saveDrafts(current)
     }
 
     fun removeFromQueue(noteId: String) {

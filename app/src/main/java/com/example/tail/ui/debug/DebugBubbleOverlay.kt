@@ -213,6 +213,7 @@ fun DebugBubbleOverlay(
             draftText = draft?.noteText ?: "",
             draftType = draft?.noteType ?: NoteType.BUG,
             queuedNotes = queue,
+            savedNotesByScreen = savedNotesByScreen,
             noteCountOnScreen = queuedCount,
             onDismiss = { showNoteDialog = false },
             onSaveDraft = { noteType, text ->
