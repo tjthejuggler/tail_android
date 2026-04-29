@@ -1814,6 +1814,13 @@ class HabitViewModel(
      */
     fun onAppForegrounded() {
         viewModelScope.launch {
+            // If the app was in the background overnight, _selectedDate may be stale
+            // (e.g. yesterday). Snap it back to today so the grid shows today's data.
+            val today = LocalDate.now()
+            if (_selectedDate.value.isBefore(today)) {
+                _selectedDate.value = today
+            }
+
             // Re-read the phone DB so external increments (e.g. from ShareTextActivity)
             // are visible immediately when the user returns to the app.
             val phoneUriStr = _settings.value.fileUri
