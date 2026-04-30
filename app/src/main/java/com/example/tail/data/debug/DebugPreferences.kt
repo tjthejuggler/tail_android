@@ -10,7 +10,7 @@ import org.json.JSONObject
 
 /**
  * Persists debug-mode settings: whether the floating bubble is enabled,
- * the user-chosen directory URI for [debug_tail.json], and per-screen drafts
+ * the user-chosen directory URI for [debug_tail.json], and saved notes
  * so they survive app restarts.
  */
 class DebugPreferences(context: Context) {
@@ -33,40 +33,62 @@ class DebugPreferences(context: Context) {
             refresh()
         }
 
-    // ── Draft persistence ─────────────────────────────────────────────────────
+    /** Versioned cleanup flag: clear stale submitted notes and legacy drafts.
+     *  V2 also clears the SAF file. */
+    var legacyDataV2Cleared: Boolean
+        get() = prefs.getBoolean(KEY_LEGACY_V2_CLEARED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_LEGACY_V2_CLEARED, value).apply()
+        }
 
-    /** Load all persisted drafts from SharedPreferences. */
-    fun loadDrafts(): Map<String, DebugDraft> {
-        val json = prefs.getString(KEY_DRAFTS, null) ?: return emptyMap()
+    // ── Saved notes persistence ─────────────────────────────────────────────
+
+    /** Load all persisted saved notes from SharedPreferences. */
+    fun loadSavedNotes(): List<SavedNote> {
+        val json = prefs.getString(KEY_SAVED_NOTES, null) ?: return emptyList()
         return try {
             val arr = JSONArray(json)
-            val map = mutableMapOf<String, DebugDraft>()
+            val notes = mutableListOf<SavedNote>()
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
-                val route = obj.getString("screenRoute")
-                map[route] = DebugDraft(
-                    screenRoute = route,
+                notes.add(SavedNote(
+                    id = obj.getString("id"),
+                    timestamp = obj.getString("timestamp"),
+                    screenRoute = obj.getString("screenRoute"),
+                    screenLabel = obj.getString("screenLabel"),
+                    sourceFile = obj.getString("sourceFile"),
+                    sourceFunctions = obj.getString("sourceFunctions"),
                     noteType = NoteType.valueOf(obj.getString("noteType")),
                     noteText = obj.getString("noteText")
-                )
+                ))
             }
-            map
+            notes
         } catch (_: Exception) {
-            emptyMap()
+            emptyList()
         }
     }
 
-    /** Persist the current drafts map to SharedPreferences. */
-    fun saveDrafts(drafts: Map<String, DebugDraft>) {
+    /** Persist the current saved notes list to SharedPreferences. */
+    fun saveSavedNotes(notes: List<SavedNote>) {
         val arr = JSONArray()
-        drafts.values.forEach { draft ->
+        notes.forEach { note ->
             arr.put(JSONObject().apply {
-                put("screenRoute", draft.screenRoute)
-                put("noteType", draft.noteType.name)
-                put("noteText", draft.noteText)
+                put("id", note.id)
+                put("timestamp", note.timestamp)
+                put("screenRoute", note.screenRoute)
+                put("screenLabel", note.screenLabel)
+                put("sourceFile", note.sourceFile)
+                put("sourceFunctions", note.sourceFunctions)
+                put("noteType", note.noteType.name)
+                put("noteText", note.noteText)
             })
         }
-        prefs.edit().putString(KEY_DRAFTS, arr.toString()).apply()
+        prefs.edit().putString(KEY_SAVED_NOTES, arr.toString()).apply()
+    }
+
+    /** Clear legacy drafts from SharedPreferences. */
+    fun clearLegacyDrafts() {
+        prefs.edit().remove(KEY_DRAFTS).apply()
     }
 
     // ── Snapshot ──────────────────────────────────────────────────────────────
@@ -88,6 +110,8 @@ class DebugPreferences(context: Context) {
         private const val KEY_DEBUG_MODE = "debug_mode_enabled"
         private const val KEY_DEBUG_DIR_URI = "debug_dir_uri"
         private const val KEY_DRAFTS = "debug_drafts_json"
+        private const val KEY_SAVED_NOTES = "debug_saved_notes_json"
+        private const val KEY_LEGACY_V2_CLEARED = "debug_legacy_v2_cleared"
     }
 }
 

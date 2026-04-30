@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -31,12 +30,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.debug.DebugNoteRepository
 import com.example.tail.data.debug.DebugPreferences
-import com.example.tail.data.debug.NoteType
 import com.example.tail.data.debug.ScreenContextMapper
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -45,7 +44,6 @@ import kotlin.math.roundToInt
 private val BubbleCyan = Color(0xFF00BCD4)
 private val BubbleOrange = Color(0xFFFF9800)
 private val BubbleGreen = Color(0xFF4CAF50)
-private val BubbleRed = Color(0xFFF44336)
 
 /**
  * A draggable floating bubble overlay for the debug mode.
@@ -69,12 +67,10 @@ fun DebugBubbleOverlay(
     }
 
     val queue by debugNoteRepo.queue.collectAsState()
-    val drafts by debugNoteRepo.drafts.collectAsState()
-    val savedNotesByScreen by debugNoteRepo.savedNotesByScreen.collectAsState()
+    val savedNotes by debugNoteRepo.savedNotes.collectAsState()
 
     val queuedCount = queue.count { it.screenRoute == currentRoute }
-    val savedCount = savedNotesByScreen[currentRoute]?.size ?: 0
-    val hasDraft = drafts.containsKey(currentRoute)
+    val savedCount = savedNotes.count { it.screenRoute == currentRoute }
     val hasQueued = queuedCount > 0
     val hasSaved = savedCount > 0
     val totalQueueSize = queue.size
@@ -119,8 +115,7 @@ fun DebugBubbleOverlay(
                 .background(
                     when {
                         hasQueued -> BubbleOrange.copy(alpha = pulseAlpha)
-                        hasDraft -> BubbleCyan.copy(alpha = pulseAlpha)
-                        hasSaved -> BubbleGreen.copy(alpha = 0.85f)
+                        hasSaved -> BubbleGreen.copy(alpha = pulseAlpha)
                         totalQueueSize > 0 -> BubbleOrange.copy(alpha = 0.6f)
                         else -> BubbleCyan.copy(alpha = 0.85f)
                     }
@@ -158,26 +153,14 @@ fun DebugBubbleOverlay(
                     Text(
                         text = queuedCount.toString(),
                         color = Color.Black,
-                        fontSize = 10.sp
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
 
-            // Cyan dot = draft exists for this screen
-            if (hasDraft && !hasQueued) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = 2.dp, y = (-6).dp)
-                        .size(14.dp)
-                        .shadow(3.dp, CircleShape)
-                        .clip(CircleShape)
-                        .background(BubbleCyan)
-                )
-            }
-
-            // Green dot = saved/submitted notes exist for this screen
-            if (hasSaved && !hasQueued && !hasDraft) {
+            // Green dot = saved notes exist for this screen
+            if (hasSaved && !hasQueued) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -190,7 +173,7 @@ fun DebugBubbleOverlay(
             }
 
             // Small yellow dot for global queue items on other screens
-            if (totalQueueSize > 0 && !hasQueued && !hasDraft && !hasSaved) {
+            if (totalQueueSize > 0 && !hasQueued && !hasSaved) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -206,18 +189,20 @@ fun DebugBubbleOverlay(
 
     // Note dialog
     if (showNoteDialog) {
-        val draft = drafts[currentRoute]
         DebugNoteDialog(
             screenContext = screenContext,
             currentRoute = currentRoute ?: "unknown",
-            draftText = draft?.noteText ?: "",
-            draftType = draft?.noteType ?: NoteType.BUG,
             queuedNotes = queue,
-            savedNotesByScreen = savedNotesByScreen,
+            savedNotes = savedNotes,
             noteCountOnScreen = queuedCount,
             onDismiss = { showNoteDialog = false },
-            onSaveDraft = { noteType, text ->
-                debugNoteRepo.saveDraft(currentRoute ?: "unknown", noteType, text)
+            onSaveNote = { noteType, text ->
+                debugNoteRepo.saveNote(
+                    screenRoute = currentRoute ?: "unknown",
+                    screenContext = screenContext,
+                    noteType = noteType,
+                    noteText = text
+                )
             },
             onQueueNote = { noteType, text ->
                 debugNoteRepo.enqueueNote(
@@ -234,6 +219,15 @@ fun DebugBubbleOverlay(
             },
             onRemoveFromQueue = { noteId ->
                 debugNoteRepo.removeFromQueue(noteId)
+            },
+            onUpdateSavedNote = { noteId, noteType, text ->
+                debugNoteRepo.updateSavedNote(noteId, noteType, text)
+            },
+            onDeleteSavedNote = { noteId ->
+                debugNoteRepo.deleteSavedNote(noteId)
+            },
+            onQueueSavedNote = { noteId ->
+                debugNoteRepo.queueSavedNote(noteId)
             }
         )
     }
