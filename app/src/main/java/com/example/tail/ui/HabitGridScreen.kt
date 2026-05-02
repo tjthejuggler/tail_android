@@ -10,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -100,6 +101,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 
 // Sentinel used to track which habit's text-input dialog is open
 private data class TextInputDialogState(
@@ -396,7 +398,32 @@ fun HabitGridScreen(
             } else {
                 // ── Portrait (or landscape without graph mode) ─────────────
                 // Grid takes up most of the screen
-                Box(modifier = Modifier.weight(1f)) {
+                Box(modifier = Modifier
+                    .weight(1f)
+                    .then(if (habitScreens.size > 1 && !editMode) {
+                        Modifier.pointerInput(habitScreens.size, activeScreenIndex) {
+                            var totalDragX = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { totalDragX = 0f },
+                                onDragEnd = {
+                                    val swipeThreshold = 60f
+                                    when {
+                                        totalDragX < -swipeThreshold -> {
+                                            val next = (activeScreenIndex + 1) % habitScreens.size
+                                            viewModel.switchScreen(next)
+                                        }
+                                        totalDragX > swipeThreshold -> {
+                                            val prev = (activeScreenIndex - 1 + habitScreens.size) % habitScreens.size
+                                            viewModel.switchScreen(prev)
+                                        }
+                                    }
+                                },
+                                onDragCancel = { totalDragX = 0f },
+                                onHorizontalDrag = { _, dragAmount -> totalDragX += dragAmount }
+                            )
+                        }
+                    } else Modifier)
+                ) {
                     HabitGrid(
                         habits = habits,
                         infoMode = infoMode,

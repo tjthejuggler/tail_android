@@ -172,6 +172,10 @@ class HabitViewModel(
     // Cache the full unified DB so we can rebuild the habit list without re-reading the file
     private var cachedPhoneDb: HabitsDatabase = emptyMap()
 
+    // Per-screen habit list cache — avoids expensive rebuildHabitList() on every screen switch.
+    // Keyed by (screen index, selected date) so switching between screens on the same date is instant.
+    private val screenHabitCache = mutableMapOf<Pair<Int, LocalDate>, List<Habit>>()
+
     /** Public read-only access to the cached database for stats computation. */
     fun getCachedDatabase(): HabitsDatabase = cachedPhoneDb
 
@@ -266,13 +270,15 @@ class HabitViewModel(
         }
     }
 
-    /** Rebuilds the displayed habit list from cached data for the current selectedDate. */
+    /** Rebuilds the displayed habit list from cached data for the current selectedDate.
+     *  Stores the result in the per-screen cache for instant retrieval on switch. */
     private suspend fun rebuildHabitList() {
         val effectiveOrder = activeHabitOrder()
         // If screens are configured and the active screen is empty, show nothing.
         // We must NOT fall back to HABIT_ORDER in this case.
         if (effectiveOrder.isEmpty() && _habitScreens.value.isNotEmpty()) {
             _habits.value = emptyList()
+            screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = emptyList()
             return
         }
         val settingsWithOrder = _settings.value.copy(habitOrder = effectiveOrder)
@@ -285,6 +291,7 @@ class HabitViewModel(
             )
         }
         _habits.value = newList
+        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = newList
     }
 
     fun setFileUri(uri: Uri) {
@@ -402,7 +409,6 @@ class HabitViewModel(
         val today = LocalDate.now()
         // Instant UI update — date label changes immediately
         _selectedDate.value = if (newDate.isAfter(today)) today else newDate
-
         // Cancel any pending rebuild and restart the debounce timer
         navDebounceJob?.cancel()
         navDebounceJob = viewModelScope.launch {
@@ -486,6 +492,8 @@ class HabitViewModel(
                 rawTodayCount = newCount
             ) else h
         }
+        // Keep per-screen cache in sync with the instant update
+        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
 
         // Step 2: update in-memory cache
         var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, amount, _selectedDate.value)
@@ -512,6 +520,8 @@ class HabitViewModel(
         }
 
         cachedPhoneDb = updatedDb
+        // Keep per-screen cache in sync after conditional updates
+        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
 
         // Step 3: full rebuild (streak/ATH recalc) + disk write in background
         viewModelScope.launch {
@@ -573,6 +583,8 @@ class HabitViewModel(
                 rawTodayCount = clamped
             ) else h
         }
+        // Keep per-screen cache in sync
+        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
 
         // Step 2: update in-memory cache — compute delta from current stored value
         val dateStr = com.example.tail.data.dateString(_selectedDate.value)
@@ -976,6 +988,12 @@ class HabitViewModel(
         if (screens.isEmpty() || index !in screens.indices) return
         _activeScreenIndex.value = index
         _selectedEditIndex.value = -1
+        // Use cached habit list for instant screen switch if available
+        val cached = screenHabitCache[Pair(index, _selectedDate.value)]
+        if (cached != null) {
+            _habits.value = cached
+        }
+        // Always rebuild in background to refresh stats (streaks, etc.)
         viewModelScope.launch {
             rebuildHabitList()
             settingsRepo.saveActiveScreenIndex(index)

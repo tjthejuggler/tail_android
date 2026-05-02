@@ -8,7 +8,9 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
@@ -57,54 +59,63 @@ fun HabitIncrementToast(
                 .border(1.dp, Color(0xFF444444), RoundedCornerShape(12.dp))
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = if (isTimeless) "✓ $habitName" else "✓ $habitName",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = if (isTimeless) Color(0xFF88CCFF) else Color(0xFF88FF88),
-                    maxLines = 1
-                )
-                if (isTimeless) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "(timeless)",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = Color(0xFF888888),
-                        maxLines = 1
-                    )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF004488), RoundedCornerShape(6.dp))
-                        .clickable(onClick = onEditTime)
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                // Habit name row (may wrap if very long, but won't squish buttons)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "🕐 Edit Time",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
+                        text = "✓ $habitName",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isTimeless) Color(0xFF88CCFF) else Color(0xFF88FF88)
                     )
+                    if (isTimeless) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "(timeless)",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = Color(0xFF888888)
+                        )
+                    }
                 }
-                if (!isTimeless) {
-                    Spacer(modifier = Modifier.width(8.dp))
+                // Buttons row — always on its own line below the name
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Box(
                         modifier = Modifier
-                            .background(Color(0xFF554400), RoundedCornerShape(6.dp))
-                            .clickable(onClick = onTimeless)
+                            .background(Color(0xFF004488), RoundedCornerShape(6.dp))
+                            .clickable(onClick = onEditTime)
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = "⏰ Timeless",
+                            text = "🕐 Edit Time",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFFFDD88)
+                            color = Color.White,
+                            maxLines = 1
                         )
+                    }
+                    if (!isTimeless) {
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFF554400), RoundedCornerShape(6.dp))
+                                .clickable(onClick = onTimeless)
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "⏰ Timeless",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFFFDD88),
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }
