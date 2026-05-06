@@ -1,11 +1,14 @@
 package com.example.tail.ui
 
+import android.Manifest
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -133,6 +136,7 @@ fun HabitGridScreen(
     val errorMessage by viewModel.errorMessage.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val selectedDate by viewModel.selectedDate.collectAsState()
+    val selectedDateLocation by viewModel.selectedDateLocation.collectAsState()
     val infoMode by viewModel.infoMode.collectAsState()
     val editMode by viewModel.editMode.collectAsState()
     val graphMode by viewModel.graphMode.collectAsState()
@@ -146,6 +150,22 @@ fun HabitGridScreen(
 
     val today = LocalDate.now()
     val isToday = selectedDate == today
+
+    // ── Location permission ───────────────────────────────────────────────────
+    val locationPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) viewModel.refreshTodayLocation()
+    }
+    // Request permission once on first composition if not yet granted
+    LaunchedEffect(Unit) {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasPermission) {
+            locationPermLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+    }
 
     // Detect landscape orientation
     val configuration = LocalConfiguration.current
@@ -168,6 +188,9 @@ fun HabitGridScreen(
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
     }
+
+    // Location edit dialog state
+    var showLocationEditDialog by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     var dialogHabit by remember { mutableStateOf<Habit?>(null) }
@@ -371,6 +394,23 @@ fun HabitGridScreen(
                 .padding(paddingValues)
                 .imePadding()
         ) {
+            // ── Location row — shown below the top bar, above tabs/grid ──────
+            if (!isLandscape) {
+                val locationLabel = selectedDateLocation ?: "No location"
+                Text(
+                    text = locationLabel,
+                    color = if (selectedDateLocation != null) Color(0xFFAAAAAA) else Color(0xFF666666),
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { showLocationEditDialog = true }
+                        .padding(horizontal = 12.dp, vertical = 3.dp)
+                )
+            }
+
             // Screen tabs — shown when multiple screens exist (hidden in landscape)
             if (habitScreens.size > 1 && !isLandscape) {
                 ScreenTabRow(
@@ -713,6 +753,19 @@ fun HabitGridScreen(
                 }
             },
             onDismiss = { timestampEditorHabitName = null }
+        )
+    }
+
+    // Location edit dialog
+    if (showLocationEditDialog) {
+        LocationEditDialog(
+            currentLocation = selectedDateLocation,
+            suggestions = viewModel.getAllStoredLocations(),
+            onConfirm = { label ->
+                viewModel.setLocationForDate(selectedDate, label)
+                showLocationEditDialog = false
+            },
+            onDismiss = { showLocationEditDialog = false }
         )
     }
 

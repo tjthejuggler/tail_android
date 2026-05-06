@@ -15,6 +15,7 @@ import com.example.tail.data.ChessComRepository
 import com.example.tail.data.ChessComType
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.HabitTimestampRepository
+import com.example.tail.data.LocationRepository
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.Habit
@@ -65,11 +66,21 @@ class HabitViewModel(
     private val datedEntryRepo: DatedEntryRepository,
     private val subtypeDataRepo: SubtypeDataRepository,
     private val timedDataRepo: TimedDataRepository,
-    private val context: Context
+    private val context: Context,
+    private val locationRepo: LocationRepository = LocationRepository(context)
 ) : ViewModel() {
 
     /** Repository for recording habit increment timestamps (internal storage). */
     val timestampRepo = HabitTimestampRepository(context)
+
+    // ── Location ─────────────────────────────────────────────────────────────
+    /**
+     * Location label for the currently selected date.
+     * Null means "not yet loaded" (only briefly on startup); use [selectedDateLocation]
+     * which wraps null as "No location" in the UI.
+     */
+    private val _selectedDateLocation = MutableStateFlow<String?>(null)
+    val selectedDateLocation: StateFlow<String?> = _selectedDateLocation.asStateFlow()
 
     private val _habits = MutableStateFlow<List<Habit>>(emptyList())
     val habits: StateFlow<List<Habit>> = _habits.asStateFlow()
@@ -182,6 +193,23 @@ class HabitViewModel(
     init {
         // Load AI icons from disk on startup
         refreshAiIcons()
+
+        // Fetch today's location in the background (no-op if already stored for today),
+        // then seed the selectedDateLocation for today.
+        viewModelScope.launch {
+            val loc = locationRepo.fetchTodayIfNeeded()
+            // Only update if we're still on today (user hasn't navigated away)
+            if (_selectedDate.value == LocalDate.now()) {
+                _selectedDateLocation.value = loc
+            }
+        }
+
+        // Keep selectedDateLocation in sync whenever the selected date changes
+        viewModelScope.launch {
+            _selectedDate.collect { date ->
+                _selectedDateLocation.value = locationRepo.getLocationForDate(date)
+            }
+        }
 
         viewModelScope.launch {
             // One-time migration: rename legacy "Launch … Widget" habit names
@@ -2251,6 +2279,30 @@ class HabitViewModel(
             _settings.value = _settings.value.copy(voiceNoteEnabled = enabled)
         }
     }
+
+    /**
+     * Re-attempts fetching today's location (called after the user grants permission).
+     * No-op if the location is already stored for today.
+     */
+    fun refreshTodayLocation() {
+        viewModelScope.launch {
+            val result = locationRepo.fetchTodayIfNeeded()
+            if (result != null && _selectedDate.value == LocalDate.now()) {
+                _selectedDateLocation.value = result
+            }
+        }
+    }
+
+    /** Manually saves a location label for the given date and refreshes the displayed value. */
+    fun setLocationForDate(date: java.time.LocalDate, label: String) {
+        locationRepo.setLocationForDate(date, label)
+        if (_selectedDate.value == date) {
+            _selectedDateLocation.value = label
+        }
+    }
+
+    /** Returns all previously stored location labels (for the edit dialog suggestions). */
+    fun getAllStoredLocations(): List<String> = locationRepo.getAllStoredLocations()
 
     /** Saves the SAF URI for the voice note markdown file. */
     fun saveVoiceNoteFileUri(uri: String) {
