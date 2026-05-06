@@ -1,6 +1,6 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-03-29T03:02Z
+**Last updated:** 2026-05-06T10:13Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
@@ -173,6 +173,27 @@ Compatible with `habitsdb_phone.txt` used by the desktop PyQt widget:
 4. Grant persistent read+write permission
 5. The grid loads immediately
 6. *(Optional)* Go to Settings → **Change Historical File** → pick `habitsdb_without_phone_totals.txt` to include full historical data in streak/ATH stats
+
+---
+
+## Seeding daily locations from a Google Maps Timeline export *(added 2026-05-06T10:13Z)*
+
+The app records one coarse "City, Region, Country" label per calendar day in the [`tail_location_prefs`](app/src/main/java/com/example/tail/data/LocationRepository.kt:17) SharedPreferences file (key `daily_locations`, value = JSON map of `YYYY-MM-DD` → label).  To backfill years of history from a Google Maps Timeline export, use [`scripts/seed_locations_from_timeline.py`](scripts/seed_locations_from_timeline.py:1).
+
+```bash
+source venv/bin/activate
+python scripts/seed_locations_from_timeline.py \
+    --timeline /path/to/Timeline.json
+```
+
+What the script does:
+- Picks one representative coordinate per date from the export.  `visit` segments (Google's "you stayed here") win over `timelinePath` / `activity` / `rawSignals` points; ties are broken by dwell-time.
+- Rounds coordinates to ~110 m and reverse-geocodes via OpenStreetMap Nominatim (1 req/sec, no API key, persistent disk cache in `scripts/_seed_locations_out/geocode_cache.json` so re-runs are free).
+- Pulls the existing on-device prefs, **preserves** every entry already there, and only fills in dates the device doesn't have yet.  Pass `--overwrite-existing` to flip that behaviour, or `--no-merge-device` to ignore the device entirely.
+- Pushes the merged XML back via `adb` + `run-as com.example.tail`, then `am force-stop`s the app so it re-reads SharedPreferences on next launch.
+- Use `--dry-run` to generate `scripts/_seed_locations_out/{merged.json, tail_location_prefs.xml}` without touching the device.
+
+Typical scale on a 12-year export: ~3,600 dated entries collapsing into ~700 unique geocode lookups (~12 min on a cold cache, ~1 s when the cache is warm).
 
 ---
 
