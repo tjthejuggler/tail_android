@@ -44,6 +44,24 @@ data class Habit(
 )
 
 /**
+ * Lightweight per-day stats used by the world-map screen's info panel.
+ * Computed on demand from the in-memory cached habit DB; we deliberately
+ * skip the full streak rebuild so the slider stays smooth while scrubbing.
+ */
+data class DayStats(
+    val date: java.time.LocalDate,
+    /** Number of tracked habits with raw count > 0 on this day. */
+    val habitsDone: Int,
+    /** Sum of points (raw / divider) across all tracked habits with non-zero raw. */
+    val totalPoints: Int,
+    /**
+     * Length of the consecutive run of "any habit done" days ending on [date].
+     * Treated as a rough day-level streak indicator on the map info panel.
+     */
+    val streakDays: Int
+)
+
+/**
  * Returns the effective "points" value for a raw count given a divider.
  * When [divider] <= 1 the raw count is returned unchanged.
  * Otherwise the result is rounded to the nearest whole number.

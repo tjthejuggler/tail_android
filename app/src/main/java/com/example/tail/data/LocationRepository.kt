@@ -16,6 +16,13 @@ import kotlin.coroutines.resume
 private const val TAG = "LocationRepo"
 private const val PREFS_NAME = "tail_location_prefs"
 private const val KEY_LOCATIONS = "daily_locations"
+/**
+ * Map of date-string ("YYYY-MM-DD") → "lat,lon" string. Populated by the
+ * Python seeder ([scripts/seed_locations_from_timeline.py]) and incrementally
+ * by [fetchTodayIfNeeded] when it has just looked up the device's coords.
+ * Used by the world-map screen to plot a person marker per day.
+ */
+private const val KEY_COORDS = "daily_coords"
 
 /**
  * Fetches and persists the device's coarse location once per calendar day.
@@ -45,6 +52,18 @@ class LocationRepository(private val context: Context) {
         return loadMap().values.distinct().sorted()
     }
 
+    /** Returns (lat, lon) for [date] if known (from the seeder or a real-time fix). */
+    fun getCoordsForDate(date: LocalDate): Pair<Double, Double>? {
+        return parseCoordString(loadCoordsMap()[date.toString()])
+    }
+
+    /** Returns ALL stored daily coords as a map of date-string → (lat, lon). */
+    fun getAllStoredCoords(): Map<String, Pair<Double, Double>> {
+        return loadCoordsMap().mapNotNull { (date, str) ->
+            parseCoordString(str)?.let { date to it }
+        }.toMap()
+    }
+
     /**
      * Fetches today's location if it hasn't been recorded yet.
      * Returns the location label or null on failure / permission denied.
@@ -58,6 +77,8 @@ class LocationRepository(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val coords = getBestLastKnownLocation() ?: return@withContext null
+                // Persist the coords too so the world-map screen can plot today.
+                saveCoords(today, coords.first, coords.second)
                 val label = reverseGeocode(coords.first, coords.second)
                 if (label != null) {
                     saveLocation(today, label)
@@ -68,6 +89,11 @@ class LocationRepository(private val context: Context) {
                 null
             }
         }
+    }
+
+    /** Manually saves (lat, lon) for [date]. Used by the seeder bridge / debug. */
+    fun setCoordsForDate(date: LocalDate, lat: Double, lon: Double) {
+        saveCoords(date, lat, lon)
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -156,5 +182,36 @@ class LocationRepository(private val context: Context) {
         val obj = JSONObject(map as Map<*, *>)
         prefs.edit().putString(KEY_LOCATIONS, obj.toString()).apply()
         Log.d(TAG, "Saved location for $date: $label")
+    }
+
+    private fun loadCoordsMap(): Map<String, String> {
+        val json = prefs.getString(KEY_COORDS, null) ?: return emptyMap()
+        return try {
+            val obj = JSONObject(json)
+            obj.keys().asSequence().associateWith { obj.getString(it) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse coords map: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    /** "lat,lon" → (lat, lon). Returns null on any parse failure. */
+    private fun parseCoordString(value: String?): Pair<Double, Double>? {
+        if (value.isNullOrBlank()) return null
+        val parts = value.split(",")
+        if (parts.size != 2) return null
+        return try {
+            Pair(parts[0].trim().toDouble(), parts[1].trim().toDouble())
+        } catch (_: NumberFormatException) {
+            null
+        }
+    }
+
+    private fun saveCoords(date: LocalDate, lat: Double, lon: Double) {
+        val map = loadCoordsMap().toMutableMap()
+        map[date.toString()] = "$lat,$lon"
+        val obj = JSONObject(map as Map<*, *>)
+        prefs.edit().putString(KEY_COORDS, obj.toString()).apply()
+        Log.d(TAG, "Saved coords for $date: $lat, $lon")
     }
 }

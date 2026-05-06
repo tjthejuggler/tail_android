@@ -14,6 +14,7 @@ import com.example.tail.data.AppSettings
 import com.example.tail.data.ChessComRepository
 import com.example.tail.data.ChessComType
 import com.example.tail.data.DatedEntryRepository
+import com.example.tail.data.DayStats
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.LocationRepository
 import com.example.tail.data.SubtypeDataRepository
@@ -2303,6 +2304,81 @@ class HabitViewModel(
 
     /** Returns all previously stored location labels (for the edit dialog suggestions). */
     fun getAllStoredLocations(): List<String> = locationRepo.getAllStoredLocations()
+
+    // ── World-map screen helpers ─────────────────────────────────────────────
+
+    /** Returns (lat, lon) for [date] if known, else null. */
+    fun getCoordsForDate(date: LocalDate): Pair<Double, Double>? =
+        locationRepo.getCoordsForDate(date)
+
+    /** Returns the location label stored for [date] (or null). */
+    fun getLocationLabelForDate(date: LocalDate): String? =
+        locationRepo.getLocationForDate(date)
+
+    /** Returns all date-strings for which we have plottable coords, sorted ascending. */
+    fun getDatesWithCoords(): List<String> =
+        locationRepo.getAllStoredCoords().keys.sorted()
+
+    /**
+     * Returns ALL stored coords as a map of [LocalDate] → (lat, lon) in ONE
+     * SharedPrefs read + ONE JSON parse pass. Used by the world-map screen so
+     * we don't pay per-date parse cost (which would freeze the UI thread for
+     * thousands of entries).
+     */
+    fun getAllStoredCoordsParsed(): Map<LocalDate, Pair<Double, Double>> {
+        val raw = locationRepo.getAllStoredCoords()
+        val out = HashMap<LocalDate, Pair<Double, Double>>(raw.size)
+        for ((dateStr, coord) in raw) {
+            val d = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: continue
+            out[d] = coord
+        }
+        return out
+    }
+
+    /**
+     * Returns lightweight stats for [date] derived from the in-memory cached habit
+     * database. Lightweight = no streak rebuilds; we just count habits with a
+     * non-zero entry on that day, the total points (after dividers), and the longest
+     * streak ending on that day.
+     */
+    fun getDayStats(date: LocalDate): DayStats {
+        val db = cachedPhoneDb
+        val dateStr = dateString(date)
+        val dividers = _settings.value.habitDividers
+        val tracked = trackedHabitNames().ifEmpty { db.keys }
+
+        var done = 0
+        var totalPoints = 0
+        for (name in tracked) {
+            val raw = db[name]?.get(dateStr) ?: 0
+            if (raw > 0) {
+                done += 1
+                totalPoints += applyDivider(raw, dividers[name] ?: 1)
+            }
+        }
+        // "Current streak" for the day = longest run of consecutive prior days
+        // (including this day) where ANY tracked habit had a non-zero entry.
+        var streak = 0
+        var cursor = date
+        while (true) {
+            val ds = dateString(cursor)
+            val anyDone = tracked.any { (db[it]?.get(ds) ?: 0) > 0 }
+            if (!anyDone) break
+            streak += 1
+            cursor = cursor.minusDays(1)
+            // Sanity: stop after 10 years to avoid runaway loops on weird data.
+            if (streak > 3650) break
+        }
+        return DayStats(date = date, habitsDone = done, totalPoints = totalPoints, streakDays = streak)
+    }
+
+    /** All habit names that appear on any screen (or in habitOrder if no screens). */
+    private fun trackedHabitNames(): Set<String> {
+        val s = _settings.value
+        val fromScreens = s.habitScreens.flatMap { it.habitNames }.toSet()
+        return if (fromScreens.isNotEmpty()) fromScreens else s.habitOrder.toSet()
+            .ifEmpty { cachedPhoneDb.keys }
+    }
 
     /** Saves the SAF URI for the voice note markdown file. */
     fun saveVoiceNoteFileUri(uri: String) {

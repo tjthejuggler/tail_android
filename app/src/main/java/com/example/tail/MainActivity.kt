@@ -28,6 +28,7 @@ import com.example.tail.ui.AppStatsScreen
 import com.example.tail.ui.HabitGridScreen
 import com.example.tail.ui.HabitViewModel
 import com.example.tail.ui.HabitViewModelFactory
+import com.example.tail.ui.MapScreen
 import com.example.tail.ui.SettingsScreen
 import com.example.tail.ui.debug.DebugBubbleOverlay
 import com.example.tail.ui.theme.TailTheme
@@ -35,6 +36,7 @@ import com.example.tail.ui.theme.TailTheme
 private const val ROUTE_GRID = "grid"
 private const val ROUTE_SETTINGS = "settings"
 private const val ROUTE_APP_STATS = "app_stats"
+private const val ROUTE_MAP = "map"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,7 +110,14 @@ private fun TailApp(
             composable(ROUTE_GRID) {
                 HabitGridScreen(
                     viewModel = viewModel,
-                    onNavigateToSettings = { navController.navigate(ROUTE_SETTINGS) }
+                    onNavigateToSettings = { navController.navigate(ROUTE_SETTINGS) },
+                    onNavigateToMap = { navController.navigate(ROUTE_MAP) }
+                )
+            }
+            composable(ROUTE_MAP) {
+                MapScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
             composable(ROUTE_SETTINGS) {

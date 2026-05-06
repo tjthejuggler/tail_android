@@ -57,6 +57,9 @@ from typing import Iterable
 PACKAGE = "com.example.tail"
 PREFS_FILE = "tail_location_prefs.xml"
 PREFS_KEY = "daily_locations"
+# Companion key holding "lat,lon" strings keyed by the same date strings.
+# The world-map screen plots a person marker per day from this map.
+PREFS_COORDS_KEY = "daily_coords"
 
 # OSM Nominatim public endpoint.  Usage policy: <= 1 req/sec, custom UA.
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
@@ -305,45 +308,62 @@ def adb(*args: str) -> str:
     return res.stdout
 
 
-def pull_device_prefs() -> dict[str, str]:
-    """Pull the existing prefs JSON map from the device, or {} if absent."""
+def _pull_device_prefs_xml() -> str | None:
+    """Returns the raw prefs XML from the device, or None if not yet present."""
     try:
-        xml = subprocess.run(
+        return subprocess.run(
             ["adb", "shell", "run-as", PACKAGE, "cat", f"shared_prefs/{PREFS_FILE}"],
             check=True,
             capture_output=True,
             text=True,
         ).stdout
     except subprocess.CalledProcessError:
-        return {}
-    m = re.search(
-        rf'<string name="{re.escape(PREFS_KEY)}">(.*?)</string>',
-        xml,
-        re.DOTALL,
-    )
+        return None
+
+
+def _extract_prefs_key(xml: str, key: str) -> dict[str, str]:
+    """Extract a single <string name=KEY> JSON map from a prefs XML blob."""
+    m = re.search(rf'<string name="{re.escape(key)}">(.*?)</string>', xml, re.DOTALL)
     if not m:
         return {}
     raw = m.group(1)
-    # SharedPreferences XML uses HTML entities for quotes.
     decoded = (
         raw.replace("&quot;", '"').replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     )
     try:
         return json.loads(decoded)
     except json.JSONDecodeError:
-        print("  WARNING: could not parse existing on-device prefs JSON.")
+        print(f"  WARNING: could not parse existing on-device {key} JSON.")
         return {}
 
 
-def build_prefs_xml(daily_map: dict[str, str]) -> str:
-    payload = json.dumps(daily_map, ensure_ascii=False, separators=(",", ":"))
-    escaped = (
-        payload.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+def pull_device_prefs() -> dict[str, str]:
+    """Pull the existing label prefs JSON map from the device, or {} if absent."""
+    xml = _pull_device_prefs_xml()
+    return _extract_prefs_key(xml, PREFS_KEY) if xml else {}
+
+
+def pull_device_coords() -> dict[str, str]:
+    """Pull the existing daily_coords JSON map from the device, or {} if absent."""
+    xml = _pull_device_prefs_xml()
+    return _extract_prefs_key(xml, PREFS_COORDS_KEY) if xml else {}
+
+
+def _xml_escape(s: str) -> str:
+    return (
+        s.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
     )
+
+
+def build_prefs_xml(daily_map: dict[str, str], coords_map: dict[str, str]) -> str:
+    """Build a SharedPreferences XML carrying BOTH the labels and the coords."""
+    labels_payload = json.dumps(daily_map, ensure_ascii=False, separators=(",", ":"))
+    coords_payload = json.dumps(coords_map, ensure_ascii=False, separators=(",", ":"))
     return (
         "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n"
         "<map>\n"
-        f'    <string name="{PREFS_KEY}">{escaped}</string>\n'
+        f'    <string name="{PREFS_KEY}">{_xml_escape(labels_payload)}</string>\n'
+        f'    <string name="{PREFS_COORDS_KEY}">{_xml_escape(coords_payload)}</string>\n'
         "</map>\n"
     )
 
@@ -438,22 +458,29 @@ def main() -> int:
     save_cache(cache)
 
     derived: dict[str, str] = {}
+    derived_coords: dict[str, str] = {}
     for d, coord in daily_coords.items():
         label = coord_to_label.get(coord)
         if label:
             derived[d] = label
+            # Always emit the rounded coords too — these power the world-map
+            # screen.  Format as "lat,lon" to match LocationRepository.kt.
+            derived_coords[d] = f"{coord[0]},{coord[1]}"
     DERIVED_FILE.write_text(json.dumps(derived, indent=2, ensure_ascii=False, sort_keys=True))
     print(f"      {len(derived)} dated labels written to {DERIVED_FILE}")
 
     print("[4/5] Merging with on-device prefs ...")
     if args.no_merge_device:
         existing: dict[str, str] = {}
+        existing_coords: dict[str, str] = {}
     else:
         existing = pull_device_prefs()
-    print(f"      device currently has {len(existing)} entries")
+        existing_coords = pull_device_coords()
+    print(f"      device currently has {len(existing)} label entries, {len(existing_coords)} coord entries")
 
     if args.overwrite_existing:
         merged = {**existing, **derived}
+        merged_coords = {**existing_coords, **derived_coords}
         # ^ Wait — that ORDER means timeline wins if both exist? No: rightmost
         # wins in dict spread, so {**existing, **derived} → derived wins.
         # That's what overwrite-existing requests.
@@ -461,14 +488,19 @@ def main() -> int:
         # Preserve existing entries; only add timeline data for dates the
         # device doesn't already have.
         merged = {**derived, **existing}
+        merged_coords = {**derived_coords, **existing_coords}
 
     # Sort newest-first to match what we saw on the device (makes diffs nice).
     merged = dict(sorted(merged.items(), reverse=True))
+    merged_coords = dict(sorted(merged_coords.items(), reverse=True))
     MERGED_FILE.write_text(json.dumps(merged, indent=2, ensure_ascii=False))
-    print(f"      merged → {len(merged)} entries  ({MERGED_FILE})")
+    print(
+        f"      merged → {len(merged)} label entries, "
+        f"{len(merged_coords)} coord entries  ({MERGED_FILE})"
+    )
 
     print("[5/5] Building prefs XML ...")
-    xml = build_prefs_xml(merged)
+    xml = build_prefs_xml(merged, merged_coords)
     PREFS_LOCAL.write_text(xml)
     print(f"      wrote {PREFS_LOCAL}")
 

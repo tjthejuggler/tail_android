@@ -129,7 +129,8 @@ private val DISPLAY_DATE_FMT = DateTimeFormatter.ofPattern("EEE MMM d")
 @Composable
 fun HabitGridScreen(
     viewModel: HabitViewModel,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToMap: () -> Unit = {}
 ) {
     val habits by viewModel.habits.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -394,21 +395,41 @@ fun HabitGridScreen(
                 .padding(paddingValues)
                 .imePadding()
         ) {
-            // ── Location row — shown below the top bar, above tabs/grid ──────
+            // ── Location row — shown below the top bar, above tabs/grid.
+            // Right-aligned globe icon sits directly under the Settings icon
+            // in the top bar (same horizontal position).
             if (!isLandscape) {
                 val locationLabel = selectedDateLocation ?: "No location"
-                Text(
-                    text = locationLabel,
-                    color = if (selectedDateLocation != null) Color(0xFFAAAAAA) else Color(0xFF666666),
-                    fontSize = 11.sp,
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) { showLocationEditDialog = true }
-                        .padding(horizontal = 12.dp, vertical = 3.dp)
-                )
+                        .padding(start = 12.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = locationLabel,
+                        color = if (selectedDateLocation != null) Color(0xFFAAAAAA) else Color(0xFF666666),
+                        fontSize = 11.sp,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) { showLocationEditDialog = true }
+                            .padding(vertical = 3.dp)
+                    )
+                    // Globe icon — positioned under the Settings icon in the top bar.
+                    IconButton(
+                        onClick = onNavigateToMap,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(id = com.example.tail.R.drawable.globe),
+                            contentDescription = "World map timeline",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
             }
 
             // Screen tabs — shown when multiple screens exist (hidden in landscape)
