@@ -1,5 +1,7 @@
 package com.example.tail.ui
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -66,6 +68,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -147,6 +150,24 @@ fun HabitGridScreen(
     // Detect landscape orientation
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // Programmatic orientation control: allow landscape only when graph mode is
+    // active with at least one habit selected; otherwise lock to portrait.
+    val allowLandscape = graphMode && graphSelectedHabits.isNotEmpty()
+    val activity = context as? Activity
+    LaunchedEffect(allowLandscape) {
+        activity?.requestedOrientation = if (allowLandscape) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+    // Restore portrait when leaving this composable (e.g. navigating to Settings)
+    DisposableEffect(Unit) {
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
 
     val snackbarHostState = remember { SnackbarHostState() }
     var dialogHabit by remember { mutableStateOf<Habit?>(null) }
