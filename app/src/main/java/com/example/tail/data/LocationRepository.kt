@@ -2,12 +2,16 @@ package com.example.tail.data
 
 import android.content.Context
 import android.location.Geocoder
+import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.time.LocalDate
 import java.util.Locale
@@ -24,12 +28,18 @@ private const val KEY_LOCATIONS = "daily_locations"
  */
 private const val KEY_COORDS = "daily_coords"
 
+/** Timeout for an active location request (millis). */
+private const val ACTIVE_FIX_TIMEOUT_MS = 15_000L
+
 /**
  * Fetches and persists the device's coarse location once per calendar day.
  * Stores a map of date-string → "City, Region, Country" in SharedPreferences.
  *
  * Uses Android's built-in LocationManager (no Google Play Services required)
  * and Geocoder for reverse-geocoding.
+ *
+ * When no cached location is available (common after overnight / reboot),
+ * actively requests a single fresh fix from NETWORK_PROVIDER with a 15 s timeout.
  */
 class LocationRepository(private val context: Context) {
 
@@ -68,6 +78,11 @@ class LocationRepository(private val context: Context) {
      * Fetches today's location if it hasn't been recorded yet.
      * Returns the location label or null on failure / permission denied.
      * Must be called with location permission already granted.
+     *
+     * Strategy:
+     * 1. Check cached (last-known) locations from all providers.
+     * 2. If none available, actively request a single fresh fix (15 s timeout).
+     * 3. Reverse-geocode the result and persist both coords and label.
      */
     suspend fun fetchTodayIfNeeded(): String? {
         val today = LocalDate.now()
@@ -76,8 +91,13 @@ class LocationRepository(private val context: Context) {
 
         return withContext(Dispatchers.IO) {
             try {
-                val coords = getBestLastKnownLocation() ?: return@withContext null
-                // Persist the coords too so the world-map screen can plot today.
+                // Try cached first, then fall back to an active request
+                val coords = getBestLastKnownLocation()
+                    ?: requestFreshLocation()
+                    ?: return@withContext null
+
+                Log.d(TAG, "Resolved coords for $today: ${coords.first}, ${coords.second}")
+                // Persist the coords so the world-map screen can plot today.
                 saveCoords(today, coords.first, coords.second)
                 val label = reverseGeocode(coords.first, coords.second)
                 if (label != null) {
@@ -102,8 +122,8 @@ class LocationRepository(private val context: Context) {
     private fun getBestLastKnownLocation(): Pair<Double, Double>? {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         val providers = listOf(
-            LocationManager.GPS_PROVIDER,
             LocationManager.NETWORK_PROVIDER,
+            LocationManager.GPS_PROVIDER,
             LocationManager.PASSIVE_PROVIDER
         )
         for (provider in providers) {
@@ -111,12 +131,66 @@ class LocationRepository(private val context: Context) {
                 @Suppress("MissingPermission")
                 val loc = lm.getLastKnownLocation(provider)
                 if (loc != null) {
-                    Log.d(TAG, "Got location from $provider: ${loc.latitude}, ${loc.longitude}")
+                    Log.d(TAG, "Got cached location from $provider: ${loc.latitude}, ${loc.longitude}")
                     return Pair(loc.latitude, loc.longitude)
                 }
             } catch (_: Exception) { /* provider not available */ }
         }
+        Log.d(TAG, "No cached location from any provider — will request fresh fix")
         return null
+    }
+
+    /**
+     * Actively requests a single location fix from NETWORK_PROVIDER (fast, coarse)
+     * with a [ACTIVE_FIX_TIMEOUT_MS] timeout. Falls back to GPS_PROVIDER if
+     * NETWORK_PROVIDER is unavailable.
+     *
+     * Returns (lat, lon) or null if no fix arrives in time.
+     */
+    private suspend fun requestFreshLocation(): Pair<Double, Double>? {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+        // Prefer network (fast, coarse) then GPS (slower but works without cell)
+        val provider = when {
+            lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ->
+                LocationManager.NETWORK_PROVIDER
+            lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ->
+                LocationManager.GPS_PROVIDER
+            else -> {
+                Log.w(TAG, "No location provider enabled")
+                return null
+            }
+        }
+
+        Log.d(TAG, "Requesting fresh location from $provider (timeout ${ACTIVE_FIX_TIMEOUT_MS}ms)")
+
+        return withTimeoutOrNull(ACTIVE_FIX_TIMEOUT_MS) {
+            suspendCancellableCoroutine { cont ->
+                val listener = object : LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        Log.d(TAG, "Fresh fix from $provider: ${location.latitude}, ${location.longitude}")
+                        lm.removeUpdates(this)
+                        cont.resume(Pair(location.latitude, location.longitude))
+                    }
+                    @Deprecated("Deprecated in API")
+                    override fun onStatusChanged(p: String?, s: Int, extras: android.os.Bundle?) {}
+                    override fun onProviderEnabled(p: String) {}
+                    override fun onProviderDisabled(p: String) {}
+                }
+
+                cont.invokeOnCancellation {
+                    lm.removeUpdates(listener)
+                }
+
+                try {
+                    @Suppress("MissingPermission")
+                    lm.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+                } catch (e: Exception) {
+                    Log.w(TAG, "requestSingleUpdate failed: ${e.message}")
+                    cont.resume(null)
+                }
+            }
+        }
     }
 
     /**

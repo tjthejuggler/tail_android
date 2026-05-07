@@ -205,10 +205,20 @@ class HabitViewModel(
             }
         }
 
-        // Keep selectedDateLocation in sync whenever the selected date changes
+        // Keep selectedDateLocation in sync whenever the selected date changes.
+        // When the user is on today and no location is stored yet, actively
+        // fetch it (the repo will request a fresh GPS/network fix if needed).
         viewModelScope.launch {
             _selectedDate.collect { date ->
-                _selectedDateLocation.value = locationRepo.getLocationForDate(date)
+                val stored = locationRepo.getLocationForDate(date)
+                _selectedDateLocation.value = stored
+                if (stored == null && date == LocalDate.now()) {
+                    val fetched = locationRepo.fetchTodayIfNeeded()
+                    // Re-check we're still on today before updating
+                    if (fetched != null && _selectedDate.value == date) {
+                        _selectedDateLocation.value = fetched
+                    }
+                }
             }
         }
 
