@@ -673,8 +673,10 @@ fun HabitGridScreen(
                         voiceTriggerEnabled = settings.voiceTriggerEnabled,
                         voiceTriggerHabits = settings.voiceTriggerHabits,
                         voiceTriggerWords = settings.voiceTriggerWords,
+                        voiceTriggerIncrements = settings.voiceTriggerIncrements,
                         onToggleVoiceTrigger = { name -> viewModel.toggleVoiceTrigger(name) },
                         onSetVoiceTriggerWords = { name, words -> viewModel.setVoiceTriggerWords(name, words) },
+                        onSetVoiceTriggerIncrement = { name, amount -> viewModel.setVoiceTriggerIncrement(name, amount) },
                         voiceSubtypeHabits = settings.voiceSubtypeHabits,
                         onToggleVoiceSubtype = { name -> viewModel.toggleVoiceSubtype(name) },
                         selectedHabitTimestampCount = selectedHabitTimestampCount,
@@ -1228,8 +1230,10 @@ private fun EditModeControlBar(
     voiceTriggerEnabled: Boolean = false,
     voiceTriggerHabits: Set<String> = emptySet(),
     voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
+    voiceTriggerIncrements: Map<String, Int> = emptyMap(),
     onToggleVoiceTrigger: (String) -> Unit = {},
     onSetVoiceTriggerWords: (String, Set<String>) -> Unit = { _, _ -> },
+    onSetVoiceTriggerIncrement: (String, Int) -> Unit = { _, _ -> },
     voiceSubtypeHabits: Set<String> = emptySet(),
     onToggleVoiceSubtype: (String) -> Unit = {},
     /** Number of timestamps for the selected habit on the current day. */
@@ -2117,6 +2121,46 @@ private fun EditModeControlBar(
                                 ),
                                 textStyle = TextStyle(fontSize = 12.sp)
                             )
+
+                            // ── Increment amount ─────────────────────────────
+                            Spacer(modifier = Modifier.height(4.dp))
+                            val currentIncrement = voiceTriggerIncrements[selectedHabitName] ?: 1
+                            var incrementText by remember(selectedHabitName) {
+                                mutableStateOf(if (currentIncrement > 1) currentIncrement.toString() else "")
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(text = "  Increment amount", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                                    Text(
+                                        text = if (currentIncrement > 1) "Adds $currentIncrement per trigger (if no number spoken)"
+                                               else "Adds 1 per trigger (default)",
+                                        color = Color(0xFF666666), fontSize = 10.sp
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = incrementText,
+                                    onValueChange = { v ->
+                                        incrementText = v.filter { it.isDigit() }
+                                        val amount = incrementText.toIntOrNull() ?: 1
+                                        onSetVoiceTriggerIncrement(selectedHabitName, amount)
+                                    },
+                                    placeholder = { Text("1", fontSize = 12.sp, color = Color(0xFF555577)) },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.width(80.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color(0xFF44BBFF),
+                                        unfocusedTextColor = Color(0xFF44BBFF),
+                                        focusedBorderColor = Color(0xFF44BBFF),
+                                        unfocusedBorderColor = Color(0xFF225577)
+                                    ),
+                                    textStyle = TextStyle(fontSize = 13.sp, textAlign = TextAlign.Center)
+                                )
+                            }
                         }
 
                         // ── Use Subtypes Voice toggle ────────────────────────

@@ -299,6 +299,15 @@ data class AppSettings(
     val voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
 
     /**
+     * Maps habit name → fixed increment amount for voice commands.
+     * When a voice trigger fires and no spoken number is detected, this value
+     * is used instead of the default of 1. For example, set to 500 for a
+     * water habit measured in millilitres.
+     * Absent or 0 means default to 1.
+     */
+    val voiceTriggerIncrements: Map<String, Int> = emptyMap(),
+
+    /**
      * Habits that have the "use subtypes voice" feature enabled.
      * Only meaningful when the habit is also in [voiceTriggerHabits] AND [subtypedHabits].
      * When enabled, the voice service also checks for subtype names in the spoken text

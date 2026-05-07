@@ -2283,6 +2283,20 @@ class HabitViewModel(
         }
     }
 
+    /** Sets the fixed voice increment amount for a specific habit (0 or 1 = default). */
+    fun setVoiceTriggerIncrement(habitName: String, amount: Int) {
+        viewModelScope.launch {
+            val allIncrements = _settings.value.voiceTriggerIncrements.toMutableMap()
+            if (amount <= 1) {
+                allIncrements.remove(habitName)
+            } else {
+                allIncrements[habitName] = amount
+            }
+            settingsRepo.saveVoiceTriggerIncrements(allIncrements)
+            _settings.value = _settings.value.copy(voiceTriggerIncrements = allIncrements)
+        }
+    }
+
     /** Toggles the "use subtypes voice" feature on/off for [habitName]. */
     fun toggleVoiceSubtype(habitName: String) {
         viewModelScope.launch {

@@ -73,6 +73,8 @@ private val KEY_VOICE_TRIGGER_HABITS = stringSetPreferencesKey("voice_trigger_ha
 private val KEY_VOICE_TRIGGER_WORDS = stringPreferencesKey("voice_trigger_words")
 // Voice subtype habits (habits that use subtypes in voice commands)
 private val KEY_VOICE_SUBTYPE_HABITS = stringSetPreferencesKey("voice_subtype_habits")
+// Stored as "habitName\x00amount|||habitName\x00amount" pairs (amount as decimal string)
+private val KEY_VOICE_TRIGGER_INCREMENTS = stringPreferencesKey("voice_trigger_increments")
 // Voice note dictation settings
 private val KEY_VOICE_NOTE_ENABLED = booleanPreferencesKey("voice_note_enabled")
 private val KEY_VOICE_NOTE_FILE_URI = stringPreferencesKey("voice_note_file_uri")
@@ -372,6 +374,7 @@ class SettingsRepository(private val context: Context) {
         val timedDataFileUrisRaw = prefs[KEY_TIMED_DATA_FILE_URIS] ?: ""
         val chessComMinutesRaw = prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] ?: ""
         val chessComHabitLinksRaw = prefs[KEY_CHESS_COM_HABIT_LINKS] ?: ""
+        val voiceTriggerIncrementsRaw = prefs[KEY_VOICE_TRIGGER_INCREMENTS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -411,6 +414,7 @@ class SettingsRepository(private val context: Context) {
             voiceTriggerEnabled = prefs[KEY_VOICE_TRIGGER_ENABLED] ?: false,
             voiceTriggerHabits = prefs[KEY_VOICE_TRIGGER_HABITS] ?: emptySet(),
             voiceTriggerWords = decodeLinkedHabitsMap(prefs[KEY_VOICE_TRIGGER_WORDS] ?: ""),
+            voiceTriggerIncrements = decodeIntMap(voiceTriggerIncrementsRaw),
             voiceSubtypeHabits = prefs[KEY_VOICE_SUBTYPE_HABITS] ?: emptySet(),
             voiceNoteEnabled = prefs[KEY_VOICE_NOTE_ENABLED] ?: false,
             voiceNoteFileUri = prefs[KEY_VOICE_NOTE_FILE_URI] ?: ""
@@ -656,6 +660,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveVoiceTriggerWords(words: Map<String, Set<String>>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_VOICE_TRIGGER_WORDS] = encodeLinkedHabitsMap(words)
+        }
+    }
+
+    /** Saves the map of habit name → fixed voice increment amount. */
+    suspend fun saveVoiceTriggerIncrements(increments: Map<String, Int>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_VOICE_TRIGGER_INCREMENTS] = encodeIntMap(increments)
         }
     }
 
