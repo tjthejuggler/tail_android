@@ -269,13 +269,13 @@ class SmartVoiceService : Service() {
         val habitToTrigger = mutableMapOf<String, String>()
         var matchedWordCount = 0
 
-        for (word in words) {
-            val matchingTrigger = wordToHabits.keys.find { trigger -> word.contains(trigger) || trigger.contains(word) }
-            if (matchingTrigger != null) {
-                val habits = wordToHabits[matchingTrigger]!!
+        // Match full trigger phrases against the normalised text (not word-by-word
+        // substring matching, which causes "puzzle" to match "puzzles" and vice versa).
+        for ((triggerWord, habits) in wordToHabits) {
+            if (normalisedText.contains(triggerWord)) {
                 matchedHabits.addAll(habits)
-                matchedTriggers.add(matchingTrigger)
-                for (name in habits) habitToTrigger[name] = matchingTrigger
+                matchedTriggers.add(triggerWord)
+                for (name in habits) habitToTrigger[name] = triggerWord
                 matchedWordCount++
             }
         }
@@ -297,7 +297,7 @@ class SmartVoiceService : Service() {
         }
 
         val ratio = matchedWordCount.toDouble() / effectiveTotal
-        val isHabitMode = ratio > 0.5 || hasVoiceSubtypeHabit
+        val isHabitMode = ratio >= 0.5 || hasVoiceSubtypeHabit
 
         Log.i(TAG, "Routing: $matchedWordCount/${words.size} words matched triggers (ratio=${"%.2f".format(ratio)}) → ${if (isHabitMode) "HABIT" else "NOTE"} mode")
 
