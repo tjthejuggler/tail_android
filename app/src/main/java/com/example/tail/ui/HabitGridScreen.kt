@@ -174,6 +174,10 @@ fun HabitGridScreen(
 
     // Programmatic orientation control: allow landscape only when graph mode is
     // active with at least one habit selected; otherwise lock to portrait.
+    // NOTE: We do NOT force portrait in onDispose here — when navigating to
+    // MapScreen, MapScreen owns orientation (landscape) and resetting on
+    // dispose would race with MapScreen's DisposableEffect. Each destination
+    // composable that cares about orientation sets it on entry.
     val allowLandscape = graphMode && graphSelectedHabits.isNotEmpty()
     val activity = context as? Activity
     LaunchedEffect(allowLandscape) {
@@ -181,12 +185,6 @@ fun HabitGridScreen(
             ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         } else {
             ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        }
-    }
-    // Restore portrait when leaving this composable (e.g. navigating to Settings)
-    DisposableEffect(Unit) {
-        onDispose {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
     }
 

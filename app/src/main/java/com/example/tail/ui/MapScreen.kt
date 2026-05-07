@@ -100,6 +100,13 @@ fun MapScreen(
         }
     }
 
+    // Wrap back navigation so we always sync the selected date to the grid
+    // before popping the back stack.
+    val handleBack: () -> Unit = {
+        viewModel.navigateToDate(viewModel.selectedDate.value)
+        onNavigateBack()
+    }
+
     val selectedDate by viewModel.selectedDate.collectAsState()
 
     // ── Snapshot ALL day-coords ONCE on entry, OFF the main thread.
@@ -165,11 +172,24 @@ fun MapScreen(
     }
 
     // ── Day-driven accent colour ────────────────────────────────────────────
-    // The "accent" is derived from the day's total points using explicit
-    // thresholds: <14 red, 14-20 orange, 21-30 green, 31-41 blue,
-    // 42-48 pink, 49-55 yellow, 56+ white.
-    val dayStats = remember(selectedDate, coordsByDate) { viewModel.getDayStats(selectedDate) }
-    val accent = remember(dayStats.totalPoints) { accentColorForPoints(dayStats.totalPoints) }
+    // Light stats (points + monthly avg) are computed on every tick for the accent.
+    // Full stats (streak/anti-streak) are debounced: only computed after the user
+    // pauses on a day for 400ms, so rapid playback stays smooth.
+    val lightStats = remember(selectedDate) { viewModel.getDayStatsLight(selectedDate) }
+    val accent = remember(lightStats.monthlyAverage) { accentColorForPoints(lightStats.monthlyAverage.toInt()) }
+
+    // Full stats — debounced. While waiting, show "..." for streak/anti-streak.
+    var dayStats by remember { mutableStateOf(lightStats) }
+    var statsLoading by remember { mutableStateOf(true) }
+    LaunchedEffect(selectedDate) {
+        // Reset to light stats immediately (shows "..." for streak/anti-streak)
+        dayStats = lightStats
+        statsLoading = true
+        // Wait 400ms — cancelled if selectedDate changes again (rapid playback)
+        delay(400L)
+        dayStats = viewModel.getDayStats(selectedDate)
+        statsLoading = false
+    }
 
     // ── Layout ──────────────────────────────────────────────────────────────
     Surface(
@@ -177,7 +197,7 @@ fun MapScreen(
         color = Color(0xFF0A0F1A)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            MapTopBar(date = selectedDate, onBack = onNavigateBack)
+            MapTopBar(date = selectedDate, onBack = handleBack)
 
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 // ── Map area (left, takes remaining width) ─────────────────
@@ -195,6 +215,7 @@ fun MapScreen(
                 // ── Side info panel (right) ────────────────────────────────
                 MapInfoPanel(
                     stats = dayStats,
+                    statsLoading = statsLoading,
                     locationLabel = viewModel.getLocationLabelForDate(selectedDate),
                     accent = accent,
                     modifier = Modifier
@@ -426,6 +447,7 @@ private fun latToY(lat: Double, height: Float): Float =
 @Composable
 private fun MapInfoPanel(
     stats: DayStats,
+    statsLoading: Boolean,
     locationLabel: String?,
     accent: Color,
     modifier: Modifier = Modifier
@@ -447,9 +469,14 @@ private fun MapInfoPanel(
             fontSize = 13.sp
         )
         Spacer(modifier = Modifier.height(14.dp))
-        StatLine("Habits done", stats.habitsDone.toString(), accent)
-        StatLine("Points",      stats.totalPoints.toString(), accent)
-        StatLine("Streak",      "${stats.streakDays} d", accent)
+        StatLine("Day points", stats.totalPoints.toString(), accent)
+        StatLine(
+            "Monthly avg",
+            String.format("%.1f", stats.monthlyAverage),
+            accent
+        )
+        StatLine("Streak",      if (statsLoading) "..." else "${stats.streakDays} d",     accent)
+        StatLine("Anti-streak", if (statsLoading) "..." else "${stats.antiStreakDays} d", accent)
     }
 }
 

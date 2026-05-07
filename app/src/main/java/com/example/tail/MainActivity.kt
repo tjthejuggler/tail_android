@@ -92,13 +92,17 @@ private fun TailApp(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    // Trigger a dated-entry sync every time the app comes to the foreground.
-    // Uses file-size comparison so it's essentially free when nothing has changed.
+    // ON_START: snap date to today if stale from a previous session (overnight).
+    //           Only fires when the app truly returns from background, not on
+    //           in-app navigation — so map→grid date sync is preserved.
+    // ON_RESUME: reload phone DB and sync dated entries (cheap when unchanged).
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.onAppForegrounded()
+            when (event) {
+                Lifecycle.Event.ON_START  -> viewModel.onAppStarted()
+                Lifecycle.Event.ON_RESUME -> viewModel.onAppForegrounded()
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

@@ -50,15 +50,23 @@ data class Habit(
  */
 data class DayStats(
     val date: java.time.LocalDate,
-    /** Number of tracked habits with raw count > 0 on this day. */
-    val habitsDone: Int,
     /** Sum of points (raw / divider) across all tracked habits with non-zero raw. */
     val totalPoints: Int,
+    /**
+     * Average daily points over the 30-day window ending on [date]
+     * (i.e. [date] and the 29 days prior).
+     */
+    val monthlyAverage: Double,
     /**
      * Length of the consecutive run of "any habit done" days ending on [date].
      * Treated as a rough day-level streak indicator on the map info panel.
      */
-    val streakDays: Int
+    val streakDays: Int,
+    /**
+     * Length of the consecutive run of "no habit done" days ending on [date].
+     * Treated as a rough day-level anti-streak indicator on the map info panel.
+     */
+    val antiStreakDays: Int
 )
 
 /**

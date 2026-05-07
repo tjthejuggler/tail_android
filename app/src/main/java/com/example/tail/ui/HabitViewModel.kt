@@ -27,6 +27,7 @@ import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
+import com.example.tail.data.expandEntriesToCalendarDaysPublic
 import com.example.tail.data.parseDate
 import com.example.tail.data.HABIT_ORDER
 import kotlinx.coroutines.Dispatchers
@@ -1858,26 +1859,37 @@ class HabitViewModel(
     }
 
     /**
-     * Called when the app comes to the foreground (via lifecycle observer in MainActivity).
-     *
-     * Two things happen:
-     *  1. The phone DB file is re-read from disk so that any external writes
-     *     (e.g. from ShareTextActivity running in a separate task) are reflected
-     *     immediately without requiring a full app restart.
-     *  2. All dated-entry habits are checked for file changes and synced if needed.
-     *
-     * Both operations are cheap when nothing has changed: ensureDaysExist is
-     * idempotent and dated-entry sync uses file-size comparison to skip unchanged files.
+     * Tracks whether [onAppStarted] has run at least once. The ViewModel survives
+     * configuration changes (orientation, etc.) and in-app navigation, but is
+     * recreated when the user truly relaunches the app from a cold start.
+     * So this flag distinguishes "fresh app launch" from "Activity recreation due
+     * to a config change" — important because MapScreen forces landscape, which
+     * destroys and recreates the Activity (and re-fires ON_START).
+     */
+    private var hasInitialisedDateOnLaunch = false
+
+    /**
+     * Called on ON_START. Snaps the selected date back to today ONLY on the very
+     * first invocation per ViewModel lifetime — i.e. on actual cold app launch,
+     * not on subsequent ON_START events fired by Activity recreation (config
+     * changes from MapScreen's landscape orientation, etc.).
+     */
+    fun onAppStarted() {
+        if (hasInitialisedDateOnLaunch) return
+        hasInitialisedDateOnLaunch = true
+        val today = LocalDate.now()
+        if (_selectedDate.value.isBefore(today)) {
+            _selectedDate.value = today
+        }
+    }
+
+    /**
+     * Called when the app comes to the foreground (via ON_RESUME lifecycle event).
+     * Reloads the phone DB and syncs dated entries. Does NOT reset the selected date
+     * so that in-app navigation (e.g. map → grid) preserves the current date.
      */
     fun onAppForegrounded() {
         viewModelScope.launch {
-            // If the app was in the background overnight, _selectedDate may be stale
-            // (e.g. yesterday). Snap it back to today so the grid shows today's data.
-            val today = LocalDate.now()
-            if (_selectedDate.value.isBefore(today)) {
-                _selectedDate.value = today
-            }
-
             // Re-read the phone DB so external increments (e.g. from ShareTextActivity)
             // are visible immediately when the user returns to the app.
             val phoneUriStr = _settings.value.fileUri
@@ -2346,10 +2358,48 @@ class HabitViewModel(
     }
 
     /**
-     * Returns lightweight stats for [date] derived from the in-memory cached habit
-     * database. Lightweight = no streak rebuilds; we just count habits with a
-     * non-zero entry on that day, the total points (after dividers), and the longest
-     * streak ending on that day.
+     * Fast (cheap) stats for [date]: only total points and 30-day monthly average.
+     * No streak computation. Used on every slider tick for accent colour updates.
+     */
+    fun getDayStatsLight(date: LocalDate): DayStats {
+        val db = cachedPhoneDb
+        val dateStr = dateString(date)
+        val dividers = _settings.value.habitDividers
+        val tracked = trackedHabitNames().ifEmpty { db.keys }
+
+        var totalPoints = 0
+        for (name in tracked) {
+            val raw = db[name]?.get(dateStr) ?: 0
+            if (raw > 0) totalPoints += applyDivider(raw, dividers[name] ?: 1)
+        }
+
+        var monthlySum = 0
+        for (i in 0 until 30) {
+            val ds = dateString(date.minusDays(i.toLong()))
+            for (name in tracked) {
+                val raw = db[name]?.get(ds) ?: 0
+                if (raw > 0) monthlySum += applyDivider(raw, dividers[name] ?: 1)
+            }
+        }
+        val monthlyAverage = monthlySum.toDouble() / 30.0
+
+        return DayStats(
+            date = date,
+            totalPoints = totalPoints,
+            monthlyAverage = monthlyAverage,
+            streakDays = 0,
+            antiStreakDays = 0
+        )
+    }
+
+    /**
+     * Full stats for [date]: total points, 30-day monthly average, and per-habit
+     * streak/anti-streak totals. Expensive — only call when the user has paused
+     * on a day (debounced in the UI).
+     *
+     * Streak/anti-streak are computed as the sum of each tracked habit's individual
+     * streak/anti-streak ending on [date], matching computeAppStats behaviour.
+     * Entries are capped at [date] so historical days are not affected by today's data.
      */
     fun getDayStats(date: LocalDate): DayStats {
         val db = cachedPhoneDb
@@ -2357,29 +2407,57 @@ class HabitViewModel(
         val dividers = _settings.value.habitDividers
         val tracked = trackedHabitNames().ifEmpty { db.keys }
 
-        var done = 0
         var totalPoints = 0
         for (name in tracked) {
             val raw = db[name]?.get(dateStr) ?: 0
-            if (raw > 0) {
-                done += 1
-                totalPoints += applyDivider(raw, dividers[name] ?: 1)
+            if (raw > 0) totalPoints += applyDivider(raw, dividers[name] ?: 1)
+        }
+
+        var monthlySum = 0
+        for (i in 0 until 30) {
+            val ds = dateString(date.minusDays(i.toLong()))
+            for (name in tracked) {
+                val raw = db[name]?.get(ds) ?: 0
+                if (raw > 0) monthlySum += applyDivider(raw, dividers[name] ?: 1)
             }
         }
-        // "Current streak" for the day = longest run of consecutive prior days
-        // (including this day) where ANY tracked habit had a non-zero entry.
-        var streak = 0
-        var cursor = date
-        while (true) {
-            val ds = dateString(cursor)
-            val anyDone = tracked.any { (db[it]?.get(ds) ?: 0) > 0 }
-            if (!anyDone) break
-            streak += 1
-            cursor = cursor.minusDays(1)
-            // Sanity: stop after 10 years to avoid runaway loops on weird data.
-            if (streak > 3650) break
+        val monthlyAverage = monthlySum.toDouble() / 30.0
+
+        // Per-habit streak/anti-streak totals ending on [date].
+        // Entries are filtered to <= dateStr so the "end" of the reversed list
+        // is always [date], not today (fixes anti-streak stuck on today's value).
+        var totalStreakDays = 0
+        var totalAntiStreakDays = 0
+        for (name in tracked) {
+            val entries = db[name] ?: continue
+            // Cap entries at [date] — only include days up to and including [date]
+            val capped = entries.filter { it.key <= dateStr }.toMutableMap()
+            if (capped.isEmpty()) continue
+            // Ensure [date] itself is present (as 0 if not recorded)
+            if (!capped.containsKey(dateStr)) capped[dateStr] = 0
+            val expanded = expandEntriesToCalendarDaysPublic(capped)
+            val reversed = expanded.entries.sortedBy { it.key }.reversed()
+
+            var habStreak = 0
+            for (entry in reversed) {
+                if (applyDivider(entry.value, dividers[name] ?: 1) > 0) habStreak++ else break
+            }
+            var habAntiStreak = 0
+            for (entry in reversed) {
+                if (applyDivider(entry.value, dividers[name] ?: 1) == 0) habAntiStreak++ else break
+            }
+
+            totalStreakDays += habStreak
+            totalAntiStreakDays += habAntiStreak
         }
-        return DayStats(date = date, habitsDone = done, totalPoints = totalPoints, streakDays = streak)
+
+        return DayStats(
+            date = date,
+            totalPoints = totalPoints,
+            monthlyAverage = monthlyAverage,
+            streakDays = totalStreakDays,
+            antiStreakDays = totalAntiStreakDays
+        )
     }
 
     /** All habit names that appear on any screen (or in habitOrder if no screens). */
