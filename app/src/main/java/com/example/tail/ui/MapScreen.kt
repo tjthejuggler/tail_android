@@ -51,6 +51,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.data.DayStats
 import com.example.tail.ui.map.WorldLandData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -163,6 +164,13 @@ fun MapScreen(
         }
     }
 
+    // ── Day-driven accent colour ────────────────────────────────────────────
+    // The "accent" is derived from the day's total points using explicit
+    // thresholds: <14 red, 14-20 orange, 21-30 green, 31-41 blue,
+    // 42-48 pink, 49-55 yellow, 56+ white.
+    val dayStats = remember(selectedDate, coordsByDate) { viewModel.getDayStats(selectedDate) }
+    val accent = remember(dayStats.totalPoints) { accentColorForPoints(dayStats.totalPoints) }
+
     // ── Layout ──────────────────────────────────────────────────────────────
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -180,14 +188,15 @@ fun MapScreen(
                 ) {
                     WorldMapWithMarker(
                         currentCoords = currentDisplayCoords,
-                        allCoordsTrail = coordsByDate
+                        allCoordsTrail = coordsByDate,
+                        accent = accent
                     )
                 }
                 // ── Side info panel (right) ────────────────────────────────
                 MapInfoPanel(
-                    viewModel = viewModel,
-                    selectedDate = selectedDate,
+                    stats = dayStats,
                     locationLabel = viewModel.getLocationLabelForDate(selectedDate),
+                    accent = accent,
                     modifier = Modifier
                         .fillMaxHeight()
                         .width(220.dp)
@@ -197,21 +206,61 @@ fun MapScreen(
             // ── Timeline + transport controls ──────────────────────────────
             TimelineBar(
                 firstDate = firstDate,
+                lastDate = lastDate,
                 totalDays = totalDays,
                 selectedDate = selectedDate,
                 onScrub = { newDate ->
                     isPlaying = false
                     viewModel.navigateToDate(newDate)
                 },
+                onStepDay = { delta ->
+                    isPlaying = false
+                    val target = selectedDate.plusDays(delta.toLong())
+                    val clamped = when {
+                        target.isBefore(firstDate) -> firstDate
+                        target.isAfter(lastDate) -> lastDate
+                        else -> target
+                    }
+                    if (clamped != selectedDate) viewModel.navigateToDate(clamped)
+                },
                 isPlaying = isPlaying,
                 onTogglePlay = { isPlaying = !isPlaying },
                 speed = speed,
                 onSpeedDown = { if (speedIndex > 0) speedIndex-- },
-                onSpeedUp = { if (speedIndex < PLAY_SPEEDS.lastIndex) speedIndex++ }
+                onSpeedUp = { if (speedIndex < PLAY_SPEEDS.lastIndex) speedIndex++ },
+                accent = accent
             )
         }
     }
 }
+
+// ── Day → accent colour mapping ─────────────────────────────────────────────
+// Maps daily total points onto the 7-tier Border* palette (vivid versions of
+// the habit colours) so the accent reads clearly against the dark map background.
+// Thresholds: <14 red · 14-20 orange · 21-30 green · 31-41 blue ·
+//             42-48 pink · 49-55 yellow · 56+ white
+private fun accentColorForPoints(points: Int): Color = when {
+    points >= 56 -> BorderGlass    // white
+    points >= 49 -> BorderYellow
+    points >= 42 -> BorderPink
+    points >= 31 -> BorderBlue
+    points >= 21 -> BorderGreen
+    points >= 14 -> BorderOrange
+    else         -> BorderRed
+}
+
+/** Slightly darker variant of [c], used for slider active track. */
+private fun Color.darker(factor: Float = 0.75f): Color =
+    Color(
+        red   = (red   * factor).coerceIn(0f, 1f),
+        green = (green * factor).coerceIn(0f, 1f),
+        blue  = (blue  * factor).coerceIn(0f, 1f),
+        alpha = alpha
+    )
+
+/** Translucent halo colour derived from [c]. */
+private fun Color.halo(alpha: Float = 0.20f): Color =
+    Color(red = red, green = green, blue = blue, alpha = alpha)
 
 // ── Top bar ─────────────────────────────────────────────────────────────────
 
@@ -241,7 +290,8 @@ private fun MapTopBar(date: LocalDate, onBack: () -> Unit) {
 @Composable
 private fun WorldMapWithMarker(
     currentCoords: Pair<Double, Double>?,
-    allCoordsTrail: Map<LocalDate, Pair<Double, Double>>
+    allCoordsTrail: Map<LocalDate, Pair<Double, Double>>,
+    accent: Color
 ) {
     val context = LocalContext.current
     // Load world polygons OFF the main thread so the screen doesn't freeze
@@ -270,8 +320,13 @@ private fun WorldMapWithMarker(
             animY.snapTo(ty)
             hasInitialPosition = true
         } else {
-            animX.animateTo(tx, animationSpec = tween(400))
-            animY.animateTo(ty, animationSpec = tween(400))
+            // Animate X and Y in PARALLEL so the marker moves diagonally in a
+            // straight line between two days. Sequential `animateTo` calls
+            // (the previous behaviour) suspended the coroutine until X
+            // finished, producing an L-shaped path that made the trip look
+            // like the user travelled along latitude then longitude.
+            launch { animX.animateTo(tx, animationSpec = tween(400)) }
+            launch { animY.animateTo(ty, animationSpec = tween(400)) }
         }
     }
 
@@ -317,32 +372,42 @@ private fun WorldMapWithMarker(
             strokeWidth = 0.5f
         )
 
-        // Trail of all dots (every visited day) — small, dim.
+        // Trail of all dots (every visited day) — small, dim, tinted with the
+        // current-day accent so the whole map feels of-a-piece.
+        val trailColor = accent.copy(alpha = 0.55f)
         for ((_, coord) in allCoordsTrail) {
             val (lat, lon) = coord
             drawCircle(
-                color = Color(0x88FFAA66),
+                color = trailColor,
                 radius = 1.5f,
                 center = Offset(lonToX(lon, size.width), latToY(lat, size.height))
             )
         }
 
-        // Current-day marker — a stylised "person pin" (head + body).
+        // Current-day marker — a stylised "person pin" (head + body), tinted
+        // by the day's accent colour.
         if (currentCoords != null) {
             val cx = animX.value
             val cy = animY.value
+            // Lighter "head" tone — blend accent → near-white.
+            val headColor = Color(
+                red = (accent.red + (1f - accent.red) * 0.45f).coerceIn(0f, 1f),
+                green = (accent.green + (1f - accent.green) * 0.45f).coerceIn(0f, 1f),
+                blue = (accent.blue + (1f - accent.blue) * 0.45f).coerceIn(0f, 1f),
+                alpha = 1f
+            )
             // Halo
-            drawCircle(color = Color(0x33FFD24A), radius = 12f, center = Offset(cx, cy))
+            drawCircle(color = accent.halo(0.20f), radius = 20f, center = Offset(cx, cy))
             // Body
-            drawCircle(color = Color(0xFFFFD24A), radius = 4.5f, center = Offset(cx, cy + 3f))
+            drawCircle(color = accent, radius = 7.5f, center = Offset(cx, cy + 5f))
             // Head
-            drawCircle(color = Color(0xFFFFE9A0), radius = 3.5f, center = Offset(cx, cy - 4f))
+            drawCircle(color = headColor, radius = 5.5f, center = Offset(cx, cy - 6f))
             // Outline
             drawCircle(
-                color = Color(0xFF3A2A00),
-                radius = 4.5f,
-                center = Offset(cx, cy + 3f),
-                style = Stroke(width = 1f)
+                color = Color(0xFF1A1408),
+                radius = 7.5f,
+                center = Offset(cx, cy + 5f),
+                style = Stroke(width = 1.5f)
             )
         }
     }
@@ -360,15 +425,11 @@ private fun latToY(lat: Double, height: Float): Float =
 
 @Composable
 private fun MapInfoPanel(
-    viewModel: HabitViewModel,
-    selectedDate: LocalDate,
+    stats: DayStats,
     locationLabel: String?,
+    accent: Color,
     modifier: Modifier = Modifier
 ) {
-    // Recompute lightweight stats every time the date changes — these are
-    // O(habit_count * lookback_for_streak) so they're effectively free.
-    val stats = remember(selectedDate) { viewModel.getDayStats(selectedDate) }
-
     Column(
         modifier = modifier
             .background(Color(0xFF0E1726))
@@ -386,20 +447,20 @@ private fun MapInfoPanel(
             fontSize = 13.sp
         )
         Spacer(modifier = Modifier.height(14.dp))
-        StatLine("Habits done", stats.habitsDone.toString())
-        StatLine("Points",      stats.totalPoints.toString())
-        StatLine("Streak",      "${stats.streakDays} d")
+        StatLine("Habits done", stats.habitsDone.toString(), accent)
+        StatLine("Points",      stats.totalPoints.toString(), accent)
+        StatLine("Streak",      "${stats.streakDays} d", accent)
     }
 }
 
 @Composable
-private fun StatLine(label: String, value: String) {
+private fun StatLine(label: String, value: String, accent: Color = Color.White) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(text = label, color = Color(0xFF8899AA), fontSize = 12.sp, modifier = Modifier.weight(1f))
-        Text(text = value, color = Color.White, fontSize = 14.sp)
+        Text(text = value, color = accent, fontSize = 14.sp)
     }
 }
 
@@ -408,19 +469,24 @@ private fun StatLine(label: String, value: String) {
 @Composable
 private fun TimelineBar(
     firstDate: LocalDate,
+    lastDate: LocalDate,
     totalDays: Int,
     selectedDate: LocalDate,
     onScrub: (LocalDate) -> Unit,
+    onStepDay: (Int) -> Unit,
     isPlaying: Boolean,
     onTogglePlay: () -> Unit,
     speed: Float,
     onSpeedDown: () -> Unit,
-    onSpeedUp: () -> Unit
+    onSpeedUp: () -> Unit,
+    accent: Color
 ) {
     val daysFromStart = java.time.temporal.ChronoUnit.DAYS
         .between(firstDate, selectedDate)
         .coerceIn(0L, totalDays.toLong())
         .toInt()
+    val canStepBack = selectedDate.isAfter(firstDate)
+    val canStepForward = selectedDate.isBefore(lastDate)
 
     Column(
         modifier = Modifier
@@ -436,9 +502,9 @@ private fun TimelineBar(
             // Play / pause
             IconButton(onClick = onTogglePlay) {
                 if (isPlaying) {
-                    Text("⏸", color = Color.White, fontSize = 16.sp)
+                    Text("⏸", color = accent, fontSize = 16.sp)
                 } else {
-                    Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color.White)
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = accent)
                 }
             }
             // Speed-up speed button
@@ -462,17 +528,38 @@ private fun TimelineBar(
                 },
                 modifier = Modifier.weight(1f),
                 colors = SliderDefaults.colors(
-                    thumbColor = Color(0xFFFFD24A),
-                    activeTrackColor = Color(0xFFFFAA33),
+                    thumbColor = accent,
+                    activeTrackColor = accent.darker(0.8f),
                     inactiveTrackColor = Color(0xFF334466)
                 )
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(4.dp))
+            // ── Step-by-day controls (sit right next to the day counter) ──
+            IconButton(
+                onClick = { if (canStepBack) onStepDay(-1) },
+                enabled = canStepBack
+            ) {
+                Text(
+                    text = "‹",
+                    color = if (canStepBack) Color.White else Color(0xFF445566),
+                    fontSize = 22.sp
+                )
+            }
             Text(
                 text = "${daysFromStart} / $totalDays",
                 color = Color(0xFFAAAAAA),
                 fontSize = 11.sp
             )
+            IconButton(
+                onClick = { if (canStepForward) onStepDay(1) },
+                enabled = canStepForward
+            ) {
+                Text(
+                    text = "›",
+                    color = if (canStepForward) Color.White else Color(0xFF445566),
+                    fontSize = 22.sp
+                )
+            }
         }
     }
 }
