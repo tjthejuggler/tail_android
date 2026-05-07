@@ -116,6 +116,42 @@ class LocationRepository(private val context: Context) {
         saveCoords(date, lat, lon)
     }
 
+    /**
+     * Forward-geocodes a human-readable location [label] to (lat, lon).
+     * Uses Android's built-in [Geocoder] — no extra library or API key needed.
+     * Returns null if the Geocoder is unavailable or no result is found.
+     *
+     * Called when the user manually enters a location name that has no stored
+     * coords, so the world-map screen can still plot a marker for that day.
+     */
+    suspend fun geocodeLocationLabel(label: String): Pair<Double, Double>? {
+        if (!Geocoder.isPresent()) {
+            Log.w(TAG, "Geocoder not present — cannot forward-geocode '$label'")
+            return null
+        }
+        val geocoder = Geocoder(context, Locale.getDefault())
+        return withContext(Dispatchers.IO) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    suspendCancellableCoroutine { cont ->
+                        geocoder.getFromLocationName(label, 1) { addresses ->
+                            val addr = addresses.firstOrNull()
+                            cont.resume(if (addr != null) Pair(addr.latitude, addr.longitude) else null)
+                        }
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    val addresses = geocoder.getFromLocationName(label, 1)
+                    val addr = addresses?.firstOrNull()
+                    if (addr != null) Pair(addr.latitude, addr.longitude) else null
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Forward-geocode failed for '$label': ${e.message}")
+                null
+            }
+        }
+    }
+
     // ── Private helpers ──────────────────────────────────────────────────────
 
     /** Returns (lat, lon) from the best available last-known location, or null. */

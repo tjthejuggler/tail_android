@@ -34,6 +34,10 @@ import androidx.compose.ui.window.Dialog
  * Dialog for manually setting the location for a given day.
  * Shows a text field pre-filled with the current location (if any),
  * and a scrollable list of previously-entered locations to pick from.
+ *
+ * The suggestion list is filtered in real-time as the user types, making
+ * it easy to find and tap an existing location. Selecting a suggestion
+ * fills the text field with that value (and its coords are already stored).
  */
 @Composable
 fun LocationEditDialog(
@@ -43,6 +47,14 @@ fun LocationEditDialog(
     onDismiss: () -> Unit
 ) {
     var text by remember { mutableStateOf(currentLocation ?: "") }
+
+    // Filter suggestions to those containing the current text (case-insensitive).
+    // When the field is blank, show all suggestions.
+    val filteredSuggestions = remember(text, suggestions) {
+        val query = text.trim().lowercase()
+        if (query.isEmpty()) suggestions
+        else suggestions.filter { it.lowercase().contains(query) }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -78,11 +90,11 @@ fun LocationEditDialog(
                     )
                 )
 
-                // Suggestions from history
-                if (suggestions.isNotEmpty()) {
+                // Filtered suggestions from history
+                if (filteredSuggestions.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "Previous locations",
+                        text = if (text.isBlank()) "Previous locations" else "Matching locations",
                         color = Color(0xFF888888),
                         fontSize = 11.sp
                     )
@@ -93,7 +105,7 @@ fun LocationEditDialog(
                             .height(140.dp)
                             .verticalScroll(rememberScrollState())
                     ) {
-                        suggestions.forEach { suggestion ->
+                        filteredSuggestions.forEach { suggestion ->
                             Text(
                                 text = suggestion,
                                 color = Color(0xFFAADDFF),

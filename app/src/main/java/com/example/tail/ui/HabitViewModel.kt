@@ -2330,11 +2330,24 @@ class HabitViewModel(
         }
     }
 
-    /** Manually saves a location label for the given date and refreshes the displayed value. */
+    /**
+     * Manually saves a location label for the given date and refreshes the displayed value.
+     *
+     * Always forward-geocodes the new label so the world-map marker is updated to
+     * match the new location, even if coords were already stored for this date
+     * (e.g. the user corrected a previously wrong entry).
+     */
     fun setLocationForDate(date: java.time.LocalDate, label: String) {
         locationRepo.setLocationForDate(date, label)
         if (_selectedDate.value == date) {
             _selectedDateLocation.value = label
+        }
+        // Always re-geocode on a manual edit so the map marker reflects the new label
+        viewModelScope.launch {
+            val coords = locationRepo.geocodeLocationLabel(label)
+            if (coords != null) {
+                locationRepo.setCoordsForDate(date, coords.first, coords.second)
+            }
         }
     }
 
