@@ -2,10 +2,11 @@ package com.example.tail.ui
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
-import android.content.res.Configuration
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,9 +19,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,6 +31,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.window.Dialog
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -47,7 +52,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,7 +61,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -65,7 +68,7 @@ import java.time.format.DateTimeFormatter
 private val MAP_DATE_FMT = DateTimeFormatter.ofPattern("EEE, MMM d, yyyy")
 
 // Available playback speeds in days/sec.
-private val PLAY_SPEEDS = listOf(0.5f, 1f, 2f, 5f, 15f, 30f)
+private val PLAY_SPEEDS = listOf(0.5f, 1f, 2f, 5f, 15f, 30f, 60f, 120f)
 private const val DEFAULT_SPEED_INDEX = 2  // 2 days/sec
 
 /**
@@ -101,11 +104,12 @@ fun MapScreen(
     }
 
     // Wrap back navigation so we always sync the selected date to the grid
-    // before popping the back stack.
+    // before popping the back stack. Also intercept the system back gesture.
     val handleBack: () -> Unit = {
         viewModel.navigateToDate(viewModel.selectedDate.value)
         onNavigateBack()
     }
+    BackHandler(onBack = handleBack)
 
     val selectedDate by viewModel.selectedDate.collectAsState()
 
@@ -116,13 +120,21 @@ fun MapScreen(
     // enough to lock the frame). We do it in a LaunchedEffect via withContext.
     var coordsByDate by remember { mutableStateOf<Map<LocalDate, Pair<Double, Double>>>(emptyMap()) }
     var dataLoaded by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        val map = withContext(Dispatchers.Default) {
+    // Sorted (date, country) timeline → enables O(N) "countries up to date X"
+    // scans without touching SharedPrefs on every slider tick. Re-loaded only
+    // when the user adds/edits a location (locationDataVersion bumps).
+    var countryTimeline by remember { mutableStateOf<List<Pair<LocalDate, String>>>(emptyList()) }
+    val locationVersion = viewModel.locationDataVersion
+    LaunchedEffect(locationVersion) {
+        val (coords, countries) = withContext(Dispatchers.Default) {
             // Single SharedPrefs read + single JSON parse → O(N) instead of
             // O(N²) date-by-date lookups.
-            viewModel.getAllStoredCoordsParsed()
+            val c = viewModel.getAllStoredCoordsParsed()
+            val ct = viewModel.buildCountryTimeline()
+            c to ct
         }
-        coordsByDate = map
+        coordsByDate = coords
+        countryTimeline = countries
         dataLoaded = true
     }
 
@@ -191,13 +203,27 @@ fun MapScreen(
         statsLoading = false
     }
 
+    // ── Country counts derived from the in-memory cache (fast O(N) scan) ────
+    val countriesVisited = remember(selectedDate, countryTimeline) {
+        val seen = HashSet<String>()
+        for ((d, c) in countryTimeline) {
+            if (d.isAfter(selectedDate)) break  // timeline is sorted ascending
+            seen.add(c)
+        }
+        seen.size
+    }
+    // Cached location label for the top bar (avoid SharedPrefs on every recomp).
+    val locationLabel = remember(selectedDate, locationVersion) {
+        viewModel.getLocationLabelForDate(selectedDate)
+    }
+
     // ── Layout ──────────────────────────────────────────────────────────────
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = Color(0xFF0A0F1A)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            MapTopBar(date = selectedDate, onBack = handleBack)
+            MapTopBar(locationLabel = locationLabel)
 
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 // ── Map area (left, takes remaining width) ─────────────────
@@ -209,14 +235,26 @@ fun MapScreen(
                     WorldMapWithMarker(
                         currentCoords = currentDisplayCoords,
                         allCoordsTrail = coordsByDate,
-                        accent = accent
+                        accent = accent,
+                        speed = speed
                     )
                 }
                 // ── Side info panel (right) ────────────────────────────────
                 MapInfoPanel(
+                    date = selectedDate,
                     stats = dayStats,
                     statsLoading = statsLoading,
-                    locationLabel = viewModel.getLocationLabelForDate(selectedDate),
+                    countriesVisited = countriesVisited,
+                    onCountriesClick = {
+                        // Build sorted distinct list from the cache only when the popup opens
+                        val seen = LinkedHashSet<String>()
+                        for ((d, c) in countryTimeline) {
+                            if (d.isAfter(selectedDate)) break
+                            seen.add(c)
+                        }
+                        seen.toList().sorted()
+                    },
+                    onPointsClick = { viewModel.getDayHabitBreakdown(selectedDate) },
                     accent = accent,
                     modifier = Modifier
                         .fillMaxHeight()
@@ -283,26 +321,36 @@ private fun Color.darker(factor: Float = 0.75f): Color =
 private fun Color.halo(alpha: Float = 0.20f): Color =
     Color(red = red, green = green, blue = blue, alpha = alpha)
 
-// ── Top bar ─────────────────────────────────────────────────────────────────
+// ── Top bar: centred location name only (date moved to stats panel) ─────────
+//
+// No back arrow — system back handles navigation. The location label is
+// horizontally centred so the centre of the text aligns with the centre
+// of the screen.
 
 @Composable
-private fun MapTopBar(date: LocalDate, onBack: () -> Unit) {
-    Row(
+private fun MapTopBar(locationLabel: String?) {
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF111726))
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
     ) {
-        IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+        if (locationLabel != null) {
+            Text(
+                text = locationLabel,
+                color = Color(0xFFAACCEE),
+                fontSize = 14.sp
+            )
+        } else {
+            // Reserve a row of space so the layout doesn't jump when no
+            // location is recorded for the selected day.
+            Text(
+                text = " ",
+                color = Color.Transparent,
+                fontSize = 14.sp
+            )
         }
-        Text(
-            text = date.format(MAP_DATE_FMT),
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.padding(start = 4.dp)
-        )
     }
 }
 
@@ -312,7 +360,8 @@ private fun MapTopBar(date: LocalDate, onBack: () -> Unit) {
 private fun WorldMapWithMarker(
     currentCoords: Pair<Double, Double>?,
     allCoordsTrail: Map<LocalDate, Pair<Double, Double>>,
-    accent: Color
+    accent: Color,
+    speed: Float = 2f
 ) {
     val context = LocalContext.current
     // Load world polygons OFF the main thread so the screen doesn't freeze
@@ -324,10 +373,20 @@ private fun WorldMapWithMarker(
     }
 
     // Animate the marker between coord changes for a smooth slide.
+    // At higher speeds the marker must complete its travel before the next
+    // day fires, so we cap the animation duration to (msPerDay - 20ms).
     val animX = remember { Animatable(0f) }
     val animY = remember { Animatable(0f) }
     var lastSize by remember { mutableStateOf(Size.Zero) }
     var hasInitialPosition by remember { mutableStateOf(false) }
+
+    // Derive animation duration from playback speed: at 1× use 800 ms for a
+    // leisurely glide; at higher speeds cap to just under the inter-day delay
+    // so the marker always arrives before the next jump.
+    val animDurationMs = remember(speed) {
+        val msPerDay = (1000f / speed).toLong().coerceAtLeast(15L)
+        (msPerDay - 20L).coerceIn(30L, 800L).toInt()
+    }
 
     LaunchedEffect(currentCoords, lastSize) {
         if (currentCoords == null || lastSize == Size.Zero) return@LaunchedEffect
@@ -342,12 +401,10 @@ private fun WorldMapWithMarker(
             hasInitialPosition = true
         } else {
             // Animate X and Y in PARALLEL so the marker moves diagonally in a
-            // straight line between two days. Sequential `animateTo` calls
-            // (the previous behaviour) suspended the coroutine until X
-            // finished, producing an L-shaped path that made the trip look
-            // like the user travelled along latitude then longitude.
-            launch { animX.animateTo(tx, animationSpec = tween(400)) }
-            launch { animY.animateTo(ty, animationSpec = tween(400)) }
+            // straight line between two days. Duration scales with playback
+            // speed so the marker always reaches its destination in time.
+            launch { animX.animateTo(tx, animationSpec = tween(animDurationMs)) }
+            launch { animY.animateTo(ty, animationSpec = tween(animDurationMs)) }
         }
     }
 
@@ -446,30 +503,38 @@ private fun latToY(lat: Double, height: Float): Float =
 
 @Composable
 private fun MapInfoPanel(
+    date: LocalDate,
     stats: DayStats,
     statsLoading: Boolean,
-    locationLabel: String?,
+    countriesVisited: Int,
+    onCountriesClick: () -> List<String>,
+    onPointsClick: () -> List<Pair<String, Int>>,
     accent: Color,
     modifier: Modifier = Modifier
 ) {
+    var showCountriesPopup by remember { mutableStateOf(false) }
+    var showPointsPopup    by remember { mutableStateOf(false) }
+
     Column(
         modifier = modifier
             .background(Color(0xFF0E1726))
             .padding(12.dp)
     ) {
+        // Date header — moved here from the top bar so the centred location
+        // label can dominate the screen header.
         Text(
-            text = "Stats for this day",
-            color = Color(0xFFAAAAAA),
-            fontSize = 11.sp
+            text = date.format(MAP_DATE_FMT),
+            color = Color.White,
+            fontSize = 14.sp
         )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = locationLabel ?: "No location",
-            color = if (locationLabel != null) Color(0xFFE0E0E0) else Color(0xFF666666),
-            fontSize = 13.sp
+        Spacer(Modifier.height(10.dp))
+
+        ClickableStatLine(
+            label = "Day points",
+            value = stats.totalPoints.toString(),
+            accent = accent,
+            onClick = { showPointsPopup = true }
         )
-        Spacer(modifier = Modifier.height(14.dp))
-        StatLine("Day points", stats.totalPoints.toString(), accent)
         StatLine(
             "Monthly avg",
             String.format("%.1f", stats.monthlyAverage),
@@ -477,6 +542,31 @@ private fun MapInfoPanel(
         )
         StatLine("Streak",      if (statsLoading) "..." else "${stats.streakDays} d",     accent)
         StatLine("Anti-streak", if (statsLoading) "..." else "${stats.antiStreakDays} d", accent)
+        ClickableStatLine(
+            label = "Countries",
+            value = countriesVisited.toString(),
+            accent = accent,
+            onClick = { showCountriesPopup = true }
+        )
+    }
+
+    if (showCountriesPopup) {
+        val countries = remember { onCountriesClick() }
+        SimpleListPopup(
+            title = "Countries visited",
+            items = countries,
+            accent = accent,
+            onDismiss = { showCountriesPopup = false }
+        )
+    }
+
+    if (showPointsPopup) {
+        val breakdown = remember { onPointsClick() }
+        HabitBreakdownPopup(
+            items = breakdown,
+            accent = accent,
+            onDismiss = { showPointsPopup = false }
+        )
     }
 }
 
@@ -488,6 +578,95 @@ private fun StatLine(label: String, value: String, accent: Color = Color.White) 
     ) {
         Text(text = label, color = Color(0xFF8899AA), fontSize = 12.sp, modifier = Modifier.weight(1f))
         Text(text = value, color = accent, fontSize = 14.sp)
+    }
+}
+
+/** A stat row whose value text is tappable (underlined hint via colour). */
+@Composable
+private fun ClickableStatLine(label: String, value: String, accent: Color, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = label, color = Color(0xFF8899AA), fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Text(
+            text = value,
+            color = accent,
+            fontSize = 14.sp,
+            modifier = Modifier.clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onClick
+            )
+        )
+    }
+}
+
+// ── Popup: scrollable list of strings ───────────────────────────────────────
+
+@Composable
+private fun SimpleListPopup(
+    title: String,
+    items: List<String>,
+    accent: Color,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF0D0D1A), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text(title, color = accent, fontSize = 14.sp)
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF223344))
+            Spacer(Modifier.height(4.dp))
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(items) { item ->
+                    Text(
+                        text = item,
+                        color = Color(0xFFCCCCCC),
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Popup: habit breakdown (name + points) ───────────────────────────────────
+
+@Composable
+private fun HabitBreakdownPopup(
+    items: List<Pair<String, Int>>,
+    accent: Color,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF0D0D1A), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text("Habits today", color = accent, fontSize = 14.sp)
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF223344))
+            Spacer(Modifier.height(4.dp))
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(items) { (name, pts) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(name, color = Color(0xFFCCCCCC), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Text(pts.toString(), color = accent, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -540,7 +719,7 @@ private fun TimelineBar(
             }
             Spacer(Modifier.width(6.dp))
             Text(
-                text = "${speed}×",
+                text = "${if (speed == speed.toLong().toFloat()) speed.toLong() else speed}×",
                 color = Color(0xFFAAAAAA),
                 fontSize = 11.sp
             )

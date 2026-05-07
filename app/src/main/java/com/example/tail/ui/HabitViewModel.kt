@@ -48,6 +48,39 @@ private const val TAG = "HabitVM"
 /** Total cells in the 8×10 habit grid — matches TOTAL_CELLS in HabitGridScreen. */
 private const val TOTAL_GRID_CELLS = 80
 
+/**
+ * US states + DC, lowercased. Used by [extractCountry] to recognise legacy
+ * "City, State" entries (no country suffix) and emit "United States" instead
+ * of mistakenly counting the state name as a country.
+ */
+private val US_STATES_LC: Set<String> = setOf(
+    "alabama","alaska","arizona","arkansas","california","colorado","connecticut",
+    "delaware","district of columbia","florida","georgia","hawaii","idaho","illinois",
+    "indiana","iowa","kansas","kentucky","louisiana","maine","maryland","massachusetts",
+    "michigan","minnesota","mississippi","missouri","montana","nebraska","nevada",
+    "new hampshire","new jersey","new mexico","new york","north carolina","north dakota",
+    "ohio","oklahoma","oregon","pennsylvania","rhode island","south carolina",
+    "south dakota","tennessee","texas","utah","vermont","virginia","washington",
+    "west virginia","wisconsin","wyoming"
+)
+
+/**
+ * Extracts a country name from a "Place, Region, Country" location label.
+ * Falls back to "United States" when the last token is a recognised US state
+ * (handles legacy entries that lack an explicit country suffix).
+ *
+ * Returns null for empty / unparseable labels.
+ */
+private fun extractCountry(label: String): String? {
+    val parts = label.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    if (parts.isEmpty()) return null
+    val last = parts.last()
+    // If the very last token is a US state, this is a US entry that lacks an
+    // explicit country suffix — emit "United States".
+    if (last.lowercase() in US_STATES_LC) return "United States"
+    return last
+}
+
 // ── IPC broadcast constants ──────────────────────────────────────────────────
 /** Broadcast action sent after every successful habit increment. */
 const val ACTION_HABIT_INCREMENTED = "com.example.tail.ACTION_HABIT_INCREMENTED"
@@ -2382,6 +2415,66 @@ class HabitViewModel(
             out[d] = coord
         }
         return out
+    }
+
+    /**
+     * One-shot, off-thread snapshot of (date, country) pairs for every stored
+     * location label, sorted ascending by date. Used by the world-map screen
+     * to compute "countries visited up to date X" in O(N) without re-parsing
+     * SharedPrefs on every slider tick.
+     *
+     * Country detection is robust to legacy entries that were stored without a
+     * country suffix (just "City, Region"): if the last comma-separated token
+     * is recognised as a US state, it is treated as "United States" instead.
+     *
+     * Pair caller with [locationDataVersion] to know when to rebuild this
+     * snapshot (the value bumps whenever a label or coords entry is saved).
+     */
+    fun buildCountryTimeline(): List<Pair<LocalDate, String>> {
+        val labels = locationRepo.getAllStoredLabels()  // single SharedPrefs read
+        val out = ArrayList<Pair<LocalDate, String>>(labels.size)
+        for ((dateStr, label) in labels) {
+            val d = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: continue
+            val country = extractCountry(label) ?: continue
+            out.add(d to country)
+        }
+        out.sortBy { it.first }
+        return out
+    }
+
+    /**
+     * Current data version of the location store. Bumped on every save.
+     * The map screen recomputes its country cache when this changes.
+     */
+    val locationDataVersion: Int
+        get() = locationRepo.dataVersion
+
+    /**
+     * Returns the list of habits done on [date] with their point values,
+     * sorted descending by points. Only habits with points > 0 are included.
+     */
+    fun getDayHabitBreakdown(date: LocalDate): List<Pair<String, Int>> {
+        val db = cachedPhoneDb
+        val dateStr = dateString(date)
+        val dividers = _settings.value.habitDividers
+        val tracked = trackedHabitNames().ifEmpty { db.keys }
+        return tracked
+            .mapNotNull { name ->
+                val raw = db[name]?.get(dateStr) ?: 0
+                if (raw > 0) Pair(name, applyDivider(raw, dividers[name] ?: 1)) else null
+            }
+            .sortedByDescending { it.second }
+    }
+
+    /**
+     * Returns the earliest date for which a location label is stored.
+     * Used by the calendar picker to set the minimum selectable year.
+     */
+    fun getEarliestLocationDate(): LocalDate? {
+        val allCoords = locationRepo.getAllStoredCoords()
+        return allCoords.keys
+            .mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
+            .minOrNull()
     }
 
     /**

@@ -143,7 +143,8 @@ fun CalendarPickerDialog(
     initialDate: LocalDate,
     getDailyTotals: (year: Int, month: Int) -> Map<String, Int>,
     onDateSelected: (LocalDate) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    minYear: Int = 2000
 ) {
     val today = LocalDate.now()
 
@@ -194,6 +195,7 @@ fun CalendarPickerDialog(
                 // ── Year picker grid ──────────────────────────────────────
                 YearPickerGrid(
                     currentYear  = displayYear,
+                    minYear      = minYear,
                     maxYear      = today.year,
                     onYearSelected = { yr ->
                         displayYear = yr
@@ -321,11 +323,10 @@ private fun CalendarHeader(
 @Composable
 private fun YearPickerGrid(
     currentYear: Int,
+    minYear: Int,
     maxYear: Int,
     onYearSelected: (Int) -> Unit
 ) {
-    // Show a range of years: from (maxYear - 15) up to maxYear
-    val minYear = maxOf(2000, maxYear - 20)
     val years = (minYear..maxYear).toList().reversed()  // newest first
 
     Column(

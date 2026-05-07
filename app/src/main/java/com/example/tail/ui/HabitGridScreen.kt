@@ -792,6 +792,11 @@ fun HabitGridScreen(
 
     // Calendar picker dialog
     if (showCalendarPicker) {
+        val earliestYear = remember {
+            val fromLocations = viewModel.getEarliestLocationDate()?.year
+            val fromHabits = viewModel.getEarliestDate(viewModel.getAllHabitNames().toSet())?.year
+            listOfNotNull(fromLocations, fromHabits).minOrNull() ?: 2000
+        }
         CalendarPickerDialog(
             initialDate     = selectedDate,
             getDailyTotals  = { yr, mo -> viewModel.getDailyTotals(yr, mo) },
@@ -799,7 +804,8 @@ fun HabitGridScreen(
                 showCalendarPicker = false
                 viewModel.navigateToDate(date)
             },
-            onDismiss       = { showCalendarPicker = false }
+            onDismiss       = { showCalendarPicker = false },
+            minYear         = earliestYear
         )
     }
 
@@ -1615,6 +1621,17 @@ private fun EditModeControlBar(
                                     fontSize = 13.sp,
                                     textAlign = TextAlign.Center
                                 )
+                            )
+                        }
+                        // Show the raw accumulated total beneath the divider field
+                        if (selectedHabitRawTodayCount > 0) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Raw total today: $selectedHabitRawTodayCount",
+                                color = Color(0xFFAA88FF),
+                                fontSize = 10.sp,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.End
                             )
                         }
                     }

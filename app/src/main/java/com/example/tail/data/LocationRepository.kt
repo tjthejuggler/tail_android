@@ -75,6 +75,22 @@ class LocationRepository(private val context: Context) {
     }
 
     /**
+     * Returns the entire date-string → label map in ONE SharedPrefs read +
+     * ONE JSON parse pass. Used by the world-map screen to build its country
+     * cache without re-parsing per-date (which would freeze the UI thread).
+     */
+    fun getAllStoredLabels(): Map<String, String> = loadMap()
+
+    /**
+     * Monotonically increasing counter, bumped each time a location label or
+     * coords entry is added/changed. Lets observers (e.g. the map screen
+     * cache) cheaply detect "data changed since I built my cache".
+     */
+    @Volatile
+    var dataVersion: Int = 0
+        private set
+
+    /**
      * Fetches today's location if it hasn't been recorded yet.
      * Returns the location label or null on failure / permission denied.
      * Must be called with location permission already granted.
@@ -291,6 +307,7 @@ class LocationRepository(private val context: Context) {
         map[date.toString()] = label
         val obj = JSONObject(map as Map<*, *>)
         prefs.edit().putString(KEY_LOCATIONS, obj.toString()).apply()
+        dataVersion++
         Log.d(TAG, "Saved location for $date: $label")
     }
 
@@ -322,6 +339,7 @@ class LocationRepository(private val context: Context) {
         map[date.toString()] = "$lat,$lon"
         val obj = JSONObject(map as Map<*, *>)
         prefs.edit().putString(KEY_COORDS, obj.toString()).apply()
+        dataVersion++
         Log.d(TAG, "Saved coords for $date: $lat, $lon")
     }
 }
