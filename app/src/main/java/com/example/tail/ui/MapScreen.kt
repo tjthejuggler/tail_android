@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -340,13 +341,41 @@ fun MapScreen(
     val locationLabel = locationLabelPair.first
     val locationIsAssumed = locationLabelPair.second
 
+    // ── Location timeline popup state ──────────────────────────────────────
+    var showLocationTimeline by remember { mutableStateOf(false) }
+
     // ── Layout ──────────────────────────────────────────────────────────────
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = Color(0xFF0A0F1A)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            MapTopBar(locationLabel = locationLabel, isAssumed = locationIsAssumed)
+            MapTopBar(
+                locationLabel = locationLabel,
+                isAssumed = locationIsAssumed,
+                onClick = { showLocationTimeline = true }
+            )
+
+            if (showLocationTimeline) {
+                val timelineEntries = remember(locationVersion) {
+                    viewModel.getAllStoredLabels().entries
+                        .mapNotNull { (dateStr, label) ->
+                            runCatching { LocalDate.parse(dateStr) to label }.getOrNull()
+                        }
+                        .sortedBy { it.first }
+                }
+                LocationTimelinePopup(
+                    entries = timelineEntries,
+                    selectedDate = selectedDate,
+                    accent = accent,
+                    onNavigate = { date ->
+                        isPlaying = false
+                        viewModel.navigateToDate(date)
+                        showLocationTimeline = false
+                    },
+                    onDismiss = { showLocationTimeline = false }
+                )
+            }
 
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 // ── Map area (left, takes remaining width) ─────────────────
@@ -454,7 +483,7 @@ private fun Color.halo(alpha: Float = 0.20f): Color =
 // minus the 220dp info panel).
 
 @Composable
-private fun MapTopBar(locationLabel: String?, isAssumed: Boolean) {
+private fun MapTopBar(locationLabel: String?, isAssumed: Boolean, onClick: () -> Unit = {}) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -477,7 +506,13 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean) {
                 text = display,
                 color = if (locationLabel != null) Color(0xFFAACCEE) else Color.Transparent,
                 fontSize = 14.sp,
-                modifier = Modifier.padding(end = 220.dp)
+                modifier = Modifier
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = onClick
+                    )
+                    .padding(end = 220.dp)
             )
         }
     }
@@ -828,6 +863,66 @@ private fun HabitBreakdownPopup(
                     ) {
                         Text(name, color = Color(0xFFCCCCCC), fontSize = 13.sp, modifier = Modifier.weight(1f))
                         Text(pts.toString(), color = accent, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Popup: location timeline (all date → location pairs) ────────────────────
+
+@Composable
+private fun LocationTimelinePopup(
+    entries: List<Pair<LocalDate, String>>,
+    selectedDate: LocalDate,
+    accent: Color,
+    onNavigate: (LocalDate) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = entries.indexOfFirst { it.first == selectedDate }
+            .coerceAtLeast(0)
+    )
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.75f)
+                .background(Color(0xFF0D0D1A), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text("Location Timeline", color = accent, fontSize = 14.sp)
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF223344))
+            Spacer(Modifier.height(4.dp))
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                items(entries) { (date, label) ->
+                    val isSelected = date == selectedDate
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigate(date) }
+                            .padding(vertical = 5.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = date.format(MAP_DATE_FMT),
+                            color = if (isSelected) accent else Color(0xFF8899AA),
+                            fontSize = 12.sp,
+                            modifier = Modifier.width(140.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = label,
+                            color = if (isSelected) Color.White else Color(0xFFCCCCCC),
+                            fontSize = 13.sp,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
             }
