@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,6 +61,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.DayStats
@@ -76,7 +79,7 @@ private val MAP_DATE_FMT = DateTimeFormatter.ofPattern("yyyy, MMM dd, EEE")
 
 // Available playback speeds in days/sec. -1f represents "Auto" mode.
 private val PLAY_SPEEDS = listOf(0.5f, 1f, 2f, 5f, 15f, 30f, 60f, 120f, -1f)
-private const val DEFAULT_SPEED_INDEX = 2  // 2 days/sec
+private const val DEFAULT_SPEED_INDEX = 8  // Auto
 
 /**
  * Maximum allowed marker travel speed, expressed as a fraction of the map's
@@ -158,17 +161,25 @@ fun MapScreen(
     // scans without touching SharedPrefs on every slider tick. Re-loaded only
     // when the user adds/edits a location (locationDataVersion bumps).
     var countryTimeline by remember { mutableStateOf<List<Pair<LocalDate, String>>>(emptyList()) }
+    // Per-date accent colours — each dot is locked to the colour of the day it
+    // represents, so dots don't all shift when the current day changes.
+    var dotColorsByDate by remember { mutableStateOf<Map<LocalDate, Color>>(emptyMap()) }
     val locationVersion = viewModel.locationDataVersion
     LaunchedEffect(locationVersion) {
-        val (coords, countries) = withContext(Dispatchers.Default) {
+        val (coords, countries, colors) = withContext(Dispatchers.Default) {
             // Single SharedPrefs read + single JSON parse → O(N) instead of
             // O(N²) date-by-date lookups.
             val c = viewModel.getAllStoredCoordsParsed()
             val ct = viewModel.buildCountryTimeline()
-            c to ct
+            // Compute each date's accent colour from its own monthly average.
+            val dc = c.keys.associateWith { date ->
+                accentColorForPoints(viewModel.getDayStatsLight(date).monthlyAverage.toInt())
+            }
+            Triple(c, ct, dc)
         }
         coordsByDate = coords
         countryTimeline = countries
+        dotColorsByDate = colors
         dataLoaded = true
     }
 
@@ -234,7 +245,11 @@ fun MapScreen(
             val travelMs = if (curCoords != null && nextCoords != null && mapSize.width > 0f) {
                 val (lat1, lon1) = curCoords
                 val (lat2, lon2) = nextCoords
-                val dx = lonToX(lon2, mapSize.width) - lonToX(lon1, mapSize.width)
+                // Use shortest longitude difference (world wrapping)
+                var lonDiff = lon2 - lon1
+                if (lonDiff > 180.0) lonDiff -= 360.0
+                if (lonDiff < -180.0) lonDiff += 360.0
+                val dx = (lonDiff / 360.0 * mapSize.width).toFloat()
                 val dy = latToY(lat2, mapSize.height) - latToY(lat1, mapSize.height)
                 val dist = kotlin.math.sqrt(dx * dx + dy * dy)
                 requiredAnimMs(dist, mapSize.width)
@@ -347,7 +362,7 @@ fun MapScreen(
     // ── Layout ──────────────────────────────────────────────────────────────
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF0A0F1A)
+        color = Color(0xFF0A0A0A)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             MapTopBar(
@@ -387,6 +402,8 @@ fun MapScreen(
                     WorldMapWithMarker(
                         currentCoords = currentDisplayCoords,
                         allCoordsTrail = coordsByDate,
+                        selectedDate = selectedDate,
+                        dotColorsByDate = dotColorsByDate,
                         accent = accent,
                         speed = speed,
                         onSizeChanged = { mapSize = it }
@@ -487,7 +504,7 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean, onClick: () ->
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF111726))
+            .background(Color(0xFF111111))
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         // Always show something — if no label at all, reserve space so layout
@@ -504,7 +521,7 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean, onClick: () ->
             Spacer(modifier = Modifier.weight(1f))
             Text(
                 text = display,
-                color = if (locationLabel != null) Color(0xFFAACCEE) else Color.Transparent,
+                color = if (locationLabel != null) Color(0xFFCCCCCC) else Color.Transparent,
                 fontSize = 14.sp,
                 modifier = Modifier
                     .clickable(
@@ -524,6 +541,8 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean, onClick: () ->
 private fun WorldMapWithMarker(
     currentCoords: Pair<Double, Double>?,
     allCoordsTrail: Map<LocalDate, Pair<Double, Double>>,
+    selectedDate: LocalDate,
+    dotColorsByDate: Map<LocalDate, Color>,
     accent: Color,
     speed: Float = 2f,
     onSizeChanged: (Size) -> Unit = {}
@@ -548,6 +567,10 @@ private fun WorldMapWithMarker(
     var lastSize by remember { mutableStateOf(Size.Zero) }
     var hasInitialPosition by remember { mutableStateOf(false) }
 
+    // Pinch-to-zoom state
+    var zoomScale by remember { mutableStateOf(1f) }
+    var zoomOffset by remember { mutableStateOf(Offset.Zero) }
+
     LaunchedEffect(currentCoords, lastSize) {
         if (currentCoords == null || lastSize == Size.Zero) return@LaunchedEffect
         val (lat, lon) = currentCoords
@@ -565,7 +588,12 @@ private fun WorldMapWithMarker(
             // crossing jump takes longer than a same-city day, even at high
             // playback speeds. The day-tick window (msPerDay) is the lower
             // bound — we never animate slower than the user's chosen speed.
-            val dx = tx - animX.value
+            // World wrapping: if the shortest path crosses the map edge,
+            // animate through the virtual off-screen coordinate.
+            var dx = tx - animX.value
+            if (dx > lastSize.width / 2f) dx -= lastSize.width
+            if (dx < -lastSize.width / 2f) dx += lastSize.width
+            val virtualTx = animX.value + dx
             val dy = ty - animY.value
             val dist = kotlin.math.sqrt(dx * dx + dy * dy)
             val msPerDay = (1000f / effectiveSpeed).toLong().coerceAtLeast(15L)
@@ -574,8 +602,12 @@ private fun WorldMapWithMarker(
                 .coerceAtMost(2000L)
                 .toInt()
             // Animate X and Y in PARALLEL so the marker moves diagonally in a
-            // straight line between two days.
-            launch { animX.animateTo(tx, animationSpec = tween(durMs)) }
+            // straight line between two days. After X animation, snap back to
+            // screen-space so the next animation starts from a normalised pos.
+            launch {
+                animX.animateTo(virtualTx, animationSpec = tween(durMs))
+                animX.snapTo(tx)
+            }
             launch { animY.animateTo(ty, animationSpec = tween(durMs)) }
         }
     }
@@ -584,17 +616,31 @@ private fun WorldMapWithMarker(
         modifier = Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(0.dp))
-            .background(Color(0xFF06101F))
+            .background(Color(0xFF080808))
+            .pointerInput(Unit) {
+                detectTransformGestures { centroid, pan, zoom, _ ->
+                    val newScale = (zoomScale * zoom).coerceIn(1f, 5f)
+                    val scaleRatio = newScale / zoomScale
+                    zoomOffset = Offset(
+                        centroid.x - (centroid.x - zoomOffset.x) * scaleRatio + pan.x,
+                        centroid.y - (centroid.y - zoomOffset.y) * scaleRatio + pan.y
+                    )
+                    zoomScale = newScale
+                }
+            }
             .onSizeChanged { newSize ->
                 val s = Size(newSize.width.toFloat(), newSize.height.toFloat())
                 lastSize = s
                 onSizeChanged(s)
             }
     ) {
+        drawContext.canvas.save()
+        drawContext.canvas.translate(zoomOffset.x, zoomOffset.y)
+        drawContext.canvas.scale(zoomScale, zoomScale)
 
         // Continent fills.
-        val landColor = Color(0xFF2A4060)
-        val landStroke = Color(0xFF3F5C82)
+        val landColor = Color(0xFF2A2A2A)
+        val landStroke = Color(0xFF444444)
         for (ring in land) {
             if (ring.size < 3) continue
             val path = Path()
@@ -610,7 +656,7 @@ private fun WorldMapWithMarker(
         }
 
         // Equator + prime meridian — faint guides.
-        val gridColor = Color(0xFF1A2638)
+        val gridColor = Color(0xFF1A1A1A)
         drawLine(
             color = gridColor,
             start = Offset(0f, size.height / 2f),
@@ -624,22 +670,24 @@ private fun WorldMapWithMarker(
             strokeWidth = 0.5f
         )
 
-        // Trail of all dots (every visited day) — small, dim, tinted with the
-        // current-day accent so the whole map feels of-a-piece.
-        val trailColor = accent.copy(alpha = 0.55f)
-        for ((_, coord) in allCoordsTrail) {
+        // Trail of visited dots — only show dots for days up to the selected
+        // date, so they appear progressively as the timeline advances.
+        // Each dot is locked to the accent colour of its own day.
+        for ((date, coord) in allCoordsTrail) {
+            if (date.isAfter(selectedDate)) continue
             val (lat, lon) = coord
+            val dotColor = (dotColorsByDate[date] ?: accent).copy(alpha = 0.55f)
             drawCircle(
-                color = trailColor,
-                radius = 1.5f,
+                color = dotColor,
+                radius = 2.0f,
                 center = Offset(lonToX(lon, size.width), latToY(lat, size.height))
             )
         }
 
         // Current-day marker — a stylised "person pin" (head + body), tinted
-        // by the day's accent colour.
+        // by the day's accent colour. Wrap X for world-circling travel.
         if (currentCoords != null) {
-            val cx = animX.value
+            val cx = ((animX.value % size.width) + size.width) % size.width
             val cy = animY.value
             // Lighter "head" tone — blend accent → near-white.
             val headColor = Color(
@@ -649,19 +697,21 @@ private fun WorldMapWithMarker(
                 alpha = 1f
             )
             // Halo
-            drawCircle(color = accent.halo(0.20f), radius = 20f, center = Offset(cx, cy))
+            drawCircle(color = accent.halo(0.20f), radius = 22f, center = Offset(cx, cy))
             // Body
-            drawCircle(color = accent, radius = 7.5f, center = Offset(cx, cy + 5f))
+            drawCircle(color = accent, radius = 8.5f, center = Offset(cx, cy + 6f))
             // Head
-            drawCircle(color = headColor, radius = 5.5f, center = Offset(cx, cy - 6f))
+            drawCircle(color = headColor, radius = 6.5f, center = Offset(cx, cy - 7f))
             // Outline
             drawCircle(
-                color = Color(0xFF1A1408),
-                radius = 7.5f,
-                center = Offset(cx, cy + 5f),
+                color = Color(0xFF111111),
+                radius = 8.5f,
+                center = Offset(cx, cy + 6f),
                 style = Stroke(width = 1.5f)
             )
         }
+
+        drawContext.canvas.restore()
     }
 }
 
@@ -695,7 +745,7 @@ private fun MapInfoPanel(
 
     Column(
         modifier = modifier
-            .background(Color(0xFF0E1726))
+            .background(Color(0xFF0E0E0E))
             .padding(12.dp)
     ) {
         // Date header — moved here from the top bar so the centred location
@@ -765,7 +815,7 @@ private fun StatLine(label: String, value: String, accent: Color = Color.White) 
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = label, color = Color(0xFF8899AA), fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Text(text = label, color = Color(0xFF888888), fontSize = 12.sp, modifier = Modifier.weight(1f))
         Text(text = value, color = accent, fontSize = 14.sp)
     }
 }
@@ -777,7 +827,7 @@ private fun ClickableStatLine(label: String, value: String, accent: Color, onCli
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = label, color = Color(0xFF8899AA), fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Text(text = label, color = Color(0xFF888888), fontSize = 12.sp, modifier = Modifier.weight(1f))
         Text(
             text = value,
             color = accent,
@@ -805,7 +855,7 @@ private fun SimpleListPopup(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF0D0D1A), RoundedCornerShape(12.dp))
+                .background(Color(0xFF0D0D0D), RoundedCornerShape(12.dp))
                 .padding(16.dp)
         ) {
             Row(
@@ -815,12 +865,12 @@ private fun SimpleListPopup(
                 Text(title, color = accent, fontSize = 14.sp, modifier = Modifier.weight(1f))
                 if (onEditIgnored != null) {
                     TextButton(onClick = onEditIgnored) {
-                        Text("Edit", color = Color(0xFF6699BB), fontSize = 12.sp)
+                        Text("Edit", color = Color(0xFF999999), fontSize = 12.sp)
                     }
                 }
             }
             Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = Color(0xFF223344))
+            HorizontalDivider(color = Color(0xFF222222))
             Spacer(Modifier.height(4.dp))
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
                 items(items) { item ->
@@ -848,12 +898,12 @@ private fun HabitBreakdownPopup(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF0D0D1A), RoundedCornerShape(12.dp))
+                .background(Color(0xFF0D0D0D), RoundedCornerShape(12.dp))
                 .padding(16.dp)
         ) {
             Text("Habits today", color = accent, fontSize = 14.sp)
             Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = Color(0xFF223344))
+            HorizontalDivider(color = Color(0xFF222222))
             Spacer(Modifier.height(4.dp))
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
                 items(items) { (name, pts) ->
@@ -890,12 +940,12 @@ private fun LocationTimelinePopup(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.75f)
-                .background(Color(0xFF0D0D1A), RoundedCornerShape(12.dp))
+                .background(Color(0xFF0D0D0D), RoundedCornerShape(12.dp))
                 .padding(16.dp)
         ) {
             Text("Location Timeline", color = accent, fontSize = 14.sp)
             Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = Color(0xFF223344))
+            HorizontalDivider(color = Color(0xFF222222))
             Spacer(Modifier.height(4.dp))
             LazyColumn(
                 state = listState,
@@ -912,7 +962,7 @@ private fun LocationTimelinePopup(
                     ) {
                         Text(
                             text = date.format(MAP_DATE_FMT),
-                            color = if (isSelected) accent else Color(0xFF8899AA),
+                            color = if (isSelected) accent else Color(0xFF888888),
                             fontSize = 12.sp,
                             modifier = Modifier.width(140.dp)
                         )
@@ -953,18 +1003,18 @@ private fun IgnoredCountriesDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF0D0D1A), RoundedCornerShape(12.dp))
+                .background(Color(0xFF0D0D0D), RoundedCornerShape(12.dp))
                 .padding(16.dp)
         ) {
             Text("Ignored country names", color = accent, fontSize = 14.sp)
             Spacer(Modifier.height(4.dp))
             Text(
                 "Names in this list are excluded from the countries count.",
-                color = Color(0xFF778899),
+                color = Color(0xFF777777),
                 fontSize = 11.sp
             )
             Spacer(Modifier.height(10.dp))
-            HorizontalDivider(color = Color(0xFF223344))
+            HorizontalDivider(color = Color(0xFF222222))
             Spacer(Modifier.height(6.dp))
 
             // ── Add row ──────────────────────────────────────────────────
@@ -975,12 +1025,12 @@ private fun IgnoredCountriesDialog(
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
-                    placeholder = { Text("Add name…", fontSize = 12.sp, color = Color(0xFF556677)) },
+                    placeholder = { Text("Add name…", fontSize = 12.sp, color = Color(0xFF555555)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = accent,
-                        unfocusedBorderColor = Color(0xFF334455),
+                        unfocusedBorderColor = Color(0xFF333333),
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
                         cursorColor = accent
@@ -1029,7 +1079,7 @@ private fun IgnoredCountriesDialog(
                             onRemove(name)
                             localList = localList - name
                         }) {
-                            Text("✕", color = Color(0xFF885555), fontSize = 13.sp)
+                            Text("✕", color = Color(0xFF666666), fontSize = 13.sp)
                         }
                     }
                 }
@@ -1066,14 +1116,14 @@ private fun TimelineBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF111726))
+            .background(Color(0xFF111111))
             .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             // Play / pause
             IconButton(onClick = onTogglePlay) {
                 if (isPlaying) {
-                    Text("⏸", color = accent, fontSize = 16.sp)
+                    Icon(Icons.Default.Pause, contentDescription = "Pause", tint = accent)
                 } else {
                     Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = accent)
                 }
@@ -1093,7 +1143,7 @@ private fun TimelineBar(
                 androidx.compose.material3.DropdownMenu(
                     expanded = showSpeedDropdown,
                     onDismissRequest = { showSpeedDropdown = false },
-                    modifier = Modifier.background(Color(0xFF1A2638))
+                    modifier = Modifier.background(Color(0xFF1A1A1A))
                 ) {
                     PLAY_SPEEDS.forEachIndexed { index, s ->
                         androidx.compose.material3.DropdownMenuItem(
@@ -1125,7 +1175,7 @@ private fun TimelineBar(
                 colors = SliderDefaults.colors(
                     thumbColor = accent,
                     activeTrackColor = accent.darker(0.8f),
-                    inactiveTrackColor = Color(0xFF334466)
+                    inactiveTrackColor = Color(0xFF333333)
                 )
             )
             Spacer(Modifier.width(4.dp))
@@ -1136,7 +1186,7 @@ private fun TimelineBar(
             ) {
                 Text(
                     text = "‹",
-                    color = if (canStepBack) Color.White else Color(0xFF445566),
+                    color = if (canStepBack) Color.White else Color(0xFF444444),
                     fontSize = 22.sp
                 )
             }
@@ -1151,7 +1201,7 @@ private fun TimelineBar(
             ) {
                 Text(
                     text = "›",
-                    color = if (canStepForward) Color.White else Color(0xFF445566),
+                    color = if (canStepForward) Color.White else Color(0xFF444444),
                     fontSize = 22.sp
                 )
             }
