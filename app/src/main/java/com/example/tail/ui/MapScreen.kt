@@ -73,8 +73,8 @@ import java.time.format.DateTimeFormatter
 // Display formatting for the map screen.
 private val MAP_DATE_FMT = DateTimeFormatter.ofPattern("yyyy, MMM dd, EEE")
 
-// Available playback speeds in days/sec.
-private val PLAY_SPEEDS = listOf(0.5f, 1f, 2f, 5f, 15f, 30f, 60f, 120f)
+// Available playback speeds in days/sec. -1f represents "Auto" mode.
+private val PLAY_SPEEDS = listOf(0.5f, 1f, 2f, 5f, 15f, 30f, 60f, 120f, -1f)
 private const val DEFAULT_SPEED_INDEX = 2  // 2 days/sec
 
 /**
@@ -208,8 +208,12 @@ fun MapScreen(
 
     LaunchedEffect(isPlaying, speed, mapSize) {
         if (!isPlaying) return@LaunchedEffect
+        
+        val isAuto = speed == -1f
+        val effectiveSpeed = if (isAuto) 240f else speed
         // Nominal time per day at the current speed.
-        val msPerDay = (1000f / speed).toLong().coerceAtLeast(15L)
+        val msPerDay = (1000f / effectiveSpeed).toLong().coerceAtLeast(15L)
+        
         while (isPlaying) {
             val cur = viewModel.selectedDate.value
             if (!cur.isBefore(lastDate)) {
@@ -234,9 +238,50 @@ fun MapScreen(
                 val dist = kotlin.math.sqrt(dx * dx + dy * dy)
                 requiredAnimMs(dist, mapSize.width)
             } else 0L
+            
+            // Check for location change in Auto mode
+            var autoPauseMs = 0L
+            if (isAuto) {
+                val curLabel = viewModel.getLocationLabelForDate(cur)
+                val nextLabel = viewModel.getLocationLabelForDate(nextDate)
+                
+                // Only pause if the next day has an explicit label AND it's different from the current day's explicit label.
+                // If nextLabel is null, it means it's an assumed location, so we don't pause.
+                // If curLabel is null, we only pause if nextLabel is a new explicit location we haven't seen just before.
+                // To be robust, let's get the effective labels for both days.
+                
+                val allLabels = viewModel.getAllStoredLabels()
+                
+                val effectiveCurLabel = curLabel ?: allLabels.entries
+                    .mapNotNull { (k, v) -> runCatching { java.time.LocalDate.parse(k) }.getOrNull()?.let { it to v } }
+                    .filter { (d, _) -> d.isBefore(cur) }
+                    .maxByOrNull { (d, _) -> d }?.second ?: allLabels.values.firstOrNull()
+                    
+                val effectiveNextLabel = nextLabel ?: allLabels.entries
+                    .mapNotNull { (k, v) -> runCatching { java.time.LocalDate.parse(k) }.getOrNull()?.let { it to v } }
+                    .filter { (d, _) -> d.isBefore(nextDate) }
+                    .maxByOrNull { (d, _) -> d }?.second ?: allLabels.values.firstOrNull()
+
+                // The requirement: "we do not count switching from a known location to the assumed location or back to the same location that is known and the same as the last assumed location as a change. it is only if it is actually a new place that it counts as a change."
+                // Also: "count a place as the "same" place for our auto setting if the last two comma separated sections are the same."
+                if (nextLabel != null && effectiveCurLabel != null) {
+                    val curParts = effectiveCurLabel.split(",").map { it.trim() }
+                    val nextParts = nextLabel.split(",").map { it.trim() }
+                    
+                    val curLastTwo = curParts.takeLast(2).joinToString(", ")
+                    val nextLastTwo = nextParts.takeLast(2).joinToString(", ")
+                    
+                    if (curLastTwo != nextLastTwo) {
+                        autoPauseMs = 500L
+                    }
+                } else if (nextLabel != null && effectiveCurLabel == null) {
+                    autoPauseMs = 500L
+                }
+            }
+
             // Wait at least the nominal day-tick, but stretch out for long
             // jumps so the marker can finish its slide.
-            val wait = kotlin.math.max(msPerDay, travelMs)
+            val wait = kotlin.math.max(msPerDay, travelMs) + autoPauseMs
             delay(wait)
             // navigateToDate clamps to today and triggers the same grid rebuild.
             viewModel.navigateToDate(cur.plusDays(1))
@@ -367,8 +412,7 @@ fun MapScreen(
                 isPlaying = isPlaying,
                 onTogglePlay = { isPlaying = !isPlaying },
                 speed = speed,
-                onSpeedDown = { if (speedIndex > 0) speedIndex-- },
-                onSpeedUp = { if (speedIndex < PLAY_SPEEDS.lastIndex) speedIndex++ },
+                onSpeedChange = { newIndex -> speedIndex = newIndex },
                 accent = accent
             )
         }
@@ -403,11 +447,11 @@ private fun Color.darker(factor: Float = 0.75f): Color =
 private fun Color.halo(alpha: Float = 0.20f): Color =
     Color(red = red, green = green, blue = blue, alpha = alpha)
 
-// ── Top bar: centred location name only (date moved to stats panel) ─────────
+// ── Top bar: location name aligned to the right of the map area ─────────────
 //
 // No back arrow — system back handles navigation. The location label is
-// horizontally centred so the centre of the text aligns with the centre
-// of the screen.
+// aligned to the right side of the world map (which takes up the space
+// minus the 220dp info panel).
 
 @Composable
 private fun MapTopBar(locationLabel: String?, isAssumed: Boolean) {
@@ -415,8 +459,7 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean) {
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF111726))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         // Always show something — if no label at all, reserve space so layout
         // doesn't jump. If assumed (no exact entry for this day), append *.
@@ -425,11 +468,18 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean) {
             locationLabel != null              -> locationLabel
             else                               -> " "
         }
-        Text(
-            text = display,
-            color = if (locationLabel != null) Color(0xFFAACCEE) else Color.Transparent,
-            fontSize = 14.sp
-        )
+        Row(modifier = Modifier.fillMaxWidth()) {
+            // Spacer to push the text to the right edge of the map area.
+            // The map area takes weight(1f) and the info panel takes 220.dp.
+            // So we want the text to be aligned to the end of the weight(1f) section.
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = display,
+                color = if (locationLabel != null) Color(0xFFAACCEE) else Color.Transparent,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(end = 220.dp)
+            )
+        }
     }
 }
 
@@ -443,6 +493,7 @@ private fun WorldMapWithMarker(
     speed: Float = 2f,
     onSizeChanged: (Size) -> Unit = {}
 ) {
+    val effectiveSpeed = if (speed == -1f) 240f else speed
     val context = LocalContext.current
     // Load world polygons OFF the main thread so the screen doesn't freeze
     // while the asset is parsed. Empty list until ready (just shows the dark
@@ -482,7 +533,7 @@ private fun WorldMapWithMarker(
             val dx = tx - animX.value
             val dy = ty - animY.value
             val dist = kotlin.math.sqrt(dx * dx + dy * dy)
-            val msPerDay = (1000f / speed).toLong().coerceAtLeast(15L)
+            val msPerDay = (1000f / effectiveSpeed).toLong().coerceAtLeast(15L)
             val travelMs = requiredAnimMs(dist, lastSize.width)
             val durMs = kotlin.math.max(MIN_MARKER_ANIM_MS, kotlin.math.max(msPerDay, travelMs))
                 .coerceAtMost(2000L)
@@ -905,10 +956,11 @@ private fun TimelineBar(
     isPlaying: Boolean,
     onTogglePlay: () -> Unit,
     speed: Float,
-    onSpeedDown: () -> Unit,
-    onSpeedUp: () -> Unit,
+    onSpeedChange: (Int) -> Unit,
     accent: Color
 ) {
+    var showSpeedDropdown by remember { mutableStateOf(false) }
+
     val daysFromStart = java.time.temporal.ChronoUnit.DAYS
         .between(firstDate, selectedDate)
         .coerceIn(0L, totalDays.toLong())
@@ -923,10 +975,6 @@ private fun TimelineBar(
             .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Slow-down speed button
-            IconButton(onClick = onSpeedDown) {
-                Text("«", color = Color.White, fontSize = 18.sp)
-            }
             // Play / pause
             IconButton(onClick = onTogglePlay) {
                 if (isPlaying) {
@@ -935,16 +983,40 @@ private fun TimelineBar(
                     Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = accent)
                 }
             }
-            // Speed-up speed button
-            IconButton(onClick = onSpeedUp) {
-                Text("»", color = Color.White, fontSize = 18.sp)
-            }
             Spacer(Modifier.width(6.dp))
-            Text(
-                text = "${if (speed == speed.toLong().toFloat()) speed.toLong() else speed}×",
-                color = Color(0xFFAAAAAA),
-                fontSize = 11.sp
-            )
+            
+            Box {
+                Text(
+                    text = if (speed == -1f) "Auto" else "${if (speed == speed.toLong().toFloat()) speed.toLong() else speed}×",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clickable { showSpeedDropdown = true }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+                
+                androidx.compose.material3.DropdownMenu(
+                    expanded = showSpeedDropdown,
+                    onDismissRequest = { showSpeedDropdown = false },
+                    modifier = Modifier.background(Color(0xFF1A2638))
+                ) {
+                    PLAY_SPEEDS.forEachIndexed { index, s ->
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (s == -1f) "Auto" else "${if (s == s.toLong().toFloat()) s.toLong() else s}×",
+                                    color = if (s == speed) accent else Color.White
+                                )
+                            },
+                            onClick = {
+                                onSpeedChange(index)
+                                showSpeedDropdown = false
+                            }
+                        )
+                    }
+                }
+            }
+            
             Spacer(Modifier.width(8.dp))
             // Slider takes the rest of the row
             Slider(
