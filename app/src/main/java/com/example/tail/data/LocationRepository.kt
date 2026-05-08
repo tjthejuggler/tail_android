@@ -22,6 +22,8 @@ private const val PREFS_NAME = "tail_location_prefs"
 private const val KEY_LOCATIONS = "daily_locations"
 /** JSON array of user-managed country/region names to exclude from the country count. */
 private const val KEY_IGNORED_COUNTRIES = "ignored_country_names"
+/** Boolean flag: true after US state names have been seeded into the ignore list. */
+private const val KEY_IGNORED_COUNTRIES_SEEDED = "ignored_country_names_seeded"
 /**
  * Map of date-string ("YYYY-MM-DD") → "lat,lon" string. Populated by the
  * Python seeder ([scripts/seed_locations_from_timeline.py]) and incrementally
@@ -32,6 +34,22 @@ private const val KEY_COORDS = "daily_coords"
 
 /** Timeout for an active location request (millis). */
 private const val ACTIVE_FIX_TIMEOUT_MS = 15_000L
+
+/**
+ * US state names (properly capitalised) seeded into the ignored-country list
+ * on first run so the user can see and optionally remove them.
+ */
+private val US_STATE_NAMES = listOf(
+    "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado",
+    "Connecticut", "Delaware", "District of Columbia", "Florida", "Georgia",
+    "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky",
+    "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota",
+    "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire",
+    "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota",
+    "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island",
+    "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont",
+    "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming"
+)
 
 /**
  * Fetches and persists the device's coarse location once per calendar day.
@@ -47,6 +65,24 @@ class LocationRepository(private val context: Context) {
 
     private val prefs by lazy {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    init {
+        seedDefaultIgnoredCountriesIfNeeded()
+    }
+
+    /**
+     * One-time seed: adds US state names to the ignored-country list so they
+     * appear in the UI and the user can remove them if desired. Sets a flag so
+     * this only runs once — subsequent removals by the user are respected.
+     */
+    private fun seedDefaultIgnoredCountriesIfNeeded() {
+        if (prefs.getBoolean(KEY_IGNORED_COUNTRIES_SEEDED, false)) return
+        val existing = loadIgnoredCountries().toMutableSet()
+        existing.addAll(US_STATE_NAMES)
+        saveIgnoredCountries(existing)
+        prefs.edit().putBoolean(KEY_IGNORED_COUNTRIES_SEEDED, true).apply()
+        Log.d(TAG, "Seeded ${US_STATE_NAMES.size} US state names into ignored countries")
     }
 
     /** Returns the stored location label for [date], or null if not yet recorded. */

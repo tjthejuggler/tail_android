@@ -413,7 +413,8 @@ class SmartVoiceService : Service() {
                             Log.i(TAG, "Voice subtype parsed for '$habitName': subtype='$subtypeName', amount=$incrementAmount")
                         }
                     } else {
-                        // For all habits: parse a number after the trigger word, default to 1
+                        // For all habits: parse a number after the trigger word.
+                        // Fall back to the configured increment amount (default 1) if none spoken.
                         val triggerWord = habitToTrigger[habitName] ?: ""
                         val triggerIndex = spokenText.indexOf(triggerWord)
                         val afterTrigger = if (triggerIndex >= 0) {
@@ -421,9 +422,11 @@ class SmartVoiceService : Service() {
                         } else {
                             spokenText
                         }
-                        incrementAmount = parseTrailingNumber(afterTrigger) ?: 1
+                        val configuredDefault = settings.voiceTriggerIncrements[habitName]
+                            ?.takeIf { it > 1 } ?: 1
+                        incrementAmount = parseTrailingNumber(afterTrigger) ?: configuredDefault
                         if (incrementAmount != 1) {
-                            Log.i(TAG, "Parsed amount $incrementAmount for '$habitName' after trigger '$triggerWord'")
+                            Log.i(TAG, "Parsed amount $incrementAmount for '$habitName' after trigger '$triggerWord' (configured default: $configuredDefault)")
                         }
                     }
 
