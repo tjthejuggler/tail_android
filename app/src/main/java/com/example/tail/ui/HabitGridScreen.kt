@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -130,6 +131,7 @@ private val DISPLAY_DATE_FMT = DateTimeFormatter.ofPattern("EEE MMM d")
 @Composable
 fun HabitGridScreen(
     viewModel: HabitViewModel,
+    adviceViewModel: AdviceViewModel,
     onNavigateToSettings: () -> Unit,
     onNavigateToMap: () -> Unit = {}
 ) {
@@ -726,6 +728,15 @@ fun HabitGridScreen(
                 }
             )
         }
+    }
+
+    // ── Advice banner at bottom of screen ────────────────────────────────────
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = 8.dp)
+    ) {
+        AdviceBanner(viewModel = adviceViewModel)
     }
     } // end Box
 

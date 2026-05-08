@@ -59,6 +59,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.example.tail.data.AiModelInfo
 import com.example.tail.data.ChessComType
 import com.example.tail.data.debug.DebugPreferences
+import com.example.tail.ui.AdviceDialog
+import com.example.tail.ui.AdviceViewModel
 
 /**
  * Settings screen: two file pickers only.
@@ -71,12 +73,14 @@ import com.example.tail.data.debug.DebugPreferences
 @Composable
 fun SettingsScreen(
     viewModel: HabitViewModel,
+    adviceViewModel: AdviceViewModel,
     debugPrefs: DebugPreferences,
     onNavigateBack: () -> Unit,
     onNavigateToAppStats: () -> Unit = {}
 ) {
     val settings by viewModel.settings.collectAsState()
     val debugSnapshot by debugPrefs.snapshot.collectAsState()
+    val adviceState by adviceViewModel.state.collectAsState()
     val context = LocalContext.current
 
     // Picker for habitsdb.txt — needs read+write so the app can increment habits
@@ -280,6 +284,42 @@ fun SettingsScreen(
             // ── Voice Note Dictation ─────────────────────────────────────────
             item {
                 VoiceNoteSettingsSection(viewModel = viewModel, settings = settings)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // ── Advice Banner ─────────────────────────────────────────────────
+            item {
+                val adviceCount = adviceState.items.size
+                var showAdviceDialog by remember { mutableStateOf(false) }
+                Text("Advice Banner", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    text = "Add reminders or tips that appear at the top of the habits screen. " +
+                           "Swipe left/right on the banner to cycle through advice.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (adviceCount == 0) "No advice set"
+                    else "$adviceCount piece${if (adviceCount != 1) "s" else ""} of advice",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = { showAdviceDialog = true }) {
+                    Text("Manage Advice")
+                }
+                if (showAdviceDialog) {
+                    AdviceDialog(
+                        adviceList = adviceState.items,
+                        onAdd = { text -> adviceViewModel.addAdvice(text) },
+                        onUpdate = { entity, text -> adviceViewModel.updateAdvice(entity, text) },
+                        onDelete = { id -> adviceViewModel.deleteAdvice(id) },
+                        onDismiss = { showAdviceDialog = false }
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))

@@ -15,6 +15,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.tail.data.AdviceRepository
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
@@ -24,6 +25,8 @@ import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.debug.DebugNoteRepository
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.data.parseDate
+import com.example.tail.ui.AdviceViewModel
+import com.example.tail.ui.AdviceViewModelFactory
 import com.example.tail.ui.AppStatsScreen
 import com.example.tail.ui.HabitGridScreen
 import com.example.tail.ui.HabitViewModel
@@ -46,6 +49,8 @@ class MainActivity : ComponentActivity() {
         val debugPrefs = DebugPreferences(applicationContext)
         val debugNoteRepo = DebugNoteRepository(applicationContext, debugPrefs)
 
+        val adviceRepo = AdviceRepository(applicationContext)
+
         setContent {
             TailTheme(darkTheme = true) {
                 TailApp(
@@ -55,6 +60,7 @@ class MainActivity : ComponentActivity() {
                     datedEntryRepo = DatedEntryRepository(),
                     subtypeDataRepo = SubtypeDataRepository(),
                     timedDataRepo = TimedDataRepository(),
+                    adviceRepo = adviceRepo,
                     debugPrefs = debugPrefs,
                     debugNoteRepo = debugNoteRepo
                 )
@@ -71,6 +77,7 @@ private fun TailApp(
     datedEntryRepo: DatedEntryRepository,
     subtypeDataRepo: SubtypeDataRepository,
     timedDataRepo: TimedDataRepository,
+    adviceRepo: AdviceRepository,
     debugPrefs: DebugPreferences,
     debugNoteRepo: DebugNoteRepository
 ) {
@@ -86,6 +93,9 @@ private fun TailApp(
             timedDataRepo = timedDataRepo,
             context = context
         )
+    )
+    val adviceViewModel: AdviceViewModel = viewModel(
+        factory = AdviceViewModelFactory(adviceRepo)
     )
 
     // Track current route for the debug bubble
@@ -114,6 +124,7 @@ private fun TailApp(
             composable(ROUTE_GRID) {
                 HabitGridScreen(
                     viewModel = viewModel,
+                    adviceViewModel = adviceViewModel,
                     onNavigateToSettings = { navController.navigate(ROUTE_SETTINGS) },
                     onNavigateToMap = { navController.navigate(ROUTE_MAP) }
                 )
@@ -127,6 +138,7 @@ private fun TailApp(
             composable(ROUTE_SETTINGS) {
                 SettingsScreen(
                     viewModel = viewModel,
+                    adviceViewModel = adviceViewModel,
                     debugPrefs = debugPrefs,
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToAppStats = { navController.navigate(ROUTE_APP_STATS) }
