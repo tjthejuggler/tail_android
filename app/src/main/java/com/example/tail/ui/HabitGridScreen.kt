@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -618,6 +619,7 @@ fun HabitGridScreen(
                         selectedIndex = selectedEditIndex,
                         selectedHabitName = selectedHabitName,
                         selectedHabitRawTodayCount = selectedHabitAtIndex?.rawTodayCount ?: 0,
+                        selectedHabitTodayCount = selectedHabitAtIndex?.todayCount ?: 0,
                         isPlaceholderSelected = isPlaceholderSelected,
                         movePending = movePendingSourceIndex >= 0,
                         habitScreens = habitScreens,
@@ -1191,6 +1193,7 @@ private fun EditModeControlBar(
     selectedIndex: Int,
     selectedHabitName: String?,
     selectedHabitRawTodayCount: Int,
+    selectedHabitTodayCount: Int = selectedHabitRawTodayCount,
     isPlaceholderSelected: Boolean,
     movePending: Boolean,
     habitScreens: List<HabitScreen>,
@@ -1414,8 +1417,9 @@ private fun EditModeControlBar(
                         modifier = Modifier.weight(1f)
                     )
                     if (selectedHabitName != null) {
-                        // Count adjuster: [−] rawCount [+]
-                        // Always shows the raw input value (before any divider is applied)
+                        // Count adjuster: [−] points [+]
+                        // Shows the divided points value; for divider habits the raw value
+                        // is editable in the "true value" field below.
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1438,7 +1442,7 @@ private fun EditModeControlBar(
                                 Text("−", fontSize = 14.sp, color = if (selectedHabitRawTodayCount > 0) Color(0xFFFFAA00) else Color(0xFF555555))
                             }
                             Text(
-                                text = selectedHabitRawTodayCount.toString(),
+                                text = selectedHabitTodayCount.toString(),
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1454,6 +1458,52 @@ private fun EditModeControlBar(
                                 Text("+", fontSize = 14.sp, color = Color(0xFF88FF88))
                             }
                         }
+                    }
+                }
+                // For divider habits, show editable true value (undivided total) under the counter
+                if (selectedHabitName != null && (habitDividers[selectedHabitName] ?: 1) > 1) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    var trueValueText by remember(selectedHabitName) {
+                        mutableStateOf(selectedHabitRawTodayCount.toString())
+                    }
+                    // Sync when external count changes (e.g., from [−]/[+] buttons)
+                    if (trueValueText.toIntOrNull() != selectedHabitRawTodayCount) {
+                        trueValueText = selectedHabitRawTodayCount.toString()
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "true value:",
+                            color = Color(0xFFAA88FF),
+                            fontSize = 10.sp
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        OutlinedTextField(
+                            value = trueValueText,
+                            onValueChange = { v: String ->
+                                trueValueText = v.filter { it.isDigit() }
+                                val newCount = trueValueText.toIntOrNull() ?: 0
+                                onSetCount(selectedHabitName, newCount)
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number
+                            ),
+                            modifier = Modifier.width(64.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color(0xFFAA88FF),
+                                unfocusedTextColor = Color(0xFFAA88FF),
+                                focusedBorderColor = Color(0xFFAA88FF),
+                                unfocusedBorderColor = Color(0xFF664488)
+                            ),
+                            textStyle = TextStyle(
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        )
                     }
                 }
                 // Timestamps button — shown when the habit has timestamps for today
@@ -1606,7 +1656,7 @@ private fun EditModeControlBar(
                             )
                             OutlinedTextField(
                                 value = divisorText,
-                                onValueChange = { v ->
+                                onValueChange = { v: String ->
                                     divisorText = v.filter { it.isDigit() }
                                     val d = divisorText.toIntOrNull() ?: 0
                                     if (d >= 2) onSetDivider(selectedHabitName, d)
@@ -1615,7 +1665,7 @@ private fun EditModeControlBar(
                                 keyboardOptions = KeyboardOptions(
                                     keyboardType = KeyboardType.Number
                                 ),
-                                modifier = Modifier.width(80.dp),
+                                modifier = Modifier.width(64.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedTextColor = Color(0xFFFF88FF),
                                     unfocusedTextColor = Color(0xFFFF88FF),
@@ -1623,20 +1673,9 @@ private fun EditModeControlBar(
                                     unfocusedBorderColor = Color(0xFF884488)
                                 ),
                                 textStyle = TextStyle(
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
                                     textAlign = TextAlign.Center
                                 )
-                            )
-                        }
-                        // Show the raw accumulated total beneath the divider field
-                        if (selectedHabitRawTodayCount > 0) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Raw total today: $selectedHabitRawTodayCount",
-                                color = Color(0xFFAA88FF),
-                                fontSize = 10.sp,
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.End
                             )
                         }
                     }
