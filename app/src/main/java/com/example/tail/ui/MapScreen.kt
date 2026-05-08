@@ -22,15 +22,21 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.window.Dialog
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
@@ -65,11 +71,38 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 // Display formatting for the map screen.
-private val MAP_DATE_FMT = DateTimeFormatter.ofPattern("EEE, MMM d, yyyy")
+private val MAP_DATE_FMT = DateTimeFormatter.ofPattern("yyyy, MMM dd, EEE")
 
 // Available playback speeds in days/sec.
 private val PLAY_SPEEDS = listOf(0.5f, 1f, 2f, 5f, 15f, 30f, 60f, 120f)
 private const val DEFAULT_SPEED_INDEX = 2  // 2 days/sec
+
+/**
+ * Maximum allowed marker travel speed, expressed as a fraction of the map's
+ * width per second. At 0.6 the little man can cross 60% of the map width
+ * (≈ continent-spanning) per second — fast enough to feel snappy but slow
+ * enough to never visually teleport. The playback loop will *wait* longer
+ * than the nominal day-tick when the marker needs more time to arrive.
+ */
+private const val MAX_MARKER_SPEED_FRAC_PER_SEC = 0.6f
+
+/**
+ * Floor for how short a single-day animation can be. Even short hops get at
+ * least this much animation time so they don't snap visibly.
+ */
+private const val MIN_MARKER_ANIM_MS = 60L
+
+/**
+ * Returns the animation duration (ms) needed to traverse [distancePx] without
+ * exceeding [MAX_MARKER_SPEED_FRAC_PER_SEC] of [mapWidthPx] per second.
+ * Returns 0 when [mapWidthPx] is 0 (map not measured yet).
+ */
+private fun requiredAnimMs(distancePx: Float, mapWidthPx: Float): Long {
+    if (mapWidthPx <= 0f) return 0L
+    val maxPxPerSec = MAX_MARKER_SPEED_FRAC_PER_SEC * mapWidthPx
+    if (maxPxPerSec <= 0f) return 0L
+    return ((distancePx / maxPxPerSec) * 1000f).toLong()
+}
 
 /**
  * Full-screen world-map "where I was" timeline screen.
@@ -167,17 +200,44 @@ fun MapScreen(
     val speed = PLAY_SPEEDS[speedIndex]
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(isPlaying, speed) {
+    // Measured map size — populated by WorldMapWithMarker once the canvas
+    // is laid out. Used by the playback loop to compute how much real time
+    // the marker needs to travel between two days without exceeding its
+    // max speed (so the little man never visually teleports).
+    var mapSize by remember { mutableStateOf(Size.Zero) }
+
+    LaunchedEffect(isPlaying, speed, mapSize) {
         if (!isPlaying) return@LaunchedEffect
-        // Advance one day every (1000 / speed) ms. Stop at lastDate.
+        // Nominal time per day at the current speed.
         val msPerDay = (1000f / speed).toLong().coerceAtLeast(15L)
         while (isPlaying) {
-            delay(msPerDay)
             val cur = viewModel.selectedDate.value
             if (!cur.isBefore(lastDate)) {
                 isPlaying = false
                 break
             }
+            // Compute the next day's display coords (with the same fallback
+            // logic as currentDisplayCoords) so we can size the wait window
+            // to "however long the marker needs to traverse the distance".
+            val nextDate = cur.plusDays(1)
+            val curCoords = coordsByDate[cur]
+                ?: coordsByDate.entries.filter { it.key.isBefore(cur) }
+                    .maxByOrNull { it.key }?.value
+            val nextCoords = coordsByDate[nextDate]
+                ?: coordsByDate.entries.filter { it.key.isBefore(nextDate) }
+                    .maxByOrNull { it.key }?.value
+            val travelMs = if (curCoords != null && nextCoords != null && mapSize.width > 0f) {
+                val (lat1, lon1) = curCoords
+                val (lat2, lon2) = nextCoords
+                val dx = lonToX(lon2, mapSize.width) - lonToX(lon1, mapSize.width)
+                val dy = latToY(lat2, mapSize.height) - latToY(lat1, mapSize.height)
+                val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                requiredAnimMs(dist, mapSize.width)
+            } else 0L
+            // Wait at least the nominal day-tick, but stretch out for long
+            // jumps so the marker can finish its slide.
+            val wait = kotlin.math.max(msPerDay, travelMs)
+            delay(wait)
             // navigateToDate clamps to today and triggers the same grid rebuild.
             viewModel.navigateToDate(cur.plusDays(1))
         }
@@ -213,9 +273,27 @@ fun MapScreen(
         seen.size
     }
     // Cached location label for the top bar (avoid SharedPrefs on every recomp).
-    val locationLabel = remember(selectedDate, locationVersion) {
-        viewModel.getLocationLabelForDate(selectedDate)
+    // Always show a label: use the exact entry for the day if present, otherwise
+    // fall back to the most recent preceding entry and mark it as assumed (*).
+    val locationLabelPair = remember(selectedDate, locationVersion) {
+        val exact = viewModel.getLocationLabelForDate(selectedDate)
+        if (exact != null) {
+            exact to false
+        } else {
+            // Walk backwards through stored labels to find the last known one.
+            val allLabels = viewModel.getAllStoredLabels()
+            val lastKnown = allLabels.entries
+                .mapNotNull { (k, v) ->
+                    runCatching { java.time.LocalDate.parse(k) }.getOrNull()?.let { it to v }
+                }
+                .filter { (d, _) -> d.isBefore(selectedDate) }
+                .maxByOrNull { (d, _) -> d }
+                ?.second
+            (lastKnown ?: allLabels.values.firstOrNull()) to true
+        }
     }
+    val locationLabel = locationLabelPair.first
+    val locationIsAssumed = locationLabelPair.second
 
     // ── Layout ──────────────────────────────────────────────────────────────
     Surface(
@@ -223,7 +301,7 @@ fun MapScreen(
         color = Color(0xFF0A0F1A)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            MapTopBar(locationLabel = locationLabel)
+            MapTopBar(locationLabel = locationLabel, isAssumed = locationIsAssumed)
 
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 // ── Map area (left, takes remaining width) ─────────────────
@@ -236,7 +314,8 @@ fun MapScreen(
                         currentCoords = currentDisplayCoords,
                         allCoordsTrail = coordsByDate,
                         accent = accent,
-                        speed = speed
+                        speed = speed,
+                        onSizeChanged = { mapSize = it }
                     )
                 }
                 // ── Side info panel (right) ────────────────────────────────
@@ -255,6 +334,9 @@ fun MapScreen(
                         seen.toList().sorted()
                     },
                     onPointsClick = { viewModel.getDayHabitBreakdown(selectedDate) },
+                    onGetIgnoredCountries = { viewModel.getIgnoredCountryNames() },
+                    onAddIgnoredCountry = { name -> viewModel.addIgnoredCountryName(name) },
+                    onRemoveIgnoredCountry = { name -> viewModel.removeIgnoredCountryName(name) },
                     accent = accent,
                     modifier = Modifier
                         .fillMaxHeight()
@@ -328,7 +410,7 @@ private fun Color.halo(alpha: Float = 0.20f): Color =
 // of the screen.
 
 @Composable
-private fun MapTopBar(locationLabel: String?) {
+private fun MapTopBar(locationLabel: String?, isAssumed: Boolean) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -336,21 +418,18 @@ private fun MapTopBar(locationLabel: String?) {
             .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (locationLabel != null) {
-            Text(
-                text = locationLabel,
-                color = Color(0xFFAACCEE),
-                fontSize = 14.sp
-            )
-        } else {
-            // Reserve a row of space so the layout doesn't jump when no
-            // location is recorded for the selected day.
-            Text(
-                text = " ",
-                color = Color.Transparent,
-                fontSize = 14.sp
-            )
+        // Always show something — if no label at all, reserve space so layout
+        // doesn't jump. If assumed (no exact entry for this day), append *.
+        val display = when {
+            locationLabel != null && isAssumed -> "  $locationLabel *"
+            locationLabel != null              -> locationLabel
+            else                               -> " "
         }
+        Text(
+            text = display,
+            color = if (locationLabel != null) Color(0xFFAACCEE) else Color.Transparent,
+            fontSize = 14.sp
+        )
     }
 }
 
@@ -361,7 +440,8 @@ private fun WorldMapWithMarker(
     currentCoords: Pair<Double, Double>?,
     allCoordsTrail: Map<LocalDate, Pair<Double, Double>>,
     accent: Color,
-    speed: Float = 2f
+    speed: Float = 2f,
+    onSizeChanged: (Size) -> Unit = {}
 ) {
     val context = LocalContext.current
     // Load world polygons OFF the main thread so the screen doesn't freeze
@@ -373,20 +453,14 @@ private fun WorldMapWithMarker(
     }
 
     // Animate the marker between coord changes for a smooth slide.
-    // At higher speeds the marker must complete its travel before the next
-    // day fires, so we cap the animation duration to (msPerDay - 20ms).
+    // The animation duration is computed per-jump from the actual distance,
+    // capped so the marker never moves faster than MAX_MARKER_SPEED_FRAC_PER_SEC
+    // — that's why long jumps look smooth (the playback loop also waits the
+    // same duration before advancing the date).
     val animX = remember { Animatable(0f) }
     val animY = remember { Animatable(0f) }
     var lastSize by remember { mutableStateOf(Size.Zero) }
     var hasInitialPosition by remember { mutableStateOf(false) }
-
-    // Derive animation duration from playback speed: at 1× use 800 ms for a
-    // leisurely glide; at higher speeds cap to just under the inter-day delay
-    // so the marker always arrives before the next jump.
-    val animDurationMs = remember(speed) {
-        val msPerDay = (1000f / speed).toLong().coerceAtLeast(15L)
-        (msPerDay - 20L).coerceIn(30L, 800L).toInt()
-    }
 
     LaunchedEffect(currentCoords, lastSize) {
         if (currentCoords == null || lastSize == Size.Zero) return@LaunchedEffect
@@ -400,11 +474,23 @@ private fun WorldMapWithMarker(
             animY.snapTo(ty)
             hasInitialPosition = true
         } else {
+            // Distance-based animation duration. The speed-cap (max pixels/sec
+            // = MAX_MARKER_SPEED_FRAC_PER_SEC * mapWidth) means a continent-
+            // crossing jump takes longer than a same-city day, even at high
+            // playback speeds. The day-tick window (msPerDay) is the lower
+            // bound — we never animate slower than the user's chosen speed.
+            val dx = tx - animX.value
+            val dy = ty - animY.value
+            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+            val msPerDay = (1000f / speed).toLong().coerceAtLeast(15L)
+            val travelMs = requiredAnimMs(dist, lastSize.width)
+            val durMs = kotlin.math.max(MIN_MARKER_ANIM_MS, kotlin.math.max(msPerDay, travelMs))
+                .coerceAtMost(2000L)
+                .toInt()
             // Animate X and Y in PARALLEL so the marker moves diagonally in a
-            // straight line between two days. Duration scales with playback
-            // speed so the marker always reaches its destination in time.
-            launch { animX.animateTo(tx, animationSpec = tween(animDurationMs)) }
-            launch { animY.animateTo(ty, animationSpec = tween(animDurationMs)) }
+            // straight line between two days.
+            launch { animX.animateTo(tx, animationSpec = tween(durMs)) }
+            launch { animY.animateTo(ty, animationSpec = tween(durMs)) }
         }
     }
 
@@ -414,7 +500,9 @@ private fun WorldMapWithMarker(
             .clip(RoundedCornerShape(0.dp))
             .background(Color(0xFF06101F))
             .onSizeChanged { newSize ->
-                lastSize = Size(newSize.width.toFloat(), newSize.height.toFloat())
+                val s = Size(newSize.width.toFloat(), newSize.height.toFloat())
+                lastSize = s
+                onSizeChanged(s)
             }
     ) {
 
@@ -509,10 +597,14 @@ private fun MapInfoPanel(
     countriesVisited: Int,
     onCountriesClick: () -> List<String>,
     onPointsClick: () -> List<Pair<String, Int>>,
+    onGetIgnoredCountries: () -> Set<String>,
+    onAddIgnoredCountry: (String) -> Unit,
+    onRemoveIgnoredCountry: (String) -> Unit,
     accent: Color,
     modifier: Modifier = Modifier
 ) {
     var showCountriesPopup by remember { mutableStateOf(false) }
+    var showIgnoredDialog  by remember { mutableStateOf(false) }
     var showPointsPopup    by remember { mutableStateOf(false) }
 
     Column(
@@ -556,7 +648,18 @@ private fun MapInfoPanel(
             title = "Countries visited",
             items = countries,
             accent = accent,
-            onDismiss = { showCountriesPopup = false }
+            onDismiss = { showCountriesPopup = false },
+            onEditIgnored = { showIgnoredDialog = true }
+        )
+    }
+
+    if (showIgnoredDialog) {
+        IgnoredCountriesDialog(
+            ignoredNames = remember(showIgnoredDialog) { onGetIgnoredCountries().sorted() },
+            accent = accent,
+            onAdd = onAddIgnoredCountry,
+            onRemove = onRemoveIgnoredCountry,
+            onDismiss = { showIgnoredDialog = false }
         )
     }
 
@@ -609,7 +712,8 @@ private fun SimpleListPopup(
     title: String,
     items: List<String>,
     accent: Color,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onEditIgnored: (() -> Unit)? = null
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -618,7 +722,17 @@ private fun SimpleListPopup(
                 .background(Color(0xFF0D0D1A), RoundedCornerShape(12.dp))
                 .padding(16.dp)
         ) {
-            Text(title, color = accent, fontSize = 14.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, color = accent, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                if (onEditIgnored != null) {
+                    TextButton(onClick = onEditIgnored) {
+                        Text("Edit", color = Color(0xFF6699BB), fontSize = 12.sp)
+                    }
+                }
+            }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(color = Color(0xFF223344))
             Spacer(Modifier.height(4.dp))
@@ -663,6 +777,114 @@ private fun HabitBreakdownPopup(
                     ) {
                         Text(name, color = Color(0xFFCCCCCC), fontSize = 13.sp, modifier = Modifier.weight(1f))
                         Text(pts.toString(), color = accent, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Ignored-country editor dialog ───────────────────────────────────────────
+
+/**
+ * Dialog that shows the current ignored-country list and lets the user
+ * add new entries or remove existing ones.
+ */
+@Composable
+private fun IgnoredCountriesDialog(
+    ignoredNames: List<String>,
+    accent: Color,
+    onAdd: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var inputText by remember { mutableStateOf("") }
+    // Local mutable copy so removals feel instant without waiting for a
+    // recomposition triggered by the ViewModel version bump.
+    var localList by remember(ignoredNames) { mutableStateOf(ignoredNames) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF0D0D1A), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text("Ignored country names", color = accent, fontSize = 14.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Names in this list are excluded from the countries count.",
+                color = Color(0xFF778899),
+                fontSize = 11.sp
+            )
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(color = Color(0xFF223344))
+            Spacer(Modifier.height(6.dp))
+
+            // ── Add row ──────────────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    placeholder = { Text("Add name…", fontSize = 12.sp, color = Color(0xFF556677)) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = accent,
+                        unfocusedBorderColor = Color(0xFF334455),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = accent
+                    ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        val trimmed = inputText.trim()
+                        if (trimmed.isNotEmpty() && trimmed !in localList) {
+                            onAdd(trimmed)
+                            localList = (localList + trimmed).sorted()
+                        }
+                        inputText = ""
+                    })
+                )
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = {
+                    val trimmed = inputText.trim()
+                    if (trimmed.isNotEmpty() && trimmed !in localList) {
+                        onAdd(trimmed)
+                        localList = (localList + trimmed).sorted()
+                    }
+                    inputText = ""
+                }) {
+                    Text("Add", color = accent, fontSize = 13.sp)
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // ── List of current ignored names ─────────────────────────────
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(localList) { name ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = name,
+                            color = Color(0xFFCCCCCC),
+                            fontSize = 13.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = {
+                            onRemove(name)
+                            localList = localList - name
+                        }) {
+                            Text("✕", color = Color(0xFF885555), fontSize = 13.sp)
+                        }
                     }
                 }
             }

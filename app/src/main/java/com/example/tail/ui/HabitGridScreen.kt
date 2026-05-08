@@ -397,7 +397,12 @@ fun HabitGridScreen(
             // Right-aligned globe icon sits directly under the Settings icon
             // in the top bar (same horizontal position).
             if (!isLandscape) {
-                val locationLabel = selectedDateLocation ?: "No location"
+                val assumedLocation = remember(selectedDate) {
+                    viewModel.getAssumedLocationForDate(selectedDate)
+                }
+                val locationLabel = selectedDateLocation
+                    ?: assumedLocation?.let { "$it *" }
+                    ?: "No location"
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

@@ -20,6 +20,8 @@ import kotlin.coroutines.resume
 private const val TAG = "LocationRepo"
 private const val PREFS_NAME = "tail_location_prefs"
 private const val KEY_LOCATIONS = "daily_locations"
+/** JSON array of user-managed country/region names to exclude from the country count. */
+private const val KEY_IGNORED_COUNTRIES = "ignored_country_names"
 /**
  * Map of date-string ("YYYY-MM-DD") → "lat,lon" string. Populated by the
  * Python seeder ([scripts/seed_locations_from_timeline.py]) and incrementally
@@ -165,6 +167,33 @@ class LocationRepository(private val context: Context) {
                 Log.w(TAG, "Forward-geocode failed for '$label': ${e.message}")
                 null
             }
+        }
+    }
+
+    // ── Ignored country names ────────────────────────────────────────────────
+
+    /**
+     * Returns the current set of country/region names that should be excluded
+     * from the "countries visited" count (e.g. US state names that still slip
+     * through, or any other false-positive entries).
+     */
+    fun getIgnoredCountryNames(): Set<String> = loadIgnoredCountries()
+
+    /** Adds [name] to the ignored-country set and persists it. */
+    fun addIgnoredCountryName(name: String) {
+        val set = loadIgnoredCountries().toMutableSet()
+        if (set.add(name.trim())) {
+            saveIgnoredCountries(set)
+            dataVersion++
+        }
+    }
+
+    /** Removes [name] from the ignored-country set and persists it. */
+    fun removeIgnoredCountryName(name: String) {
+        val set = loadIgnoredCountries().toMutableSet()
+        if (set.remove(name.trim())) {
+            saveIgnoredCountries(set)
+            dataVersion++
         }
     }
 
@@ -341,5 +370,22 @@ class LocationRepository(private val context: Context) {
         prefs.edit().putString(KEY_COORDS, obj.toString()).apply()
         dataVersion++
         Log.d(TAG, "Saved coords for $date: $lat, $lon")
+    }
+
+    private fun loadIgnoredCountries(): Set<String> {
+        val json = prefs.getString(KEY_IGNORED_COUNTRIES, null) ?: return emptySet()
+        return try {
+            val arr = org.json.JSONArray(json)
+            (0 until arr.length()).map { arr.getString(it) }.toSet()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse ignored countries: ${e.message}")
+            emptySet()
+        }
+    }
+
+    private fun saveIgnoredCountries(set: Set<String>) {
+        val arr = org.json.JSONArray(set.toList())
+        prefs.edit().putString(KEY_IGNORED_COUNTRIES, arr.toString()).apply()
+        Log.d(TAG, "Saved ignored countries: $set")
     }
 }

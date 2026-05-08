@@ -69,16 +69,18 @@ private val US_STATES_LC: Set<String> = setOf(
  * Falls back to "United States" when the last token is a recognised US state
  * (handles legacy entries that lack an explicit country suffix).
  *
- * Returns null for empty / unparseable labels.
+ * Returns null for empty / unparseable labels, or when the resolved country
+ * is in [ignoredNames] (user-managed exclusion list).
  */
-private fun extractCountry(label: String): String? {
+private fun extractCountry(label: String, ignoredNames: Set<String> = emptySet()): String? {
     val parts = label.split(",").map { it.trim() }.filter { it.isNotEmpty() }
     if (parts.isEmpty()) return null
     val last = parts.last()
     // If the very last token is a US state, this is a US entry that lacks an
     // explicit country suffix — emit "United States".
-    if (last.lowercase() in US_STATES_LC) return "United States"
-    return last
+    val country = if (last.lowercase() in US_STATES_LC) "United States" else last
+    if (country in ignoredNames) return null
+    return country
 }
 
 // ── IPC broadcast constants ──────────────────────────────────────────────────
@@ -2387,6 +2389,9 @@ class HabitViewModel(
     /** Returns all previously stored location labels (for the edit dialog suggestions). */
     fun getAllStoredLocations(): List<String> = locationRepo.getAllStoredLocations()
 
+    /** Returns the full date-string → label map in one SharedPrefs read. */
+    fun getAllStoredLabels(): Map<String, String> = locationRepo.getAllStoredLabels()
+
     // ── World-map screen helpers ─────────────────────────────────────────────
 
     /** Returns (lat, lon) for [date] if known, else null. */
@@ -2396,6 +2401,23 @@ class HabitViewModel(
     /** Returns the location label stored for [date] (or null). */
     fun getLocationLabelForDate(date: LocalDate): String? =
         locationRepo.getLocationForDate(date)
+
+    /**
+     * Returns the assumed location label for [date] — the most recent
+     * preceding stored label when no exact entry exists for [date].
+     * Returns null only if no labels exist at all.
+     */
+    fun getAssumedLocationForDate(date: LocalDate): String? {
+        val allLabels = locationRepo.getAllStoredLabels()
+        val lastKnown = allLabels.entries
+            .mapNotNull { (k, v) ->
+                runCatching { LocalDate.parse(k) }.getOrNull()?.let { it to v }
+            }
+            .filter { (d, _) -> d.isBefore(date) }
+            .maxByOrNull { (d, _) -> d }
+            ?.second
+        return lastKnown ?: allLabels.values.firstOrNull()
+    }
 
     /** Returns all date-strings for which we have plottable coords, sorted ascending. */
     fun getDatesWithCoords(): List<String> =
@@ -2432,15 +2454,25 @@ class HabitViewModel(
      */
     fun buildCountryTimeline(): List<Pair<LocalDate, String>> {
         val labels = locationRepo.getAllStoredLabels()  // single SharedPrefs read
+        val ignored = locationRepo.getIgnoredCountryNames()
         val out = ArrayList<Pair<LocalDate, String>>(labels.size)
         for ((dateStr, label) in labels) {
             val d = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: continue
-            val country = extractCountry(label) ?: continue
+            val country = extractCountry(label, ignored) ?: continue
             out.add(d to country)
         }
         out.sortBy { it.first }
         return out
     }
+
+    /** Returns the current set of country/region names excluded from the country count. */
+    fun getIgnoredCountryNames(): Set<String> = locationRepo.getIgnoredCountryNames()
+
+    /** Adds [name] to the ignored-country set (persisted). Bumps locationDataVersion. */
+    fun addIgnoredCountryName(name: String) = locationRepo.addIgnoredCountryName(name)
+
+    /** Removes [name] from the ignored-country set (persisted). Bumps locationDataVersion. */
+    fun removeIgnoredCountryName(name: String) = locationRepo.removeIgnoredCountryName(name)
 
     /**
      * Current data version of the location store. Bumped on every save.
