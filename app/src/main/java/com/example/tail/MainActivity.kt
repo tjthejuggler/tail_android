@@ -22,6 +22,7 @@ import com.example.tail.data.SettingsRepository
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.TimedDataRepository
+import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.debug.DebugNoteRepository
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.data.parseDate
@@ -51,18 +52,36 @@ class MainActivity : ComponentActivity() {
 
         val adviceRepo = AdviceRepository(applicationContext)
 
+        val habitsRepo = HabitsRepository()
+        val settingsRepo = SettingsRepository(applicationContext)
+        val textInputRepo = TextInputRepository()
+        val subtypeDataRepo = SubtypeDataRepository()
+        val timedDataRepo = TimedDataRepository()
+
+        val backupManager = BackupManager(
+            context = applicationContext,
+            settingsRepo = settingsRepo,
+            adviceRepo = adviceRepo,
+            habitsRepo = habitsRepo,
+            textInputRepo = textInputRepo,
+            subtypeDataRepo = subtypeDataRepo,
+            timedDataRepo = timedDataRepo,
+            debugPrefs = debugPrefs
+        )
+
         setContent {
             TailTheme(darkTheme = true) {
                 TailApp(
-                    habitsRepo = HabitsRepository(),
-                    settingsRepo = SettingsRepository(applicationContext),
-                    textInputRepo = TextInputRepository(),
+                    habitsRepo = habitsRepo,
+                    settingsRepo = settingsRepo,
+                    textInputRepo = textInputRepo,
                     datedEntryRepo = DatedEntryRepository(),
-                    subtypeDataRepo = SubtypeDataRepository(),
-                    timedDataRepo = TimedDataRepository(),
+                    subtypeDataRepo = subtypeDataRepo,
+                    timedDataRepo = timedDataRepo,
                     adviceRepo = adviceRepo,
                     debugPrefs = debugPrefs,
-                    debugNoteRepo = debugNoteRepo
+                    debugNoteRepo = debugNoteRepo,
+                    backupManager = backupManager
                 )
             }
         }
@@ -79,7 +98,8 @@ private fun TailApp(
     timedDataRepo: TimedDataRepository,
     adviceRepo: AdviceRepository,
     debugPrefs: DebugPreferences,
-    debugNoteRepo: DebugNoteRepository
+    debugNoteRepo: DebugNoteRepository,
+    backupManager: BackupManager
 ) {
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -140,6 +160,7 @@ private fun TailApp(
                     viewModel = viewModel,
                     adviceViewModel = adviceViewModel,
                     debugPrefs = debugPrefs,
+                    backupManager = backupManager,
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToAppStats = { navController.navigate(ROUTE_APP_STATS) }
                 )
