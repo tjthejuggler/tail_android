@@ -429,10 +429,9 @@ private fun CalendarDayGrid(
     val cells: List<Int?> = buildList {
         repeat(startOffset) { add(null) }
         for (d in 1..daysInMonth) add(d)
-        // Pad to a multiple of 7 so the grid is rectangular
-        val total = startOffset + daysInMonth
-        val remainder = if (total % 7 == 0) 0 else 7 - (total % 7)
-        repeat(remainder) { add(null) }
+        // Always pad to 42 cells (6 rows of 7) so the dialog height stays
+        // consistent regardless of how many rows the month actually needs.
+        while (size < 42) add(null)
     }
 
     Column(

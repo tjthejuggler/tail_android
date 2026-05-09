@@ -61,7 +61,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -618,14 +619,96 @@ private fun WorldMapWithMarker(
             .clip(RoundedCornerShape(0.dp))
             .background(Color(0xFF080808))
             .pointerInput(Unit) {
-                detectTransformGestures { centroid, pan, zoom, _ ->
-                    val newScale = (zoomScale * zoom).coerceIn(1f, 5f)
-                    val scaleRatio = newScale / zoomScale
-                    zoomOffset = Offset(
-                        centroid.x - (centroid.x - zoomOffset.x) * scaleRatio + pan.x,
-                        centroid.y - (centroid.y - zoomOffset.y) * scaleRatio + pan.y
-                    )
-                    zoomScale = newScale
+                var lastTapUpTime = 0L
+
+                awaitEachGesture {
+                    val firstDown = awaitFirstDown(requireUnconsumed = false)
+                    val downTime = firstDown.uptimeMillis
+
+                    var isTransform = false
+                    var totalMovement = 0f
+                    var prevCentroid = firstDown.position
+                    var prevPinchDist = 0f
+                    val pointerPositions = mutableMapOf(firstDown.id to firstDown.position)
+
+                    while (pointerPositions.isNotEmpty()) {
+                        val event = awaitPointerEvent()
+
+                        // Update pointer tracking
+                        for (change in event.changes) {
+                            if (change.pressed) {
+                                pointerPositions[change.id] = change.position
+                            } else {
+                                pointerPositions.remove(change.id)
+                            }
+                        }
+
+                        if (pointerPositions.size >= 2) {
+                            isTransform = true
+                            val positions = pointerPositions.values.toList()
+                            val centroid = Offset(
+                                positions.map { it.x }.average().toFloat(),
+                                positions.map { it.y }.average().toFloat()
+                            )
+                            val dx = positions[0].x - positions[1].x
+                            val dy = positions[0].y - positions[1].y
+                            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+
+                            if (prevPinchDist > 0f) {
+                                val zoom = dist / prevPinchDist
+                                val newScale = (zoomScale * zoom).coerceIn(1f, 5f)
+                                if (newScale > 1f) {
+                                    val scaleRatio = newScale / zoomScale
+                                    val pan = Offset(
+                                        centroid.x - prevCentroid.x,
+                                        centroid.y - prevCentroid.y
+                                    )
+                                    zoomOffset = Offset(
+                                        centroid.x - (centroid.x - zoomOffset.x) * scaleRatio + pan.x,
+                                        centroid.y - (centroid.y - zoomOffset.y) * scaleRatio + pan.y
+                                    )
+                                    zoomScale = newScale
+                                } else {
+                                    zoomScale = 1f
+                                    zoomOffset = Offset.Zero
+                                }
+                            }
+                            prevCentroid = centroid
+                            prevPinchDist = dist
+                        } else if (pointerPositions.size == 1) {
+                            val pos = pointerPositions.values.first()
+                            val dx = pos.x - prevCentroid.x
+                            val dy = pos.y - prevCentroid.y
+                            val move = kotlin.math.sqrt(dx * dx + dy * dy)
+                            totalMovement += move
+
+                            if (zoomScale > 1f && totalMovement > 8f) {
+                                isTransform = true
+                                zoomOffset = Offset(zoomOffset.x + dx, zoomOffset.y + dy)
+                            }
+                            prevCentroid = pos
+                            prevPinchDist = 0f
+                        }
+
+                        event.changes.forEach { it.consume() }
+                    }
+
+                    // Tap detection: not a transform, short duration, small movement
+                    val upTime = System.currentTimeMillis()
+                    val isTap = !isTransform && (upTime - downTime) < 300 && totalMovement < 20f
+
+                    if (isTap) {
+                        if (upTime - lastTapUpTime < 300) {
+                            // Double tap → reset zoom
+                            zoomScale = 1f
+                            zoomOffset = Offset.Zero
+                            lastTapUpTime = 0L
+                        } else {
+                            lastTapUpTime = upTime
+                        }
+                    } else {
+                        lastTapUpTime = 0L
+                    }
                 }
             }
             .onSizeChanged { newSize ->
