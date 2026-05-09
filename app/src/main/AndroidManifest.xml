@@ -252,6 +252,63 @@
             </intent-filter>
         </service>
 
+        <!--
+            ════════════════════════════════════════════════════════════════
+            Lock-screen Habit List Widget
+            ════════════════════════════════════════════════════════════════
+
+            HabitListWidgetProvider: AppWidgetProvider that renders the
+            collapsed bar / expanded scrollable habit list. Handles all of:
+              - tap-to-arm / second-tap-to-expand (accident-resistance)
+              - per-row tap → habit increment (normal / max-one)
+              - per-row tap → launches WidgetInputActivity (text-input habits)
+              - auto-disarm timeout (alarm-driven)
+              - per-widget DataStore state (recent-tap order, max1-today set)
+        -->
+        <receiver
+            android:name=".widget.HabitListWidgetProvider"
+            android:exported="true"
+            android:label="Tail habits">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <!-- Custom actions used by the widget itself -->
+                <action android:name="com.example.tail.widget.ARM" />
+                <action android:name="com.example.tail.widget.DISARM" />
+                <action android:name="com.example.tail.widget.EXPAND" />
+                <action android:name="com.example.tail.widget.COLLAPSE" />
+                <action android:name="com.example.tail.widget.INCREMENT" />
+                <action android:name="com.example.tail.widget.REFRESH" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info" />
+        </receiver>
+
+        <!--
+            HabitListRemoteViewsService: backs the ListView inside the expanded
+            widget. Must hold android.permission.BIND_REMOTEVIEWS so only the
+            system can bind to it (Android requires this for RemoteViewsService).
+        -->
+        <service
+            android:name=".widget.HabitListRemoteViewsService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+
+        <!--
+            WidgetInputActivity: transparent trampoline that shows the
+            TextInputDialog when the user taps a text-input habit from the
+            widget. Reuses Theme.Tail.Transparent so only the dialog is visible.
+            Single-task / no-history so it can't end up in the recents stack.
+        -->
+        <activity
+            android:name=".widget.WidgetInputActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Tail.Transparent" />
+
     </application>
 
 </manifest>

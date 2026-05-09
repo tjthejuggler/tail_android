@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AppWidgetProvider metadata for the lock-screen habit list widget.
+  - Initial layout = collapsed bar (so a freshly placed widget is in the safe state).
+  - resizeMode horizontal|vertical so the user can stretch it as wide as the lock screen allows.
+  - widgetCategory keyguard|home_screen → eligible to be placed on the lock screen on devices
+    that still support it (Samsung) AND on the home screen as a fallback.
+  - 30 minute updatePeriodMillis is the OS minimum; we mostly drive updates manually
+    via notifyAppWidgetViewDataChanged from the provider.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialLayout="@layout/widget_collapsed"
+    android:minWidth="180dp"
+    android:minHeight="40dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="40dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="4"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="keyguard|home_screen"
+    android:previewImage="@mipmap/ic_launcher" />
