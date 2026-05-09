@@ -3,6 +3,7 @@ package com.example.tail.ui
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,7 +30,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -62,6 +66,68 @@ import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.ui.AdviceDialog
 import com.example.tail.ui.AdviceViewModel
+
+/**
+ * Grayscale color scheme for the Settings screen.
+ * All colors are black/white/gray to create a monochrome look
+ * while maintaining text visibility through proper contrast.
+ */
+@Composable
+private fun settingsGrayscaleScheme(): ColorScheme {
+    return if (isSystemInDarkTheme()) {
+        darkColorScheme(
+            primary = Color(0xFFB0B0B0),
+            onPrimary = Color.Black,
+            primaryContainer = Color(0xFF333333),
+            onPrimaryContainer = Color(0xFFE0E0E0),
+            secondary = Color(0xFF888888),
+            onSecondary = Color.Black,
+            secondaryContainer = Color(0xFF333333),
+            onSecondaryContainer = Color(0xFFE0E0E0),
+            tertiary = Color(0xFF888888),
+            onTertiary = Color.Black,
+            background = Color(0xFF1A1A1A),
+            onBackground = Color(0xFFE0E0E0),
+            surface = Color(0xFF1A1A1A),
+            onSurface = Color(0xFFE0E0E0),
+            surfaceVariant = Color(0xFF2A2A2A),
+            onSurfaceVariant = Color(0xFFAAAAAA),
+            outline = Color(0xFF666666),
+            outlineVariant = Color(0xFF444444),
+            error = Color(0xFFCCCCCC),
+            onError = Color.Black,
+            errorContainer = Color(0xFF333333),
+            onErrorContainer = Color(0xFFCCCCCC),
+            surfaceTint = Color(0xFF808080),
+        )
+    } else {
+        lightColorScheme(
+            primary = Color(0xFF444444),
+            onPrimary = Color.White,
+            primaryContainer = Color(0xFFD0D0D0),
+            onPrimaryContainer = Color(0xFF1A1A1A),
+            secondary = Color(0xFF666666),
+            onSecondary = Color.White,
+            secondaryContainer = Color(0xFFD0D0D0),
+            onSecondaryContainer = Color(0xFF1A1A1A),
+            tertiary = Color(0xFF666666),
+            onTertiary = Color.White,
+            background = Color.White,
+            onBackground = Color(0xFF1A1A1A),
+            surface = Color.White,
+            onSurface = Color(0xFF1A1A1A),
+            surfaceVariant = Color(0xFFF5F5F5),
+            onSurfaceVariant = Color(0xFF666666),
+            outline = Color(0xFF999999),
+            outlineVariant = Color(0xFFD0D0D0),
+            error = Color(0xFF333333),
+            onError = Color.White,
+            errorContainer = Color(0xFFE0E0E0),
+            onErrorContainer = Color(0xFF333333),
+            surfaceTint = Color(0xFF808080),
+        )
+    }
+}
 
 /**
  * Settings screen: two file pickers only.
@@ -141,6 +207,7 @@ fun SettingsScreen(
         }
     }
 
+    MaterialTheme(colorScheme = settingsGrayscaleScheme()) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -368,6 +435,7 @@ fun SettingsScreen(
             }
         }
     }
+    } // closes grayscale MaterialTheme
 }
 
 /**
@@ -931,7 +999,7 @@ private fun VoiceNoteSettingsSection(
 
 // ── Debug Mode card ──────────────────────────────────────────────────────────
 
-private val DebugGreen = Color(0xFF4CAF50)
+private val DebugGray = Color(0xFF666666)
 
 @Composable
 private fun DebugModeCard(
@@ -963,14 +1031,14 @@ private fun DebugModeCard(
                 Text(
                     if (debugModeEnabled) "Bubble is visible" else "Bubble is hidden",
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (debugModeEnabled) DebugGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (debugModeEnabled) DebugGray else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Switch(
                 checked = debugModeEnabled,
                 onCheckedChange = onToggleDebugMode,
                 colors = SwitchDefaults.colors(
-                    checkedTrackColor = DebugGreen,
+                    checkedTrackColor = DebugGray,
                     checkedThumbColor = Color.White
                 )
             )
@@ -999,7 +1067,7 @@ private fun DebugModeCard(
                         Text(
                             text = "📁 $displayPath",
                             style = MaterialTheme.typography.bodySmall,
-                            color = DebugGreen,
+                            color = DebugGray,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
