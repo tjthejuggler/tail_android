@@ -2,6 +2,9 @@ package com.example.tail.ui
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -133,11 +136,21 @@ fun MapScreen(
         val activity = context as? Activity
         val previousOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+
+        // ── Immersive mode: hide status bar, navigation bar, and clock ──
+        val window = activity?.window
+        val insetsController = window?.let { WindowInsetsControllerCompat(it, it.decorView) }
+        insetsController?.hide(WindowInsetsCompat.Type.systemBars())
+        insetsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
         onDispose {
             // Restore whatever orientation policy was in effect before we entered.
             if (activity != null && previousOrientation != null) {
                 activity.requestedOrientation = previousOrientation
             }
+            // Restore system bars
+            insetsController?.show(WindowInsetsCompat.Type.systemBars())
+            insetsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
         }
     }
 
@@ -677,17 +690,24 @@ private fun WorldMapWithMarker(
                             prevPinchDist = dist
                         } else if (pointerPositions.size == 1) {
                             val pos = pointerPositions.values.first()
-                            val dx = pos.x - prevCentroid.x
-                            val dy = pos.y - prevCentroid.y
-                            val move = kotlin.math.sqrt(dx * dx + dy * dy)
-                            totalMovement += move
 
-                            if (zoomScale > 1f && totalMovement > 8f) {
-                                isTransform = true
-                                zoomOffset = Offset(zoomOffset.x + dx, zoomOffset.y + dy)
+                            // When transitioning from pinch (2 fingers) to single finger,
+                            // skip the pan delta to avoid a snap — just update the reference point.
+                            if (prevPinchDist > 0f) {
+                                prevCentroid = pos
+                                prevPinchDist = 0f
+                            } else {
+                                val dx = pos.x - prevCentroid.x
+                                val dy = pos.y - prevCentroid.y
+                                val move = kotlin.math.sqrt(dx * dx + dy * dy)
+                                totalMovement += move
+
+                                if (zoomScale > 1f && totalMovement > 8f) {
+                                    isTransform = true
+                                    zoomOffset = Offset(zoomOffset.x + dx, zoomOffset.y + dy)
+                                }
+                                prevCentroid = pos
                             }
-                            prevCentroid = pos
-                            prevPinchDist = 0f
                         }
 
                         event.changes.forEach { it.consume() }

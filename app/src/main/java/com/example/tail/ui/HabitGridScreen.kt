@@ -730,13 +730,15 @@ fun HabitGridScreen(
         }
     }
 
-    // ── Advice banner at bottom of screen ────────────────────────────────────
-    Box(
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .padding(bottom = 8.dp)
-    ) {
-        AdviceBanner(viewModel = adviceViewModel)
+    // ── Advice banner at bottom of screen (hidden in edit/info/graph modes) ──
+    if (!editMode && !infoMode && !graphMode) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 8.dp)
+        ) {
+            AdviceBanner(viewModel = adviceViewModel)
+        }
     }
     } // end Box
 
