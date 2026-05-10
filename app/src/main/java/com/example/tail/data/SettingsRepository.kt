@@ -48,6 +48,8 @@ private val KEY_SUBTYPE_DATA_FILE_URIS = stringPreferencesKey("subtype_data_file
 // Timed habit type keys
 private val KEY_TIMED_HABITS = stringSetPreferencesKey("timed_habits")
 private val KEY_TIMED_DATA_FILE_URIS = stringPreferencesKey("timed_data_file_uris")
+// Timeless habit type key
+private val KEY_TIMELESS_HABITS = stringSetPreferencesKey("timeless_habits")
 // Hidden screens (set of screen IDs)
 private val KEY_HIDDEN_SCREENS = stringSetPreferencesKey("hidden_screens")
 // Disabled habits (set of habit names)
@@ -302,6 +304,7 @@ class SettingsRepository(private val context: Context) {
             migrateStringSet(KEY_CONDITIONAL_HABITS)
             migrateStringSet(KEY_SUBTYPED_HABITS)
             migrateStringSet(KEY_TIMED_HABITS)
+            migrateStringSet(KEY_TIMELESS_HABITS)
             migrateStringSet(KEY_VOICE_TRIGGER_HABITS)
 
             // --- Delimited-string keys (habit order) ---
@@ -399,6 +402,7 @@ class SettingsRepository(private val context: Context) {
             subtypeDataFileUris = decodeFileUriMap(subtypeDataFileUrisRaw),
             timedHabits = prefs[KEY_TIMED_HABITS] ?: emptySet(),
             timedDataFileUris = decodeFileUriMap(timedDataFileUrisRaw),
+            timelessHabits = prefs[KEY_TIMELESS_HABITS] ?: emptySet(),
             hiddenScreens = prefs[KEY_HIDDEN_SCREENS] ?: emptySet(),
             disabledHabits = prefs[KEY_DISABLED_HABITS] ?: emptySet(),
             aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
@@ -574,6 +578,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the map of habit name → SAF URI for the timed data file. */
     suspend fun saveTimedDataFileUris(uris: Map<String, String>) {
         context.dataStore.edit { prefs -> prefs[KEY_TIMED_DATA_FILE_URIS] = encodeFileUriMap(uris) }
+    }
+
+    /** Saves the set of habits that have the "timeless" feature enabled. */
+    suspend fun saveTimelessHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_TIMELESS_HABITS] = habits }
     }
 
     /** Saves the set of screen IDs that are hidden. */

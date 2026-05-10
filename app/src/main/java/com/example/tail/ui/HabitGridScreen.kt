@@ -555,8 +555,8 @@ fun HabitGridScreen(
                                 }
                                 habit.useCustomInput -> dialogHabit = habit
                                 else -> {
-                                    // When viewing a different day, increment without timestamp (timeless by default)
-                                    val timeless = !isToday
+                                    // When viewing a different day or habit is timeless, increment without timestamp
+                                    val timeless = !isToday || habit.name in settings.timelessHabits
                                     viewModel.incrementHabit(habit.name, 1, recordTimestamp = !timeless)
                                     // Show increment toast with edit-time option
                                     incrementToastHabit = habit.name
@@ -688,6 +688,8 @@ fun HabitGridScreen(
                         onSetVoiceTriggerIncrement = { name, amount -> viewModel.setVoiceTriggerIncrement(name, amount) },
                         voiceSubtypeHabits = settings.voiceSubtypeHabits,
                         onToggleVoiceSubtype = { name -> viewModel.toggleVoiceSubtype(name) },
+                        timelessHabits = settings.timelessHabits,
+                        onToggleTimeless = { name -> viewModel.toggleTimeless(name) },
                         selectedHabitTimestampCount = selectedHabitTimestampCount,
                         onShowTimestamps = { name ->
                             timestampScope.launch {
@@ -1267,6 +1269,8 @@ private fun EditModeControlBar(
     onSetVoiceTriggerIncrement: (String, Int) -> Unit = { _, _ -> },
     voiceSubtypeHabits: Set<String> = emptySet(),
     onToggleVoiceSubtype: (String) -> Unit = {},
+    timelessHabits: Set<String> = emptySet(),
+    onToggleTimeless: (String) -> Unit = {},
     /** Number of timestamps for the selected habit on the current day. */
     selectedHabitTimestampCount: Int = 0,
     /** Called when the user taps the timestamps button. */
@@ -2115,6 +2119,34 @@ private fun EditModeControlBar(
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color(0xFFFF4444),
                                 checkedTrackColor = Color(0xFF4A0000),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // ── Timeless toggle ────────────────────────────────────
+                    val isTimeless = selectedHabitName in timelessHabits
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "Timeless", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isTimeless) "No timestamp recorded by default" else "Timestamp recorded on increment",
+                                color = Color(0xFF888888), fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isTimeless,
+                            onCheckedChange = { onToggleTimeless(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF88CCFF),
+                                checkedTrackColor = Color(0xFF003A5A),
                                 uncheckedThumbColor = Color(0xFF888888),
                                 uncheckedTrackColor = Color(0xFF333333)
                             )

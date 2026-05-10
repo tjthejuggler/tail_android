@@ -239,6 +239,14 @@ data class AppSettings(
     val timedDataFileUris: Map<String, String> = emptyMap(),
 
     /**
+     * Habits that have the "timeless" feature enabled.
+     * When a timeless habit is incremented, no timestamp is recorded by default
+     * (the increment is recorded as timeless). The user can still edit the time
+     * via the toast's "Edit Time" button to add a timestamp retroactively.
+     */
+    val timelessHabits: Set<String> = emptySet(),
+
+    /**
      * Set of screen IDs that are "hidden". A hidden screen's name is not shown
      * in the top tab bar when it is not the active screen. When selected, it
      * shows its name normally in the active tab bubble.

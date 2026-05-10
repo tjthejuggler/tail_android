@@ -410,6 +410,7 @@ class BackupManager(
 
         settingsRepo.saveTimedHabits(s.timedHabits.toSet())
         settingsRepo.saveTimedDataFileUris(s.timedDataFileUris)
+        settingsRepo.saveTimelessHabits(s.timelessHabits.toSet())
 
         settingsRepo.saveHiddenScreens(s.hiddenScreens.toSet())
         settingsRepo.saveDisabledHabits(s.disabledHabits.toSet())
@@ -653,6 +654,7 @@ class BackupManager(
         subtypeDataFileUris = s.subtypeDataFileUris,
         timedHabits = s.timedHabits.toList(),
         timedDataFileUris = s.timedDataFileUris,
+        timelessHabits = s.timelessHabits.toList(),
         hiddenScreens = s.hiddenScreens.toList(),
         disabledHabits = s.disabledHabits.toList(),
         aiIconsEnabled = s.aiIconsEnabled,

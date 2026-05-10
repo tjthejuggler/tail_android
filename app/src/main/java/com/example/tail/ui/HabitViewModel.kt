@@ -847,6 +847,16 @@ class HabitViewModel(
         }
     }
 
+    /** Toggles the "timeless" feature on/off for [habitName]. */
+    fun toggleTimeless(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.timelessHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveTimelessHabits(current)
+            _settings.value = _settings.value.copy(timelessHabits = current)
+        }
+    }
+
     /** Sets the SAF URI for a timed habit's data file. */
     fun setTimedDataFileUri(habitName: String, uri: Uri) {
         viewModelScope.launch {

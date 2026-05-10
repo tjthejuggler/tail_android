@@ -97,6 +97,7 @@ data class SettingsSection(
     val subtypeDataFileUris: Map<String, String> = emptyMap(),
     val timedHabits: List<String> = emptyList(),
     val timedDataFileUris: Map<String, String> = emptyMap(),
+    val timelessHabits: List<String> = emptyList(),
     val hiddenScreens: List<String> = emptyList(),
     val disabledHabits: List<String> = emptyList(),
     val aiIconsEnabled: Boolean = false,
