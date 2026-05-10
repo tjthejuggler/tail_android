@@ -43,7 +43,7 @@ import androidx.compose.ui.window.Dialog
 fun LocationEditDialog(
     currentLocation: String?,
     suggestions: List<String>,
-    onConfirm: (String) -> Unit,
+    onConfirm: (String?) -> Unit,
     onDismiss: () -> Unit
 ) {
     var text by remember { mutableStateOf(currentLocation ?: "") }
@@ -127,6 +127,14 @@ fun LocationEditDialog(
                         Text("Cancel", color = Color(0xFF888888))
                     }
                     Spacer(modifier = Modifier.weight(1f))
+                    if (currentLocation != null) {
+                        TextButton(
+                            onClick = { onConfirm(null) },
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFCC4444))
+                        ) {
+                            Text("Delete", color = Color(0xFFCC4444))
+                        }
+                    }
                     Button(
                         onClick = { onConfirm(text.trim()) },
                         enabled = text.isNotBlank(),

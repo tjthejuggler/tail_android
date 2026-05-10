@@ -2371,6 +2371,19 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Removes the location label and coords for the given date, making it act
+     * as if a location was never manually set. The day will then be assumed
+     * to be at whatever the previous known location was.
+     */
+    fun removeLocationForDate(date: java.time.LocalDate) {
+        locationRepo.removeLocationForDate(date)
+        if (_selectedDate.value == date) {
+            // Re-derive the location from the previous known day
+            _selectedDateLocation.value = locationRepo.getLocationForDate(date)
+        }
+    }
+
     /** Returns all previously stored location labels (for the edit dialog suggestions). */
     fun getAllStoredLocations(): List<String> = locationRepo.getAllStoredLocations()
 

@@ -803,7 +803,11 @@ fun HabitGridScreen(
             currentLocation = selectedDateLocation,
             suggestions = viewModel.getAllStoredLocations(),
             onConfirm = { label ->
-                viewModel.setLocationForDate(selectedDate, label)
+                if (label == null) {
+                    viewModel.removeLocationForDate(selectedDate)
+                } else {
+                    viewModel.setLocationForDate(selectedDate, label)
+                }
                 showLocationEditDialog = false
             },
             onDismiss = { showLocationEditDialog = false }

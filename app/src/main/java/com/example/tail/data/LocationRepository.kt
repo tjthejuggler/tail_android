@@ -95,6 +95,12 @@ class LocationRepository(private val context: Context) {
         saveLocation(date, label)
     }
 
+    /** Removes both the location label and coords for [date], making it act as if never set. */
+    fun removeLocationForDate(date: LocalDate) {
+        removeLocation(date)
+        removeCoords(date)
+    }
+
     /** Returns all previously stored location labels (deduplicated, sorted). */
     fun getAllStoredLocations(): List<String> {
         return loadMap().values.distinct().sorted()
@@ -406,6 +412,26 @@ class LocationRepository(private val context: Context) {
         prefs.edit().putString(KEY_COORDS, obj.toString()).apply()
         dataVersion++
         Log.d(TAG, "Saved coords for $date: $lat, $lon")
+    }
+
+    private fun removeLocation(date: LocalDate) {
+        val map = loadMap().toMutableMap()
+        if (map.remove(date.toString()) != null) {
+            val obj = JSONObject(map as Map<*, *>)
+            prefs.edit().putString(KEY_LOCATIONS, obj.toString()).apply()
+            dataVersion++
+            Log.d(TAG, "Removed location for $date")
+        }
+    }
+
+    private fun removeCoords(date: LocalDate) {
+        val map = loadCoordsMap().toMutableMap()
+        if (map.remove(date.toString()) != null) {
+            val obj = JSONObject(map as Map<*, *>)
+            prefs.edit().putString(KEY_COORDS, obj.toString()).apply()
+            dataVersion++
+            Log.d(TAG, "Removed coords for $date")
+        }
     }
 
     private fun loadIgnoredCountries(): Set<String> {
