@@ -7,6 +7,7 @@ import android.net.Uri
 import android.util.Log
 import com.example.tail.ui.ACTION_HABIT_INCREMENTED
 import com.example.tail.ui.EXTRA_HABIT_NAME
+import com.example.tail.ui.HabitIncrementBus
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
@@ -104,6 +105,7 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                 }
 
                 habitsRepo.incrementHabit(uri, appContext, habitName, 1)
+                HabitIncrementBus.emit(habitName)
                 Log.i(TAG, "Incremented habit '$habitName' via IPC broadcast")
 
                 // Record timestamp for IPC-triggered increment
@@ -129,6 +131,7 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                             }
                         }
                         habitsRepo.incrementHabit(uri, appContext, linkedName, 1)
+                        HabitIncrementBus.emit(linkedName)
                         Log.i(TAG, "Incremented linked habit '$linkedName' (conditional on '$habitName')")
                     }
                 }

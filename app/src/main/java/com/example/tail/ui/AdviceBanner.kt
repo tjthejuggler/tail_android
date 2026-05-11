@@ -79,6 +79,9 @@ fun AdviceBanner(
     // Track which advice item to show notes dialog for
     var noteDialogAdvice by remember { mutableStateOf<AdviceItem?>(null) }
 
+    // Track whether the "Add Advice" management dialog is open
+    var showAddAdviceDialog by remember { mutableStateOf(false) }
+
     // 5 lines × 16sp lineHeight ≈ 80dp content + 12dp vertical padding = ~92dp max
     val maxBannerHeight = 92.dp
 
@@ -157,7 +160,22 @@ fun AdviceBanner(
             onSave = { notes ->
                 viewModel.saveNotes(adviceItem.id, notes)
             },
-            onDismiss = { noteDialogAdvice = null }
+            onDismiss = { noteDialogAdvice = null },
+            onAddAdvice = {
+                noteDialogAdvice = null
+                showAddAdviceDialog = true
+            }
+        )
+    }
+
+    // ── Add Advice management dialog ────────────────────────────────────────
+    if (showAddAdviceDialog) {
+        AdviceDialog(
+            adviceList = state.items,
+            onAdd = { text -> viewModel.addAdvice(text) },
+            onUpdate = { item, text -> viewModel.updateAdvice(item, text) },
+            onDelete = { id -> viewModel.deleteAdvice(id) },
+            onDismiss = { showAddAdviceDialog = false }
         )
     }
 }

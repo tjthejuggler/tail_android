@@ -216,6 +216,26 @@ class HabitViewModel(
         // Load AI icons from disk on startup
         refreshAiIcons()
 
+        // Collect in-process increment events from VoiceHabitService / IPC receivers
+        // so the UI updates instantly without waiting for ON_RESUME.
+        viewModelScope.launch {
+            HabitIncrementBus.events.collect { habitName ->
+                Log.d(TAG, "HabitIncrementBus event for '$habitName' — reloading DB")
+                val phoneUriStr = _settings.value.fileUri
+                if (phoneUriStr.isNotEmpty()) {
+                    try {
+                        val db = withContext(Dispatchers.IO) {
+                            habitsRepo.ensureDaysExist(Uri.parse(phoneUriStr), context)
+                        }
+                        cachedPhoneDb = db
+                        rebuildHabitList()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to reload DB after increment event: ${e.message}")
+                    }
+                }
+            }
+        }
+
         // Fetch today's location in the background (no-op if already stored for today),
         // then seed the selectedDateLocation for today.
         viewModelScope.launch {
@@ -2634,6 +2654,7 @@ class HabitViewModel(
             _settings.value = _settings.value.copy(voiceNoteFileUri = uri)
         }
     }
+
 }
 
 class HabitViewModelFactory(

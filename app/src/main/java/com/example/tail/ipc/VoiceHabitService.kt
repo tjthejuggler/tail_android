@@ -30,6 +30,7 @@ import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
 import com.example.tail.ui.ACTION_HABIT_INCREMENTED
 import com.example.tail.ui.EXTRA_HABIT_NAME
+import com.example.tail.ui.HabitIncrementBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -412,6 +413,7 @@ class VoiceHabitService : Service() {
                     }
 
                     habitsRepo.incrementHabit(uri, applicationContext, habitName, incrementAmount)
+                    HabitIncrementBus.emit(habitName)
                     Log.i(TAG, "Incremented habit '$habitName' by $incrementAmount via voice trigger")
 
                     // Save subtype breakdown if applicable
@@ -451,6 +453,7 @@ class VoiceHabitService : Service() {
                                 }
                             }
                             habitsRepo.incrementHabit(uri, applicationContext, linkedName, 1)
+                            HabitIncrementBus.emit(linkedName)
                             Log.i(TAG, "Incremented linked '$linkedName' (conditional on '$habitName')")
                         }
                     }

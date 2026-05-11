@@ -18,6 +18,7 @@ import com.example.tail.R
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.ui.HabitIncrementBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -342,10 +343,12 @@ class HabitListWidgetProvider : AppWidgetProvider() {
                         val cur = db[habitName]?.get(todayStr) ?: 0
                         if (cur < 1) {
                             habitsRepo.incrementHabit(uri, appCtx, habitName, 1)
+                            HabitIncrementBus.emit(habitName)
                             didIncrement = true
                         }
                     } else {
                         habitsRepo.incrementHabit(uri, appCtx, habitName, 1)
+                        HabitIncrementBus.emit(habitName)
                         didIncrement = true
                     }
 

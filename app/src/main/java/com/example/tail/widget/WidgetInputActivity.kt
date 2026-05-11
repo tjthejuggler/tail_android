@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
+import com.example.tail.ui.HabitIncrementBus
 import com.example.tail.ui.TextInputDialog
 import com.example.tail.ui.theme.TailTheme
 import kotlinx.coroutines.flow.first
@@ -119,6 +120,7 @@ class WidgetInputActivity : ComponentActivity() {
                         habitName,
                         1
                     )
+                    HabitIncrementBus.emit(habitName)
                 }
 
                 // 3. Record widget-local recent tap (text-input habits aren't "max-one"
