@@ -187,7 +187,7 @@ fun MapScreen(
             val ct = viewModel.buildCountryTimeline()
             // Compute each date's accent colour from its own monthly average.
             val dc = c.keys.associateWith { date ->
-                accentColorForPoints(viewModel.getDayStatsLight(date).monthlyAverage.toInt())
+                accentColorForPoints(kotlin.math.round(viewModel.getDayStatsLight(date).monthlyAverage).toInt())
             }
             Triple(c, ct, dc)
         }
@@ -323,7 +323,7 @@ fun MapScreen(
     // Full stats (streak/anti-streak) are debounced: only computed after the user
     // pauses on a day for 400ms, so rapid playback stays smooth.
     val lightStats = remember(selectedDate) { viewModel.getDayStatsLight(selectedDate) }
-    val accent = remember(lightStats.monthlyAverage) { accentColorForPoints(lightStats.monthlyAverage.toInt()) }
+    val accent = remember(lightStats.monthlyAverage) { accentColorForPoints(kotlin.math.round(lightStats.monthlyAverage).toInt()) }
 
     // Full stats — debounced. While waiting, show "..." for streak/anti-streak.
     var dayStats by remember { mutableStateOf(lightStats) }
