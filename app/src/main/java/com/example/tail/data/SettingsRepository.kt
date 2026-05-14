@@ -80,6 +80,9 @@ private val KEY_VOICE_TRIGGER_INCREMENTS = stringPreferencesKey("voice_trigger_i
 // Voice note dictation settings
 private val KEY_VOICE_NOTE_ENABLED = booleanPreferencesKey("voice_note_enabled")
 private val KEY_VOICE_NOTE_FILE_URI = stringPreferencesKey("voice_note_file_uri")
+// Automatic daily backup settings — see AppSettings.autoBackupFolderUri
+private val KEY_AUTO_BACKUP_FOLDER_URI = stringPreferencesKey("auto_backup_folder_uri")
+private val KEY_AUTO_BACKUP_LAST_DATE = stringPreferencesKey("auto_backup_last_date")
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
@@ -421,8 +424,20 @@ class SettingsRepository(private val context: Context) {
             voiceTriggerIncrements = decodeIntMap(voiceTriggerIncrementsRaw),
             voiceSubtypeHabits = prefs[KEY_VOICE_SUBTYPE_HABITS] ?: emptySet(),
             voiceNoteEnabled = prefs[KEY_VOICE_NOTE_ENABLED] ?: false,
-            voiceNoteFileUri = prefs[KEY_VOICE_NOTE_FILE_URI] ?: ""
+            voiceNoteFileUri = prefs[KEY_VOICE_NOTE_FILE_URI] ?: "",
+            autoBackupFolderUri = prefs[KEY_AUTO_BACKUP_FOLDER_URI] ?: "",
+            autoBackupLastDate = prefs[KEY_AUTO_BACKUP_LAST_DATE] ?: ""
         )
+    }
+
+    /** Saves the SAF tree URI for the automatic daily backup folder. */
+    suspend fun saveAutoBackupFolderUri(uri: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_AUTO_BACKUP_FOLDER_URI] = uri }
+    }
+
+    /** Saves the ISO date string of the most recent successful automatic backup. */
+    suspend fun saveAutoBackupLastDate(date: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_AUTO_BACKUP_LAST_DATE] = date }
     }
 
     suspend fun saveFileUri(uri: String) {

@@ -62,6 +62,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.tail.data.AiModelInfo
 import com.example.tail.data.ChessComType
+import com.example.tail.data.backup.AutoBackupManager
 import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.ui.AdviceDialog
@@ -143,6 +144,7 @@ fun SettingsScreen(
     adviceViewModel: AdviceViewModel,
     debugPrefs: DebugPreferences,
     backupManager: BackupManager,
+    autoBackupManager: AutoBackupManager,
     onNavigateBack: () -> Unit,
     onNavigateToAppStats: () -> Unit = {}
 ) {
@@ -396,7 +398,10 @@ fun SettingsScreen(
 
             // ── Backup & Restore ─────────────────────────────────────────────
             item {
-                BackupSettingsSection(backupManager = backupManager)
+                BackupSettingsSection(
+                    backupManager = backupManager,
+                    autoBackupManager = autoBackupManager
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))

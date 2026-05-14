@@ -329,7 +329,28 @@ data class AppSettings(
     /** Global on/off for voice note dictation feature. */
     val voiceNoteEnabled: Boolean = false,
     /** SAF URI for the notes markdown file to prepend dictated notes to. */
-    val voiceNoteFileUri: String = ""
+    val voiceNoteFileUri: String = "",
+
+    // ── Automatic daily backup settings ───────────────────────────────────
+    /**
+     * SAF tree URI for the folder where automatic daily backups are written.
+     * When non-empty, on the FIRST app launch of each calendar day (and before
+     * any habit DB read/write) the app exports a full backup bundle to
+     * `<folder>/tail_auto_backup_YYYY-MM-DD.json`. Old backups remain until
+     * the user deletes them manually via Settings. Empty = feature disabled
+     * (no folder picked yet).
+     *
+     * This was added in response to a near-total database wipe incident where
+     * Syncthing-related conditions caused a transient load failure followed
+     * by an empty-skeleton overwrite. See ADR / README for details.
+     */
+    val autoBackupFolderUri: String = "",
+    /**
+     * ISO date string ("YYYY-MM-DD") of the most recent successful automatic
+     * backup. Compared against [java.time.LocalDate.now] on launch to decide
+     * whether to run a fresh backup. Empty = never backed up.
+     */
+    val autoBackupLastDate: String = ""
 )
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.data.backup.AutoBackupManager
 import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.backup.BackupResult
 import kotlinx.coroutines.launch
@@ -45,7 +47,8 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun BackupSettingsSection(
-    backupManager: BackupManager
+    backupManager: BackupManager,
+    autoBackupManager: AutoBackupManager
 ) {
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<String?>(null) }
@@ -135,6 +138,15 @@ fun BackupSettingsSection(
                         else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+
+        // ── Automatic daily backup sub-section ─────────────────────────────
+        // Added after the near-total data-wipe incident. Even if the
+        // anti-shrinkage guard in HabitsRepository prevents the wipe, an
+        // automatic dated backup gives the user a known-good rollback target.
+        Spacer(modifier = Modifier.height(12.dp))
+        HorizontalDivider()
+        Spacer(modifier = Modifier.height(8.dp))
+        AutoBackupSection(autoBackupManager = autoBackupManager)
     }
 
     // Confirmation dialog before applying an import — destructive op, must be opt-in.

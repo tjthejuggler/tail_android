@@ -22,6 +22,7 @@ import com.example.tail.data.SettingsRepository
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.TimedDataRepository
+import com.example.tail.data.backup.AutoBackupManager
 import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.debug.DebugNoteRepository
 import com.example.tail.data.debug.DebugPreferences
@@ -36,6 +37,7 @@ import com.example.tail.ui.MapScreen
 import com.example.tail.ui.SettingsScreen
 import com.example.tail.ui.debug.DebugBubbleOverlay
 import com.example.tail.ui.theme.TailTheme
+import kotlinx.coroutines.launch
 
 private const val ROUTE_GRID = "grid"
 private const val ROUTE_SETTINGS = "settings"
@@ -69,6 +71,12 @@ class MainActivity : ComponentActivity() {
             debugPrefs = debugPrefs
         )
 
+        val autoBackupManager = AutoBackupManager(
+            context = applicationContext,
+            settingsRepo = settingsRepo,
+            backupManager = backupManager
+        )
+
         setContent {
             TailTheme(darkTheme = true) {
                 TailApp(
@@ -81,7 +89,8 @@ class MainActivity : ComponentActivity() {
                     adviceRepo = adviceRepo,
                     debugPrefs = debugPrefs,
                     debugNoteRepo = debugNoteRepo,
-                    backupManager = backupManager
+                    backupManager = backupManager,
+                    autoBackupManager = autoBackupManager
                 )
             }
         }
@@ -99,7 +108,8 @@ private fun TailApp(
     adviceRepo: AdviceRepository,
     debugPrefs: DebugPreferences,
     debugNoteRepo: DebugNoteRepository,
-    backupManager: BackupManager
+    backupManager: BackupManager,
+    autoBackupManager: AutoBackupManager
 ) {
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -122,15 +132,33 @@ private fun TailApp(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    // ON_START: snap date to today if stale from a previous session (overnight).
+    // ON_START: snap date to today if stale from a previous session (overnight),
+    //           AND run the once-per-day automatic backup BEFORE any DB read/write.
     //           Only fires when the app truly returns from background, not on
     //           in-app navigation — so map→grid date sync is preserved.
     // ON_RESUME: reload phone DB and sync dated entries (cheap when unchanged).
+    //
+    // Ordering is critical: the auto-backup MUST complete (or no-op because no
+    // folder is configured) before any habit DB load/save runs, so that a
+    // backup captures the on-disk state in its sync-stable pre-launch form.
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val appScope = androidx.compose.runtime.rememberCoroutineScope()
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START  -> viewModel.onAppStarted()
+                Lifecycle.Event.ON_START  -> {
+                    viewModel.onAppStarted()
+                    // Run today's auto-backup in the background. Cheap (~1 DataStore
+                    // read) when already done today; otherwise it streams the full
+                    // bundle to the SAF folder. Errors are logged inside the manager.
+                    appScope.launch {
+                        try {
+                            autoBackupManager.runIfNeeded()
+                        } catch (t: Throwable) {
+                            android.util.Log.w("TailApp", "auto-backup threw: ${t.message}", t)
+                        }
+                    }
+                }
                 Lifecycle.Event.ON_RESUME -> viewModel.onAppForegrounded()
                 else -> Unit
             }
@@ -161,6 +189,7 @@ private fun TailApp(
                     adviceViewModel = adviceViewModel,
                     debugPrefs = debugPrefs,
                     backupManager = backupManager,
+                    autoBackupManager = autoBackupManager,
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToAppStats = { navController.navigate(ROUTE_APP_STATS) }
                 )
