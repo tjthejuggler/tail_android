@@ -31,6 +31,8 @@ private const val KEY_IGNORED_COUNTRIES_SEEDED = "ignored_country_names_seeded"
  * Used by the world-map screen to plot a person marker per day.
  */
 private const val KEY_COORDS = "daily_coords"
+/** The user's preferred auto-detected location candidate string. */
+private const val KEY_PREFERRED_AUTO_CANDIDATE = "preferred_auto_candidate"
 
 /** Timeout for an active location request (millis). */
 private const val ACTIVE_FIX_TIMEOUT_MS = 15_000L
@@ -106,6 +108,17 @@ class LocationRepository(private val context: Context) {
         return loadMap().values.distinct().sorted()
     }
 
+    /** Saves the user's preferred auto-detected location candidate string. */
+    fun savePreferredAutoCandidate(candidate: String) {
+        prefs.edit().putString(KEY_PREFERRED_AUTO_CANDIDATE, candidate).apply()
+        Log.d(TAG, "Saved preferred auto candidate: $candidate")
+    }
+
+    /** Returns the user's preferred auto-detected location candidate, or null. */
+    fun getPreferredAutoCandidate(): String? {
+        return prefs.getString(KEY_PREFERRED_AUTO_CANDIDATE, null)
+    }
+
     /** Returns (lat, lon) for [date] if known (from the seeder or a real-time fix). */
     fun getCoordsForDate(date: LocalDate): Pair<Double, Double>? {
         return parseCoordString(loadCoordsMap()[date.toString()])
@@ -171,9 +184,294 @@ class LocationRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Actively requests a fresh GPS/network fix, reverse-geocodes it, and
+     * saves both the label and coords for [date]. Returns the label or null.
+     * Unlike [fetchTodayIfNeeded], this always requests a fresh fix even if a
+     * location is already stored for [date].
+     */
+    suspend fun fetchFreshLocationForDate(date: LocalDate): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val coords = getBestLastKnownLocation()
+                    ?: requestFreshLocation()
+                    ?: return@withContext null
+
+                Log.d(TAG, "Fresh fix for $date: ${coords.first}, ${coords.second}")
+                saveCoords(date, coords.first, coords.second)
+                val label = reverseGeocode(coords.first, coords.second)
+                if (label != null) {
+                    saveLocation(date, label)
+                }
+                label
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to fetch fresh location: ${e.message}")
+                null
+            }
+        }
+    }
+
     /** Manually saves (lat, lon) for [date]. Used by the seeder bridge / debug. */
     fun setCoordsForDate(date: LocalDate, lat: Double, lon: Double) {
         saveCoords(date, lat, lon)
+    }
+
+    /**
+     * Generates multiple candidate location names for the given coordinates.
+     * Each candidate is a different way of formatting the address from the
+     * geocoder results, allowing the user to cycle through options.
+     *
+     * Returns a deduplicated list ordered from most specific to least specific.
+     * The GPS coordinates are NOT changed — only the display label varies.
+     */
+    suspend fun generateLocationCandidates(lat: Double, lon: Double): List<String> {
+        val candidates = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+
+        // ── Source 1: Android Geocoder (structured fields) ──────────────
+        if (Geocoder.isPresent()) {
+            val roundedLat = (Math.round(lat * 1000.0)) / 1000.0
+            val roundedLon = (Math.round(lon * 1000.0)) / 1000.0
+            val geocoder = Geocoder(context, Locale.getDefault())
+            val maxResults = 5
+
+            val addresses = fetchGeocoderAddresses(geocoder, roundedLat, roundedLon, maxResults)
+
+            for (addr in addresses) {
+                for (candidate in buildPlaceCandidates(addr)) {
+                    if (seen.add(candidate)) candidates.add(candidate)
+                }
+                // Also extract candidates from the Address's formatted address lines
+                // which often contain the town name even when individual fields are null
+                for (candidate in buildAddressLineCandidates(addr)) {
+                    if (seen.add(candidate)) candidates.add(candidate)
+                }
+            }
+
+            // Also try with raw (unrounded) coords
+            if (roundedLat != lat || roundedLon != lon) {
+                val rawAddresses = fetchGeocoderAddresses(geocoder, lat, lon, maxResults)
+                for (addr in rawAddresses) {
+                    for (candidate in buildPlaceCandidates(addr)) {
+                        if (seen.add(candidate)) candidates.add(candidate)
+                    }
+                    for (candidate in buildAddressLineCandidates(addr)) {
+                        if (seen.add(candidate)) candidates.add(candidate)
+                    }
+                }
+            }
+        }
+
+        // ── Source 2: Nominatim (OpenStreetMap) fallback ─────────────────
+        // The Android Geocoder often misses small towns; Nominatim has much
+        // better coverage for places like Halesworth, Lowestoft, etc.
+        try {
+            val nominatimCandidates = fetchNominatimCandidates(lat, lon)
+            for (candidate in nominatimCandidates) {
+                if (seen.add(candidate)) candidates.add(candidate)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Nominatim fallback failed: ${e.message}")
+        }
+
+        // Reorder: if the user has a preferred candidate, move it to the front
+        val preferred = getPreferredAutoCandidate()
+        if (preferred != null && preferred in candidates) {
+            candidates.remove(preferred)
+            candidates.add(0, preferred)
+        }
+
+        Log.d(TAG, "Generated ${candidates.size} location candidates for $lat, $lon: $candidates")
+        return candidates
+    }
+
+    /**
+     * Fetches addresses from the Android Geocoder, handling both the
+     * TIRAMISU+ async API and the legacy synchronous API.
+     */
+    private suspend fun fetchGeocoderAddresses(
+        geocoder: Geocoder,
+        lat: Double,
+        lon: Double,
+        maxResults: Int
+    ): List<android.location.Address> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            suspendCancellableCoroutine { cont ->
+                geocoder.getFromLocation(lat, lon, maxResults) { addrs ->
+                    cont.resume(addrs)
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            geocoder.getFromLocation(lat, lon, maxResults) ?: emptyList()
+        }
+    }
+
+    /**
+     * Extracts candidate names from the Address's formatted address lines.
+     * The Android Geocoder often puts the town name in an address line even
+     * when the structured locality/featureName fields are null or wrong.
+     * E.g. address line "Angel Yd, Halesworth IP19" → extract "Halesworth".
+     */
+    private fun buildAddressLineCandidates(addr: android.location.Address): List<String> {
+        val candidates = mutableListOf<String>()
+        val country = addr.countryName?.takeIf { it.isNotBlank() }
+        val region = addr.adminArea?.takeIf { it.isNotBlank() }
+
+        // Collect all meaningful tokens from address lines
+        val townNames = mutableSetOf<String>()
+        for (i in 0 until addr.maxAddressLineIndex.coerceAtMost(3)) {
+            val line = addr.getAddressLine(i) ?: continue
+            // Split by commas and clean up each part
+            line.split(",").map { it.trim() }.filter { it.isNotBlank() }.forEach { part ->
+                // Skip parts that are just postcodes (e.g. "IP19"), numbers, or very short
+                if (part.length > 3 && looksLikePlaceName(part) && !part.matches(Regex("^[A-Z]{1,2}\\d.*"))) {
+                    townNames.add(part)
+                }
+            }
+        }
+
+        for (town in townNames) {
+            // "Town, Region, Country"
+            val full = listOfNotNull(town, region, country).joinToString(", ")
+            if (full.isNotBlank()) candidates.add(full)
+
+            // "Town, Country"
+            if (region != null && country != null) {
+                val noRegion = listOfNotNull(town, country).joinToString(", ")
+                if (noRegion != full && noRegion.isNotBlank()) candidates.add(noRegion)
+            }
+        }
+
+        return candidates.distinct()
+    }
+
+    /**
+     * Queries the Nominatim (OpenStreetMap) reverse-geocoding API.
+     * Returns candidate location names extracted from the JSON response.
+     * Nominatim has excellent coverage for small towns worldwide.
+     */
+    private suspend fun fetchNominatimCandidates(lat: Double, lon: Double): List<String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val urlStr = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lon&zoom=10&addressdetails=1"
+                val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("User-Agent", "TailHabitTracker/1.0")
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+
+                val responseCode = conn.responseCode
+                if (responseCode != 200) {
+                    Log.w(TAG, "Nominatim returned HTTP $responseCode")
+                    return@withContext emptyList()
+                }
+
+                val json = conn.inputStream.bufferedReader().readText()
+                conn.disconnect()
+
+                val jsonObj = org.json.JSONObject(json)
+                val address = jsonObj.optJSONObject("address") ?: return@withContext emptyList()
+                val candidates = mutableListOf<String>()
+                val seen = mutableSetOf<String>()
+
+                // Extract town/city/village/hamlet — Nominatim uses these keys for settlements
+                val settlementKeys = listOf("city", "town", "village", "hamlet", "suburb", "municipality")
+                val settlement = settlementKeys.firstNotNullOfOrNull { key ->
+                    address.optString(key)?.takeIf { it.isNotBlank() }
+                }
+
+                val county = address.optString("county")?.takeIf { it.isNotBlank() }
+                val state = address.optString("state")?.takeIf { it.isNotBlank() }
+                val countryName = address.optString("country")?.takeIf { it.isNotBlank() }
+
+                if (settlement != null) {
+                    // "Settlement, State, Country"
+                    val full = listOfNotNull(settlement, state, countryName).joinToString(", ")
+                    if (seen.add(full)) candidates.add(full)
+
+                    // "Settlement, Country"
+                    if (state != null && countryName != null) {
+                        val noState = listOfNotNull(settlement, countryName).joinToString(", ")
+                        if (seen.add(noState)) candidates.add(noState)
+                    }
+
+                    // "Settlement, County, Country"
+                    if (county != null && county != state) {
+                        val withCounty = listOfNotNull(settlement, county, countryName).joinToString(", ")
+                        if (seen.add(withCounty)) candidates.add(withCounty)
+                    }
+                }
+
+                // "County, State, Country" as broader option
+                if (county != null) {
+                    val countyFull = listOfNotNull(county, state, countryName).joinToString(", ")
+                    if (seen.add(countyFull)) candidates.add(countyFull)
+                }
+
+                // "State, Country"
+                if (state != null && countryName != null) {
+                    val stateFull = listOf(state, countryName).joinToString(", ")
+                    if (seen.add(stateFull)) candidates.add(stateFull)
+                }
+
+                // Also try the display_name from Nominatim — extract first few parts
+                val displayName = jsonObj.optString("name")?.takeIf { it.isNotBlank() && looksLikePlaceName(it) }
+                if (displayName != null && displayName != settlement) {
+                    val nameFull = listOfNotNull(displayName, state, countryName).joinToString(", ")
+                    if (seen.add(nameFull)) candidates.add(nameFull)
+                }
+
+                candidates
+            } catch (e: Exception) {
+                Log.w(TAG, "Nominatim request failed: ${e.message}")
+                emptyList()
+            }
+        }
+    }
+
+    /**
+     * Builds a list of candidate names from a single Address at different
+     * specificity levels: "Place, Region, Country", "Place, Country",
+     * "Region, Country", "Country", etc.
+     */
+    private fun buildPlaceCandidates(addr: android.location.Address): List<String> {
+        val candidates = mutableListOf<String>()
+        val country = addr.countryName?.takeIf { it.isNotBlank() }
+        val region = addr.adminArea?.takeIf { it.isNotBlank() }
+        val subAdmin = addr.subAdminArea?.takeIf { it.isNotBlank() }
+        val locality = addr.locality?.takeIf { it.isNotBlank() }
+        val subLocality = addr.subLocality?.takeIf { it.isNotBlank() }
+        val feature = addr.featureName?.takeIf { it.isNotBlank() && looksLikePlaceName(it) }
+
+        // Determine the best "place" name (most specific to least)
+        val placeOptions = listOfNotNull(locality, subLocality, feature, subAdmin)
+            .distinct()
+
+        for (place in placeOptions) {
+            // "Place, Region, Country"
+            val full = listOfNotNull(place, region, country).joinToString(", ")
+            if (full.isNotBlank()) candidates.add(full)
+
+            // "Place, Country" (skip region)
+            if (region != null && country != null) {
+                val noRegion = listOfNotNull(place, country).joinToString(", ")
+                if (noRegion != full && noRegion.isNotBlank()) candidates.add(noRegion)
+            }
+        }
+
+        // "Region, Country" as a broader option
+        if (region != null && country != null) {
+            val regionFull = listOf(region, country).joinToString(", ")
+            if (regionFull !in candidates) candidates.add(regionFull)
+        }
+
+        // "Country" only as last resort
+        if (country != null && country !in candidates) {
+            candidates.add(country)
+        }
+
+        return candidates.distinct()
     }
 
     /**
@@ -318,40 +616,129 @@ class LocationRepository(private val context: Context) {
 
     /**
      * Reverse-geocodes (lat, lon) to a human-readable string.
-     * Tries to include the most specific place name available:
-     * subLocality → locality → subAdminArea → adminArea, plus countryName.
+     *
+     * To avoid micro-locations like "Angel Yd" appearing instead of the
+     * actual town, we:
+     * 1. Round coordinates to 3 decimal places (~111 m grid) to smooth
+     *    out GPS jitter that can land on a courtyard or building.
+     * 2. Request up to 5 results and scan them for the one with the
+     *    best locality-level place name.
+     * 3. Format as "Place, Region, Country".
      */
     private suspend fun reverseGeocode(lat: Double, lon: Double): String? {
+        // If the user has a preferred auto candidate, use it directly for daily auto-fetch
+        val preferred = getPreferredAutoCandidate()
+        if (preferred != null) {
+            Log.d(TAG, "Using preferred auto candidate: $preferred")
+            return preferred
+        }
+
         if (!Geocoder.isPresent()) {
             Log.w(TAG, "Geocoder not present on this device")
             return null
         }
-        val geocoder = Geocoder(context, Locale.getDefault())
+        // Round to 3 decimal places (~111 m) to avoid micro-locations
+        val roundedLat = (Math.round(lat * 1000.0)) / 1000.0
+        val roundedLon = (Math.round(lon * 1000.0)) / 1000.0
+        Log.d(TAG, "Reverse-geocoding rounded coords: $roundedLat, $roundedLon (raw: $lat, $lon)")
 
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val geocoder = Geocoder(context, Locale.getDefault())
+        val maxResults = 5
+
+        val addresses = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             suspendCancellableCoroutine { cont ->
-                geocoder.getFromLocation(lat, lon, 1) { addresses ->
-                    cont.resume(formatAddress(addresses.firstOrNull()))
+                geocoder.getFromLocation(roundedLat, roundedLon, maxResults) { addrs ->
+                    cont.resume(addrs)
                 }
             }
         } else {
             @Suppress("DEPRECATION")
-            val addresses = geocoder.getFromLocation(lat, lon, 1)
-            formatAddress(addresses?.firstOrNull())
+            geocoder.getFromLocation(roundedLat, roundedLon, maxResults) ?: emptyList()
         }
+
+        return pickBestAddress(addresses)
+    }
+
+    /**
+     * Scans a list of Address results and picks the one with the most
+     * specific town/city-level place name, skipping micro-locations
+     * (building names, courtyards, etc.).
+     *
+     * Strategy:
+     * 1. If any result has `locality`, prefer that (it's the postal town).
+     * 2. If no result has `locality`, fall back to `subLocality` or
+     *    `featureName` — but only if it looks like a real place name.
+     * 3. Last resort: `subAdminArea` (county-level).
+     */
+    private fun pickBestAddress(addresses: List<android.location.Address>): String? {
+        if (addresses.isEmpty()) return null
+
+        // First pass: look for a result with locality set
+        for (addr in addresses) {
+            val locality = addr.locality?.takeIf { it.isNotBlank() && looksLikePlaceName(it) }
+            if (locality != null) {
+                return formatPlaceRegionCountry(locality, addr)
+            }
+        }
+
+        // Second pass: look for subLocality or featureName that looks like a place
+        for (addr in addresses) {
+            val place = listOfNotNull(
+                addr.subLocality?.takeIf { it.isNotBlank() && looksLikePlaceName(it) },
+                addr.featureName?.takeIf { it.isNotBlank() && looksLikePlaceName(it) }
+            ).firstOrNull()
+            if (place != null) {
+                return formatPlaceRegionCountry(place, addr)
+            }
+        }
+
+        // Last resort: use the first result's subAdminArea
+        val fallback = addresses.firstOrNull()
+        val place = fallback?.subAdminArea?.takeIf { it.isNotBlank() }
+            ?: fallback?.adminArea?.takeIf { it.isNotBlank() }
+        if (place != null && fallback != null) {
+            return formatPlaceRegionCountry(place, fallback)
+        }
+
+        return formatAddress(addresses.firstOrNull())
+    }
+
+    /** Heuristic: reject micro-locations like "Angel Yd", "12", "Unit 3". */
+    private fun looksLikePlaceName(name: String): Boolean {
+        if (name.length <= 2) return false
+        if (name.all { it.isDigit() }) return false
+        // Reject names that look like building/unit identifiers
+        val lower = name.lowercase()
+        val microPrefixes = listOf("unit ", "flat ", "suite ", "apt ", "room ")
+        if (microPrefixes.any { lower.startsWith(it) }) return false
+        return true
+    }
+
+    /**
+     * Formats a known place name with the region and country from an Address.
+     * Skips the region if it's the same as the place (e.g. "Suffolk, Suffolk").
+     */
+    private fun formatPlaceRegionCountry(
+        place: String,
+        addr: android.location.Address
+    ): String {
+        val region = addr.adminArea?.takeIf { it.isNotBlank() && it != place }
+        val country = addr.countryName?.takeIf { it.isNotBlank() }
+        return listOfNotNull(place, region, country).joinToString(", ")
     }
 
     /**
      * Formats an Address into the most specific "Place, Region, Country" string.
-     * Priority for the "place" part: subLocality > locality > subAdminArea > adminArea.
+     * Fallback used when pickBestAddress doesn't find a good result.
+     * Priority for the "place" part: subLocality > locality > featureName > subAdminArea > adminArea.
      */
     private fun formatAddress(address: android.location.Address?): String? {
         if (address == null) return null
 
-        // Pick the most specific city/town/neighbourhood name available
         val place = listOfNotNull(
             address.subLocality?.takeIf { it.isNotBlank() },
             address.locality?.takeIf { it.isNotBlank() },
+            address.featureName?.takeIf { it.isNotBlank() },
             address.subAdminArea?.takeIf { it.isNotBlank() }
         ).firstOrNull()
 

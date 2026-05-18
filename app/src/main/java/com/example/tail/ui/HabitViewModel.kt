@@ -634,7 +634,7 @@ class HabitViewModel(
         // Step 5: record timestamp(s) if requested
         if (recordTimestamp && amount > 0) {
             viewModelScope.launch {
-                timestampRepo.addTimestamps(habitName, amount, _selectedDate.value)
+                timestampRepo.addTimestamp(habitName, _selectedDate.value)
             }
         }
 
@@ -2414,6 +2414,59 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Fetches a fresh GPS/network fix, reverse-geocodes it, and saves both
+     * the label and coords for [date]. Calls [onComplete] when finished
+     * (success or failure) so the caller can dismiss loading spinners.
+     * Used by the "Auto Set" button in the location edit dialog.
+     */
+    fun fetchFreshLocationForDate(date: java.time.LocalDate, onComplete: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                val label = locationRepo.fetchFreshLocationForDate(date)
+                if (label != null && _selectedDate.value == date) {
+                    _selectedDateLocation.value = label
+                }
+            } catch (_: Exception) { /* already logged by repo */ }
+            onComplete()
+        }
+    }
+
+    /**
+     * Generates multiple candidate location names for [date] by using the
+     * stored coords (or fetching fresh ones if none exist). Returns a list
+     * of candidate labels ordered from most specific to least specific.
+     * The GPS coords are NOT changed — only the display label varies.
+     * Used by the cycling "auto" button in the location edit dialog.
+     */
+    fun fetchLocationCandidates(date: java.time.LocalDate, onResult: (List<String>) -> Unit) {
+        viewModelScope.launch {
+            val candidates = try {
+                // Use existing coords if available, otherwise fetch fresh
+                var coords = locationRepo.getCoordsForDate(date)
+                if (coords == null) {
+                    // Fetch fresh location (this also saves coords + label)
+                    val label = locationRepo.fetchFreshLocationForDate(date)
+                    if (label != null && _selectedDate.value == date) {
+                        _selectedDateLocation.value = label
+                    }
+                    coords = locationRepo.getCoordsForDate(date)
+                }
+                if (coords != null) {
+                    locationRepo.generateLocationCandidates(coords.first, coords.second)
+                } else {
+                    emptyList()
+                }
+            } catch (_: Exception) { /* already logged by repo */ emptyList() }
+            onResult(candidates)
+        }
+    }
+
+    /** Saves the user's preferred auto-detected location candidate. */
+    fun savePreferredAutoCandidate(candidate: String) {
+        locationRepo.savePreferredAutoCandidate(candidate)
+    }
+
     /** Returns all previously stored location labels (for the edit dialog suggestions). */
     fun getAllStoredLocations(): List<String> = locationRepo.getAllStoredLocations()
 
@@ -2433,18 +2486,20 @@ class HabitViewModel(
     /**
      * Returns the assumed location label for [date] — the most recent
      * preceding stored label when no exact entry exists for [date].
-     * Returns null only if no labels exist at all.
+     * Returns null only if no preceding labels exist at all.
+     *
+     * Only looks at dates strictly before [date], so setting a location
+     * for one day never changes the assumed location for earlier days.
      */
     fun getAssumedLocationForDate(date: LocalDate): String? {
         val allLabels = locationRepo.getAllStoredLabels()
-        val lastKnown = allLabels.entries
+        return allLabels.entries
             .mapNotNull { (k, v) ->
                 runCatching { LocalDate.parse(k) }.getOrNull()?.let { it to v }
             }
             .filter { (d, _) -> d.isBefore(date) }
             .maxByOrNull { (d, _) -> d }
             ?.second
-        return lastKnown ?: allLabels.values.firstOrNull()
     }
 
     /** Returns all date-strings for which we have plottable coords, sorted ascending. */

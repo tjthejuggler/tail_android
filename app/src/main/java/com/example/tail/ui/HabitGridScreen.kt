@@ -799,10 +799,13 @@ fun HabitGridScreen(
         )
     }
 
-    // Location edit dialog
+    // Location edit dialog — pass the effective location (stored or assumed)
+    // so the field is pre-filled even for days with no stored location.
     if (showLocationEditDialog) {
+        val effectiveLocation = selectedDateLocation
+            ?: viewModel.getAssumedLocationForDate(selectedDate)
         LocationEditDialog(
-            currentLocation = selectedDateLocation,
+            currentLocation = effectiveLocation,
             suggestions = viewModel.getAllStoredLocations(),
             onConfirm = { label ->
                 if (label == null) {
@@ -812,7 +815,13 @@ fun HabitGridScreen(
                 }
                 showLocationEditDialog = false
             },
-            onDismiss = { showLocationEditDialog = false }
+            onDismiss = { showLocationEditDialog = false },
+            onFetchCandidates = { onResult ->
+                viewModel.fetchLocationCandidates(selectedDate, onResult)
+            },
+            onSavePreferredCandidate = { candidate ->
+                viewModel.savePreferredAutoCandidate(candidate)
+            }
         )
     }
 

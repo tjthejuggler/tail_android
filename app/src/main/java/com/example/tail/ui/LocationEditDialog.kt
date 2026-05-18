@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -19,10 +20,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -32,28 +35,57 @@ import androidx.compose.ui.window.Dialog
 
 /**
  * Dialog for manually setting the location for a given day.
- * Shows a text field pre-filled with the current location (if any),
+ * Shows a text field pre-filled with the effective location (stored or assumed),
  * and a scrollable list of previously-entered locations to pick from.
  *
- * The suggestion list is filtered in real-time as the user types, making
- * it easy to find and tap an existing location. Selecting a suggestion
- * fills the text field with that value (and its coords are already stored).
+ * Includes an "auto" link in the title row that, when clicked, fetches GPS
+ * and shows a popup list of candidate location names. The user picks one,
+ * and it fills the text field. The GPS coordinates are NOT changed — only
+ * the display label varies.
+ *
+ * When the user saves a candidate, [onSavePreferredCandidate] is called
+ * so the app remembers which candidate format the user prefers, making
+ * it the first option next time and the default for daily auto-fetch.
  */
 @Composable
 fun LocationEditDialog(
     currentLocation: String?,
     suggestions: List<String>,
     onConfirm: (String?) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onFetchCandidates: (((List<String>) -> Unit) -> Unit)? = null,
+    onSavePreferredCandidate: ((String) -> Unit)? = null
 ) {
     var text by remember { mutableStateOf(currentLocation ?: "") }
+    var fetching by remember { mutableStateOf(false) }
+    var autoCandidates by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showAutoPopup by remember { mutableStateOf(false) }
+
+    // If the caller updates currentLocation externally, sync the text field.
+    LaunchedEffect(currentLocation) {
+        if (currentLocation != null && text != currentLocation) {
+            text = currentLocation
+        }
+    }
 
     // Filter suggestions to those containing the current text (case-insensitive).
-    // When the field is blank, show all suggestions.
     val filteredSuggestions = remember(text, suggestions) {
         val query = text.trim().lowercase()
         if (query.isEmpty()) suggestions
         else suggestions.filter { it.lowercase().contains(query) }
+    }
+
+    // Auto candidates popup
+    if (showAutoPopup && autoCandidates.isNotEmpty()) {
+        AutoCandidatesPopup(
+            candidates = autoCandidates,
+            onSelect = { candidate ->
+                text = candidate
+                showAutoPopup = false
+                onSavePreferredCandidate?.invoke(candidate)
+            },
+            onDismiss = { showAutoPopup = false }
+        )
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -67,12 +99,36 @@ fun LocationEditDialog(
                     .padding(20.dp)
                     .fillMaxWidth()
             ) {
-                Text(
-                    text = "Set location",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                // Title row with "auto" link
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Set location",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (onFetchCandidates != null) {
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = if (fetching) "locating…" else "auto",
+                            color = if (fetching) Color(0xFF666666) else Color(0xFF44BBFF),
+                            fontSize = 13.sp,
+                            modifier = Modifier.clickable(enabled = !fetching) {
+                                fetching = true
+                                onFetchCandidates { result ->
+                                    fetching = false
+                                    if (result.isNotEmpty()) {
+                                        autoCandidates = result
+                                        showAutoPopup = true
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -122,7 +178,10 @@ fun LocationEditDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Row(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     TextButton(onClick = onDismiss) {
                         Text("Cancel", color = Color(0xFF888888))
                     }
@@ -142,6 +201,90 @@ fun LocationEditDialog(
                     ) {
                         Text("Save", color = Color(0xFF44BBFF))
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Popup that shows a scrollable list of auto-detected location candidates.
+ * The user taps one to select it. The first item is the preferred candidate
+ * (if one was previously saved).
+ */
+@Composable
+private fun AutoCandidatesPopup(
+    candidates: List<String>,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF1A1A2E),
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .fillMaxWidth()
+            ) {
+                Text(
+                    text = "Auto-detected locations",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "Tap to select. Your choice becomes the default for future auto-detects.",
+                    color = Color(0xFF888888),
+                    fontSize = 11.sp
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    candidates.forEachIndexed { index, candidate ->
+                        if (index > 0) {
+                            HorizontalDivider(color = Color(0xFF333333), thickness = 0.5.dp)
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(candidate) }
+                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = candidate,
+                                color = if (index == 0) Color(0xFF44BBFF) else Color(0xFFAADDFF),
+                                fontSize = 14.sp,
+                                fontWeight = if (index == 0) FontWeight.Bold else FontWeight.Normal
+                            )
+                            if (index == 0) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "★",
+                                    color = Color(0xFF44BBFF),
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
                 }
             }
         }
