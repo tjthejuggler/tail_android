@@ -219,6 +219,21 @@
         </activity>
 
         <!--
+            HabitIncrementConfirmActivity: shows a brief confirmation message
+            over the lock screen after a voice/smart voice habit increment.
+            Auto-dismisses after 3 seconds.
+        -->
+        <activity
+            android:name=".ui.HabitIncrementConfirmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.Tail.Transparent" />
+
+        <!--
             VoiceNoteService: foreground service that uses SpeechRecognizer to
             listen for dictated speech and prepend it to a notes markdown file.
         -->

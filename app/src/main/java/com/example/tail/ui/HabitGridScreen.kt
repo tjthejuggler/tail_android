@@ -226,6 +226,8 @@ fun HabitGridScreen(
     var incrementToastHabit by remember { mutableStateOf<String?>(null) }
     var incrementToastOriginalTime by remember { mutableStateOf("") }
     var incrementToastIsTimeless by remember { mutableStateOf(false) }
+    // Version counter to prevent stale auto-dismiss from clearing a newer toast
+    var incrementToastVersion by remember { mutableIntStateOf(0) }
     // Quick timestamp editor dialog state
     var quickEditHabitName by remember { mutableStateOf<String?>(null) }
     var quickEditOriginalTime by remember { mutableStateOf("") }
@@ -559,12 +561,17 @@ fun HabitGridScreen(
                                     val timeless = !isToday || habit.name in settings.timelessHabits
                                     viewModel.incrementHabit(habit.name, 1, recordTimestamp = !timeless)
                                     // Show increment toast with edit-time option
+                                    incrementToastVersion++
                                     incrementToastHabit = habit.name
                                     incrementToastIsTimeless = timeless
                                     incrementToastOriginalTime = if (!timeless) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                                    val currentVersion = incrementToastVersion
                                     toastScope.launch {
                                         delay(3500)
-                                        incrementToastHabit = null
+                                        // Only clear if no newer toast has replaced this one
+                                        if (incrementToastVersion == currentVersion) {
+                                            incrementToastHabit = null
+                                        }
                                     }
                                 }
                             }
@@ -719,6 +726,7 @@ fun HabitGridScreen(
                     quickEditHabitName = toastHabit
                     quickEditOriginalTime = incrementToastOriginalTime
                     quickEditWasTimeless = incrementToastIsTimeless
+                    incrementToastVersion++
                     incrementToastHabit = null
                 },
                 onTimeless = {

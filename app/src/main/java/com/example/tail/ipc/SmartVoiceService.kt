@@ -521,6 +521,10 @@ class SmartVoiceService : Service() {
                 // Confirmation vibration (single pulse — habit style)
                 vibrateConfirmation()
 
+                // Heads-up notification confirmation — visible on lock screen / other apps
+                val confirmMsg = ttsParts.joinToString(", ")
+                handler.post { showHabitIncrementConfirmation(confirmMsg) }
+
                 // TTS confirmation
                 val ttsText = ttsParts.joinToString(", ")
                 Log.i(TAG, "Smart voice (habit mode) complete — incremented ${matchedHabits.size} habit(s)")
@@ -760,6 +764,15 @@ class SmartVoiceService : Service() {
         stopped = true
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /** Launches a full-screen confirmation activity over the lock screen. */
+    private fun showHabitIncrementConfirmation(confirmMsg: String) {
+        val intent = Intent(applicationContext, com.example.tail.ui.HabitIncrementConfirmActivity::class.java).apply {
+            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, confirmMsg)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        applicationContext.startActivity(intent)
     }
 
     private fun createNotificationChannel() {

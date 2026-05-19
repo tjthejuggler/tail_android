@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#CC000000">
+
+    <TextView
+        android:id="@+id/confirm_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:textColor="#88FF88"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:padding="32dp"
+        android:shadowColor="#000000"
+        android:shadowRadius="4" />
+</FrameLayout>
