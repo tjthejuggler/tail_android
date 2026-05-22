@@ -637,6 +637,7 @@ fun HabitGridScreen(
                             viewModel.screenIndexForHabit(selectedHabitName) else -1,
                         maxOneHabits = settings.maxOneHabits,
                         customInputHabits = settings.customInputHabits,
+                        customInputAmounts = settings.customInputAmounts,
                         textInputHabits = settings.textInputHabits,
                         textInputOptionsHabits = settings.textInputOptionsHabits,
                         textInputFileUris = settings.textInputFileUris,
@@ -656,6 +657,7 @@ fun HabitGridScreen(
                         onDeleteScreen = { viewModel.deleteScreen(activeScreenIndex) },
                         onToggleMaxOne = { name -> viewModel.toggleMaxOne(name) },
                         onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) },
+                        onSetCustomInputAmounts = { name, amounts -> viewModel.setCustomInputAmounts(name, amounts) },
                         onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
                         onToggleTextInputOptions = { name -> viewModel.toggleTextInputOptions(name) },
                         onPickTextInputFile = { name ->
@@ -854,11 +856,17 @@ fun HabitGridScreen(
 
     // Custom increment dialog
     dialogHabit?.let { habit ->
+        val customAmounts = settings.customInputAmounts[habit.name]
+            ?: com.example.tail.data.DEFAULT_CUSTOM_INPUT_AMOUNTS
+        val recentAmounts = settings.customInputRecentAmounts[habit.name] ?: emptyList()
         IncrementDialog(
             habitName = habit.name,
             currentCount = habit.todayCount,
+            quickAmounts = customAmounts,
+            recentAmounts = recentAmounts,
             onConfirm = { amount ->
                 viewModel.incrementHabit(habit.name, amount)
+                viewModel.recordRecentIncrementAmount(habit.name, amount)
                 dialogHabit = null
             },
             onDismiss = { dialogHabit = null }
@@ -1237,6 +1245,7 @@ private fun EditModeControlBar(
     selectedHabitScreenIndex: Int,
     maxOneHabits: Set<String>,
     customInputHabits: Set<String>,
+    customInputAmounts: Map<String, List<Int>> = emptyMap(),
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
     textInputFileUris: Map<String, String>,
@@ -1256,6 +1265,7 @@ private fun EditModeControlBar(
     onDeleteScreen: () -> Unit,
     onToggleMaxOne: (String) -> Unit,
     onToggleCustomInput: (String) -> Unit,
+    onSetCustomInputAmounts: (String, List<Int>) -> Unit = { _, _ -> },
     onToggleTextInput: (String) -> Unit,
     onToggleTextInputOptions: (String) -> Unit,
     onPickTextInputFile: (String) -> Unit,
@@ -1750,6 +1760,7 @@ private fun EditModeControlBar(
 
                     // Custom input toggle
                     val isCustomInput = selectedHabitName in customInputHabits
+                    var showIncrementAmountsDialog by remember { mutableStateOf(false) }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1772,6 +1783,49 @@ private fun EditModeControlBar(
                                 uncheckedTrackColor = Color(0xFF333333)
                             )
                         )
+                    }
+
+                    // "Set increment amounts" button — only shown when custom input is on
+                    if (isCustomInput) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val currentAmounts = customInputAmounts[selectedHabitName]
+                            ?: com.example.tail.data.DEFAULT_CUSTOM_INPUT_AMOUNTS
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "  Increment amounts",
+                                    color = Color(0xFFAAAAAA), fontSize = 12.sp
+                                )
+                                Text(
+                                    text = currentAmounts.joinToString(", "),
+                                    color = Color(0xFF888888), fontSize = 10.sp
+                                )
+                            }
+                            Button(
+                                onClick = { showIncrementAmountsDialog = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2800)),
+                                modifier = Modifier.height(32.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                            ) {
+                                Text("Edit", fontSize = 11.sp, color = Color(0xFFFFCC44))
+                            }
+                        }
+
+                        if (showIncrementAmountsDialog) {
+                            IncrementAmountsEditorDialog(
+                                habitName = selectedHabitName,
+                                currentAmounts = currentAmounts,
+                                onSave = { amounts ->
+                                    onSetCustomInputAmounts(selectedHabitName, amounts)
+                                    showIncrementAmountsDialog = false
+                                },
+                                onDismiss = { showIncrementAmountsDialog = false }
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
@@ -2712,6 +2766,102 @@ private fun AddScreenDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A3A00))
                 ) {
                     Text("Add", color = Color(0xFFFFAA00))
+                }
+            }
+        }
+    }
+}
+
+// ── Increment amounts editor dialog ───────────────────────────────────────────
+
+/**
+ * Dialog for editing the quick-increment button amounts for a custom-input habit.
+ * Shows the current amounts as editable chips and allows adding/removing values.
+ * Saving with an empty list resets to the default amounts.
+ */
+@Composable
+private fun IncrementAmountsEditorDialog(
+    habitName: String,
+    currentAmounts: List<Int>,
+    onSave: (List<Int>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // Represent each amount as a text field string so the user can edit freely
+    var amountsText by remember { mutableStateOf(currentAmounts.joinToString(", ")) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Increment amounts",
+                color = Color(0xFFFFCC44),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = habitName,
+                color = Color(0xFF888888),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = "Enter amounts separated by commas:",
+                color = Color(0xFFAAAAAA),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+
+            OutlinedTextField(
+                value = amountsText,
+                onValueChange = { amountsText = it },
+                label = { Text("e.g. 1, 5, 10, 30, 50", color = Color(0xFF666666)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFFFFCC44),
+                    unfocusedBorderColor = Color(0xFF555555),
+                    cursorColor = Color(0xFFFFCC44)
+                ),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Leave empty to use defaults (1, 5, 10, 30, 50)",
+                color = Color(0xFF666666),
+                fontSize = 10.sp
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.padding(horizontal = 4.dp))
+                Button(
+                    onClick = {
+                        val parsed = amountsText
+                            .split(",")
+                            .mapNotNull { it.trim().toIntOrNull() }
+                            .filter { it > 0 }
+                            .distinct()
+                        onSave(parsed)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2800))
+                ) {
+                    Text("Save", color = Color(0xFFFFCC44))
                 }
             }
         }

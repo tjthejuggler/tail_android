@@ -717,6 +717,40 @@ class HabitViewModel(
     }
 
     /**
+     * Saves a custom list of quick-increment button amounts for [habitName].
+     * Pass an empty list to revert to the default amounts.
+     */
+    fun setCustomInputAmounts(habitName: String, amounts: List<Int>) {
+        viewModelScope.launch {
+            val current = _settings.value.customInputAmounts.toMutableMap()
+            if (amounts.isEmpty()) {
+                current.remove(habitName)
+            } else {
+                current[habitName] = amounts
+            }
+            settingsRepo.saveCustomInputAmounts(current)
+            _settings.value = _settings.value.copy(customInputAmounts = current)
+        }
+    }
+
+    /**
+     * Records [amount] as the most recently used increment for [habitName].
+     * Keeps up to 3 unique recent amounts, most recent first.
+     */
+    fun recordRecentIncrementAmount(habitName: String, amount: Int) {
+        viewModelScope.launch {
+            val current = _settings.value.customInputRecentAmounts.toMutableMap()
+            val existing = current[habitName]?.toMutableList() ?: mutableListOf()
+            existing.remove(amount)          // remove duplicate if present
+            existing.add(0, amount)          // prepend as most recent
+            if (existing.size > 3) existing.subList(3, existing.size).clear()
+            current[habitName] = existing
+            settingsRepo.saveCustomInputRecentAmounts(current)
+            _settings.value = _settings.value.copy(customInputRecentAmounts = current)
+        }
+    }
+
+    /**
      * Sets (or clears) the divider for [habitName].
      * [divisor] must be >= 2 to enable division; pass 1 (or 0) to disable.
      * When changed, the habit list is rebuilt so the displayed count updates immediately.

@@ -331,6 +331,19 @@ data class AppSettings(
     /** SAF URI for the notes markdown file to prepend dictated notes to. */
     val voiceNoteFileUri: String = "",
 
+    // ── Custom input increment amounts ────────────────────────────────────
+    /**
+     * Maps habit name → ordered list of quick-increment button amounts.
+     * When absent, the default [DEFAULT_CUSTOM_INPUT_AMOUNTS] is used.
+     */
+    val customInputAmounts: Map<String, List<Int>> = emptyMap(),
+
+    /**
+     * Maps habit name → list of the most recently used increment amounts (up to 3).
+     * Most recent first. Used to show "recent" quick-add buttons in the IncrementDialog.
+     */
+    val customInputRecentAmounts: Map<String, List<Int>> = emptyMap(),
+
     // ── Automatic daily backup settings ───────────────────────────────────
     /**
      * SAF tree URI for the folder where automatic daily backups are written.
@@ -352,6 +365,9 @@ data class AppSettings(
      */
     val autoBackupLastDate: String = ""
 )
+
+/** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */
+val DEFAULT_CUSTOM_INPUT_AMOUNTS: List<Int> = listOf(1, 5, 10, 30, 50)
 
 val DEFAULT_CUSTOM_INPUT_HABITS: Set<String> = setOf(
     "Pushups",

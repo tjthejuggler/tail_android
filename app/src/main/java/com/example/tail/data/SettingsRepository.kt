@@ -83,6 +83,10 @@ private val KEY_VOICE_NOTE_FILE_URI = stringPreferencesKey("voice_note_file_uri"
 // Automatic daily backup settings — see AppSettings.autoBackupFolderUri
 private val KEY_AUTO_BACKUP_FOLDER_URI = stringPreferencesKey("auto_backup_folder_uri")
 private val KEY_AUTO_BACKUP_LAST_DATE = stringPreferencesKey("auto_backup_last_date")
+// Custom input increment amounts — stored as "habitName\x00amt1,amt2,amt3|||…" pairs
+private val KEY_CUSTOM_INPUT_AMOUNTS = stringPreferencesKey("custom_input_amounts")
+// Custom input recent amounts — stored as "habitName\x00amt1,amt2,amt3|||…" pairs (most recent first)
+private val KEY_CUSTOM_INPUT_RECENT_AMOUNTS = stringPreferencesKey("custom_input_recent_amounts")
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
@@ -221,6 +225,28 @@ private fun decodeIntMap(raw: String): Map<String, Int> {
             val key = pair.substring(0, idx)
             val value = pair.substring(idx + 1).toIntOrNull() ?: return@mapNotNull null
             key to value
+        }
+    }.toMap()
+}
+
+// Serialisation helpers for Map<String, List<Int>> (habit name → ordered list of ints).
+// Format: "habitName\x00amt1,amt2,amt3|||habitName\x00amt1,amt2"
+private fun encodeIntListMap(map: Map<String, List<Int>>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) ->
+        "$k$KV_SEP${v.joinToString(",")}"
+    }
+
+private fun decodeIntListMap(raw: String): Map<String, List<Int>> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null
+        else {
+            val key = pair.substring(0, idx)
+            val values = pair.substring(idx + 1)
+                .split(",")
+                .mapNotNull { it.toIntOrNull() }
+            if (values.isEmpty()) null else key to values
         }
     }.toMap()
 }
@@ -381,6 +407,8 @@ class SettingsRepository(private val context: Context) {
         val chessComMinutesRaw = prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] ?: ""
         val chessComHabitLinksRaw = prefs[KEY_CHESS_COM_HABIT_LINKS] ?: ""
         val voiceTriggerIncrementsRaw = prefs[KEY_VOICE_TRIGGER_INCREMENTS] ?: ""
+        val customInputAmountsRaw = prefs[KEY_CUSTOM_INPUT_AMOUNTS] ?: ""
+        val customInputRecentAmountsRaw = prefs[KEY_CUSTOM_INPUT_RECENT_AMOUNTS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -426,8 +454,24 @@ class SettingsRepository(private val context: Context) {
             voiceNoteEnabled = prefs[KEY_VOICE_NOTE_ENABLED] ?: false,
             voiceNoteFileUri = prefs[KEY_VOICE_NOTE_FILE_URI] ?: "",
             autoBackupFolderUri = prefs[KEY_AUTO_BACKUP_FOLDER_URI] ?: "",
-            autoBackupLastDate = prefs[KEY_AUTO_BACKUP_LAST_DATE] ?: ""
+            autoBackupLastDate = prefs[KEY_AUTO_BACKUP_LAST_DATE] ?: "",
+            customInputAmounts = decodeIntListMap(customInputAmountsRaw),
+            customInputRecentAmounts = decodeIntListMap(customInputRecentAmountsRaw)
         )
+    }
+
+    /** Saves the per-habit custom increment button amounts. */
+    suspend fun saveCustomInputAmounts(amounts: Map<String, List<Int>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CUSTOM_INPUT_AMOUNTS] = encodeIntListMap(amounts)
+        }
+    }
+
+    /** Saves the per-habit recent increment amounts (up to 3, most recent first). */
+    suspend fun saveCustomInputRecentAmounts(recent: Map<String, List<Int>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CUSTOM_INPUT_RECENT_AMOUNTS] = encodeIntListMap(recent)
+        }
     }
 
     /** Saves the SAF tree URI for the automatic daily backup folder. */
