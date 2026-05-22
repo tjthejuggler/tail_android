@@ -1943,27 +1943,35 @@ class HabitViewModel(
     }
 
     /**
-     * Tracks whether [onAppStarted] has run at least once. The ViewModel survives
-     * configuration changes (orientation, etc.) and in-app navigation, but is
-     * recreated when the user truly relaunches the app from a cold start.
-     * So this flag distinguishes "fresh app launch" from "Activity recreation due
-     * to a config change" — important because MapScreen forces landscape, which
-     * destroys and recreates the Activity (and re-fires ON_START).
+     * Tracks the date on which [onAppStarted] last snapped the selected date.
+     * Null means it has never run yet.
+     *
+     * The ViewModel survives configuration changes (orientation, etc.) and
+     * in-app navigation, but is recreated on a true cold start. By storing the
+     * *date* (not just a boolean) we can detect when a new day has arrived
+     * while the app was in the background and snap to today on the next
+     * ON_START — while still avoiding redundant snaps on same-day Activity
+     * recreations (e.g. MapScreen forcing landscape).
      */
-    private var hasInitialisedDateOnLaunch = false
+    private var lastInitializedDate: LocalDate? = null
 
     /**
-     * Called on ON_START. Snaps the selected date back to today ONLY on the very
-     * first invocation per ViewModel lifetime — i.e. on actual cold app launch,
-     * not on subsequent ON_START events fired by Activity recreation (config
-     * changes from MapScreen's landscape orientation, etc.).
+     * Called on ON_START. Snaps the selected date back to today when:
+     *  - This is the very first invocation (cold launch), OR
+     *  - The day has changed since the last invocation (app was backgrounded
+     *    overnight and reopened the next morning).
+     *
+     * Does NOT snap on same-day ON_START events caused by Activity recreation
+     * (e.g. config changes from MapScreen's landscape orientation).
      */
     fun onAppStarted() {
-        if (hasInitialisedDateOnLaunch) return
-        hasInitialisedDateOnLaunch = true
         val today = LocalDate.now()
-        if (_selectedDate.value.isBefore(today)) {
-            _selectedDate.value = today
+        val lastDate = lastInitializedDate
+        lastInitializedDate = today
+        if (lastDate == null || lastDate != today) {
+            if (_selectedDate.value.isBefore(today)) {
+                _selectedDate.value = today
+            }
         }
     }
 
