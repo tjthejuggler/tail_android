@@ -41,7 +41,10 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.window.Dialog
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
@@ -522,11 +525,21 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean, onClick: () ->
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         // Always show something — if no label at all, reserve space so layout
-        // doesn't jump. If assumed (no exact entry for this day), append *.
-        val display = when {
-            locationLabel != null && isAssumed -> "  $locationLabel *"
-            locationLabel != null              -> locationLabel
-            else                               -> " "
+        // doesn't jump. The " *" suffix is always reserved in layout but rendered
+        // transparent when not assumed, so the label itself never shifts position.
+        val labelText = locationLabel ?: " "
+        val suffixColor = when {
+            locationLabel == null -> Color.Transparent
+            isAssumed             -> Color(0xFFCCCCCC)
+            else                  -> Color.Transparent
+        }
+        val display = buildAnnotatedString {
+            withStyle(SpanStyle(color = if (locationLabel != null) Color(0xFFCCCCCC) else Color.Transparent)) {
+                append(labelText)
+            }
+            withStyle(SpanStyle(color = suffixColor)) {
+                append(" *")
+            }
         }
         Row(modifier = Modifier.fillMaxWidth()) {
             // Spacer to push the text to the right edge of the map area.
@@ -535,7 +548,6 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean, onClick: () ->
             Spacer(modifier = Modifier.weight(1f))
             Text(
                 text = display,
-                color = if (locationLabel != null) Color(0xFFCCCCCC) else Color.Transparent,
                 fontSize = 14.sp,
                 modifier = Modifier
                     .clickable(
