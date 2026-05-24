@@ -39,6 +39,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.SpanStyle
@@ -91,6 +92,21 @@ private data class Result4<A, B, C, D>(
 
 // Display formatting for the map screen.
 private val MAP_DATE_FMT = DateTimeFormatter.ofPattern("yyyy, MMM dd, EEE")
+
+/**
+ * Fuzzy location-label comparison: two labels are considered the "same place"
+ * if their last two comma-separated parts match (e.g. "Dublin, County Dublin,
+ * Leinster, Ireland" ≈ "Dublin, Ireland" because both end with "Dublin, Ireland").
+ * Returns true when the labels refer to the same place.
+ */
+private fun isSameLocationLabel(a: String?, b: String?): Boolean {
+    if (a == null || b == null) return a == b
+    val partsA = a.split(",").map { it.trim() }
+    val partsB = b.split(",").map { it.trim() }
+    val lastTwoA = partsA.takeLast(2).joinToString(", ")
+    val lastTwoB = partsB.takeLast(2).joinToString(", ")
+    return lastTwoA == lastTwoB
+}
 
 // Available playback speeds in days/sec. -1f represents "Auto" mode.
 private val PLAY_SPEEDS = listOf(0.5f, 1f, 2f, 5f, 15f, 30f, 60f, 120f, -1f)
@@ -288,13 +304,20 @@ fun MapScreen(
             // Only when "All" mode is active
             if (showAll) {
                 val curSecondaries = secondaryByDate[cur]?.sortedBy { it.timeMinutes }
+                val curPrimaryLabel = viewModel.getLocationLabelForDate(cur)
                 if (curSecondaries != null && curSecondaries.isNotEmpty()) {
-                    for (sec in curSecondaries) {
+                    // Show the whole-number day briefly before stepping into secondaries
+                    clockTimeMinutes = null
+                    delay(msPerSecondary)
+                    // Only step through secondaries that are at a different location
+                    val differentSecondaries = curSecondaries.filter { sec ->
+                        !isSameLocationLabel(sec.label, curPrimaryLabel)
+                    }
+                    for (sec in differentSecondaries) {
                         if (!isPlaying) break
                         val secCoords = Pair(sec.lat, sec.lon)
                         secondaryPlaybackCoords = secCoords
                         clockTimeMinutes = sec.timeMinutes
-                        // Short delay for quick traversal — no auto-pause for secondaries
                         delay(msPerSecondary)
                     }
                     secondaryPlaybackCoords = null
@@ -460,7 +483,8 @@ fun MapScreen(
             MapTopBar(
                 locationLabel = locationLabel,
                 isAssumed = locationIsAssumed,
-                onClick = { showLocationTimeline = true }
+                onClick = { showLocationTimeline = true },
+                onSettingsClick = { showAddLocationDialog = true }
             )
 
             if (showLocationTimeline) {
@@ -488,6 +512,8 @@ fun MapScreen(
                 AddSecondaryLocationDialog(
                     date = selectedDate,
                     accent = accent,
+                    showAll = showAll,
+                    onShowAllChange = { showAll = it },
                     onAdd = { address, timeMinutes ->
                         scope.launch {
                             viewModel.addManualSecondaryLocation(selectedDate, address, timeMinutes)
@@ -528,57 +554,6 @@ fun MapScreen(
                             accent = accent
                         )
                     }
-
-                    // ── Settings gear icon (top-right of map) ──────────────────
-                    var showMapSettings by remember { mutableStateOf(false) }
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                    ) {
-                        Text(
-                            text = "⚙",
-                            color = Color(0xFF888888),
-                            fontSize = 18.sp,
-                            modifier = Modifier
-                                .clickable(
-                                    indication = null,
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    onClick = { showMapSettings = !showMapSettings }
-                                )
-                                .padding(4.dp)
-                        )
-                        androidx.compose.material3.DropdownMenu(
-                            expanded = showMapSettings,
-                            onDismissRequest = { showMapSettings = false },
-                            modifier = Modifier.background(Color(0xFF1A1A1A))
-                        ) {
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        androidx.compose.material3.Checkbox(
-                                            checked = showAll,
-                                            onCheckedChange = { showAll = it },
-                                            modifier = Modifier.size(16.dp),
-                                            colors = androidx.compose.material3.CheckboxDefaults.colors(
-                                                checkedColor = accent,
-                                                uncheckedColor = Color(0xFF666666)
-                                            )
-                                        )
-                                        Text("All locations", color = Color.White, fontSize = 13.sp)
-                                    }
-                                },
-                                onClick = { showAll = !showAll }
-                            )
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text("+ Add location…", color = accent, fontSize = 13.sp) },
-                                onClick = {
-                                    showMapSettings = false
-                                    showAddLocationDialog = true
-                                }
-                            )
-                        }
-                    }
                 }
                 // ── Side info panel (right) ────────────────────────────────
                 MapInfoPanel(
@@ -613,7 +588,7 @@ fun MapScreen(
                 totalDays = totalDays,
                 selectedDate = selectedDate,
                 clockTimeMinutes = clockTimeMinutes,
-                dayHasSecondaries = showAll && daySecondaries.isNotEmpty(),
+                dayHasSecondaries = showAll && daySecondaries.any { !isSameLocationLabel(it.label, locationLabel) },
                 onScrub = { newDate ->
                     isPlaying = false
                     viewModel.navigateToDate(newDate)
@@ -673,7 +648,12 @@ private fun Color.halo(alpha: Float = 0.20f): Color =
 // minus the 220dp info panel).
 
 @Composable
-private fun MapTopBar(locationLabel: String?, isAssumed: Boolean, onClick: () -> Unit = {}) {
+private fun MapTopBar(
+    locationLabel: String?,
+    isAssumed: Boolean,
+    onClick: () -> Unit = {},
+    onSettingsClick: () -> Unit = {}
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -697,7 +677,10 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean, onClick: () ->
                 append(" *")
             }
         }
-        Row(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             // Spacer to push the text to the right edge of the map area.
             // The map area takes weight(1f) and the info panel takes 220.dp.
             // So we want the text to be aligned to the end of the weight(1f) section.
@@ -711,8 +694,22 @@ private fun MapTopBar(locationLabel: String?, isAssumed: Boolean, onClick: () ->
                         interactionSource = remember { MutableInteractionSource() },
                         onClick = onClick
                     )
-                    .padding(end = 220.dp)
             )
+            // Settings gear — directly to the right of the location label
+            Text(
+                text = "⚙",
+                color = Color(0xFF888888),
+                fontSize = 18.sp,
+                modifier = Modifier
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = onSettingsClick
+                    )
+                    .padding(start = 8.dp)
+            )
+            // Reserve space for the 220dp info panel on the right
+            Spacer(modifier = Modifier.width(220.dp))
         }
     }
 }
@@ -1512,18 +1509,25 @@ private fun TimelineBar(
 /**
  * Dialog for manually adding a secondary location by pasting an address
  * (e.g. from Google Maps). The address is forward-geocoded to get coords.
- * Also allows setting the time of day for the visit.
+ * Also allows setting the time of day for the visit via swipe wheel pickers.
+ * Includes a toggle for showing all locations on the map.
  */
 @Composable
 private fun AddSecondaryLocationDialog(
     date: LocalDate,
     accent: Color,
+    showAll: Boolean,
+    onShowAllChange: (Boolean) -> Unit,
     onAdd: (address: String, timeMinutes: Int) -> Unit,
     onDismiss: () -> Unit
 ) {
     var addressText by remember { mutableStateOf("") }
-    var hourText by remember { mutableStateOf("") }
-    var minuteText by remember { mutableStateOf("") }
+    val now = java.time.LocalTime.now()
+    var selectedHour by remember { mutableStateOf(now.hour) }
+    var selectedMinute by remember { mutableStateOf(now.minute) }
+
+    val hours = (0..23).map { String.format("%02d", it) }
+    val minutes = (0..59).map { String.format("%02d", it) }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -1559,44 +1563,55 @@ private fun AddSecondaryLocationDialog(
                 textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
             )
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
 
-            Text("Time of visit (optional):", color = Color(0xFF888888), fontSize = 11.sp)
-            Spacer(Modifier.height(4.dp))
+            // Show all locations toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedTextField(
-                    value = hourText,
-                    onValueChange = { if (it.length <= 2) hourText = it.filter { c -> c.isDigit() } },
-                    placeholder = { Text("HH", fontSize = 12.sp, color = Color(0xFF555555)) },
-                    singleLine = true,
-                    modifier = Modifier.width(56.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = accent,
-                        unfocusedBorderColor = Color(0xFF333333),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = accent
-                    ),
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
+                Text("Show all locations", color = Color(0xFFCCCCCC), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Switch(
+                    checked = showAll,
+                    onCheckedChange = onShowAllChange,
+                    colors = androidx.compose.material3.SwitchDefaults.colors(
+                        checkedTrackColor = accent,
+                        checkedThumbColor = Color.White,
+                        uncheckedTrackColor = Color(0xFF333333),
+                        uncheckedThumbColor = Color(0xFF888888)
+                    )
                 )
-                Text(":", color = Color(0xFF888888), fontSize = 16.sp, modifier = Modifier.padding(horizontal = 4.dp))
-                OutlinedTextField(
-                    value = minuteText,
-                    onValueChange = { if (it.length <= 2) minuteText = it.filter { c -> c.isDigit() } },
-                    placeholder = { Text("MM", fontSize = 12.sp, color = Color(0xFF555555)) },
-                    singleLine = true,
-                    modifier = Modifier.width(56.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = accent,
-                        unfocusedBorderColor = Color(0xFF333333),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = accent
-                    ),
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Text("Time of visit:", color = Color(0xFF888888), fontSize = 11.sp)
+            Spacer(Modifier.height(8.dp))
+
+            // 24-hour wheel pickers for hours and minutes
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                WheelPicker(
+                    items = hours,
+                    selectedIndex = selectedHour,
+                    onSelectedChange = { selectedHour = it },
+                    itemHeight = 36.dp,
+                    visibleItems = 5,
+                    accent = accent,
+                    modifier = Modifier.width(80.dp)
+                )
+                Text(":", color = Color(0xFF888888), fontSize = 24.sp, modifier = Modifier.padding(horizontal = 8.dp))
+                WheelPicker(
+                    items = minutes,
+                    selectedIndex = selectedMinute,
+                    onSelectedChange = { selectedMinute = it },
+                    itemHeight = 36.dp,
+                    visibleItems = 5,
+                    accent = accent,
+                    modifier = Modifier.width(80.dp)
                 )
             }
 
@@ -1612,9 +1627,7 @@ private fun AddSecondaryLocationDialog(
                 Spacer(Modifier.width(8.dp))
                 TextButton(
                     onClick = {
-                        val hours = hourText.toIntOrNull()?.coerceIn(0, 23) ?: java.time.LocalTime.now().hour
-                        val mins = minuteText.toIntOrNull()?.coerceIn(0, 59) ?: java.time.LocalTime.now().minute
-                        val timeMinutes = hours * 60 + mins
+                        val timeMinutes = selectedHour * 60 + selectedMinute
                         onAdd(addressText.trim(), timeMinutes)
                     },
                     enabled = addressText.isNotBlank()
