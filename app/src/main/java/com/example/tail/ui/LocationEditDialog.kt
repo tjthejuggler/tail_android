@@ -43,9 +43,10 @@ import androidx.compose.ui.window.Dialog
  * and it fills the text field. The GPS coordinates are NOT changed — only
  * the display label varies.
  *
- * When the user saves a candidate, [onSavePreferredCandidate] is called
- * so the app remembers which candidate format the user prefers, making
- * it the first option next time and the default for daily auto-fetch.
+ * When the user picks a candidate, [onSavePreferredCandidateIndex] is called
+ * with the 0-based index of the chosen candidate in the generated list.
+ * On the next day, the app re-runs candidate generation with fresh GPS data
+ * and picks the same positional slot — so the location name is always fresh.
  */
 @Composable
 fun LocationEditDialog(
@@ -54,7 +55,7 @@ fun LocationEditDialog(
     onConfirm: (String?) -> Unit,
     onDismiss: () -> Unit,
     onFetchCandidates: (((List<String>) -> Unit) -> Unit)? = null,
-    onSavePreferredCandidate: ((String) -> Unit)? = null
+    onSavePreferredCandidateIndex: ((Int) -> Unit)? = null
 ) {
     var text by remember { mutableStateOf(currentLocation ?: "") }
     var fetching by remember { mutableStateOf(false) }
@@ -80,9 +81,10 @@ fun LocationEditDialog(
         AutoCandidatesPopup(
             candidates = autoCandidates,
             onSelect = { candidate ->
+                val index = autoCandidates.indexOf(candidate)
                 text = candidate
                 showAutoPopup = false
-                onSavePreferredCandidate?.invoke(candidate)
+                if (index >= 0) onSavePreferredCandidateIndex?.invoke(index)
             },
             onDismiss = { showAutoPopup = false }
         )

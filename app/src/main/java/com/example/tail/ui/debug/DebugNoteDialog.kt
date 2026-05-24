@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -495,13 +496,15 @@ private fun SavedNoteEditDialog(
             }
         },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                val compactPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                 // Delete button
                 OutlinedButton(
                     onClick = { onDelete(note.id) },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = DialogRed)
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = DialogRed),
+                    contentPadding = compactPadding
                 ) {
-                    Text("Delete")
+                    Text("Delete", fontSize = 12.sp)
                 }
                 // Queue button
                 Button(
@@ -509,9 +512,10 @@ private fun SavedNoteEditDialog(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = DialogOrange,
                         contentColor = DialogBackgroundDark
-                    )
+                    ),
+                    contentPadding = compactPadding
                 ) {
-                    Text("Queue")
+                    Text("Queue", fontSize = 12.sp)
                 }
                 // Save (update) button
                 Button(
@@ -522,9 +526,10 @@ private fun SavedNoteEditDialog(
                         contentColor = DialogBackgroundDark,
                         disabledContainerColor = DialogSurfaceVariant,
                         disabledContentColor = DialogTextSecondary
-                    )
+                    ),
+                    contentPadding = compactPadding
                 ) {
-                    Text("Update")
+                    Text("Update", fontSize = 12.sp)
                 }
             }
         },

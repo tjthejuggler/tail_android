@@ -31,8 +31,12 @@ private const val KEY_IGNORED_COUNTRIES_SEEDED = "ignored_country_names_seeded"
  * Used by the world-map screen to plot a person marker per day.
  */
 private const val KEY_COORDS = "daily_coords"
-/** The user's preferred auto-detected location candidate string. */
-private const val KEY_PREFERRED_AUTO_CANDIDATE = "preferred_auto_candidate"
+/**
+ * The 0-based index of the candidate the user last chose from the auto-generated list.
+ * Stored as an Int so that on the next day we re-run generateLocationCandidates with
+ * fresh GPS data and pick the same positional slot — not the same literal string.
+ */
+private const val KEY_PREFERRED_AUTO_CANDIDATE_INDEX = "preferred_auto_candidate_index"
 
 /** Timeout for an active location request (millis). */
 private const val ACTIVE_FIX_TIMEOUT_MS = 15_000L
@@ -108,15 +112,21 @@ class LocationRepository(private val context: Context) {
         return loadMap().values.distinct().sorted()
     }
 
-    /** Saves the user's preferred auto-detected location candidate string. */
-    fun savePreferredAutoCandidate(candidate: String) {
-        prefs.edit().putString(KEY_PREFERRED_AUTO_CANDIDATE, candidate).apply()
-        Log.d(TAG, "Saved preferred auto candidate: $candidate")
+    /**
+     * Saves the 0-based index of the candidate the user chose from the auto list.
+     * On the next day, [fetchTodayIfNeeded] will re-run [generateLocationCandidates]
+     * with fresh GPS data and pick the candidate at this index.
+     */
+    fun savePreferredAutoCandidateIndex(index: Int) {
+        prefs.edit().putInt(KEY_PREFERRED_AUTO_CANDIDATE_INDEX, index).apply()
+        Log.d(TAG, "Saved preferred auto candidate index: $index")
     }
 
-    /** Returns the user's preferred auto-detected location candidate, or null. */
-    fun getPreferredAutoCandidate(): String? {
-        return prefs.getString(KEY_PREFERRED_AUTO_CANDIDATE, null)
+    /**
+     * Returns the saved preferred candidate index, or -1 if none has been set.
+     */
+    fun getPreferredAutoCandidateIndex(): Int {
+        return prefs.getInt(KEY_PREFERRED_AUTO_CANDIDATE_INDEX, -1)
     }
 
     /** Returns (lat, lon) for [date] if known (from the seeder or a real-time fix). */
@@ -272,13 +282,6 @@ class LocationRepository(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Nominatim fallback failed: ${e.message}")
-        }
-
-        // Reorder: if the user has a preferred candidate, move it to the front
-        val preferred = getPreferredAutoCandidate()
-        if (preferred != null && preferred in candidates) {
-            candidates.remove(preferred)
-            candidates.add(0, preferred)
         }
 
         Log.d(TAG, "Generated ${candidates.size} location candidates for $lat, $lon: $candidates")
@@ -626,11 +629,17 @@ class LocationRepository(private val context: Context) {
      * 3. Format as "Place, Region, Country".
      */
     private suspend fun reverseGeocode(lat: Double, lon: Double): String? {
-        // If the user has a preferred auto candidate, use it directly for daily auto-fetch
-        val preferred = getPreferredAutoCandidate()
-        if (preferred != null) {
-            Log.d(TAG, "Using preferred auto candidate: $preferred")
-            return preferred
+        // If the user has a preferred candidate index, re-run the full candidate
+        // generation with the fresh coords and pick the same positional slot.
+        // This ensures we use today's actual location data, not yesterday's name.
+        val preferredIndex = getPreferredAutoCandidateIndex()
+        if (preferredIndex >= 0) {
+            val candidates = generateLocationCandidates(lat, lon)
+            if (candidates.isNotEmpty()) {
+                val picked = candidates.getOrElse(preferredIndex) { candidates[0] }
+                Log.d(TAG, "Using preferred candidate index $preferredIndex → \"$picked\" (${candidates.size} candidates)")
+                return picked
+            }
         }
 
         if (!Geocoder.isPresent()) {

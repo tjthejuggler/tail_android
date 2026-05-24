@@ -2505,8 +2505,13 @@ class HabitViewModel(
     }
 
     /** Saves the user's preferred auto-detected location candidate. */
-    fun savePreferredAutoCandidate(candidate: String) {
-        locationRepo.savePreferredAutoCandidate(candidate)
+    /**
+     * Saves the index of the candidate the user chose from the auto list.
+     * On the next day, [fetchTodayIfNeeded] will re-run candidate generation
+     * with fresh GPS data and pick the same positional slot.
+     */
+    fun savePreferredAutoCandidateIndex(index: Int) {
+        locationRepo.savePreferredAutoCandidateIndex(index)
     }
 
     /** Returns all previously stored location labels (for the edit dialog suggestions). */

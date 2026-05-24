@@ -829,8 +829,8 @@ fun HabitGridScreen(
             onFetchCandidates = { onResult ->
                 viewModel.fetchLocationCandidates(selectedDate, onResult)
             },
-            onSavePreferredCandidate = { candidate ->
-                viewModel.savePreferredAutoCandidate(candidate)
+            onSavePreferredCandidateIndex = { index ->
+                viewModel.savePreferredAutoCandidateIndex(index)
             }
         )
     }
