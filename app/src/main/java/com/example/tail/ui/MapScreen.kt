@@ -73,13 +73,21 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.DayStats
+import com.example.tail.data.SecondaryLocation
+import com.example.tail.ui.map.DayClock
 import com.example.tail.ui.map.WorldLandData
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+
+/** 4-tuple helper for the LaunchedEffect that loads map data in one pass. */
+private data class Result4<A, B, C, D>(
+    val first: A, val second: B, val third: C, val fourth: D
+)
 
 // Display formatting for the map screen.
 private val MAP_DATE_FMT = DateTimeFormatter.ofPattern("yyyy, MMM dd, EEE")
@@ -181,9 +189,11 @@ fun MapScreen(
     // Per-date accent colours — each dot is locked to the colour of the day it
     // represents, so dots don't all shift when the current day changes.
     var dotColorsByDate by remember { mutableStateOf<Map<LocalDate, Color>>(emptyMap()) }
+    // Secondary locations per date — logged each time the app is opened.
+    var secondaryByDate by remember { mutableStateOf<Map<LocalDate, List<SecondaryLocation>>>(emptyMap()) }
     val locationVersion = viewModel.locationDataVersion
     LaunchedEffect(locationVersion) {
-        val (coords, countries, colors) = withContext(Dispatchers.Default) {
+        val (coords, countries, colors, secondaries) = withContext(Dispatchers.Default) {
             // Single SharedPrefs read + single JSON parse → O(N) instead of
             // O(N²) date-by-date lookups.
             val c = viewModel.getAllStoredCoordsParsed()
@@ -192,11 +202,18 @@ fun MapScreen(
             val dc = c.keys.associateWith { date ->
                 accentColorForPoints(kotlin.math.round(viewModel.getDayStatsLight(date).monthlyAverage).toInt())
             }
-            Triple(c, ct, dc)
+            // Load secondary locations in one pass
+            val sec = viewModel.getAllSecondaryLocations()
+                .mapNotNull { (dateStr, list) ->
+                    runCatching { LocalDate.parse(dateStr) to list }.getOrNull()
+                }
+                .toMap()
+            Result4(c, ct, dc, sec)
         }
         coordsByDate = coords
         countryTimeline = countries
         dotColorsByDate = colors
+        secondaryByDate = secondaries
         dataLoaded = true
     }
 
@@ -214,14 +231,29 @@ fun MapScreen(
     // Resolve the marker's coords for the *current* day. If the selected day
     // itself has no coords, fall back to the nearest preceding day with
     // coords — that's the user's last known location. Empty map → null.
-    val currentDisplayCoords = remember(selectedDate, coordsByDate) {
-        coordsByDate[selectedDate]
+    // During secondary-location playback, secondaryPlaybackCoords overrides this.
+    var secondaryPlaybackCoords by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    val currentDisplayCoords = remember(selectedDate, coordsByDate, secondaryPlaybackCoords) {
+        secondaryPlaybackCoords
+            ?: coordsByDate[selectedDate]
             ?: coordsByDate.entries
                 .filter { it.key.isBefore(selectedDate) }
                 .maxByOrNull { it.key }
                 ?.value
             ?: coordsByDate.entries.minByOrNull { it.key }?.value
     }
+
+    // ── "All" mode: show secondary locations on map + clock ─────────────────
+    var showAll by remember { mutableStateOf(true) }
+
+    // ── Clock state: tracks which secondary location time to show ──────────
+    // When stepping through secondaries, this advances; otherwise shows the
+    // last secondary location time for the selected day (or spins if none).
+    var clockTimeMinutes by remember { mutableStateOf<Int?>(null) }
+    var clockSpinPhase by remember { mutableStateOf(0f) }
+
+    // ── Manual secondary location entry dialog ─────────────────────────────
+    var showAddLocationDialog by remember { mutableStateOf(false) }
 
     // ── Playback state ──────────────────────────────────────────────────────
     var isPlaying by remember { mutableStateOf(false) }
@@ -242,6 +274,8 @@ fun MapScreen(
         val effectiveSpeed = if (isAuto) 240f else speed
         // Nominal time per day at the current speed.
         val msPerDay = (1000f / effectiveSpeed).toLong().coerceAtLeast(15L)
+        // Speed for secondary locations — always fast (quick traversal).
+        val msPerSecondary = (1000f / effectiveSpeed).toLong().coerceAtLeast(10L)
         
         while (isPlaying) {
             val cur = viewModel.selectedDate.value
@@ -249,6 +283,24 @@ fun MapScreen(
                 isPlaying = false
                 break
             }
+
+            // ── Traverse secondary locations for the current day at quick speed ──
+            // Only when "All" mode is active
+            if (showAll) {
+                val curSecondaries = secondaryByDate[cur]?.sortedBy { it.timeMinutes }
+                if (curSecondaries != null && curSecondaries.isNotEmpty()) {
+                    for (sec in curSecondaries) {
+                        if (!isPlaying) break
+                        val secCoords = Pair(sec.lat, sec.lon)
+                        secondaryPlaybackCoords = secCoords
+                        clockTimeMinutes = sec.timeMinutes
+                        // Short delay for quick traversal — no auto-pause for secondaries
+                        delay(msPerSecondary)
+                    }
+                    secondaryPlaybackCoords = null
+                }
+            }
+
             // Compute the next day's display coords (with the same fallback
             // logic as currentDisplayCoords) so we can size the wait window
             // to "however long the marker needs to traverse the distance".
@@ -272,16 +324,12 @@ fun MapScreen(
                 requiredAnimMs(dist, mapSize.width)
             } else 0L
             
-            // Check for location change in Auto mode
+            // Check for location change in Auto mode — only novel MAIN
+            // locations trigger the slow pause, not secondary locations.
             var autoPauseMs = 0L
             if (isAuto) {
                 val curLabel = viewModel.getLocationLabelForDate(cur)
                 val nextLabel = viewModel.getLocationLabelForDate(nextDate)
-                
-                // Only pause if the next day has an explicit label AND it's different from the current day's explicit label.
-                // If nextLabel is null, it means it's an assumed location, so we don't pause.
-                // If curLabel is null, we only pause if nextLabel is a new explicit location we haven't seen just before.
-                // To be robust, let's get the effective labels for both days.
                 
                 val allLabels = viewModel.getAllStoredLabels()
                 
@@ -295,8 +343,6 @@ fun MapScreen(
                     .filter { (d, _) -> d.isBefore(nextDate) }
                     .maxByOrNull { (d, _) -> d }?.second ?: allLabels.values.firstOrNull()
 
-                // The requirement: "we do not count switching from a known location to the assumed location or back to the same location that is known and the same as the last assumed location as a change. it is only if it is actually a new place that it counts as a change."
-                // Also: "count a place as the "same" place for our auto setting if the last two comma separated sections are the same."
                 if (nextLabel != null && effectiveCurLabel != null) {
                     val curParts = effectiveCurLabel.split(",").map { it.trim() }
                     val nextParts = nextLabel.split(",").map { it.trim() }
@@ -319,6 +365,8 @@ fun MapScreen(
             // navigateToDate clamps to today and triggers the same grid rebuild.
             viewModel.navigateToDate(cur.plusDays(1))
         }
+        // Clean up secondary playback state when playback stops
+        secondaryPlaybackCoords = null
     }
 
     // ── Day-driven accent colour ────────────────────────────────────────────
@@ -327,6 +375,33 @@ fun MapScreen(
     // pauses on a day for 400ms, so rapid playback stays smooth.
     val lightStats = remember(selectedDate) { viewModel.getDayStatsLight(selectedDate) }
     val accent = remember(lightStats.monthlyAverage) { accentColorForPoints(kotlin.math.round(lightStats.monthlyAverage).toInt()) }
+
+    // ── Clock: update when selected date or secondary data changes ──────────
+    // Show the time of the last secondary location for the selected day,
+    // or null (fast 24h cycle) if there are no secondaries.
+    val daySecondaries = remember(selectedDate, secondaryByDate) {
+        secondaryByDate[selectedDate]?.sortedBy { it.timeMinutes } ?: emptyList()
+    }
+    LaunchedEffect(selectedDate, daySecondaries, showAll) {
+        clockTimeMinutes = if (showAll && daySecondaries.isNotEmpty()) {
+            daySecondaries.last().timeMinutes
+        } else null
+    }
+
+    // Fast 24h clock sweep when there are no secondary locations.
+    // Does one full day cycle (0→1439 min) in ~1.5s on each day change, then stops.
+    LaunchedEffect(selectedDate) {
+        clockSpinPhase = 0f
+        val hasSecondaries = showAll && secondaryByDate[selectedDate]?.isNotEmpty() == true
+        if (!hasSecondaries) {
+            var minute = 0f
+            while (minute < 1440f) {
+                minute = (minute + 16f).coerceAtMost(1440f)
+                clockSpinPhase = minute / 1440f
+                delay(16L)
+            }
+        }
+    }
 
     // Full stats — debounced. While waiting, show "..." for streak/anti-streak.
     var dayStats by remember { mutableStateOf(lightStats) }
@@ -409,6 +484,20 @@ fun MapScreen(
                 )
             }
 
+            if (showAddLocationDialog) {
+                AddSecondaryLocationDialog(
+                    date = selectedDate,
+                    accent = accent,
+                    onAdd = { address, timeMinutes ->
+                        scope.launch {
+                            viewModel.addManualSecondaryLocation(selectedDate, address, timeMinutes)
+                        }
+                        showAddLocationDialog = false
+                    },
+                    onDismiss = { showAddLocationDialog = false }
+                )
+            }
+
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 // ── Map area (left, takes remaining width) ─────────────────
                 Box(
@@ -421,10 +510,75 @@ fun MapScreen(
                         allCoordsTrail = coordsByDate,
                         selectedDate = selectedDate,
                         dotColorsByDate = dotColorsByDate,
+                        secondaryByDate = if (showAll) secondaryByDate else emptyMap(),
                         accent = accent,
                         speed = speed,
                         onSizeChanged = { mapSize = it }
                     )
+
+                    // ── Clock overlay (bottom-left of map) ──────────────────
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(8.dp)
+                    ) {
+                        DayClock(
+                            timeMinutes = clockTimeMinutes,
+                            spinPhase = clockSpinPhase,
+                            accent = accent
+                        )
+                    }
+
+                    // ── Settings gear icon (top-right of map) ──────────────────
+                    var showMapSettings by remember { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                    ) {
+                        Text(
+                            text = "⚙",
+                            color = Color(0xFF888888),
+                            fontSize = 18.sp,
+                            modifier = Modifier
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    onClick = { showMapSettings = !showMapSettings }
+                                )
+                                .padding(4.dp)
+                        )
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = showMapSettings,
+                            onDismissRequest = { showMapSettings = false },
+                            modifier = Modifier.background(Color(0xFF1A1A1A))
+                        ) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        androidx.compose.material3.Checkbox(
+                                            checked = showAll,
+                                            onCheckedChange = { showAll = it },
+                                            modifier = Modifier.size(16.dp),
+                                            colors = androidx.compose.material3.CheckboxDefaults.colors(
+                                                checkedColor = accent,
+                                                uncheckedColor = Color(0xFF666666)
+                                            )
+                                        )
+                                        Text("All locations", color = Color.White, fontSize = 13.sp)
+                                    }
+                                },
+                                onClick = { showAll = !showAll }
+                            )
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("+ Add location…", color = accent, fontSize = 13.sp) },
+                                onClick = {
+                                    showMapSettings = false
+                                    showAddLocationDialog = true
+                                }
+                            )
+                        }
+                    }
                 }
                 // ── Side info panel (right) ────────────────────────────────
                 MapInfoPanel(
@@ -458,6 +612,8 @@ fun MapScreen(
                 lastDate = lastDate,
                 totalDays = totalDays,
                 selectedDate = selectedDate,
+                clockTimeMinutes = clockTimeMinutes,
+                dayHasSecondaries = showAll && daySecondaries.isNotEmpty(),
                 onScrub = { newDate ->
                     isPlaying = false
                     viewModel.navigateToDate(newDate)
@@ -569,6 +725,7 @@ private fun WorldMapWithMarker(
     allCoordsTrail: Map<LocalDate, Pair<Double, Double>>,
     selectedDate: LocalDate,
     dotColorsByDate: Map<LocalDate, Color>,
+    secondaryByDate: Map<LocalDate, List<SecondaryLocation>>,
     accent: Color,
     speed: Float = 2f,
     onSizeChanged: (Size) -> Unit = {}
@@ -797,6 +954,21 @@ private fun WorldMapWithMarker(
                 radius = 2.0f,
                 center = Offset(lonToX(lon, size.width), latToY(lat, size.height))
             )
+        }
+
+        // Secondary location dots — smaller, slightly more transparent dots
+        // for positions logged each time the app was opened throughout the day.
+        // Only shown for days up to the selected date.
+        for ((date, secondaries) in secondaryByDate) {
+            if (date.isAfter(selectedDate)) continue
+            val secColor = (dotColorsByDate[date] ?: accent).copy(alpha = 0.35f)
+            for (sec in secondaries) {
+                drawCircle(
+                    color = secColor,
+                    radius = 1.3f,
+                    center = Offset(lonToX(sec.lon, size.width), latToY(sec.lat, size.height))
+                )
+            }
         }
 
         // Current-day marker — a stylised "person pin" (head + body), tinted
@@ -1217,7 +1389,9 @@ private fun TimelineBar(
     onTogglePlay: () -> Unit,
     speed: Float,
     onSpeedChange: (Int) -> Unit,
-    accent: Color
+    accent: Color,
+    clockTimeMinutes: Int? = null,
+    dayHasSecondaries: Boolean = false
 ) {
     var showSpeedDropdown by remember { mutableStateOf(false) }
 
@@ -1225,6 +1399,15 @@ private fun TimelineBar(
         .between(firstDate, selectedDate)
         .coerceIn(0L, totalDays.toLong())
         .toInt()
+
+    // For days with secondary locations, add a decimal based on time of day.
+    // Noon = .50, midnight = .00, etc. Precision to .01 (≈14.4 min).
+    val daysDisplay = if (dayHasSecondaries && clockTimeMinutes != null) {
+        val fraction = (clockTimeMinutes / 1440.0 * 100).roundToInt() / 100.0
+        String.format("%.2f", daysFromStart + fraction)
+    } else {
+        daysFromStart.toString()
+    }
     val canStepBack = selectedDate.isAfter(firstDate)
     val canStepForward = selectedDate.isBefore(lastDate)
 
@@ -1306,7 +1489,7 @@ private fun TimelineBar(
                 )
             }
             Text(
-                text = "${daysFromStart} / $totalDays",
+                text = "$daysDisplay / $totalDays",
                 color = Color(0xFFAAAAAA),
                 fontSize = 11.sp
             )
@@ -1319,6 +1502,125 @@ private fun TimelineBar(
                     color = if (canStepForward) Color.White else Color(0xFF444444),
                     fontSize = 22.sp
                 )
+            }
+        }
+    }
+}
+
+// ── Add secondary location dialog ──────────────────────────────────────────
+
+/**
+ * Dialog for manually adding a secondary location by pasting an address
+ * (e.g. from Google Maps). The address is forward-geocoded to get coords.
+ * Also allows setting the time of day for the visit.
+ */
+@Composable
+private fun AddSecondaryLocationDialog(
+    date: LocalDate,
+    accent: Color,
+    onAdd: (address: String, timeMinutes: Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var addressText by remember { mutableStateOf("") }
+    var hourText by remember { mutableStateOf("") }
+    var minuteText by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF0D0D0D), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text("Add location for ${date.format(MAP_DATE_FMT)}", color = accent, fontSize = 14.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Paste a Google Maps address or place name. It will be geocoded to coordinates.",
+                color = Color(0xFF777777),
+                fontSize = 11.sp
+            )
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(color = Color(0xFF222222))
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = addressText,
+                onValueChange = { addressText = it },
+                placeholder = { Text("Address or place name…", fontSize = 12.sp, color = Color(0xFF555555)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = accent,
+                    unfocusedBorderColor = Color(0xFF333333),
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = accent
+                ),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            Text("Time of visit (optional):", color = Color(0xFF888888), fontSize = 11.sp)
+            Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = hourText,
+                    onValueChange = { if (it.length <= 2) hourText = it.filter { c -> c.isDigit() } },
+                    placeholder = { Text("HH", fontSize = 12.sp, color = Color(0xFF555555)) },
+                    singleLine = true,
+                    modifier = Modifier.width(56.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = accent,
+                        unfocusedBorderColor = Color(0xFF333333),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = accent
+                    ),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
+                )
+                Text(":", color = Color(0xFF888888), fontSize = 16.sp, modifier = Modifier.padding(horizontal = 4.dp))
+                OutlinedTextField(
+                    value = minuteText,
+                    onValueChange = { if (it.length <= 2) minuteText = it.filter { c -> c.isDigit() } },
+                    placeholder = { Text("MM", fontSize = 12.sp, color = Color(0xFF555555)) },
+                    singleLine = true,
+                    modifier = Modifier.width(56.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = accent,
+                        unfocusedBorderColor = Color(0xFF333333),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = accent
+                    ),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888), fontSize = 13.sp)
+                }
+                Spacer(Modifier.width(8.dp))
+                TextButton(
+                    onClick = {
+                        val hours = hourText.toIntOrNull()?.coerceIn(0, 23) ?: java.time.LocalTime.now().hour
+                        val mins = minuteText.toIntOrNull()?.coerceIn(0, 59) ?: java.time.LocalTime.now().minute
+                        val timeMinutes = hours * 60 + mins
+                        onAdd(addressText.trim(), timeMinutes)
+                    },
+                    enabled = addressText.isNotBlank()
+                ) {
+                    Text("Add", color = if (addressText.isNotBlank()) accent else Color(0xFF444444), fontSize = 13.sp)
+                }
             }
         }
     }

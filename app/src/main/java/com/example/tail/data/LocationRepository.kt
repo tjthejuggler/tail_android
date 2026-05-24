@@ -37,6 +37,14 @@ private const val KEY_COORDS = "daily_coords"
  * fresh GPS data and pick the same positional slot — not the same literal string.
  */
 private const val KEY_PREFERRED_AUTO_CANDIDATE_INDEX = "preferred_auto_candidate_index"
+/**
+ * Map of date-string ("YYYY-MM-DD") → JSON array of secondary location objects.
+ * Each object has: {"lat": double, "lon": double, "label": string}.
+ * Secondary locations are logged each time the app is opened and represent
+ * places visited throughout the day beyond the main daily location.
+ * Only unique labels are stored per day (duplicates are skipped).
+ */
+private const val KEY_SECONDARY_LOCATIONS = "secondary_locations"
 
 /** Timeout for an active location request (millis). */
 private const val ACTIVE_FIX_TIMEOUT_MS = 15_000L
@@ -846,4 +854,182 @@ class LocationRepository(private val context: Context) {
         prefs.edit().putString(KEY_IGNORED_COUNTRIES, arr.toString()).apply()
         Log.d(TAG, "Saved ignored countries: $set")
     }
+
+    // ── Secondary locations ──────────────────────────────────────────────────
+
+    /**
+     * Returns the list of secondary locations recorded for [date].
+     * Each entry has GPS coords and a label. Returns empty list if none stored.
+     */
+    fun getSecondaryLocationsForDate(date: LocalDate): List<SecondaryLocation> {
+        val map = loadSecondaryMap()
+        val arr = map[date.toString()] ?: return emptyList()
+        return parseSecondaryArray(arr)
+    }
+
+    /**
+     * Returns ALL stored secondary locations as a map of date-string → list.
+     * Used by the world-map screen to plot secondary dots in one read.
+     */
+    fun getAllSecondaryLocations(): Map<String, List<SecondaryLocation>> {
+        val map = loadSecondaryMap()
+        return map.mapValues { (_, arr) -> parseSecondaryArray(arr) }
+    }
+
+    /**
+     * Logs a secondary location for today. Only stores it if the label is
+     * unique among today's secondary locations (avoids duplicates when the
+     * user opens the app multiple times from the same place).
+     *
+     * The label is derived from the preferred auto candidate index, falling
+     * back to a simple reverse-geocode if no preferred index is set.
+     */
+    suspend fun logSecondaryLocation(lat: Double, lon: Double, label: String, timeMinutes: Int = java.time.LocalTime.now().toSecondOfDay() / 60) {
+        val today = LocalDate.now()
+        val map = loadSecondaryMap().toMutableMap()
+        val existingArr = map[today.toString()]
+        val existing = parseSecondaryArray(existingArr ?: "[]")
+
+        // Skip if this label already exists for today
+        if (existing.any { it.label == label }) {
+            Log.d(TAG, "Secondary location '$label' already exists for $today — skipping")
+            return
+        }
+
+        val newEntry = org.json.JSONObject().apply {
+            put("lat", lat)
+            put("lon", lon)
+            put("label", label)
+            put("time", timeMinutes)
+        }
+        val combined = org.json.JSONArray(existingArr ?: "[]")
+        combined.put(newEntry)
+        map[today.toString()] = combined.toString()
+        prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
+        dataVersion++
+        Log.d(TAG, "Logged secondary location for $today: $label ($lat, $lon) at ${timeMinutes}min")
+    }
+
+    /**
+     * Fetches the current GPS position and logs it as a secondary location
+     * for today. Uses the preferred auto candidate index to derive the label.
+     * Returns the label used, or null on failure.
+     */
+    suspend fun logCurrentPositionAsSecondary(): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val coords = getBestLastKnownLocation()
+                    ?: requestFreshLocation()
+                    ?: return@withContext null
+
+                val label = deriveSecondaryLabel(coords.first, coords.second) ?: return@withContext null
+                logSecondaryLocation(coords.first, coords.second, label)
+                label
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to log secondary location: ${e.message}")
+                null
+            }
+        }
+    }
+
+    /**
+     * Manually adds a secondary location for [date] by forward-geocoding
+     * a human-readable address string (e.g. pasted from Google Maps).
+     * Returns the resolved label, or null if geocoding fails.
+     */
+    suspend fun addManualSecondaryLocation(date: LocalDate, address: String, timeMinutes: Int = java.time.LocalTime.now().toSecondOfDay() / 60): String? {
+        val coords = geocodeLocationLabel(address) ?: return null
+        val label = deriveSecondaryLabel(coords.first, coords.second) ?: address
+        val map = loadSecondaryMap().toMutableMap()
+        val existingArr = map[date.toString()]
+        val existing = parseSecondaryArray(existingArr ?: "[]")
+
+        // Skip if this label already exists for this date
+        if (existing.any { it.label == label }) {
+            Log.d(TAG, "Manual secondary location '$label' already exists for $date — skipping")
+            return label
+        }
+
+        val newEntry = org.json.JSONObject().apply {
+            put("lat", coords.first)
+            put("lon", coords.second)
+            put("label", label)
+            put("time", timeMinutes)
+        }
+        val combined = org.json.JSONArray(existingArr ?: "[]")
+        combined.put(newEntry)
+        map[date.toString()] = combined.toString()
+        prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
+        dataVersion++
+        Log.d(TAG, "Added manual secondary location for $date: $label (${coords.first}, ${coords.second}) at ${timeMinutes}min")
+        return label
+    }
+
+    /**
+     * Derives a label for a secondary location using the preferred auto
+     * candidate index (same method as the main daily location). Falls back
+     * to a simple reverse-geocode if no preferred index is set.
+     */
+    private suspend fun deriveSecondaryLabel(lat: Double, lon: Double): String? {
+        val preferredIndex = getPreferredAutoCandidateIndex()
+        if (preferredIndex >= 0) {
+            val candidates = generateLocationCandidates(lat, lon)
+            if (candidates.isNotEmpty()) {
+                return candidates.getOrElse(preferredIndex) { candidates[0] }
+            }
+        }
+        return reverseGeocode(lat, lon)
+    }
+
+    /** Parses a JSON array string into a list of SecondaryLocation objects. */
+    private fun parseSecondaryArray(jsonArrStr: String): List<SecondaryLocation> {
+        if (jsonArrStr.isBlank() || jsonArrStr == "[]") return emptyList()
+        return try {
+            val arr = org.json.JSONArray(jsonArrStr)
+            (0 until arr.length()).mapNotNull { i ->
+                val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                val lat = obj.optDouble("lat", Double.NaN)
+                val lon = obj.optDouble("lon", Double.NaN)
+                val label = obj.optString("label", "")
+                // Backward compatible: default to 0 (midnight) if time field missing
+                val timeMinutes = obj.optInt("time", 0)
+                if (!lat.isNaN() && !lon.isNaN() && label.isNotBlank()) {
+                    SecondaryLocation(lat, lon, label, timeMinutes)
+                } else null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse secondary locations: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** Loads the date-string → JSON-array-string map from SharedPrefs. */
+    private fun loadSecondaryMap(): Map<String, String> {
+        val json = prefs.getString(KEY_SECONDARY_LOCATIONS, null) ?: return emptyMap()
+        return try {
+            val obj = JSONObject(json)
+            obj.keys().asSequence().associateWith { obj.getString(it) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse secondary locations map: ${e.message}")
+            emptyMap()
+        }
+    }
 }
+
+/**
+ * A secondary location logged when the app is opened throughout the day.
+ * Unlike the main daily location (one per day), secondary locations capture
+ * multiple positions as the user moves around.
+ *
+ * @param lat Latitude
+ * @param lon Longitude
+ * @param label Human-readable place name (from auto-candidate or manual entry)
+ * @param timeMinutes Minutes since midnight (0–1439). Used by the analog clock
+ *   on the map screen to show when each location was visited.
+ */
+data class SecondaryLocation(
+    val lat: Double,
+    val lon: Double,
+    val label: String,
+    val timeMinutes: Int = 0
+)

@@ -17,6 +17,7 @@ import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.DayStats
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.LocationRepository
+import com.example.tail.data.SecondaryLocation
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.Habit
@@ -1998,6 +1999,10 @@ class HabitViewModel(
             }
             syncAllDatedEntries(forceReparse = false)
         }
+        // Log current position as a secondary location for today.
+        // Runs in the background — silently no-ops if permission is missing
+        // or the label duplicates an existing entry.
+        logSecondaryLocationOnForeground()
     }
 
     /**
@@ -2609,6 +2614,47 @@ class HabitViewModel(
      */
     val locationDataVersion: Int
         get() = locationRepo.dataVersion
+
+    // ── Secondary locations ─────────────────────────────────────────────────
+
+    /** Returns secondary locations for a specific date. */
+    fun getSecondaryLocationsForDate(date: LocalDate): List<SecondaryLocation> =
+        locationRepo.getSecondaryLocationsForDate(date)
+
+    /** Returns ALL secondary locations as a map of date-string → list. */
+    fun getAllSecondaryLocations(): Map<String, List<SecondaryLocation>> =
+        locationRepo.getAllSecondaryLocations()
+
+    /**
+     * Logs the current GPS position as a secondary location for today.
+     * Called when the app is foregrounded. Silently no-ops if location
+     * permission is not granted or the label duplicates an existing entry.
+     */
+    fun logSecondaryLocationOnForeground() {
+        viewModelScope.launch {
+            try {
+                locationRepo.logCurrentPositionAsSecondary()
+            } catch (e: Exception) {
+                Log.w(TAG, "logSecondaryLocationOnForeground failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Manually adds a secondary location for [date] by forward-geocoding
+     * a pasted address (e.g. from Google Maps). Returns the resolved label
+     * on success, or null on failure. Runs on Dispatchers.IO.
+     */
+    suspend fun addManualSecondaryLocation(date: LocalDate, address: String, timeMinutes: Int = java.time.LocalTime.now().toSecondOfDay() / 60): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                locationRepo.addManualSecondaryLocation(date, address, timeMinutes)
+            } catch (e: Exception) {
+                Log.w(TAG, "addManualSecondaryLocation failed: ${e.message}")
+                null
+            }
+        }
+    }
 
     /**
      * Returns the list of habits done on [date] with their point values,
