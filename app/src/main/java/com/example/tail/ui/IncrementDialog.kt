@@ -99,16 +99,18 @@ fun IncrementDialog(
                     ) {
                         recentAmounts.forEach { amount ->
                             Button(
-                                onClick = { inputText = amount.toString() },
+                                onClick = {
+                                    val current = inputText.toIntOrNull() ?: 0
+                                    inputText = (current + amount).toString()
+                                },
                                 modifier = Modifier
-                                    .weight(1f)
                                     .padding(0.dp),
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF3A2800)
                                 )
                             ) {
-                                Text("=$amount", fontSize = 11.sp, color = Color(0xFFFFCC44))
+                                Text("+$amount", fontSize = 11.sp, color = Color(0xFFFFCC44))
                             }
                         }
                     }
