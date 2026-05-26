@@ -262,9 +262,23 @@ fun MapScreen(
     // ── "All" mode: show secondary locations on map + clock ─────────────────
     var showAll by remember { mutableStateOf(true) }
 
-    // ── Clock state: tracks which secondary location time to show ──────────
-    // When stepping through secondaries, this advances; otherwise shows the
-    // last secondary location time for the selected day (or spins if none).
+    // ── Secondary stepping state ────────────────────────────────────────────
+    // null = currently viewing the day's PRIMARY (whole-number label).
+    // 0..N-1 = currently viewing the Nth distinct secondary for the day.
+    // Driven by the left/right arrow buttons.
+    var secondaryStepIndex by remember { mutableStateOf<Int?>(null) }
+    // When the BACKWARD arrow crosses to the previous day we want to land on
+    // that day's LAST distinct secondary. We park the desired index here so
+    // it survives the date-change auto-reset below.
+    var pendingStepIndexOnDateChange by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(selectedDate) {
+        secondaryStepIndex = pendingStepIndexOnDateChange
+        pendingStepIndexOnDateChange = null
+    }
+
+    // ── Clock state ────────────────────────────────────────────────────────
+    // Derived from secondaryStepIndex (and overridden by the auto-play loop).
+    // null → primary view (clock spins or shows nothing).
     var clockTimeMinutes by remember { mutableStateOf<Int?>(null) }
     var clockSpinPhase by remember { mutableStateOf(0f) }
 
@@ -285,7 +299,12 @@ fun MapScreen(
 
     LaunchedEffect(isPlaying, speed, mapSize) {
         if (!isPlaying) return@LaunchedEffect
-        
+
+        // Auto-play owns secondary marker + clock writes directly; clear any
+        // manual step-index so it doesn't fight us through the derivation
+        // effect once playback finishes.
+        secondaryStepIndex = null
+
         val isAuto = speed == -1f
         val effectiveSpeed = if (isAuto) 240f else speed
         // Nominal time per day at the current speed.
@@ -301,22 +320,38 @@ fun MapScreen(
             }
 
             // ── Traverse secondary locations for the current day at quick speed ──
-            // Only when "All" mode is active
+            // Only when "All" mode is active. Filter by GPS distance (≥250m
+            // from the day's primary AND from each previously-shown secondary)
+            // so we don't dwell on labels that are physically the same place.
             if (showAll) {
-                val curSecondaries = secondaryByDate[cur]?.sortedBy { it.timeMinutes }
-                val curPrimaryLabel = viewModel.getLocationLabelForDate(cur)
-                if (curSecondaries != null && curSecondaries.isNotEmpty()) {
+                val curSecondaries = secondaryByDate[cur]?.sortedBy { it.timeMinutes }.orEmpty()
+                val curPrimaryCoords = coordsByDate[cur]
+                val differentSecondaries = run {
+                    val kept = mutableListOf<SecondaryLocation>()
+                    for (sec in curSecondaries) {
+                        val tooClosePrimary = curPrimaryCoords != null &&
+                            com.example.tail.data.haversineMeters(
+                                curPrimaryCoords.first, curPrimaryCoords.second, sec.lat, sec.lon
+                            ) < 250.0
+                        if (tooClosePrimary) continue
+                        val tooCloseKept = kept.any {
+                            com.example.tail.data.haversineMeters(
+                                it.lat, it.lon, sec.lat, sec.lon
+                            ) < 250.0
+                        }
+                        if (tooCloseKept) continue
+                        kept.add(sec)
+                    }
+                    kept
+                }
+                if (differentSecondaries.isNotEmpty()) {
                     // Show the whole-number day briefly before stepping into secondaries
                     clockTimeMinutes = null
+                    secondaryPlaybackCoords = null
                     delay(msPerSecondary)
-                    // Only step through secondaries that are at a different location
-                    val differentSecondaries = curSecondaries.filter { sec ->
-                        !isSameLocationLabel(sec.label, curPrimaryLabel)
-                    }
                     for (sec in differentSecondaries) {
                         if (!isPlaying) break
-                        val secCoords = Pair(sec.lat, sec.lon)
-                        secondaryPlaybackCoords = secCoords
+                        secondaryPlaybackCoords = Pair(sec.lat, sec.lon)
                         clockTimeMinutes = sec.timeMinutes
                         delay(msPerSecondary)
                     }
@@ -399,16 +434,46 @@ fun MapScreen(
     val lightStats = remember(selectedDate) { viewModel.getDayStatsLight(selectedDate) }
     val accent = remember(lightStats.monthlyAverage) { accentColorForPoints(kotlin.math.round(lightStats.monthlyAverage).toInt()) }
 
-    // ── Clock: update when selected date or secondary data changes ──────────
-    // Show the time of the last secondary location for the selected day,
-    // or null (fast 24h cycle) if there are no secondaries.
+    // ── Day secondaries (raw + distinct-from-primary, GPS distance based) ──
+    // `daySecondaries` = ALL secondaries logged for the day (sorted by time).
+    // `distinctDaySecondaries` = only those that are physically distant from
+    // the day's primary coords AND from any earlier-in-the-day secondary
+    // we'll be showing — this is what the user steps through and what
+    // determines whether the day has a decimal in the "N / M" label.
     val daySecondaries = remember(selectedDate, secondaryByDate) {
         secondaryByDate[selectedDate]?.sortedBy { it.timeMinutes } ?: emptyList()
     }
-    LaunchedEffect(selectedDate, daySecondaries, showAll) {
-        clockTimeMinutes = if (showAll && daySecondaries.isNotEmpty()) {
-            daySecondaries.last().timeMinutes
-        } else null
+    val distinctDaySecondaries = remember(selectedDate, daySecondaries, coordsByDate) {
+        val primary = coordsByDate[selectedDate]
+        val kept = mutableListOf<SecondaryLocation>()
+        for (sec in daySecondaries) {
+            val tooCloseToPrimary = primary != null &&
+                com.example.tail.data.haversineMeters(primary.first, primary.second, sec.lat, sec.lon) < 250.0
+            if (tooCloseToPrimary) continue
+            val tooCloseToKept = kept.any {
+                com.example.tail.data.haversineMeters(it.lat, it.lon, sec.lat, sec.lon) < 250.0
+            }
+            if (tooCloseToKept) continue
+            kept.add(sec)
+        }
+        kept
+    }
+
+    // Drive the clock + secondary marker from secondaryStepIndex (manual
+    // stepping); auto-play has its own override branch. Suppressed while
+    // isPlaying so the play loop's direct writes aren't clobbered.
+    LaunchedEffect(selectedDate, secondaryStepIndex, distinctDaySecondaries, showAll, isPlaying) {
+        if (isPlaying) return@LaunchedEffect
+        val idx = secondaryStepIndex
+        val active = showAll && idx != null && idx in distinctDaySecondaries.indices
+        if (active) {
+            val sec = distinctDaySecondaries[idx!!]
+            clockTimeMinutes = sec.timeMinutes
+            secondaryPlaybackCoords = Pair(sec.lat, sec.lon)
+        } else {
+            clockTimeMinutes = null
+            secondaryPlaybackCoords = null
+        }
     }
 
     // Fast 24h clock sweep when there are no secondary locations.
@@ -448,10 +513,11 @@ fun MapScreen(
         }
         seen.size
     }
-    // Cached location label for the top bar (avoid SharedPrefs on every recomp).
-    // Always show a label: use the exact entry for the day if present, otherwise
-    // fall back to the most recent preceding entry and mark it as assumed (*).
-    val locationLabelPair = remember(selectedDate, locationVersion) {
+    // Cached PRIMARY location label for the top bar (avoid SharedPrefs on
+    // every recomp). Always show a label: use the exact entry for the day
+    // if present, otherwise fall back to the most recent preceding entry
+    // and mark it as assumed (*).
+    val primaryLabelPair = remember(selectedDate, locationVersion) {
         val exact = viewModel.getLocationLabelForDate(selectedDate)
         if (exact != null) {
             exact to false
@@ -468,8 +534,16 @@ fun MapScreen(
             (lastKnown ?: allLabels.values.firstOrNull()) to true
         }
     }
-    val locationLabel = locationLabelPair.first
-    val locationIsAssumed = locationLabelPair.second
+    // When the user has stepped to a distinct secondary, show that
+    // secondary's label (produced via the same pipeline as the primary —
+    // see LocationRepository.deriveSecondaryLabel). It will naturally
+    // collapse back to the primary's label if the labeling method yields
+    // the same string for both coordinates.
+    val activeSecondary = secondaryStepIndex?.let { idx ->
+        distinctDaySecondaries.getOrNull(idx)
+    }
+    val locationLabel = activeSecondary?.label ?: primaryLabelPair.first
+    val locationIsAssumed = activeSecondary == null && primaryLabelPair.second
 
     // ── Location timeline popup state ──────────────────────────────────────
     var showLocationTimeline by remember { mutableStateOf(false) }
@@ -588,20 +662,88 @@ fun MapScreen(
                 totalDays = totalDays,
                 selectedDate = selectedDate,
                 clockTimeMinutes = clockTimeMinutes,
-                dayHasSecondaries = showAll && daySecondaries.any { !isSameLocationLabel(it.label, locationLabel) },
+                // Decimal in the "N / M" label is only shown when the user
+                // is actively viewing a secondary for this day (Bug B fix).
+                // When secondaryStepIndex == null, the WHOLE-NUMBER primary
+                // is shown — matching the legacy behaviour.
+                dayHasSecondaries = showAll && secondaryStepIndex != null &&
+                    secondaryStepIndex!! in distinctDaySecondaries.indices,
                 onScrub = { newDate ->
                     isPlaying = false
+                    // Slider scrub always returns to the day's primary view.
+                    secondaryStepIndex = null
                     viewModel.navigateToDate(newDate)
                 },
                 onStepDay = { delta ->
                     isPlaying = false
-                    val target = selectedDate.plusDays(delta.toLong())
-                    val clamped = when {
-                        target.isBefore(firstDate) -> firstDate
-                        target.isAfter(lastDate) -> lastDate
-                        else -> target
+                    // Walk secondaries within the current day first, then
+                    // cross to the adjacent day's primary (Bug D fix).
+                    // State machine (forward / delta = +1):
+                    //   primary (null) → secondary 0 → secondary 1 → ... →
+                    //   secondary N-1 → next day primary (null).
+                    // Reverse for delta = -1.
+                    val n = distinctDaySecondaries.size
+                    val curIdx = secondaryStepIndex
+                    if (delta > 0) {
+                        when {
+                            // Currently on primary: jump to first secondary if any.
+                            curIdx == null && n > 0 -> secondaryStepIndex = 0
+                            // Currently on a secondary, more remain: advance.
+                            curIdx != null && curIdx < n - 1 -> secondaryStepIndex = curIdx + 1
+                            // No more secondaries for today: move to next day's primary.
+                            else -> {
+                                val target = selectedDate.plusDays(1)
+                                val clamped = if (target.isAfter(lastDate)) lastDate else target
+                                if (clamped != selectedDate) viewModel.navigateToDate(clamped)
+                            }
+                        }
+                    } else {
+                        when {
+                            // Currently on secondary 0: back to primary.
+                            curIdx == 0 -> secondaryStepIndex = null
+                            // Currently on a later secondary: step back one.
+                            curIdx != null && curIdx > 0 -> secondaryStepIndex = curIdx - 1
+                            // Currently on primary: cross to previous day's
+                            // LAST distinct secondary (or primary if none).
+                            else -> {
+                                val target = selectedDate.minusDays(1)
+                                val clamped = if (target.isBefore(firstDate)) firstDate else target
+                                if (clamped != selectedDate) {
+                                    viewModel.navigateToDate(clamped)
+                                    val prevSecs = secondaryByDate[clamped]
+                                        ?.sortedBy { it.timeMinutes }.orEmpty()
+                                    val prevPrimary = coordsByDate[clamped]
+                                    val prevDistinct = run {
+                                        val kept = mutableListOf<SecondaryLocation>()
+                                        for (sec in prevSecs) {
+                                            val tooClosePrimary = prevPrimary != null &&
+                                                com.example.tail.data.haversineMeters(
+                                                    prevPrimary.first, prevPrimary.second,
+                                                    sec.lat, sec.lon
+                                                ) < 250.0
+                                            if (tooClosePrimary) continue
+                                            val tooCloseKept = kept.any {
+                                                com.example.tail.data.haversineMeters(
+                                                    it.lat, it.lon, sec.lat, sec.lon
+                                                ) < 250.0
+                                            }
+                                            if (tooCloseKept) continue
+                                            kept.add(sec)
+                                        }
+                                        kept
+                                    }
+                                    // LaunchedEffect(selectedDate) will set
+                                    // secondaryStepIndex = pendingStepIndexOnDateChange
+                                    // after the navigation recomposes. We park the
+                                    // desired "last distinct secondary" here so it
+                                    // survives the date-change handler.
+                                    pendingStepIndexOnDateChange =
+                                        if (prevDistinct.isNotEmpty()) prevDistinct.size - 1
+                                        else null
+                                }
+                            }
+                        }
                     }
-                    if (clamped != selectedDate) viewModel.navigateToDate(clamped)
                 },
                 isPlaying = isPlaying,
                 onTogglePlay = { isPlaying = !isPlaying },

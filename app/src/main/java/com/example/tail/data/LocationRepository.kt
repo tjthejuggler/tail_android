@@ -50,6 +50,36 @@ private const val KEY_SECONDARY_LOCATIONS = "secondary_locations"
 private const val ACTIVE_FIX_TIMEOUT_MS = 15_000L
 
 /**
+ * Two secondary samples (or a secondary vs. the day's primary) are considered
+ * "the same place" when they are within this many metres. Anything closer is
+ * deduped on capture so opening the app multiple times from the same coffee
+ * shop / home doesn't fill the day with near-identical pings.
+ *
+ * 250 m is a city-block-ish radius — big enough to absorb GPS noise on a
+ * coarse network fix, small enough that crossing the street to a different
+ * neighbourhood still registers.
+ */
+private const val SECONDARY_DEDUP_METERS = 250.0
+
+/**
+ * Great-circle distance between two lat/lon pairs in metres
+ * (haversine formula). Used to dedup secondary location pings that may
+ * reverse-geocode to the same coarse label even though they're not the
+ * same physical place.
+ */
+internal fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val r = 6371000.0  // Earth radius in metres
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = kotlin.math.sin(dLat / 2).let { it * it } +
+        kotlin.math.cos(Math.toRadians(lat1)) *
+        kotlin.math.cos(Math.toRadians(lat2)) *
+        kotlin.math.sin(dLon / 2).let { it * it }
+    val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+    return r * c
+}
+
+/**
  * US state names (properly capitalised) seeded into the ignored-country list
  * on first run so the user can see and optionally remove them.
  */
@@ -877,9 +907,12 @@ class LocationRepository(private val context: Context) {
     }
 
     /**
-     * Logs a secondary location for today. Only stores it if the label is
-     * unique among today's secondary locations (avoids duplicates when the
-     * user opens the app multiple times from the same place).
+     * Logs a secondary location for today. Stores it unless we already have a
+     * sample at substantially the same physical location (same label OR within
+     * [SECONDARY_DEDUP_METERS] of today's primary coords or of any existing
+     * secondary), so opening the app multiple times from the same place
+     * doesn't fill the day with near-identical pings, but any real movement
+     * (e.g. drove across town, same coarse city label) IS captured.
      *
      * The label is derived from the preferred auto candidate index, falling
      * back to a simple reverse-geocode if no preferred index is set.
@@ -890,9 +923,27 @@ class LocationRepository(private val context: Context) {
         val existingArr = map[today.toString()]
         val existing = parseSecondaryArray(existingArr ?: "[]")
 
-        // Skip if this label already exists for today
+        // 1. Skip if exact same label already exists for today.
         if (existing.any { it.label == label }) {
             Log.d(TAG, "Secondary location '$label' already exists for $today — skipping")
+            return
+        }
+
+        // 2. Skip if within SECONDARY_DEDUP_METERS of today's PRIMARY coords —
+        //    this means the user just opened the app from "home" / the place
+        //    they woke up in; that's already captured as the primary.
+        val primaryCoords = getCoordsForDate(today)
+        if (primaryCoords != null &&
+            haversineMeters(lat, lon, primaryCoords.first, primaryCoords.second) < SECONDARY_DEDUP_METERS
+        ) {
+            Log.d(TAG, "Secondary location ($lat,$lon) within ${SECONDARY_DEDUP_METERS}m of primary — skipping")
+            return
+        }
+
+        // 3. Skip if within SECONDARY_DEDUP_METERS of an existing secondary
+        //    for today (no point logging two pings from the same coffee shop).
+        if (existing.any { haversineMeters(lat, lon, it.lat, it.lon) < SECONDARY_DEDUP_METERS }) {
+            Log.d(TAG, "Secondary location ($lat,$lon) within ${SECONDARY_DEDUP_METERS}m of an existing secondary — skipping")
             return
         }
 
@@ -914,12 +965,17 @@ class LocationRepository(private val context: Context) {
      * Fetches the current GPS position and logs it as a secondary location
      * for today. Uses the preferred auto candidate index to derive the label.
      * Returns the label used, or null on failure.
+     *
+     * Prefers a FRESH fix over the cached last-known location — secondary
+     * logging exists specifically to detect movement, and the cached fix is
+     * often the morning primary, which would just be deduped against itself.
+     * Falls back to last-known only if the active request times out.
      */
     suspend fun logCurrentPositionAsSecondary(): String? {
         return withContext(Dispatchers.IO) {
             try {
-                val coords = getBestLastKnownLocation()
-                    ?: requestFreshLocation()
+                val coords = requestFreshLocation()
+                    ?: getBestLastKnownLocation()
                     ?: return@withContext null
 
                 val label = deriveSecondaryLabel(coords.first, coords.second) ?: return@withContext null
@@ -944,9 +1000,14 @@ class LocationRepository(private val context: Context) {
         val existingArr = map[date.toString()]
         val existing = parseSecondaryArray(existingArr ?: "[]")
 
-        // Skip if this label already exists for this date
+        // Skip if this label already exists for this date OR a sample within
+        // SECONDARY_DEDUP_METERS already exists (same physical place).
         if (existing.any { it.label == label }) {
             Log.d(TAG, "Manual secondary location '$label' already exists for $date — skipping")
+            return label
+        }
+        if (existing.any { haversineMeters(coords.first, coords.second, it.lat, it.lon) < SECONDARY_DEDUP_METERS }) {
+            Log.d(TAG, "Manual secondary location (${coords.first},${coords.second}) within ${SECONDARY_DEDUP_METERS}m of existing — skipping")
             return label
         }
 
