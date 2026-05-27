@@ -1617,7 +1617,7 @@ private fun TimelineBar(
             )
             Spacer(Modifier.width(4.dp))
             // ── Step-by-day controls (sit right next to the day counter) ──
-            IconButton(
+            RepeatIconButton(
                 onClick = { if (canStepBack) onStepDay(-1) },
                 enabled = canStepBack
             ) {
@@ -1632,7 +1632,7 @@ private fun TimelineBar(
                 color = Color(0xFFAAAAAA),
                 fontSize = 11.sp
             )
-            IconButton(
+            RepeatIconButton(
                 onClick = { if (canStepForward) onStepDay(1) },
                 enabled = canStepForward
             ) {

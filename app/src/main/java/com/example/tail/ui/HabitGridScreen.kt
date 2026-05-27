@@ -302,8 +302,8 @@ fun HabitGridScreen(
                         horizontalArrangement = Arrangement.Start,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        // Back arrow — always available
-                        IconButton(onClick = { viewModel.navigateDay(-1) }) {
+                        // Back arrow — always available, hold to rapid-step
+                        RepeatIconButton(onClick = { viewModel.navigateDay(-1) }) {
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Previous day",
@@ -327,8 +327,8 @@ fun HabitGridScreen(
                                 .padding(horizontal = 6.dp, vertical = 4.dp)
                         )
 
-                        // Forward arrow — disabled when already on today
-                        IconButton(
+                        // Forward arrow — disabled when already on today, hold to rapid-step
+                        RepeatIconButton(
                             onClick = { viewModel.navigateDay(+1) },
                             enabled = !isToday
                         ) {
