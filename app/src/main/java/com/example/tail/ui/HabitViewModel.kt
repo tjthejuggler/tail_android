@@ -2531,6 +2531,10 @@ class HabitViewModel(
     fun getCoordsForDate(date: LocalDate): Pair<Double, Double>? =
         locationRepo.getCoordsForDate(date)
 
+    /** Manually sets (lat, lon) for [date]. Used for coordinate editing from the map. */
+    fun setCoordsForDate(date: LocalDate, lat: Double, lon: Double) =
+        locationRepo.setCoordsForDate(date, lat, lon)
+
     /** Returns the location label stored for [date] (or null). */
     fun getLocationLabelForDate(date: LocalDate): String? =
         locationRepo.getLocationForDate(date)

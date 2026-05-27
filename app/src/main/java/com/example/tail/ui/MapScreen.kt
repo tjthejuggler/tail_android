@@ -1,6 +1,7 @@
 package com.example.tail.ui
 
 import android.app.Activity
+import android.widget.Toast
 import android.content.pm.ActivityInfo
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -9,6 +10,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -47,6 +51,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -578,7 +583,9 @@ fun MapScreen(
                         viewModel.navigateToDate(date)
                         showLocationTimeline = false
                     },
-                    onDismiss = { showLocationTimeline = false }
+                    onDismiss = { showLocationTimeline = false },
+                    onGetCoords = { date -> viewModel.getCoordsForDate(date) },
+                    onSetCoords = { date, lat, lon -> viewModel.setCoordsForDate(date, lat, lon) }
                 )
             }
 
@@ -837,11 +844,11 @@ private fun MapTopBar(
                         onClick = onClick
                     )
             )
-            // Settings gear — directly to the right of the location label
+            // Plus button — directly to the right of the location label
             Text(
-                text = "⚙",
+                text = "+",
                 color = Color(0xFF888888),
-                fontSize = 18.sp,
+                fontSize = 20.sp,
                 modifier = Modifier
                     .clickable(
                         indication = null,
@@ -1348,23 +1355,34 @@ private fun HabitBreakdownPopup(
 
 // ── Popup: location timeline (all date → location pairs) ────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LocationTimelinePopup(
     entries: List<Pair<LocalDate, String>>,
     selectedDate: LocalDate,
     accent: Color,
     onNavigate: (LocalDate) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onGetCoords: (LocalDate) -> Pair<Double, Double>?,
+    onSetCoords: (LocalDate, Double, Double) -> Unit
 ) {
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = entries.indexOfFirst { it.first == selectedDate }
             .coerceAtLeast(0)
     )
 
-    Dialog(onDismissRequest = onDismiss) {
+    // Track which date's coordinates are being edited via long-press
+    var editingCoordsDate by remember { mutableStateOf<LocalDate?>(null) }
+    var coordsText by remember { mutableStateOf("") }
+    val context = LocalContext.current
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .widthIn(min = 480.dp, max = 700.dp)
                 .fillMaxHeight(0.75f)
                 .background(Color(0xFF0D0D0D), RoundedCornerShape(12.dp))
                 .padding(16.dp)
@@ -1379,30 +1397,133 @@ private fun LocationTimelinePopup(
             ) {
                 items(entries) { (date, label) ->
                     val isSelected = date == selectedDate
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onNavigate(date) }
-                            .padding(vertical = 5.dp, horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = date.format(MAP_DATE_FMT),
-                            color = if (isSelected) accent else Color(0xFF888888),
-                            fontSize = 12.sp,
-                            modifier = Modifier.width(140.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = label,
-                            color = if (isSelected) Color.White else Color(0xFFCCCCCC),
-                            fontSize = 13.sp,
-                            modifier = Modifier.weight(1f)
-                        )
+                    val isEditingCoords = editingCoordsDate == date
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = { onNavigate(date) },
+                                    onLongClick = {
+                                        val coords = onGetCoords(date)
+                                        coordsText = if (coords != null) {
+                                            "${coords.first}, ${coords.second}"
+                                        } else ""
+                                        editingCoordsDate = date
+                                    }
+                                )
+                                .padding(vertical = 5.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = date.format(MAP_DATE_FMT),
+                                color = if (isSelected) accent else Color(0xFF888888),
+                                fontSize = 12.sp,
+                                modifier = Modifier.width(140.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.White else Color(0xFFCCCCCC),
+                                fontSize = 13.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        // Editable coordinates field — shown when long-pressed
+                        if (isEditingCoords) {
+                            val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 152.dp, top = 2.dp, bottom = 4.dp, end = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = coordsText,
+                                    onValueChange = { coordsText = it },
+                                    placeholder = {
+                                        Text("lat,lon", fontSize = 12.sp, color = Color(0xFF555555))
+                                    },
+                                    singleLine = true,
+                                    modifier = Modifier.widthIn(min = 180.dp, max = 260.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = accent,
+                                        unfocusedBorderColor = Color(0xFF333333),
+                                        focusedTextColor = Color(0xFFCCCCCC),
+                                        unfocusedTextColor = Color(0xFFCCCCCC),
+                                        cursorColor = accent
+                                    ),
+                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val trimmed = coordsText.trim()
+                                        if (trimmed.isEmpty()) {
+                                            editingCoordsDate = null
+                                        } else {
+                                            val parsed = parseCoordsInput(trimmed)
+                                            if (parsed != null) {
+                                                onSetCoords(date, parsed.first, parsed.second)
+                                                editingCoordsDate = null
+                                            } else {
+                                                Toast.makeText(
+                                                    context,
+                                                    "Invalid coordinates. Use format: lat,lon",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
+                                    })
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                TextButton(onClick = {
+                                    clipboardManager.setText(
+                                        androidx.compose.ui.text.AnnotatedString(coordsText)
+                                    )
+                                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                                }, enabled = coordsText.isNotBlank()) {
+                                    Text("Copy", color = if (coordsText.isNotBlank()) accent else Color(0xFF444444), fontSize = 11.sp)
+                                }
+                                TextButton(onClick = {
+                                    val pasted = clipboardManager.getText()?.text ?: ""
+                                    if (pasted.isNotBlank()) {
+                                        val parsed = parseCoordsInput(pasted.trim())
+                                        if (parsed != null) {
+                                            coordsText = "$pasted"
+                                            onSetCoords(date, parsed.first, parsed.second)
+                                            editingCoordsDate = null
+                                        } else {
+                                            coordsText = pasted
+                                            Toast.makeText(
+                                                context,
+                                                "Invalid coordinates. Use format: lat,lon",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    }
+                                }) {
+                                    Text("Paste", color = Color(0xFF999999), fontSize = 11.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/** Parses a "lat,lon" string. Returns (lat, lon) or null if invalid. */
+private fun parseCoordsInput(input: String): Pair<Double, Double>? {
+    val parts = input.split(",").map { it.trim() }
+    if (parts.size != 2) return null
+    return try {
+        val lat = parts[0].toDouble()
+        val lon = parts[1].toDouble()
+        if (lat in -90.0..90.0 && lon in -180.0..180.0) Pair(lat, lon) else null
+    } catch (_: NumberFormatException) {
+        null
     }
 }
 
