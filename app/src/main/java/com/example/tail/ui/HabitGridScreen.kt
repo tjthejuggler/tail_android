@@ -115,7 +115,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 private data class TextInputDialogState(
     val habit: Habit,
     val showOptions: Boolean,
-    val options: List<String>
+    val options: List<String>,
+    val todayEntries: List<Pair<String, String>> = emptyList()
 )
 
 // Grid is 8 columns × 10 rows = 80 cells
@@ -218,6 +219,21 @@ fun HabitGridScreen(
     // Timestamp editor dialog state
     var timestampEditorHabitName by remember { mutableStateOf<String?>(null) }
     var timestampEditorList by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Text entries for the currently selected edit-mode habit (for view/edit in edit bar)
+    var editModeTextEntries by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    // Derive the selected edit habit name at top level for LaunchedEffect
+    val editHabitName = if (selectedEditIndex >= 0 && selectedEditIndex < habits.size)
+        habits[selectedEditIndex].name?.takeIf { it.isNotEmpty() } else null
+    // Load text entries when the selected edit habit changes and is a text-input habit
+    LaunchedEffect(editHabitName, selectedDate) {
+        if (editHabitName != null && editHabitName in settings.textInputHabits) {
+            viewModel.loadTextEntriesWithTimestamps(editHabitName, selectedDate) { entries ->
+                editModeTextEntries = entries
+            }
+        } else {
+            editModeTextEntries = emptyList()
+        }
+    }
     // Timestamp count for the currently selected edit-mode habit (for showing the button)
     var selectedHabitTimestampCount by remember { mutableIntStateOf(0) }
     val timestampScope = rememberCoroutineScope()
@@ -539,20 +555,25 @@ fun HabitGridScreen(
                                 }
                                 habit.name in settings.textInputHabits -> {
                                     val showOpts = habit.name in settings.textInputOptionsHabits
-                                    if (showOpts) {
-                                        viewModel.loadTextOptions(habit.name) { opts ->
+                                    // Load today's entries for the dialog
+                                    viewModel.loadTextEntriesWithTimestamps(habit.name, selectedDate) { todayEntries ->
+                                        if (showOpts) {
+                                            viewModel.loadTextOptions(habit.name) { opts ->
+                                                textInputDialogState = TextInputDialogState(
+                                                    habit = habit,
+                                                    showOptions = true,
+                                                    options = opts,
+                                                    todayEntries = todayEntries
+                                                )
+                                            }
+                                        } else {
                                             textInputDialogState = TextInputDialogState(
                                                 habit = habit,
-                                                showOptions = true,
-                                                options = opts
+                                                showOptions = false,
+                                                options = emptyList(),
+                                                todayEntries = todayEntries
                                             )
                                         }
-                                    } else {
-                                        textInputDialogState = TextInputDialogState(
-                                            habit = habit,
-                                            showOptions = false,
-                                            options = emptyList()
-                                        )
                                     }
                                 }
                                 habit.useCustomInput -> dialogHabit = habit
@@ -704,6 +725,24 @@ fun HabitGridScreen(
                             timestampScope.launch {
                                 timestampEditorList = viewModel.timestampRepo.getTimestampsForDay(name, selectedDate)
                                 timestampEditorHabitName = name
+                            }
+                        },
+                        todayTextEntries = editModeTextEntries,
+                        onLoadTextEntries = { name, onResult ->
+                            viewModel.loadTextEntriesWithTimestamps(name, selectedDate, onResult)
+                        },
+                        onEditTextEntry = { name, timestamp, newText ->
+                            viewModel.updateTextEntry(name, timestamp, newText)
+                            // Reload entries after edit
+                            viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
+                                editModeTextEntries = entries
+                            }
+                        },
+                        onDeleteTextEntry = { name, timestamp ->
+                            viewModel.deleteTextEntry(name, timestamp)
+                            // Reload entries after delete
+                            viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
+                                editModeTextEntries = entries
                             }
                         }
                     )
@@ -897,11 +936,26 @@ fun HabitGridScreen(
             habitName = state.habit.name,
             showOptions = state.showOptions,
             options = state.options,
+            todayEntries = state.todayEntries,
             onConfirm = { text ->
                 viewModel.saveTextEntry(state.habit.name, text)
                 textInputDialogState = null
             },
-            onDismiss = { textInputDialogState = null }
+            onDismiss = { textInputDialogState = null },
+            onEdit = { oldTimestamp, newText ->
+                viewModel.updateTextEntry(state.habit.name, oldTimestamp, newText)
+                // Reload entries after edit
+                viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
+                    textInputDialogState = state.copy(todayEntries = entries)
+                }
+            },
+            onDelete = { timestamp ->
+                viewModel.deleteTextEntry(state.habit.name, timestamp)
+                // Reload entries after delete
+                viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
+                    textInputDialogState = state.copy(todayEntries = entries)
+                }
+            }
         )
     }
 
@@ -1301,7 +1355,15 @@ private fun EditModeControlBar(
     /** Number of timestamps for the selected habit on the current day. */
     selectedHabitTimestampCount: Int = 0,
     /** Called when the user taps the timestamps button. */
-    onShowTimestamps: (String) -> Unit = {}
+    onShowTimestamps: (String) -> Unit = {},
+    /** Today's text entries for the selected habit (timestamp → text pairs). */
+    todayTextEntries: List<Pair<String, String>> = emptyList(),
+    /** Called to load text entries for a habit. */
+    onLoadTextEntries: (String, (List<Pair<String, String>>) -> Unit) -> Unit = { _, _ -> },
+    /** Called when the user edits an existing text entry. */
+    onEditTextEntry: (String, String, String) -> Unit = { _, _, _ -> },
+    /** Called when the user deletes an existing text entry. */
+    onDeleteTextEntry: (String, String) -> Unit = { _, _ -> }
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -1920,6 +1982,105 @@ private fun EditModeControlBar(
                                     color = Color(0xFF88CCFF)
                                 )
                             }
+                        }
+                    }
+
+                    // ── Today's text entries (view/edit) ──────────────────────
+                    if (isTextInput && textInputFileUris.containsKey(selectedHabitName)) {
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        if (todayTextEntries.isNotEmpty()) {
+                            Text(
+                                text = "  Today's entries",
+                                color = Color(0xFF88CCFF),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            for ((timestamp, text) in todayTextEntries) {
+                                var isEditing by remember { mutableStateOf(false) }
+                                var editText by remember { mutableStateOf(text) }
+
+                                if (isEditing) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 16.dp, bottom = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        OutlinedTextField(
+                                            value = editText,
+                                            onValueChange = { editText = it },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedTextColor = Color.White,
+                                                unfocusedTextColor = Color.White,
+                                                focusedBorderColor = Color(0xFF44AAFF),
+                                                unfocusedBorderColor = Color(0xFF555555),
+                                                cursorColor = Color(0xFF44AAFF)
+                                            ),
+                                            textStyle = TextStyle(fontSize = 12.sp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        TextButton(
+                                            onClick = {
+                                                if (editText.trim().isNotEmpty()) {
+                                                    onEditTextEntry(selectedHabitName, timestamp, editText.trim())
+                                                }
+                                                isEditing = false
+                                            }
+                                        ) {
+                                            Text("✓", color = Color(0xFF88FF88), fontSize = 14.sp)
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                editText = text
+                                                isEditing = false
+                                            }
+                                        ) {
+                                            Text("✕", color = Color(0xFF888888), fontSize = 13.sp)
+                                        }
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 16.dp, bottom = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = text,
+                                            color = Color(0xFFCCCCCC),
+                                            fontSize = 12.sp,
+                                            modifier = Modifier.weight(1f),
+                                            maxLines = 2
+                                        )
+                                        TextButton(
+                                            onClick = { isEditing = true; editText = text },
+                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                                start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                                            )
+                                        ) {
+                                            Text("✎", color = Color(0xFF888888), fontSize = 14.sp)
+                                        }
+                                        TextButton(
+                                            onClick = { onDeleteTextEntry(selectedHabitName, timestamp) },
+                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                                start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                                            )
+                                        ) {
+                                            Text("✕", color = Color(0xFF666666), fontSize = 13.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            Text(
+                                text = "  No text entries today",
+                                color = Color(0xFF666666),
+                                fontSize = 11.sp
+                            )
                         }
                     }
 

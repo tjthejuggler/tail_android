@@ -363,7 +363,20 @@ data class AppSettings(
      * backup. Compared against [java.time.LocalDate.now] on launch to decide
      * whether to run a fresh backup. Empty = never backed up.
      */
-    val autoBackupLastDate: String = ""
+    val autoBackupLastDate: String = "",
+
+    // ── Map screen stats settings ────────────────────────────────────────
+    /**
+     * Habits selected to show their daily values in the map screen's stats panel.
+     * The user picks these from the map settings dialog.
+     */
+    val mapStatsHabits: Set<String> = emptySet(),
+
+    /**
+     * Text-input habits whose text entries should be shown in the map stats panel.
+     * Only meaningful for habits that are also in [mapStatsHabits] AND [textInputHabits].
+     */
+    val mapStatsShowTextHabits: Set<String> = emptySet()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

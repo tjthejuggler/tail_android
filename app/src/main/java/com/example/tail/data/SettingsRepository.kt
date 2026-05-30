@@ -87,6 +87,9 @@ private val KEY_AUTO_BACKUP_LAST_DATE = stringPreferencesKey("auto_backup_last_d
 private val KEY_CUSTOM_INPUT_AMOUNTS = stringPreferencesKey("custom_input_amounts")
 // Custom input recent amounts — stored as "habitName\x00amt1,amt2,amt3|||…" pairs (most recent first)
 private val KEY_CUSTOM_INPUT_RECENT_AMOUNTS = stringPreferencesKey("custom_input_recent_amounts")
+// Map screen stats settings
+private val KEY_MAP_STATS_HABITS = stringSetPreferencesKey("map_stats_habits")
+private val KEY_MAP_STATS_SHOW_TEXT_HABITS = stringSetPreferencesKey("map_stats_show_text_habits")
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
@@ -456,7 +459,9 @@ class SettingsRepository(private val context: Context) {
             autoBackupFolderUri = prefs[KEY_AUTO_BACKUP_FOLDER_URI] ?: "",
             autoBackupLastDate = prefs[KEY_AUTO_BACKUP_LAST_DATE] ?: "",
             customInputAmounts = decodeIntListMap(customInputAmountsRaw),
-            customInputRecentAmounts = decodeIntListMap(customInputRecentAmountsRaw)
+            customInputRecentAmounts = decodeIntListMap(customInputRecentAmountsRaw),
+            mapStatsHabits = prefs[KEY_MAP_STATS_HABITS] ?: emptySet(),
+            mapStatsShowTextHabits = prefs[KEY_MAP_STATS_SHOW_TEXT_HABITS] ?: emptySet()
         )
     }
 
@@ -753,5 +758,17 @@ class SettingsRepository(private val context: Context) {
     /** Saves the SAF URI for the voice note markdown file. */
     suspend fun saveVoiceNoteFileUri(uri: String) {
         context.dataStore.edit { prefs -> prefs[KEY_VOICE_NOTE_FILE_URI] = uri }
+    }
+
+    // ── Map Screen Stats Settings ────────────────────────────────────────
+
+    /** Saves the set of habits selected for display in the map stats panel. */
+    suspend fun saveMapStatsHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_MAP_STATS_HABITS] = habits }
+    }
+
+    /** Saves the set of text-input habits whose text should be shown in the map stats panel. */
+    suspend fun saveMapStatsShowTextHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_MAP_STATS_SHOW_TEXT_HABITS] = habits }
     }
 }

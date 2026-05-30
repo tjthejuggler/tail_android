@@ -86,4 +86,40 @@ class TextInputRepository {
         withContext(Dispatchers.IO) {
             loadTextLog(uri, context).values.toSortedSet().toList()
         }
+
+    /**
+     * Updates an existing text entry in the log file.
+     * [oldTimestamp] is the exact key to match; [newText] replaces the old value.
+     * If the key is not found, no change is made.
+     * Returns the updated log map.
+     */
+    suspend fun updateTextEntry(
+        uri: Uri,
+        context: Context,
+        oldTimestamp: String,
+        newText: String
+    ): Map<String, String> = withContext(Dispatchers.IO) {
+        val existing = loadTextLog(uri, context).toMutableMap()
+        if (oldTimestamp in existing) {
+            existing[oldTimestamp] = newText
+            saveTextLog(uri, context, existing)
+        }
+        existing
+    }
+
+    /**
+     * Deletes an existing text entry from the log file.
+     * [timestamp] is the exact key to remove.
+     * Returns the updated log map.
+     */
+    suspend fun deleteTextEntry(
+        uri: Uri,
+        context: Context,
+        timestamp: String
+    ): Map<String, String> = withContext(Dispatchers.IO) {
+        val existing = loadTextLog(uri, context).toMutableMap()
+        existing.remove(timestamp)
+        saveTextLog(uri, context, existing)
+        existing
+    }
 }

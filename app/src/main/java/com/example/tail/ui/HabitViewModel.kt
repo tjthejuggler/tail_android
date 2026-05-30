@@ -597,6 +597,12 @@ class HabitViewModel(
                         rawTodayCount = linkedClamped
                     ) else h
                 }
+                // Record timestamp for the linked habit too
+                if (recordTimestamp) {
+                    viewModelScope.launch {
+                        timestampRepo.addTimestamp(linkedName, _selectedDate.value)
+                    }
+                }
             }
         }
 
@@ -1852,6 +1858,63 @@ class HabitViewModel(
     }
 
     /**
+     * Loads text entries for a text-input habit on a specific date,
+     * returning both timestamps and values (for editing).
+     * Returns pairs of (timestamp, text) sorted by timestamp.
+     */
+    fun loadTextEntriesWithTimestamps(habitName: String, date: LocalDate, onResult: (List<Pair<String, String>>) -> Unit) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            onResult(emptyList())
+            return
+        }
+        val datePrefix = dateString(date)
+        viewModelScope.launch {
+            try {
+                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                val entries = log.filter { (key, _) -> key.startsWith(datePrefix) }
+                    .toList()
+                    .sortedBy { it.first }
+                onResult(entries)
+            } catch (e: Exception) {
+                onResult(emptyList())
+            }
+        }
+    }
+
+    /**
+     * Updates an existing text entry for [habitName].
+     * [oldTimestamp] is the exact key; [newText] replaces the old value.
+     */
+    fun updateTextEntry(habitName: String, oldTimestamp: String, newText: String) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) return
+        viewModelScope.launch {
+            try {
+                textInputRepo.updateTextEntry(Uri.parse(uriString), context, oldTimestamp, newText)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to update text entry: ${e.message}"
+            }
+        }
+    }
+
+    /**
+     * Deletes an existing text entry for [habitName].
+     * [timestamp] is the exact key to remove.
+     */
+    fun deleteTextEntry(habitName: String, timestamp: String) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) return
+        viewModelScope.launch {
+            try {
+                textInputRepo.deleteTextEntry(Uri.parse(uriString), context, timestamp)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to delete text entry: ${e.message}"
+            }
+        }
+    }
+
+    /**
      * Loads the text chunks from the dated-entry source file for [habitName] on [date].
      * Each chunk is a paragraph block from the file under that date's header.
      * Returns an empty list if the habit has no dated-entry file configured, or on error.
@@ -1898,6 +1961,54 @@ class HabitViewModel(
      */
     fun isTextInputHabit(habitName: String): Boolean {
         return habitName in _settings.value.textInputHabits
+    }
+
+    // ── Map screen stats settings ──────────────────────────────────────────
+
+    /**
+     * Toggles a habit in/out of the map stats panel selection.
+     * When removed from mapStatsHabits, also removes from mapStatsShowTextHabits.
+     */
+    fun toggleMapStatsHabit(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.mapStatsHabits.toMutableSet()
+            if (habitName in current) {
+                current.remove(habitName)
+                // Also remove from show-text set
+                val showText = _settings.value.mapStatsShowTextHabits.toMutableSet()
+                showText.remove(habitName)
+                settingsRepo.saveMapStatsShowTextHabits(showText)
+                _settings.value = _settings.value.copy(mapStatsShowTextHabits = showText)
+            } else {
+                current.add(habitName)
+            }
+            settingsRepo.saveMapStatsHabits(current)
+            _settings.value = _settings.value.copy(mapStatsHabits = current)
+        }
+    }
+
+    /**
+     * Toggles whether a text-input habit's text entries should be shown
+     * in the map stats panel. Only meaningful for habits in mapStatsHabits
+     * that are also text-input habits.
+     */
+    fun toggleMapStatsShowText(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.mapStatsShowTextHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveMapStatsShowTextHabits(current)
+            _settings.value = _settings.value.copy(mapStatsShowTextHabits = current)
+        }
+    }
+
+    /**
+     * Returns the points value for [habitName] on [date].
+     * Returns 0 if the habit has no data for that date.
+     */
+    fun getHabitValueForDate(habitName: String, date: LocalDate): Int {
+        val raw = cachedPhoneDb[habitName]?.get(dateString(date)) ?: 0
+        val divider = _settings.value.habitDividers[habitName] ?: 1
+        return applyDivider(raw, divider)
     }
 
     // ── Dated Entry feature ───────────────────────────────────────────────────

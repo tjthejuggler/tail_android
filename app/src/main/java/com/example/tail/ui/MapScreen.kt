@@ -36,6 +36,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -47,6 +48,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
@@ -195,6 +197,7 @@ fun MapScreen(
     BackHandler(onBack = handleBack)
 
     val selectedDate by viewModel.selectedDate.collectAsState()
+    val settings by viewModel.settings.collectAsState()
 
     // ── Snapshot ALL day-coords ONCE on entry, OFF the main thread.
     // Reading SharedPrefs + parsing thousands of JSON entries on the UI thread
@@ -289,6 +292,9 @@ fun MapScreen(
 
     // ── Manual secondary location entry dialog ─────────────────────────────
     var showAddLocationDialog by remember { mutableStateOf(false) }
+
+    // ── Map settings dialog ────────────────────────────────────────────────
+    var showMapSettingsDialog by remember { mutableStateOf(false) }
 
     // ── Playback state ──────────────────────────────────────────────────────
     var isPlaying by remember { mutableStateOf(false) }
@@ -481,9 +487,20 @@ fun MapScreen(
         }
     }
 
-    // Fast 24h clock sweep when there are no secondary locations.
-    // Does one full day cycle (0→1439 min) in ~1.5s on each day change, then stops.
+    // Continuous clock spin during autoplay — keeps the hands flying
+    // through days without resetting on each day change.
+    LaunchedEffect(isPlaying) {
+        if (!isPlaying) return@LaunchedEffect
+        while (isPlaying) {
+            clockSpinPhase += 0.025f
+            delay(16L)
+        }
+    }
+
+    // Single 24h sweep when not playing (day change without autoplay).
+    // Resets and sweeps once, then stops.
     LaunchedEffect(selectedDate) {
+        if (isPlaying) return@LaunchedEffect  // autoplay loop handles it
         clockSpinPhase = 0f
         val hasSecondaries = showAll && secondaryByDate[selectedDate]?.isNotEmpty() == true
         if (!hasSecondaries) {
@@ -497,6 +514,7 @@ fun MapScreen(
     }
 
     // Full stats — debounced. While waiting, show "..." for streak/anti-streak.
+    // Computed off the main thread so it never stalls the clock animation.
     var dayStats by remember { mutableStateOf(lightStats) }
     var statsLoading by remember { mutableStateOf(true) }
     LaunchedEffect(selectedDate) {
@@ -505,7 +523,10 @@ fun MapScreen(
         statsLoading = true
         // Wait 400ms — cancelled if selectedDate changes again (rapid playback)
         delay(400L)
-        dayStats = viewModel.getDayStats(selectedDate)
+        val stats = withContext(Dispatchers.Default) {
+            viewModel.getDayStats(selectedDate)
+        }
+        dayStats = stats
         statsLoading = false
     }
 
@@ -558,12 +579,13 @@ fun MapScreen(
         modifier = Modifier.fillMaxSize(),
         color = Color(0xFF0A0A0A)
     ) {
+        Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             MapTopBar(
                 locationLabel = locationLabel,
                 isAssumed = locationIsAssumed,
                 onClick = { showLocationTimeline = true },
-                onSettingsClick = { showAddLocationDialog = true }
+                onAddLocationClick = { showAddLocationDialog = true }
             )
 
             if (showLocationTimeline) {
@@ -586,6 +608,19 @@ fun MapScreen(
                     onDismiss = { showLocationTimeline = false },
                     onGetCoords = { date -> viewModel.getCoordsForDate(date) },
                     onSetCoords = { date, lat, lon -> viewModel.setCoordsForDate(date, lat, lon) }
+                )
+            }
+
+            if (showMapSettingsDialog) {
+                val allHabits = remember { viewModel.getAllHabitNames() }
+                MapSettingsDialog(
+                    allHabits = allHabits,
+                    selectedHabits = settings.mapStatsHabits,
+                    textInputHabits = settings.textInputHabits,
+                    showTextHabits = settings.mapStatsShowTextHabits,
+                    onToggleHabit = { viewModel.toggleMapStatsHabit(it) },
+                    onToggleShowText = { viewModel.toggleMapStatsShowText(it) },
+                    onDismiss = { showMapSettingsDialog = false }
                 )
             }
 
@@ -655,6 +690,13 @@ fun MapScreen(
                     onGetIgnoredCountries = { viewModel.getIgnoredCountryNames() },
                     onAddIgnoredCountry = { name -> viewModel.addIgnoredCountryName(name) },
                     onRemoveIgnoredCountry = { name -> viewModel.removeIgnoredCountryName(name) },
+                    mapStatsHabits = settings.mapStatsHabits,
+                    mapStatsShowTextHabits = settings.mapStatsShowTextHabits,
+                    textInputHabits = settings.textInputHabits,
+                    onGetHabitValue = { habitName -> viewModel.getHabitValueForDate(habitName, selectedDate) },
+                    onLoadTextEntries = { habitName, onResult ->
+                        viewModel.loadTextEntriesForDate(habitName, selectedDate, onResult)
+                    },
                     accent = accent,
                     modifier = Modifier
                         .fillMaxHeight()
@@ -759,6 +801,23 @@ fun MapScreen(
                 accent = accent
             )
         }
+
+        // Settings gear overlay at absolute top-right corner
+        IconButton(
+            onClick = { showMapSettingsDialog = true },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 8.dp, end = 8.dp)
+                .size(28.dp)
+        ) {
+            Icon(
+                Icons.Default.Settings,
+                contentDescription = "Map settings",
+                tint = Color(0xFF888888),
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
     }
 }
 
@@ -801,7 +860,7 @@ private fun MapTopBar(
     locationLabel: String?,
     isAssumed: Boolean,
     onClick: () -> Unit = {},
-    onSettingsClick: () -> Unit = {}
+    onAddLocationClick: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
@@ -853,7 +912,7 @@ private fun MapTopBar(
                     .clickable(
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() },
-                        onClick = onSettingsClick
+                        onClick = onAddLocationClick
                     )
                     .padding(start = 8.dp)
             )
@@ -1169,12 +1228,37 @@ private fun MapInfoPanel(
     onGetIgnoredCountries: () -> Set<String>,
     onAddIgnoredCountry: (String) -> Unit,
     onRemoveIgnoredCountry: (String) -> Unit,
+    mapStatsHabits: Set<String>,
+    mapStatsShowTextHabits: Set<String>,
+    textInputHabits: Set<String>,
+    onGetHabitValue: (String) -> Int,
+    onLoadTextEntries: (String, (List<String>) -> Unit) -> Unit,
     accent: Color,
     modifier: Modifier = Modifier
 ) {
     var showCountriesPopup by remember { mutableStateOf(false) }
     var showIgnoredDialog  by remember { mutableStateOf(false) }
     var showPointsPopup    by remember { mutableStateOf(false) }
+
+    // Text entries for habits that have "show text" enabled — loaded asynchronously.
+    // Each load completes via a callback, so update Compose state inside the callback
+    // instead of assigning the result map before those callbacks have returned.
+    var textEntries by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    LaunchedEffect(date, mapStatsShowTextHabits, textInputHabits) {
+        val showTextHabits = mapStatsShowTextHabits.intersect(textInputHabits)
+        textEntries = emptyMap()
+        if (showTextHabits.isEmpty()) return@LaunchedEffect
+
+        for (habitName in showTextHabits) {
+            onLoadTextEntries(habitName) { entries ->
+                textEntries = if (entries.isNotEmpty()) {
+                    textEntries + (habitName to entries)
+                } else {
+                    textEntries - habitName
+                }
+            }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -1209,6 +1293,40 @@ private fun MapInfoPanel(
             accent = accent,
             onClick = { showCountriesPopup = true }
         )
+
+        // ── Selected habit values ──────────────────────────────────────────
+        if (mapStatsHabits.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF222222))
+            Spacer(Modifier.height(6.dp))
+            for (habitName in mapStatsHabits) {
+                val isShowText = habitName in mapStatsShowTextHabits && habitName in textInputHabits
+                if (isShowText) {
+                    // Show only text entries for this habit, not the count
+                    Text(
+                        text = habitName,
+                        color = accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    val entries = textEntries[habitName]
+                    if (entries != null && entries.isNotEmpty()) {
+                        for (entry in entries) {
+                            Text(
+                                text = entry,
+                                color = Color(0xFF999999),
+                                fontSize = 10.sp,
+                                maxLines = 2,
+                                modifier = Modifier.padding(start = 8.dp, top = 1.dp, bottom = 2.dp)
+                            )
+                        }
+                    }
+                } else {
+                    val value = onGetHabitValue(habitName)
+                    StatLine(habitName, value.toString(), accent)
+                }
+            }
+        }
     }
 
     if (showCountriesPopup) {

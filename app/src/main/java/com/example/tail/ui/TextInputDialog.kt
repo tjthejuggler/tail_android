@@ -37,20 +37,30 @@ import androidx.compose.ui.window.Dialog
 /**
  * Dialog shown when the user taps a habit that has "text input" enabled.
  *
- * - Always shows a free-text [OutlinedTextField] for the user to type an entry.
+ * - Shows existing text entries for the current day with edit/delete capability.
+ * - Always shows a free-text [OutlinedTextField] for the user to type a new entry.
  * - When [showOptions] is true AND [options] is non-empty, also shows a scrollable
  *   list of all unique past entries. Tapping one populates the text field.
  * - OK saves the entry (calls [onConfirm]); Cancel dismisses without saving.
+ *
+ * @param todayEntries Pairs of (timestamp, text) for entries already logged today.
+ * @param onEdit Called when the user edits an existing entry: (oldTimestamp, newText).
+ * @param onDelete Called when the user deletes an existing entry: (timestamp).
  */
 @Composable
 fun TextInputDialog(
     habitName: String,
     showOptions: Boolean,
     options: List<String>,
+    todayEntries: List<Pair<String, String>> = emptyList(),
     onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onEdit: (String, String) -> Unit = { _, _ -> },
+    onDelete: (String) -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf("") }
+    var editingTimestamp by remember { mutableStateOf<String?>(null) }
+    var editingText by remember { mutableStateOf("") }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -68,28 +78,10 @@ fun TextInputDialog(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // ── Text input field ───────────────────────────────────────────────
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = { inputText = it },
-                label = { Text("Entry", color = Color(0xFF888888)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedBorderColor = Color(0xFFFFAA00),
-                    unfocusedBorderColor = Color(0xFF555555),
-                    cursorColor = Color(0xFFFFAA00)
-                )
-            )
-
-            // ── Past options list (only when showOptions = true and list non-empty) ──
-            if (showOptions && options.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(10.dp))
-
+            // ── Today's existing entries ───────────────────────────────────────
+            if (todayEntries.isNotEmpty() && editingTimestamp == null) {
                 Text(
-                    text = "Past entries",
+                    text = "Today's entries",
                     color = Color(0xFF888888),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -100,20 +92,45 @@ fun TextInputDialog(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 200.dp)
+                        .heightIn(max = 150.dp)
                         .background(Color(0xFF111111), RoundedCornerShape(6.dp))
                 ) {
                     LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
-                        items(options) { option ->
-                            Text(
-                                text = option,
-                                color = Color(0xFFCCCCCC),
-                                fontSize = 13.sp,
+                        items(todayEntries) { (timestamp, text) ->
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { inputText = option }
-                                    .padding(horizontal = 12.dp, vertical = 7.dp)
-                            )
+                                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = text,
+                                    color = Color(0xFFCCCCCC),
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                // Edit button
+                                TextButton(
+                                    onClick = {
+                                        editingTimestamp = timestamp
+                                        editingText = text
+                                    },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                        start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                                    )
+                                ) {
+                                    Text("✎", color = Color(0xFF888888), fontSize = 14.sp)
+                                }
+                                // Delete button
+                                TextButton(
+                                    onClick = { onDelete(timestamp) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                        start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                                    )
+                                ) {
+                                    Text("✕", color = Color(0xFF666666), fontSize = 13.sp)
+                                }
+                            }
                             HorizontalDivider(
                                 color = Color(0xFF2A2A2A),
                                 thickness = 0.5.dp
@@ -121,32 +138,145 @@ fun TextInputDialog(
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(12.dp))
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // ── Buttons ────────────────────────────────────────────────────────
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel", color = Color(0xFF888888))
-                }
-                Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                Button(
-                    onClick = {
-                        val trimmed = inputText.trim()
-                        if (trimmed.isNotEmpty()) onConfirm(trimmed)
-                    },
-                    enabled = inputText.trim().isNotEmpty(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF5A3A00),
-                        disabledContainerColor = Color(0xFF2A2A2A)
+            // ── Edit mode for an existing entry ─────────────────────────────────
+            if (editingTimestamp != null) {
+                Text(
+                    text = "Edit entry",
+                    color = Color(0xFF888888),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = editingText,
+                    onValueChange = { editingText = it },
+                    label = { Text("Entry", color = Color(0xFF888888)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFFFFAA00),
+                        unfocusedBorderColor = Color(0xFF555555),
+                        cursorColor = Color(0xFFFFAA00)
                     )
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("OK", color = Color(0xFFFFAA00))
+                    TextButton(onClick = {
+                        editingTimestamp = null
+                        editingText = ""
+                    }) {
+                        Text("Cancel", color = Color(0xFF888888))
+                    }
+                    Spacer(modifier = Modifier.padding(horizontal = 4.dp))
+                    Button(
+                        onClick = {
+                            val trimmed = editingText.trim()
+                            if (trimmed.isNotEmpty() && editingTimestamp != null) {
+                                onEdit(editingTimestamp!!, trimmed)
+                                editingTimestamp = null
+                                editingText = ""
+                            }
+                        },
+                        enabled = editingText.trim().isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF5A3A00),
+                            disabledContainerColor = Color(0xFF2A2A2A)
+                        )
+                    ) {
+                        Text("Save", color = Color(0xFFFFAA00))
+                    }
+                }
+            } else {
+                // ── New entry input field ───────────────────────────────────────
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    label = { Text("New entry", color = Color(0xFF888888)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFFFFAA00),
+                        unfocusedBorderColor = Color(0xFF555555),
+                        cursorColor = Color(0xFFFFAA00)
+                    )
+                )
+
+                // ── Past options list (only when showOptions = true and list non-empty) ──
+                if (showOptions && options.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = "Past entries",
+                        color = Color(0xFF888888),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp)
+                            .background(Color(0xFF111111), RoundedCornerShape(6.dp))
+                    ) {
+                        LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
+                            items(options) { option ->
+                                Text(
+                                    text = option,
+                                    color = Color(0xFFCCCCCC),
+                                    fontSize = 13.sp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { inputText = option }
+                                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                                )
+                                HorizontalDivider(
+                                    color = Color(0xFF2A2A2A),
+                                    thickness = 0.5.dp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // ── Buttons ────────────────────────────────────────────────────────
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = Color(0xFF888888))
+                    }
+                    Spacer(modifier = Modifier.padding(horizontal = 4.dp))
+                    Button(
+                        onClick = {
+                            val trimmed = inputText.trim()
+                            if (trimmed.isNotEmpty()) onConfirm(trimmed)
+                        },
+                        enabled = inputText.trim().isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF5A3A00),
+                            disabledContainerColor = Color(0xFF2A2A2A)
+                        )
+                    ) {
+                        Text("OK", color = Color(0xFFFFAA00))
+                    }
                 }
             }
         }
