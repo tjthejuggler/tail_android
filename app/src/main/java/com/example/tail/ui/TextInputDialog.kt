@@ -197,11 +197,11 @@ fun TextInputDialog(
                     }
                 }
             } else {
-                // ── New entry input field ───────────────────────────────────────
+                // ── Entry input field ───────────────────────────────────────
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
-                    label = { Text("New entry", color = Color(0xFF888888)) },
+                    label = { Text("Entry", color = Color(0xFF888888)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -215,6 +215,13 @@ fun TextInputDialog(
 
                 // ── Past options list (only when showOptions = true and list non-empty) ──
                 if (showOptions && options.isNotEmpty()) {
+                    // Filter options by current input text (case-insensitive contains)
+                    val filteredOptions = if (inputText.isBlank()) {
+                        options
+                    } else {
+                        options.filter { it.contains(inputText, ignoreCase = true) }
+                    }
+
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
@@ -232,21 +239,30 @@ fun TextInputDialog(
                             .heightIn(max = 200.dp)
                             .background(Color(0xFF111111), RoundedCornerShape(6.dp))
                     ) {
-                        LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
-                            items(options) { option ->
-                                Text(
-                                    text = option,
-                                    color = Color(0xFFCCCCCC),
-                                    fontSize = 13.sp,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { inputText = option }
-                                        .padding(horizontal = 12.dp, vertical = 7.dp)
-                                )
-                                HorizontalDivider(
-                                    color = Color(0xFF2A2A2A),
-                                    thickness = 0.5.dp
-                                )
+                        if (filteredOptions.isEmpty()) {
+                            Text(
+                                text = "No matching entries",
+                                color = Color(0xFF555555),
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        } else {
+                            LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
+                                items(filteredOptions) { option ->
+                                    Text(
+                                        text = option,
+                                        color = Color(0xFFCCCCCC),
+                                        fontSize = 13.sp,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { inputText = option }
+                                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                                    )
+                                    HorizontalDivider(
+                                        color = Color(0xFF2A2A2A),
+                                        thickness = 0.5.dp
+                                    )
+                                }
                             }
                         }
                     }
