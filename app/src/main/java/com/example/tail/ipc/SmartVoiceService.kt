@@ -575,10 +575,9 @@ class SmartVoiceService : Service() {
                 }
 
                 Log.i(TAG, "Note prepended to file: \"$text\"")
-                handler.post {
-                    val preview = if (text.length > 40) text.take(40) + "…" else text
-                    Toast.makeText(applicationContext, "🧠→📝 Note saved: \"$preview\"", Toast.LENGTH_SHORT).show()
-                }
+
+                // Show overlay confirmation with note text
+                handler.post { showNoteConfirmation(text) }
 
                 // Show notification with full note text
                 showNoteSavedNotification(text, timestamp)
@@ -586,8 +585,8 @@ class SmartVoiceService : Service() {
                 // Double-pulse vibration — note style
                 vibrateNoteConfirmation()
 
-                // No TTS for notes — just stop
-                handler.post { stopSelfCleanly() }
+                // No TTS for notes — stop after a delay to let overlay show
+                handler.postDelayed({ stopSelfCleanly() }, 3500)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to write note: ${e.message}", e)
                 handler.post { Toast.makeText(applicationContext, "🧠 Error saving note: ${e.message}", Toast.LENGTH_LONG).show() }
@@ -770,6 +769,18 @@ class SmartVoiceService : Service() {
     private fun showHabitIncrementConfirmation(confirmMsg: String) {
         val intent = Intent(applicationContext, com.example.tail.ui.HabitIncrementConfirmActivity::class.java).apply {
             putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, confirmMsg)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        applicationContext.startActivity(intent)
+    }
+
+    /** Launches a full-screen note confirmation overlay over the lock screen. */
+    private fun showNoteConfirmation(noteText: String) {
+        val preview = if (noteText.length > 80) noteText.take(80) + "…" else noteText
+        val intent = Intent(applicationContext, com.example.tail.ui.HabitIncrementConfirmActivity::class.java).apply {
+            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, "Note saved")
+            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_NOTE_BODY, preview)
+            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_IS_NOTE, true)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         applicationContext.startActivity(intent)
