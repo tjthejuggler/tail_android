@@ -124,14 +124,6 @@ class HabitViewModel(
     /** True when selectedDate == today */
     val isToday: Boolean get() = _selectedDate.value == LocalDate.now()
 
-    /** When true, tapping a habit button shows its info panel instead of incrementing. */
-    private val _infoMode = MutableStateFlow(false)
-    val infoMode: StateFlow<Boolean> = _infoMode.asStateFlow()
-
-    /** The habit currently selected for info display (null = none). */
-    private val _selectedInfoHabit = MutableStateFlow<Habit?>(null)
-    val selectedInfoHabit: StateFlow<Habit?> = _selectedInfoHabit.asStateFlow()
-
     /** When true, the grid is in tap-to-select reorder edit mode. */
     private val _editMode = MutableStateFlow(false)
     val editMode: StateFlow<Boolean> = _editMode.asStateFlow()
@@ -929,34 +921,7 @@ class HabitViewModel(
         }
     }
 
-    /** Toggles info mode on/off. Clears selected habit when turning off.
-     *  Acts as a radio button with edit mode — turning info on turns edit off. */
-    fun toggleInfoMode() {
-        val turningOn = !_infoMode.value
-        _infoMode.value = turningOn
-        if (!turningOn) {
-            _selectedInfoHabit.value = null
-        } else {
-            // Deactivate edit mode and graph mode when info mode is activated
-            _editMode.value = false
-            _selectedEditIndex.value = -1
-            _movePendingSourceIndex.value = -1
-            _graphMode.value = false
-        }
-    }
-
-    /** Called when a habit is tapped in info mode — selects it for display. */
-    fun selectInfoHabit(habit: Habit) {
-        _selectedInfoHabit.value = habit
-    }
-
-    /** Clears the currently selected info habit (e.g. when tapping elsewhere). */
-    fun clearInfoHabit() {
-        _selectedInfoHabit.value = null
-    }
-
-    /** Toggles edit (tap-to-select reorder) mode on/off. Clears selection when turning off.
-     *  Acts as a radio button with info mode — turning edit on turns info off. */
+    /** Toggles edit (tap-to-select reorder) mode on/off. Clears selection when turning off. */
     fun toggleEditMode() {
         val turningOn = !_editMode.value
         _editMode.value = turningOn
@@ -964,9 +929,7 @@ class HabitViewModel(
             _selectedEditIndex.value = -1
             _movePendingSourceIndex.value = -1
         } else {
-            // Deactivate info mode and graph mode when edit mode is activated
-            _infoMode.value = false
-            _selectedInfoHabit.value = null
+            // Deactivate graph mode when edit mode is activated
             _graphMode.value = false
         }
     }
@@ -1739,8 +1702,6 @@ class HabitViewModel(
         _graphMode.value = turningOn
         if (turningOn) {
             // Deactivate other modes
-            _infoMode.value = false
-            _selectedInfoHabit.value = null
             _editMode.value = false
             _selectedEditIndex.value = -1
             _movePendingSourceIndex.value = -1

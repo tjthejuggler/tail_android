@@ -44,8 +44,7 @@ private val tightTextStyle = TextStyle(
  *   Bottom-left:  current streak (positive) or antistreak (negative)
  *   Bottom-right: longest streak
  *
- * When [infoMode] is true, tapping shows info instead of incrementing.
- * When [isSelected] is true (info mode + this habit selected), a highlight border is shown.
+ * When [isSelected] is true, a highlight border is shown.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -54,7 +53,6 @@ fun HabitButton(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
-    infoMode: Boolean = false,
     isSelected: Boolean = false,
     editMode: Boolean = false,
     /** True when this cell is the habit currently "in flight" waiting to be placed. */
@@ -94,9 +92,8 @@ fun HabitButton(
         isGraphSelected -> Modifier.border(2.dp, Color(0xFF66DD66), shape)         // green border when selected for graph
         isSelected && editMode -> Modifier.border(2.dp, Color(0xFFFFAA00), shape)  // orange border when selected in edit mode
         isMovePendingTarget -> Modifier.border(1.dp, Color(0xFF44FFFF), shape)     // cyan border = valid drop target
-        isSelected -> Modifier.border(2.dp, Color(0xFFFFD700), shape)              // gold border when selected in info mode
+        isSelected -> Modifier.border(2.dp, Color(0xFFFFD700), shape)              // gold border when selected
         graphMode  -> Modifier.border(1.dp, Color(0xFF1A4A1A), shape)              // dim green border in graph mode
-        infoMode   -> Modifier.border(1.dp, Color(0xFF88CCFF), shape)              // subtle blue border in info mode
         editMode   -> Modifier.border(1.dp, Color(0xFFFF8C00), shape)              // dim orange border in edit mode
         else       -> Modifier
     }
@@ -145,7 +142,7 @@ fun HabitButton(
             )
         }
 
-        // Top-right: move-pending indicator OR graph mode indicator OR edit mode handle OR info mode indicator OR custom input badge
+        // Top-right: move-pending indicator OR graph mode indicator OR edit mode handle OR custom input badge
         if (isGraphSelected) {
             Text(
                 text = "📊",
@@ -184,17 +181,6 @@ fun HabitButton(
                 text = "⠿",
                 color = Color(0xFFFF8C00),
                 fontSize = 11.sp,
-                fontWeight = FontWeight.ExtraBold,
-                style = tightTextStyle,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 1.dp, top = 0.dp)
-            )
-        } else if (infoMode) {
-            Text(
-                text = "ℹ",
-                color = Color(0xFF88CCFF),
-                fontSize = 9.sp,
                 fontWeight = FontWeight.ExtraBold,
                 style = tightTextStyle,
                 modifier = Modifier

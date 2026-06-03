@@ -142,11 +142,9 @@ fun HabitGridScreen(
     val settings by viewModel.settings.collectAsState()
     val selectedDate by viewModel.selectedDate.collectAsState()
     val selectedDateLocation by viewModel.selectedDateLocation.collectAsState()
-    val infoMode by viewModel.infoMode.collectAsState()
     val editMode by viewModel.editMode.collectAsState()
     val graphMode by viewModel.graphMode.collectAsState()
     val graphSelectedHabits by viewModel.graphSelectedHabits.collectAsState()
-    val selectedInfoHabit by viewModel.selectedInfoHabit.collectAsState()
     val selectedEditIndex by viewModel.selectedEditIndex.collectAsState()
     val movePendingSourceIndex by viewModel.movePendingSourceIndex.collectAsState()
     val habitScreens by viewModel.habitScreens.collectAsState()
@@ -387,19 +385,6 @@ fun HabitGridScreen(
                             tint = if (graphMode) Color(0xFF66DD66) else Color.White
                         )
                     }
-                    // Info mode toggle button
-                    IconButton(
-                        onClick = { viewModel.toggleInfoMode() },
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = if (infoMode) Color(0xFF1A4A7A) else Color.Transparent
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.Info,
-                            contentDescription = if (infoMode) "Info mode ON" else "Info mode OFF",
-                            tint = if (infoMode) Color(0xFF88CCFF) else Color.White
-                        )
-                    }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
@@ -532,11 +517,9 @@ fun HabitGridScreen(
                 ) {
                     HabitGrid(
                         habits = habits,
-                        infoMode = infoMode,
                         editMode = editMode,
                         graphMode = graphMode,
                         graphSelectedHabits = graphSelectedHabits,
-                        selectedInfoHabit = selectedInfoHabit,
                         selectedEditIndex = selectedEditIndex,
                         movePendingSourceIndex = movePendingSourceIndex,
                         customIconOverrides = settings.habitIcons,
@@ -546,7 +529,6 @@ fun HabitGridScreen(
                             when {
                                 graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
                                 editMode -> viewModel.selectEditHabit(index)
-                                infoMode -> viewModel.selectInfoHabit(habit)
                                 habit.name in settings.subtypedHabits -> {
                                     viewModel.loadSubtypeBreakdown(habit.name) { breakdown ->
                                         subtypeDialogBreakdown = breakdown
@@ -598,7 +580,7 @@ fun HabitGridScreen(
                             }
                         },
                         onHabitLongClick = { habit ->
-                            if (!infoMode && !editMode && !graphMode) {
+                            if (!editMode && !graphMode) {
                                 // Long-press increments without recording a timestamp
                                 viewModel.incrementHabit(habit.name, 1, recordTimestamp = false)
                             }
@@ -624,16 +606,6 @@ fun HabitGridScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
-                }
-
-                // Info panel — shown below grid when in info mode
-                if (infoMode) {
-                    HabitInfoPanel(
-                        habit = selectedInfoHabit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
                 }
 
                 // Edit mode control bar — shown below grid when in edit mode
@@ -781,8 +753,8 @@ fun HabitGridScreen(
         }
     }
 
-    // ── Advice banner at bottom of screen (hidden in edit/info/graph modes) ──
-    if (!editMode && !infoMode && !graphMode) {
+    // ── Advice banner at bottom of screen (hidden in edit/graph modes) ──
+    if (!editMode && !graphMode) {
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -1156,11 +1128,9 @@ private fun ScreenTabRow(
 @Composable
 private fun HabitGrid(
     habits: List<Habit>,
-    infoMode: Boolean,
     editMode: Boolean,
     graphMode: Boolean = false,
     graphSelectedHabits: Set<String> = emptySet(),
-    selectedInfoHabit: Habit?,
     selectedEditIndex: Int,
     movePendingSourceIndex: Int = -1,
     customIconOverrides: Map<String, String> = emptyMap(),
@@ -1189,7 +1159,6 @@ private fun HabitGrid(
         itemsIndexed(cells) { index, habit ->
             if (habit != null) {
                 val isEditSelected = editMode && index == selectedEditIndex
-                val isInfoSelected = infoMode && selectedInfoHabit?.name == habit.name
                 val isGraphSelected = graphMode && habit.name in graphSelectedHabits
                 val isMovePendingSource = editMode && index == movePendingSourceIndex
                 HabitButton(
@@ -1197,9 +1166,8 @@ private fun HabitGrid(
                     onClick = { onHabitClick(habit, index) },
                     onLongClick = { onHabitLongClick(habit) },
                     modifier = Modifier.padding(2.dp),
-                    infoMode = infoMode,
                     editMode = editMode,
-                    isSelected = isEditSelected || isInfoSelected || isGraphSelected,
+                    isSelected = isEditSelected || isGraphSelected,
                     isMovePendingSource = isMovePendingSource,
                     isMovePendingTarget = isMovePending && !isMovePendingSource && editMode,
                     customIconOverrides = customIconOverrides,
@@ -3455,10 +3423,10 @@ fun HabitInfoPanel(
     habit: Habit?,
     modifier: Modifier = Modifier
 ) {
-    val panelBg = Color(0xFF1A1A2E)
-    val labelColor = Color(0xFFADD8E6)
-    val valueColor = Color.White
-    val dimColor = Color(0xFF888888)
+    val panelBg = Color(0xFF1A2E1A)
+    val labelColor = Color(0xFF88CC88)
+    val valueColor = Color(0xFFCCEECC)
+    val dimColor = Color(0xFF889988)
 
     Box(
         modifier = modifier
@@ -3477,11 +3445,10 @@ fun HabitInfoPanel(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
             ) {
                 Text(
                     text = habit.name,
-                    color = Color(0xFFFFD700),
+                    color = Color(0xFF66DD66),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )

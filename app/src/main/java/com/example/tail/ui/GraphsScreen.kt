@@ -112,6 +112,7 @@ fun GraphsPanel(
     val selectedPeriod by viewModel.graphTimePeriod.collectAsState()
     val zoomStartDate by viewModel.graphZoomStartDate.collectAsState()
     val zoomEndDate by viewModel.graphZoomEndDate.collectAsState()
+    val habits by viewModel.habits.collectAsState()
 
     var selectedDataPoint by remember { mutableStateOf<SelectedPoint?>(null) }
     var textEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -403,6 +404,21 @@ fun GraphsPanel(
                                 )
                             }
                         }
+                    }
+                }
+
+                // ── Info panels for each selected habit ──────────────────
+                if (!isLandscape) {
+                    val selectedHabitObjects = graphSelectedHabits.mapNotNull { name ->
+                        habits.find { it.name == name }
+                    }
+                    selectedHabitObjects.forEach { habit ->
+                        HabitInfoPanel(
+                            habit = habit,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
                     }
                 }
             }
