@@ -2732,6 +2732,14 @@ class HabitViewModel(
         }
     }
 
+    fun removeSecondaryLocation(date: LocalDate, index: Int) {
+        locationRepo.removeSecondaryLocation(date, index)
+    }
+
+    fun updateSecondaryLocationTime(date: LocalDate, index: Int, newTimeMinutes: Int) {
+        locationRepo.updateSecondaryLocationTime(date, index, newTimeMinutes)
+    }
+
     /**
      * Returns the list of habits done on [date] with their point values,
      * sorted descending by points. Only habits with points > 0 are included.

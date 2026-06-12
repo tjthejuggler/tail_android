@@ -929,6 +929,16 @@ class LocationRepository(private val context: Context) {
             return
         }
 
+        // 1b. Skip if the label is the same place as today's PRIMARY location.
+        //     A secondary that resolves to the same name as the primary (e.g.
+        //     "NYC, New York" when the primary is already "NYC, New York") is
+        //     redundant — the primary already represents that location.
+        val primaryLabel = getLocationForDate(today)
+        if (primaryLabel != null && isSameLocationLabel(label, primaryLabel)) {
+            Log.d(TAG, "Secondary location '$label' same as primary '$primaryLabel' for $today — skipping")
+            return
+        }
+
         // 2. Skip if within SECONDARY_DEDUP_METERS of today's PRIMARY coords —
         //    this means the user just opened the app from "home" / the place
         //    they woke up in; that's already captured as the primary.
@@ -1006,6 +1016,14 @@ class LocationRepository(private val context: Context) {
             Log.d(TAG, "Manual secondary location '$label' already exists for $date — skipping")
             return label
         }
+
+        // Skip if the label is the same place as the PRIMARY location for this date.
+        val primaryLabel = getLocationForDate(date)
+        if (primaryLabel != null && isSameLocationLabel(label, primaryLabel)) {
+            Log.d(TAG, "Manual secondary location '$label' same as primary '$primaryLabel' for $date — skipping")
+            return label
+        }
+
         if (existing.any { haversineMeters(coords.first, coords.second, it.lat, it.lon) < SECONDARY_DEDUP_METERS }) {
             Log.d(TAG, "Manual secondary location (${coords.first},${coords.second}) within ${SECONDARY_DEDUP_METERS}m of existing — skipping")
             return label
@@ -1024,6 +1042,44 @@ class LocationRepository(private val context: Context) {
         dataVersion++
         Log.d(TAG, "Added manual secondary location for $date: $label (${coords.first}, ${coords.second}) at ${timeMinutes}min")
         return label
+    }
+
+    /**
+     * Removes a secondary location entry for [date] at the given [index]
+     * (0-based position in the stored array). No-op if index is out of range.
+     */
+    fun removeSecondaryLocation(date: LocalDate, index: Int) {
+        val map = loadSecondaryMap().toMutableMap()
+        val existingArr = map[date.toString()] ?: return
+        val arr = org.json.JSONArray(existingArr)
+        if (index < 0 || index >= arr.length()) return
+        arr.remove(index)
+        if (arr.length() == 0) {
+            map.remove(date.toString())
+        } else {
+            map[date.toString()] = arr.toString()
+        }
+        prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
+        dataVersion++
+        Log.d(TAG, "Removed secondary location #$index for $date")
+    }
+
+    /**
+     * Updates the time-of-visit for a secondary location entry for [date]
+     * at the given [index] (0-based). No-op if index is out of range.
+     */
+    fun updateSecondaryLocationTime(date: LocalDate, index: Int, newTimeMinutes: Int) {
+        val map = loadSecondaryMap().toMutableMap()
+        val existingArr = map[date.toString()] ?: return
+        val arr = org.json.JSONArray(existingArr)
+        if (index < 0 || index >= arr.length()) return
+        val obj = arr.getJSONObject(index)
+        obj.put("time", newTimeMinutes)
+        arr.put(index, obj)
+        map[date.toString()] = arr.toString()
+        prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
+        dataVersion++
+        Log.d(TAG, "Updated secondary location #$index time to ${newTimeMinutes}min for $date")
     }
 
     /**
@@ -1074,6 +1130,21 @@ class LocationRepository(private val context: Context) {
             Log.w(TAG, "Failed to parse secondary locations map: ${e.message}")
             emptyMap()
         }
+    }
+
+    /**
+     * Fuzzy location-label comparison: two labels are considered the "same
+     * place" if their last two comma-separated parts match (e.g.
+     * "Dublin, County Dublin, Leinster, Ireland" ≈ "Dublin, Ireland" because
+     * both end with "Dublin, Ireland").
+     * Returns true when the labels refer to the same place.
+     */
+    private fun isSameLocationLabel(a: String, b: String): Boolean {
+        val partsA = a.split(",").map { it.trim() }
+        val partsB = b.split(",").map { it.trim() }
+        val lastTwoA = partsA.takeLast(2).joinToString(", ")
+        val lastTwoB = partsB.takeLast(2).joinToString(", ")
+        return lastTwoA == lastTwoB
     }
 }
 

@@ -625,16 +625,26 @@ fun MapScreen(
             }
 
             if (showAddLocationDialog) {
+                val currentSecondaries = remember(selectedDate, locationVersion) {
+                    viewModel.getSecondaryLocationsForDate(selectedDate)
+                }
                 AddSecondaryLocationDialog(
                     date = selectedDate,
                     accent = accent,
                     showAll = showAll,
+                    existingSecondaries = currentSecondaries,
                     onShowAllChange = { showAll = it },
                     onAdd = { address, timeMinutes ->
                         scope.launch {
                             viewModel.addManualSecondaryLocation(selectedDate, address, timeMinutes)
                         }
                         showAddLocationDialog = false
+                    },
+                    onRemove = { index ->
+                        viewModel.removeSecondaryLocation(selectedDate, index)
+                    },
+                    onUpdateTime = { index, newTimeMinutes ->
+                        viewModel.updateSecondaryLocationTime(selectedDate, index, newTimeMinutes)
                     },
                     onDismiss = { showAddLocationDialog = false }
                 )
@@ -1898,14 +1908,18 @@ private fun AddSecondaryLocationDialog(
     date: LocalDate,
     accent: Color,
     showAll: Boolean,
+    existingSecondaries: List<SecondaryLocation>,
     onShowAllChange: (Boolean) -> Unit,
     onAdd: (address: String, timeMinutes: Int) -> Unit,
+    onRemove: (index: Int) -> Unit,
+    onUpdateTime: (index: Int, newTimeMinutes: Int) -> Unit,
     onDismiss: () -> Unit
 ) {
     var addressText by remember { mutableStateOf("") }
     val now = java.time.LocalTime.now()
     var selectedHour by remember { mutableStateOf(now.hour) }
     var selectedMinute by remember { mutableStateOf(now.minute) }
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
 
     val hours = (0..23).map { String.format("%02d", it) }
     val minutes = (0..59).map { String.format("%02d", it) }
@@ -1917,15 +1931,92 @@ private fun AddSecondaryLocationDialog(
                 .background(Color(0xFF0D0D0D), RoundedCornerShape(12.dp))
                 .padding(16.dp)
         ) {
-            Text("Add location for ${date.format(MAP_DATE_FMT)}", color = accent, fontSize = 14.sp)
+            Text("Locations for ${date.format(MAP_DATE_FMT)}", color = accent, fontSize = 14.sp)
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(color = Color(0xFF222222))
+            Spacer(Modifier.height(8.dp))
+
+            // ── Existing secondary locations ──
+            if (existingSecondaries.isNotEmpty()) {
+                Text("Existing locations:", color = Color(0xFF888888), fontSize = 11.sp)
+                Spacer(Modifier.height(4.dp))
+                existingSecondaries.forEachIndexed { idx, sec ->
+                    val isEditing = editingIndex == idx
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = sec.label,
+                            color = Color(0xFFCCCCCC),
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1
+                        )
+                        if (isEditing) {
+                            // Inline time editor for this entry
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                WheelPicker(
+                                    items = hours,
+                                    selectedIndex = sec.timeMinutes / 60,
+                                    onSelectedChange = { h ->
+                                        onUpdateTime(idx, h * 60 + sec.timeMinutes % 60)
+                                    },
+                                    itemHeight = 28.dp,
+                                    visibleItems = 3,
+                                    accent = accent,
+                                    modifier = Modifier.width(56.dp)
+                                )
+                                Text(":", color = Color(0xFF888888), fontSize = 16.sp, modifier = Modifier.padding(horizontal = 2.dp))
+                                WheelPicker(
+                                    items = minutes,
+                                    selectedIndex = sec.timeMinutes % 60,
+                                    onSelectedChange = { m ->
+                                        onUpdateTime(idx, (sec.timeMinutes / 60) * 60 + m)
+                                    },
+                                    itemHeight = 28.dp,
+                                    visibleItems = 3,
+                                    accent = accent,
+                                    modifier = Modifier.width(56.dp)
+                                )
+                            }
+                            TextButton(onClick = { editingIndex = null }) {
+                                Text("Done", color = accent, fontSize = 11.sp)
+                            }
+                        } else {
+                            Text(
+                                text = String.format("%02d:%02d", sec.timeMinutes / 60, sec.timeMinutes % 60),
+                                color = Color(0xFF999999),
+                                fontSize = 11.sp,
+                                modifier = Modifier.clickable { editingIndex = idx }
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            TextButton(
+                                onClick = { onRemove(idx) },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                            ) {
+                                Text("✕", color = Color(0xFF666666), fontSize = 14.sp)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = Color(0xFF222222))
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // ── Add new location ──
+            Text("Add new location", color = Color(0xFFCCCCCC), fontSize = 12.sp)
             Spacer(Modifier.height(4.dp))
             Text(
                 "Paste a Google Maps address or place name. It will be geocoded to coordinates.",
                 color = Color(0xFF777777),
                 fontSize = 11.sp
             )
-            Spacer(Modifier.height(10.dp))
-            HorizontalDivider(color = Color(0xFF222222))
             Spacer(Modifier.height(8.dp))
 
             OutlinedTextField(

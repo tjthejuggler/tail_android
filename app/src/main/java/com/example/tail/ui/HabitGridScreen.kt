@@ -1342,6 +1342,7 @@ private fun EditModeControlBar(
     } else emptyList()
 
     var moveToScreenExpanded by remember { mutableStateOf(false) }
+    var showSetCountDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -1524,7 +1525,12 @@ private fun EditModeControlBar(
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.width(28.dp),
+                                modifier = Modifier
+                                    .width(28.dp)
+                                    .clickable(
+                                        indication = null,
+                                        interactionSource = remember { MutableInteractionSource() }
+                                    ) { showSetCountDialog = true },
                                 textAlign = TextAlign.Center
                             )
                             Button(
@@ -1536,6 +1542,18 @@ private fun EditModeControlBar(
                                 Text("+", fontSize = 14.sp, color = Color(0xFF88FF88))
                             }
                         }
+                    }
+                    // Set-count dialog — opened by tapping the count number
+                    if (showSetCountDialog && selectedHabitName != null) {
+                        SetCountDialog(
+                            habitName = selectedHabitName,
+                            currentCount = selectedHabitRawTodayCount,
+                            onConfirm = { newCount ->
+                                onSetCount(selectedHabitName, newCount)
+                                showSetCountDialog = false
+                            },
+                            onDismiss = { showSetCountDialog = false }
+                        )
                     }
                 }
                 // For divider habits, show editable true value (undivided total) under the counter
@@ -3050,6 +3068,82 @@ private fun AddHabitDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A1A))
                 ) {
                     Text("Add", color = Color(0xFF88FF88))
+                }
+            }
+        }
+    }
+}
+
+// ── Delete habit confirmation dialog ─────────────────────────────────────────
+
+// ── Set count dialog ──────────────────────────────────────────────────────────
+
+/**
+ * Dialog for directly typing in a new today-count value for a habit.
+ * Pre-filled with the current count. Confirming sets the raw count to the
+ * entered value (the displayed points value may differ if a divider is set).
+ */
+@Composable
+private fun SetCountDialog(
+    habitName: String,
+    currentCount: Int,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var countText by remember { mutableStateOf(currentCount.toString()) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Set today's count",
+                color = Color(0xFFFFAA00),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = habitName,
+                color = Color(0xFF888888),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = countText,
+                onValueChange = { countText = it.filter { c -> c.isDigit() } },
+                label = { Text("Count", color = Color(0xFF888888)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFFFFAA00),
+                    unfocusedBorderColor = Color(0xFF555555),
+                    cursorColor = Color(0xFFFFAA00)
+                )
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val newCount = countText.toIntOrNull() ?: 0
+                        onConfirm(newCount)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A3A00))
+                ) {
+                    Text("Set", color = Color(0xFFFFAA00))
                 }
             }
         }
