@@ -609,7 +609,7 @@ class LocationRepository(private val context: Context) {
      *
      * Returns (lat, lon) or null if no fix arrives in time.
      */
-    private suspend fun requestFreshLocation(): Pair<Double, Double>? {
+    private suspend fun requestFreshLocation(timeoutMs: Long = ACTIVE_FIX_TIMEOUT_MS): Pair<Double, Double>? {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
         // Prefer network (fast, coarse) then GPS (slower but works without cell)
@@ -624,9 +624,9 @@ class LocationRepository(private val context: Context) {
             }
         }
 
-        Log.d(TAG, "Requesting fresh location from $provider (timeout ${ACTIVE_FIX_TIMEOUT_MS}ms)")
+        Log.d(TAG, "Requesting fresh location from $provider (timeout ${timeoutMs}ms)")
 
-        return withTimeoutOrNull(ACTIVE_FIX_TIMEOUT_MS) {
+        return withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { cont ->
                 val listener = object : LocationListener {
                     override fun onLocationChanged(location: Location) {
@@ -984,8 +984,13 @@ class LocationRepository(private val context: Context) {
     suspend fun logCurrentPositionAsSecondary(): String? {
         return withContext(Dispatchers.IO) {
             try {
-                val coords = requestFreshLocation()
-                    ?: getBestLastKnownLocation()
+                // Use a longer timeout (30s) for secondary logging — this runs
+                // in the background on foreground and a cold GPS fix at a new
+                // location often takes longer than the default 15s.
+                // Do NOT fall back to getBestLastKnownLocation() here: the
+                // cached fix is often stale (from before the user moved) and
+                // would just be deduped against the primary anyway.
+                val coords = requestFreshLocation(timeoutMs = 30_000L)
                     ?: return@withContext null
 
                 val label = deriveSecondaryLabel(coords.first, coords.second) ?: return@withContext null

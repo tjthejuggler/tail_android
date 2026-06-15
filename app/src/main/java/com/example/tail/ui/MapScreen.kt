@@ -574,6 +574,9 @@ fun MapScreen(
     // ── Location timeline popup state ──────────────────────────────────────
     var showLocationTimeline by remember { mutableStateOf(false) }
 
+    // ── Stats panel scroll state — persists across day changes ─────────────
+    val statsListState = rememberLazyListState()
+
     // ── Layout ──────────────────────────────────────────────────────────────
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -708,6 +711,7 @@ fun MapScreen(
                         viewModel.loadTextEntriesForDate(habitName, selectedDate, onResult)
                     },
                     accent = accent,
+                    listState = statsListState,
                     modifier = Modifier
                         .fillMaxHeight()
                         .width(220.dp)
@@ -1244,11 +1248,13 @@ private fun MapInfoPanel(
     onGetHabitValue: (String) -> Int,
     onLoadTextEntries: (String, (List<String>) -> Unit) -> Unit,
     accent: Color,
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
     modifier: Modifier = Modifier
 ) {
     var showCountriesPopup by remember { mutableStateOf(false) }
     var showIgnoredDialog  by remember { mutableStateOf(false) }
     var showPointsPopup    by remember { mutableStateOf(false) }
+    var statsCollapsed by remember { mutableStateOf(false) }
 
     // Text entries for habits that have "show text" enabled — loaded asynchronously.
     // Each load completes via a callback, so update Compose state inside the callback
@@ -1273,67 +1279,121 @@ private fun MapInfoPanel(
     Column(
         modifier = modifier
             .background(Color(0xFF0E0E0E))
-            .padding(12.dp)
+            .fillMaxHeight()
     ) {
-        // Date header — moved here from the top bar so the centred location
-        // label can dominate the screen header.
-        Text(
-            text = date.format(MAP_DATE_FMT),
-            color = Color.White,
-            fontSize = 14.sp
-        )
-        Spacer(Modifier.height(10.dp))
+        // ── Fixed date header (not scrollable) ────────────────────────────────
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF0E0E0E))
+                .padding(12.dp)
+        ) {
+            Text(
+                text = date.format(MAP_DATE_FMT),
+                color = Color.White,
+                fontSize = 14.sp
+            )
+        }
 
-        ClickableStatLine(
-            label = "Day points",
-            value = stats.totalPoints.toString(),
-            accent = accent,
-            onClick = { showPointsPopup = true }
-        )
-        StatLine(
-            "Monthly avg",
-            String.format("%.1f", stats.monthlyAverage),
-            accent
-        )
-        StatLine("Streak",      if (statsLoading) "..." else "${stats.streakDays} d",     accent)
-        StatLine("Anti-streak", if (statsLoading) "..." else "${stats.antiStreakDays} d", accent)
-        ClickableStatLine(
-            label = "Countries",
-            value = countriesVisited.toString(),
-            accent = accent,
-            onClick = { showCountriesPopup = true }
-        )
-
-        // ── Selected habit values ──────────────────────────────────────────
-        if (mapStatsHabits.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = Color(0xFF222222))
-            Spacer(Modifier.height(6.dp))
-            for (habitName in mapStatsHabits) {
-                val isShowText = habitName in mapStatsShowTextHabits && habitName in textInputHabits
-                if (isShowText) {
-                    // Show only text entries for this habit, not the count
+        // ── Collapsible stats section ─────────────────────────────────────────
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF0E0E0E))
+                .padding(horizontal = 12.dp)
+        ) {
+            Column {
+                // Stats toggle header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { statsCollapsed = !statsCollapsed }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = habitName,
-                        color = accent,
-                        fontSize = 11.sp,
+                        text = "Stats",
+                        color = Color(0xFF888888),
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    val entries = textEntries[habitName]
-                    if (entries != null && entries.isNotEmpty()) {
-                        for (entry in entries) {
-                            Text(
-                                text = entry,
-                                color = Color(0xFF999999),
-                                fontSize = 10.sp,
-                                maxLines = 2,
-                                modifier = Modifier.padding(start = 8.dp, top = 1.dp, bottom = 2.dp)
-                            )
-                        }
+                    Text(
+                        text = if (statsCollapsed) "+" else "−",
+                        color = accent,
+                        fontSize = 16.sp
+                    )
+                }
+
+                // Stats content (collapsible)
+                if (!statsCollapsed) {
+                    Column {
+                        ClickableStatLine(
+                            label = "Day points",
+                            value = stats.totalPoints.toString(),
+                            accent = accent,
+                            onClick = { showPointsPopup = true }
+                        )
+                        StatLine(
+                            "Monthly avg",
+                            String.format("%.1f", stats.monthlyAverage),
+                            accent
+                        )
+                        StatLine("Streak",      if (statsLoading) "..." else "${stats.streakDays} d",     accent)
+                        StatLine("Anti-streak", if (statsLoading) "..." else "${stats.antiStreakDays} d", accent)
+                        ClickableStatLine(
+                            label = "Countries",
+                            value = countriesVisited.toString(),
+                            accent = accent,
+                            onClick = { showCountriesPopup = true }
+                        )
                     }
-                } else {
-                    val value = onGetHabitValue(habitName)
-                    StatLine(habitName, value.toString(), accent)
+                }
+            }
+        }
+
+        // ── Divider between stats and habits ─────────────────────────────────
+        if (mapStatsHabits.isNotEmpty()) {
+            HorizontalDivider(color = Color(0xFF222222))
+        }
+
+        // ── Habit info section (separate, always scrollable) ─────────────────
+        if (mapStatsHabits.isNotEmpty()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(12.dp)
+            ) {
+                items(mapStatsHabits.toList()) { habitName ->
+                    val isShowText = habitName in mapStatsShowTextHabits && habitName in textInputHabits
+                    if (isShowText) {
+                        // Show only text entries for this habit, not the count
+                        Column {
+                            Text(
+                                text = habitName,
+                                color = accent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            val entries = textEntries[habitName]
+                            if (entries != null && entries.isNotEmpty()) {
+                                for (entry in entries) {
+                                    Text(
+                                        text = entry,
+                                        color = Color(0xFF999999),
+                                        fontSize = 10.sp,
+                                        maxLines = 2,
+                                        modifier = Modifier.padding(start = 8.dp, top = 1.dp, bottom = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        val value = onGetHabitValue(habitName)
+                        StatLine(habitName, value.toString(), accent)
+                    }
                 }
             }
         }
