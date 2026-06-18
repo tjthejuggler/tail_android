@@ -100,6 +100,7 @@ import androidx.compose.ui.window.Dialog
 import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.ChessComType
+import com.example.tail.data.GarminType
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.RollingHigh
@@ -149,6 +150,7 @@ fun HabitGridScreen(
     val movePendingSourceIndex by viewModel.movePendingSourceIndex.collectAsState()
     val habitScreens by viewModel.habitScreens.collectAsState()
     val activeScreenIndex by viewModel.activeScreenIndex.collectAsState()
+    val garminMonthlyData by viewModel.garminMonthlyData.collectAsState()
     val context = LocalContext.current
 
     val today = LocalDate.now()
@@ -678,9 +680,15 @@ fun HabitGridScreen(
                         onToggleScreenHidden = { viewModel.toggleScreenHidden(activeScreenIndex) },
                         disabledHabits = settings.disabledHabits,
                         onToggleDisabled = { name -> viewModel.toggleDisabledHabit(name) },
+                        noPointsHabits = settings.noPointsHabits,
+                        onToggleNoPoints = { name -> viewModel.toggleNoPointsHabit(name) },
                         chessComEnabled = settings.chessComEnabled,
                         chessComHabitLinks = settings.chessComHabitLinks,
                         onSetChessComLink = { name, type -> viewModel.setChessComHabitLink(name, type) },
+                        garminEnabled = settings.garminEnabled,
+                        garminHabitLinks = settings.garminHabitLinks,
+                        onSetGarminLink = { name, type -> viewModel.setGarminHabitLink(name, type) },
+                        garminMonthlyData = garminMonthlyData,
                         voiceTriggerEnabled = settings.voiceTriggerEnabled,
                         voiceTriggerHabits = settings.voiceTriggerHabits,
                         voiceTriggerWords = settings.voiceTriggerWords,
@@ -1280,6 +1288,7 @@ private fun EditModeControlBar(
     habitSubtypes: Map<String, List<String>>,
     subtypeDataFileUris: Map<String, String>,
     allHabitNames: List<String>,
+    garminMonthlyData: Map<com.example.tail.data.GarminType, Map<String, Int>> = emptyMap(),
     onStartMove: () -> Unit,
     onAddHabit: () -> Unit,
     onMoveToScreen: (Int) -> Unit,
@@ -1306,9 +1315,14 @@ private fun EditModeControlBar(
     onToggleScreenHidden: () -> Unit = {},
     disabledHabits: Set<String> = emptySet(),
     onToggleDisabled: (String) -> Unit = {},
+    noPointsHabits: Set<String> = emptySet(),
+    onToggleNoPoints: (String) -> Unit = {},
     chessComEnabled: Boolean = false,
     chessComHabitLinks: Map<String, String> = emptyMap(),
     onSetChessComLink: (String, String?) -> Unit = { _, _ -> },
+    garminEnabled: Boolean = false,
+    garminHabitLinks: Map<String, String> = emptyMap(),
+    onSetGarminLink: (String, String?) -> Unit = { _, _ -> },
     voiceTriggerEnabled: Boolean = false,
     voiceTriggerHabits: Set<String> = emptySet(),
     voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
@@ -1557,13 +1571,29 @@ private fun EditModeControlBar(
                     }
                 }
                 // For divider habits, show editable true value (undivided total) under the counter
-                if (selectedHabitName != null && (habitDividers[selectedHabitName] ?: 1) > 1) {
+                // For Garmin-linked habits, show read-only Garmin metric value
+                val isGarminLinked = selectedHabitName != null && selectedHabitName in garminHabitLinks
+                val isDivider = selectedHabitName != null && (habitDividers[selectedHabitName] ?: 1) > 1
+                if (isGarminLinked || isDivider) {
                     Spacer(modifier = Modifier.height(2.dp))
+                    // For Garmin habits, derive the value live on every recomposition so it
+                    // reflects garminMonthlyData updates that arrive asynchronously (e.g. after
+                    // a "Test Connection" sync). Caching it in remember() keyed only on the
+                    // habit name would leave a stale "-" when the data lands after selection.
+                    val garminValueText: String = if (isGarminLinked) {
+                        val today = LocalDate.now().toString()
+                        val garminType = garminHabitLinks[selectedHabitName]?.let { GarminType.fromKey(it) }
+                        val dailyValues = garminType?.let { garminMonthlyData[it] }
+                        dailyValues?.get(today)?.toString() ?: "-"
+                    } else {
+                        "-"
+                    }
+                    // For divider habits, keep an editable remembered field bound to the raw count.
                     var trueValueText by remember(selectedHabitName) {
                         mutableStateOf(selectedHabitRawTodayCount.toString())
                     }
                     // Sync when external count changes (e.g., from [−]/[+] buttons)
-                    if (trueValueText.toIntOrNull() != selectedHabitRawTodayCount) {
+                    if (!isGarminLinked && trueValueText.toIntOrNull() != selectedHabitRawTodayCount) {
                         trueValueText = selectedHabitRawTodayCount.toString()
                     }
                     Row(
@@ -1572,17 +1602,19 @@ private fun EditModeControlBar(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "true value:",
+                            text = if (isGarminLinked) "garmin value:" else "true value:",
                             color = Color(0xFFAA88FF),
                             fontSize = 10.sp
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         OutlinedTextField(
-                            value = trueValueText,
+                            value = if (isGarminLinked) garminValueText else trueValueText,
                             onValueChange = { v: String ->
-                                trueValueText = v.filter { it.isDigit() }
-                                val newCount = trueValueText.toIntOrNull() ?: 0
-                                onSetCount(selectedHabitName, newCount)
+                                if (!isGarminLinked) {
+                                    trueValueText = v.filter { it.isDigit() }
+                                    val newCount = trueValueText.toIntOrNull() ?: 0
+                                    onSetCount(selectedHabitName, newCount)
+                                }
                             },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(
@@ -2345,6 +2377,36 @@ private fun EditModeControlBar(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
+                    // ── Don't affect points toggle ────────────────────────────
+                    val isNoPoints = selectedHabitName in noPointsHabits
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "Don't affect points", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isNoPoints) "Excluded from totals"
+                                       else "Counts toward point totals",
+                                color = if (isNoPoints) Color(0xFF66BB6A) else Color(0xFF888888),
+                                fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isNoPoints,
+                            onCheckedChange = { onToggleNoPoints(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF66BB6A),
+                                checkedTrackColor = Color(0xFF2E7D32),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
                     // ── Timeless toggle ────────────────────────────────────
                     val isTimeless = selectedHabitName in timelessHabits
                     Row(
@@ -2595,6 +2657,80 @@ private fun EditModeControlBar(
                                             onClick = {
                                                 onSetChessComLink(selectedHabitName, type.name)
                                                 chessDropdownExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Garmin link toggle ────────────────────────────────────
+                    if (garminEnabled) {
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val currentGarminLink = garminHabitLinks[selectedHabitName]
+                        val isGarminLinked = currentGarminLink != null
+                        var garminDropdownExpanded by remember { mutableStateOf(false) }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(text = "❤️ Garmin", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                Text(
+                                    text = if (isGarminLinked) {
+                                        val typeName = GarminType.fromKey(currentGarminLink)?.label ?: currentGarminLink
+                                        "Linked to: $typeName"
+                                    } else "Not linked to Garmin",
+                                    color = if (isGarminLinked) Color(0xFF66BB6A) else Color(0xFF888888),
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Switch(
+                                checked = isGarminLinked,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        garminDropdownExpanded = true
+                                    } else {
+                                        onSetGarminLink(selectedHabitName, null)
+                                    }
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color(0xFF66BB6A),
+                                    checkedTrackColor = Color(0xFF1B5E20),
+                                    uncheckedThumbColor = Color(0xFF888888),
+                                    uncheckedTrackColor = Color(0xFF333333)
+                                )
+                            )
+                        }
+
+                        // Garmin type picker dropdown
+                        if (isGarminLinked || garminDropdownExpanded) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Box {
+                                Button(
+                                    onClick = { garminDropdownExpanded = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20)),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    val label = if (currentGarminLink != null) {
+                                        GarminType.fromKey(currentGarminLink)?.label ?: "Select type"
+                                    } else "Select type"
+                                    Text(label, fontSize = 11.sp, color = Color(0xFF66BB6A))
+                                }
+                                DropdownMenu(
+                                    expanded = garminDropdownExpanded,
+                                    onDismissRequest = { garminDropdownExpanded = false }
+                                ) {
+                                    GarminType.entries.forEach { type ->
+                                        DropdownMenuItem(
+                                            text = { Text(type.label) },
+                                            onClick = {
+                                                onSetGarminLink(selectedHabitName, type.name)
+                                                garminDropdownExpanded = false
                                             }
                                         )
                                     }

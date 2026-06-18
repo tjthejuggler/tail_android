@@ -13,6 +13,8 @@ import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
 import com.example.tail.data.ChessComRepository
 import com.example.tail.data.ChessComType
+import com.example.tail.data.GarminRepository
+import com.example.tail.data.GarminType
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.DayStats
 import com.example.tail.data.HabitTimestampRepository
@@ -183,6 +185,23 @@ class HabitViewModel(
 
     /** Interval between chess.com polls (15 minutes). */
     private val CHESS_COM_POLL_INTERVAL_MS = 15 * 60 * 1000L
+
+    // ── Garmin Integration ────────────────────────────────────────────────────
+    private val garminRepo = GarminRepository(context)
+
+    /** Status message for Garmin sync operations (shown in settings). */
+    private val _garminSyncStatus = MutableStateFlow("")
+    val garminSyncStatus: StateFlow<String> = _garminSyncStatus.asStateFlow()
+
+    /** Current month's Garmin data for display (metric type → date → value). */
+    private val _garminMonthlyData = MutableStateFlow<Map<GarminType, Map<String, Int>>>(emptyMap())
+    val garminMonthlyData: StateFlow<Map<GarminType, Map<String, Int>>> = _garminMonthlyData.asStateFlow()
+
+    /** Job for the periodic Garmin polling loop. */
+    private var garminPollingJob: Job? = null
+
+    /** Interval between Garmin polls (once a day). */
+    private val GARMIN_POLL_INTERVAL_MS = 24 * 60 * 60 * 1000L
 
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
@@ -518,6 +537,7 @@ class HabitViewModel(
         if (db.isEmpty()) return emptyMap()
 
         val dividers = _settings.value.habitDividers
+        val noPointsHabits = _settings.value.noPointsHabits
         // Use all habit names present in the DB (covers all screens)
         val habitNames = db.keys
 
@@ -529,6 +549,8 @@ class HabitViewModel(
             val ds = dateString(LocalDate.of(year, month, d))
             var total = 0
             for (name in habitNames) {
+                // Skip habits that don't affect points
+                if (name in noPointsHabits) continue
                 val raw = db[name]?.get(ds) ?: 0
                 total += applyDivider(raw, dividers[name] ?: 1)
             }
@@ -1208,6 +1230,17 @@ class HabitViewModel(
         if (habitName in current) current.remove(habitName) else current.add(habitName)
         _settings.value = _settings.value.copy(disabledHabits = current)
         viewModelScope.launch { settingsRepo.saveDisabledHabits(current) }
+    }
+
+    /**
+     * Toggles the "no points" flag for [habitName].
+     * When enabled, the habit's points are NOT included in any totals.
+     */
+    fun toggleNoPointsHabit(habitName: String) {
+        val current = _settings.value.noPointsHabits.toMutableSet()
+        if (habitName in current) current.remove(habitName) else current.add(habitName)
+        _settings.value = _settings.value.copy(noPointsHabits = current)
+        viewModelScope.launch { settingsRepo.saveNoPointsHabits(current) }
     }
 
     /**
@@ -2403,6 +2436,284 @@ class HabitViewModel(
             }
 
             Log.d(TAG, "Chess.com data applied to habits")
+        }
+    }
+
+    // ── Garmin Integration Methods ────────────────────────────────────────────
+
+    /** Saves all Garmin settings at once (called from Settings screen). */
+    fun saveGarminSettings(
+        enabled: Boolean,
+        proxyUrl: String,
+        appToken: String,
+        thresholds: Map<String, Int>
+    ) {
+        viewModelScope.launch {
+            // Normalise the URL/token at the source so a stray trailing newline or
+            // space (common when pasting) can never corrupt later URL parsing.
+            val cleanProxyUrl = proxyUrl.trim().trimEnd('/')
+            val cleanToken = appToken.trim()
+            settingsRepo.saveGarminSettings(enabled, cleanProxyUrl, cleanToken, thresholds)
+            _settings.value = _settings.value.copy(
+                garminEnabled = enabled,
+                garminProxyUrl = cleanProxyUrl,
+                garminAppToken = cleanToken,
+                garminThresholds = thresholds
+            )
+            // Start or stop polling based on enabled state
+            if (enabled && proxyUrl.isNotEmpty() && appToken.isNotEmpty() && lastLoadedUri.isNotEmpty()) {
+                startGarminPolling()
+            } else {
+                stopGarminPolling()
+            }
+        }
+    }
+
+    /** Links or unlinks a habit to a Garmin metric type. */
+    fun setGarminHabitLink(habitName: String, garminType: String?) {
+        viewModelScope.launch {
+            val links = _settings.value.garminHabitLinks.toMutableMap()
+            if (garminType != null) {
+                links[habitName] = garminType
+            } else {
+                links.remove(habitName)
+            }
+            settingsRepo.saveGarminHabitLinks(links)
+            _settings.value = _settings.value.copy(garminHabitLinks = links)
+        }
+    }
+
+    /** Starts the periodic Garmin polling loop. */
+    private fun startGarminPolling() {
+        // Cancel any existing polling job
+        garminPollingJob?.cancel()
+        garminPollingJob = viewModelScope.launch {
+            while (true) {
+                syncGarminCurrentMonth()
+                delay(GARMIN_POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** Stops the Garmin polling loop. */
+    private fun stopGarminPolling() {
+        garminPollingJob?.cancel()
+        garminPollingJob = null
+    }
+
+    /**
+     * Fetches current month Garmin data and applies increments to linked habits.
+     * Called periodically by the polling loop.
+     */
+    private suspend fun syncGarminCurrentMonth() {
+        val s = _settings.value
+        if (!s.garminEnabled || s.garminProxyUrl.isEmpty() || s.garminAppToken.isEmpty()) return
+        if (s.garminHabitLinks.isEmpty()) return
+        if (s.fileUri.isEmpty()) return
+
+        try {
+            _garminSyncStatus.value = "Syncing Garmin data…"
+            val monthData = garminRepo.fetchCurrentMonthData(s.garminProxyUrl, s.garminAppToken)
+            val today = LocalDate.now().toString()
+            Log.d(TAG, "Garmin sync: fetched types=${monthData.keys}, " +
+                "links=${s.garminHabitLinks}, " +
+                "todayValues=" + monthData.mapValues { it.value[today] })
+            _garminMonthlyData.value = monthData  // Store for UI display
+            applyGarminData(monthData, s)
+            _garminSyncStatus.value = "Last sync: ${java.time.LocalTime.now().toString().take(5)}"
+        } catch (e: Exception) {
+            Log.e(TAG, "Garmin sync failed: ${e.message}", e)
+            _garminSyncStatus.value = "Sync failed: ${e.message?.take(50)}"
+        }
+    }
+
+    /**
+     * Fetches the entire Garmin health history and retroactively fills habit data.
+     * Called from the Settings screen "Fetch Entire Backlog" button.
+     */
+    fun fetchGarminBacklog() {
+        val s = _settings.value
+        if (!s.garminEnabled || s.garminProxyUrl.isEmpty() || s.garminAppToken.isEmpty()) {
+            _garminSyncStatus.value = "Enable Garmin and set connection settings first"
+            return
+        }
+        if (s.fileUri.isEmpty()) {
+            _garminSyncStatus.value = "Set habit database file first"
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                // Clear cache so we get completely fresh data
+                _garminSyncStatus.value = "Clearing cache…"
+                garminRepo.clearCache()
+
+                // Reset all Garmin-linked habits to 0 for all dates
+                _garminSyncStatus.value = "Resetting linked habit data…"
+                resetGarminHabitData(s)
+
+                _garminSyncStatus.value = "Fetching entire backlog…"
+                val allData = garminRepo.fetchEntireBacklog(
+                    s.garminProxyUrl,
+                    s.garminAppToken
+                ) { done, total ->
+                    _garminSyncStatus.value = "Fetching archives: $done / $total months"
+                }
+                _garminSyncStatus.value = "Applying backlog data to habits…"
+                _garminMonthlyData.value = allData  // Store for UI display
+                applyGarminData(allData, s)
+                _garminSyncStatus.value = "Backlog sync complete!"
+            } catch (e: Exception) {
+                Log.e(TAG, "Garmin backlog fetch failed: ${e.message}")
+                _garminSyncStatus.value = "Failed: ${e.message?.take(50)}"
+            }
+        }
+    }
+
+    /**
+     * Resets all Garmin-linked habits to 0 for all dates in the cached database.
+     * Called before fetching backlog to avoid double-counting.
+     */
+    private suspend fun resetGarminHabitData(settings: AppSettings) {
+        val linkedHabits = settings.garminHabitLinks.keys
+        if (linkedHabits.isEmpty()) return
+
+        val mutableDb = cachedPhoneDb.toMutableMap()
+        var dbChanged = false
+
+        for (habitName in linkedHabits) {
+            if (habitName !in mutableDb) continue
+            val habitData = mutableDb[habitName]!!.toMutableMap()
+            for (date in habitData.keys) {
+                habitData[date] = 0
+                dbChanged = true
+            }
+            mutableDb[habitName] = habitData
+        }
+
+        if (dbChanged) {
+            cachedPhoneDb = mutableDb
+            rebuildHabitList()
+
+            // Persist to disk
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(settings.fileUri), context, mutableDb)
+            }
+        }
+    }
+
+    /**
+     * Tests the Garmin connection by performing a comprehensive health check.
+     * Validates the full chain: proxy server, app token, Garmin API, and data availability.
+     */
+    fun testGarminConnection() {
+        val s = _settings.value
+        if (s.garminProxyUrl.isEmpty() || s.garminAppToken.isEmpty()) {
+            _garminSyncStatus.value = "Set proxy URL and app token first"
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                _garminSyncStatus.value = "Testing connection…"
+                val result = garminRepo.performHealthCheck(s.garminProxyUrl, s.garminAppToken)
+                
+                if (result.success) {
+                    val message = buildString {
+                        append("✓ Connection successful!\n")
+                        append("  Proxy: ${if (result.proxyRunning) "Running" else "Not running"}\n")
+                        append("  Garmin: ${if (result.garminConnected) "Connected" else "Not connected"}\n")
+                        if (result.dataAvailable) {
+                            append("  Data: Available")
+                        }
+                    }
+                    _garminSyncStatus.value = message
+
+                    // After a successful test, immediately fetch and apply Garmin data
+                    // to linked habits (in addition to the once-a-day automatic poll).
+                    Log.d(TAG, "Garmin test ok: enabled=${s.garminEnabled}, " +
+                        "links=${s.garminHabitLinks.size}, fileUriSet=${s.fileUri.isNotEmpty()}")
+                    if (s.garminEnabled && s.garminHabitLinks.isNotEmpty() && s.fileUri.isNotEmpty()) {
+                        syncGarminCurrentMonth()
+                    } else {
+                        Log.w(TAG, "Garmin sync skipped after test — guard not satisfied")
+                    }
+                } else {
+                    _garminSyncStatus.value = "✗ Connection failed: ${result.message}"
+                }
+            } catch (e: Exception) {
+                _garminSyncStatus.value = "✗ Error: ${e.message}"
+            }
+        }
+    }
+
+    /**
+     * Applies Garmin data to linked habits in the database.
+     * For each linked habit, computes increments based on the threshold and applies them.
+     */
+    private suspend fun applyGarminData(
+        allData: Map<GarminType, Map<String, Int>>,
+        settings: AppSettings
+    ) {
+        val linkedHabits = settings.garminHabitLinks
+        if (linkedHabits.isEmpty()) return
+
+        val mutableDb = cachedPhoneDb.toMutableMap()
+        var dbChanged = false
+        val todayDeltas = mutableMapOf<String, Int>()
+
+        for ((habitName, garminTypeStr) in linkedHabits) {
+            val garminType = GarminType.fromKey(garminTypeStr) ?: continue
+            val dailyValues = allData[garminType] ?: continue
+            val threshold = settings.garminThresholds[garminTypeStr] ?: continue
+            if (threshold <= 0) continue
+
+            // Ensure habit exists in DB
+            if (habitName !in mutableDb) {
+                mutableDb[habitName] = mutableMapOf()
+            }
+
+            val habitData = mutableDb[habitName]!!.toMutableMap()
+            for ((date, value) in dailyValues) {
+                // Only apply the value if it meets or exceeds the threshold
+                if (value >= threshold) {
+                    val existing = habitData[date] ?: 0
+                    // Threshold met: increment by 1 (not set to the Garmin value)
+                    val newValue = existing + 1
+                    if (newValue != existing) {
+                        habitData[date] = newValue
+                        dbChanged = true
+
+                        // Track delta for today
+                        val today = LocalDate.now().toString()
+                        if (date == today) {
+                            todayDeltas[habitName] = (todayDeltas[habitName] ?: 0) + 1
+                        }
+                    }
+                }
+            }
+            mutableDb[habitName] = habitData
+        }
+
+        if (dbChanged) {
+            cachedPhoneDb = mutableDb
+            rebuildHabitList()
+
+            // Persist to disk
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(settings.fileUri), context, mutableDb)
+            }
+
+            // Record timestamps only for the NEW increments (delta), not the total count
+            if (todayDeltas.isNotEmpty()) {
+                val now = HabitTimestampRepository.nowTime()
+                val today = LocalDate.now()
+                for ((habitName, delta) in todayDeltas) {
+                    timestampRepo.addTimestamps(habitName, delta, today, now)
+                }
+            }
+
+            Log.d(TAG, "Garmin data applied to habits")
         }
     }
 

@@ -62,6 +62,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.tail.data.AiModelInfo
 import com.example.tail.data.ChessComType
+import com.example.tail.data.GarminType
 import com.example.tail.data.backup.AutoBackupManager
 import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.debug.DebugPreferences
@@ -339,6 +340,14 @@ fun SettingsScreen(
             // ── Chess.com Integration ─────────────────────────────────────────
             item {
                 ChessComSettingsSection(viewModel = viewModel, settings = settings)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // ── Garmin Integration ────────────────────────────────────────────
+            item {
+                GarminSettingsSection(viewModel = viewModel, settings = settings)
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
@@ -828,6 +837,243 @@ private fun ChessComSettingsSection(
             Spacer(modifier = Modifier.height(4.dp))
             Button(
                 onClick = { viewModel.fetchChessComBacklog() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondary
+                )
+            ) {
+                Text("Fetch Entire Backlog", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/**
+ * Garmin Integration settings section — proxy URL, app token, and thresholds.
+ */
+@Composable
+private fun GarminSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    val garminSyncStatus by viewModel.garminSyncStatus.collectAsState()
+
+    var enabled by remember(settings.garminEnabled) { mutableStateOf(settings.garminEnabled) }
+    var proxyUrl by remember(settings.garminProxyUrl) { mutableStateOf(settings.garminProxyUrl) }
+    var appToken by remember(settings.garminAppToken) { mutableStateOf(settings.garminAppToken) }
+
+    // Thresholds for each type — individual mutableStateOf for recomposition
+    val types = GarminType.entries
+    var vo2MaxThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["VO2_MAX"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var fitnessAgeThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["FITNESS_AGE"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var restingHrThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["RESTING_HR"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var hrvLastNightThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["HRV_LAST_NIGHT"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var hrvWeeklyAvgThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["HRV_WEEKLY_AVG"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var sleepScoreThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["SLEEP_SCORE"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+
+    fun getThresholdFor(type: GarminType): String = when (type) {
+        GarminType.VO2_MAX -> vo2MaxThreshold
+        GarminType.FITNESS_AGE -> fitnessAgeThreshold
+        GarminType.RESTING_HR -> restingHrThreshold
+        GarminType.HRV_LAST_NIGHT -> hrvLastNightThreshold
+        GarminType.HRV_WEEKLY_AVG -> hrvWeeklyAvgThreshold
+        GarminType.SLEEP_SCORE -> sleepScoreThreshold
+    }
+
+    fun setThresholdFor(type: GarminType, value: String) {
+        val filtered = value.filter { it.isDigit() }
+        when (type) {
+            GarminType.VO2_MAX -> vo2MaxThreshold = filtered
+            GarminType.FITNESS_AGE -> fitnessAgeThreshold = filtered
+            GarminType.RESTING_HR -> restingHrThreshold = filtered
+            GarminType.HRV_LAST_NIGHT -> hrvLastNightThreshold = filtered
+            GarminType.HRV_WEEKLY_AVG -> hrvWeeklyAvgThreshold = filtered
+            GarminType.SLEEP_SCORE -> sleepScoreThreshold = filtered
+        }
+    }
+
+    fun save() {
+        val thresholdsMap = mutableMapOf<String, Int>()
+        types.forEach { type ->
+            val value = getThresholdFor(type).toIntOrNull() ?: 0
+            if (value > 0) thresholdsMap[type.name] = value
+        }
+        viewModel.saveGarminSettings(enabled, proxyUrl, appToken, thresholdsMap)
+    }
+
+    Column {
+        Text("❤️ Garmin Integration", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Link habits to your Garmin health metrics. Metrics are automatically " +
+                   "tracked and converted to habit increments when thresholds are met.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Enable Garmin", fontSize = 14.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            Switch(
+                checked = enabled,
+                onCheckedChange = { newVal ->
+                    enabled = newVal
+                    save()
+                }
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Proxy URL
+            OutlinedTextField(
+                value = proxyUrl,
+                onValueChange = { proxyUrl = it },
+                label = { Text("Proxy URL") },
+                placeholder = { Text("https://your-proxy.onrender.com") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // App Token
+            OutlinedTextField(
+                value = appToken,
+                onValueChange = { appToken = it },
+                label = { Text("App Token") },
+                placeholder = { Text("Your secret app token") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Button(onClick = { save() }) {
+                Text("Save Connection Settings", fontSize = 12.sp)
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // Test Connection button - always visible when settings are configured
+        if (proxyUrl.isNotEmpty() || appToken.isNotEmpty()) {
+            Button(
+                onClick = { viewModel.testGarminConnection() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (MaterialTheme.colorScheme.primary == Color.Unspecified)
+                        Color(0xFF2196F3)
+                    else MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Text("Test Connection", fontSize = 12.sp)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Thresholds for each type
+            Text(
+                "Thresholds",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Set the minimum value for each metric type to count as 1 habit increment. " +
+                       "Leave blank or 0 to disable that type.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            types.forEach { type ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp)
+                ) {
+                    Text(
+                        text = type.label,
+                        fontSize = 13.sp,
+                        modifier = Modifier.width(140.dp)
+                    )
+                    OutlinedTextField(
+                        value = getThresholdFor(type),
+                        onValueChange = { newVal -> setThresholdFor(type, newVal) },
+                        placeholder = { Text("0") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp),
+                        textStyle = TextStyle(fontSize = 13.sp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = when (type) {
+                            GarminType.VO2_MAX -> "ml/kg/min"
+                            GarminType.FITNESS_AGE -> "years"
+                            GarminType.RESTING_HR -> "bpm"
+                            GarminType.HRV_LAST_NIGHT -> "ms"
+                            GarminType.HRV_WEEKLY_AVG -> "ms"
+                            GarminType.SLEEP_SCORE -> "pts"
+                        },
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = { save() }) {
+                Text("Save Garmin Settings", fontSize = 12.sp)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Sync status
+            if (garminSyncStatus.isNotEmpty()) {
+                Text(
+                    text = garminSyncStatus,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+
+            // Backlog fetch button
+            Text(
+                "Backlog Sync",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Fetch your entire Garmin health history and retroactively " +
+                       "fill in habit data for all past days. This may take a while.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Button(
+                onClick = { viewModel.fetchGarminBacklog() },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.secondary
                 )

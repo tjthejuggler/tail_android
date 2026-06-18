@@ -85,10 +85,11 @@ fun AppStatsScreen(
     val dividers = settings.habitDividers
 
     val disabledHabits = settings.disabledHabits
+    val noPointsHabits = settings.noPointsHabits
 
     // Compute all stats from the cached database
     val db = viewModel.getCachedDatabase()
-    val stats = remember(db, dividers, disabledHabits) { computeAppStats(db, dividers, disabledHabits) }
+    val stats = remember(db, dividers, disabledHabits, noPointsHabits) { computeAppStats(db, dividers, disabledHabits, noPointsHabits) }
 
     // State for the habit-list popup
     var popupTitle by remember { mutableStateOf("") }
@@ -1034,7 +1035,8 @@ private data class AppStats(
 private fun computeAppStats(
     db: HabitsDatabase,
     dividers: Map<String, Int>,
-    disabledHabits: Set<String> = emptySet()
+    disabledHabits: Set<String> = emptySet(),
+    noPointsHabits: Set<String> = emptySet()
 ): AppStats {
     if (db.isEmpty()) return AppStats()
 
@@ -1060,6 +1062,8 @@ private fun computeAppStats(
         var totalPoints = 0
         var habitsCount = 0
         for ((habitName, entries) in db) {
+            // Skip habits that don't affect points
+            if (habitName in noPointsHabits) continue
             val raw = entries[dateStr] ?: 0
             val points = applyDivider(raw, dividers[habitName] ?: 1)
             totalPoints += points
@@ -1077,6 +1081,9 @@ private fun computeAppStats(
         } ?: 0L
         Pair(name, formatLargeNumber(total) + " pts")
     }
+    
+    // Filter out no-points habits from habit stats calculations
+    val pointHabits = db.keys.filter { it !in noPointsHabits }
 
     // Days with data = days where total points > 0 (excludes zero-point days)
     val daysWithPointsSet = dailyTotals.filter { it.value > 0 }.keys

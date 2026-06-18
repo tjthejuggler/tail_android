@@ -100,6 +100,7 @@ data class SettingsSection(
     val timelessHabits: List<String> = emptyList(),
     val hiddenScreens: List<String> = emptyList(),
     val disabledHabits: List<String> = emptyList(),
+    val noPointsHabits: List<String> = emptyList(),
     val aiIconsEnabled: Boolean = false,
     val aiIconsApiKey: String = "",
     val aiIconsBaseUrl: String = "",

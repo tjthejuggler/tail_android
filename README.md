@@ -25,6 +25,8 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 - **Add habit to JSON files** — when adding a new habit via the placeholder cell, it is automatically written to all currently configured JSON files (`habitsdb_phone.txt`, `habitsdb.txt`, `habitsdb_without_phone_totals.txt`)
 - **Icon picker** — in edit mode, select a habit → tap 🎨 Icon → scrollable 6-column grid of all 269 available icons; tap to assign, "No icon" to clear override
 - **Conditional habit type** *(added 2026-03-24T16:57Z)* — in edit mode, select a habit → toggle **Conditional** on → tap **Set Links** to open a multi-select popup of all other habits; any habits chosen are auto-incremented by +1 whenever the conditional habit is tapped; the linked set is shown inline in the edit bar and persisted to DataStore
+- **Garmin health integration** *(added 2026-06-16T13:31Z, updated 2026-06-16T15:28Z)* — in Settings → **❤️ Garmin Integration**, configure your Garmin proxy URL and app token, then set thresholds for health metrics (VO2 Max, Fitness Age, Resting HR, HRV, Sleep Score). Link habits to Garmin metric types in edit mode. The app polls every 15 minutes and automatically increments habits when metrics meet or exceed your thresholds. Use "Fetch Entire Backlog" to retroactively fill historical data. Use the "Test Connection" button to verify the full connection chain (proxy server, app token, Garmin API, and data availability) before enabling. Requires deploying the Python proxy (see `garmin_proxy/` directory).
+- **Chess.com integration** *(added 2026-03-12T20:12Z)* — in Settings → **♟ Chess.com Integration**, enter your username and set minutes-per-increment for Bullet/Blitz/Rapid games. Link habits to game types in edit mode. The app polls every 15 minutes and automatically increments habits based on your chess activity. Use "Fetch Entire Backlog" to retroactively fill historical data.
 - **DataStore habit-name migration** *(added 2026-03-29T03:02Z)* — one-time migration renames legacy "Launch Pushups/Situps/Squats Widget" to "Pushups"/"Situps"/"Squats" across all persisted DataStore keys (custom input set, habit order, screens, icon maps, dividers, etc.); runs automatically on first launch after update; guarded by a boolean flag so it only executes once
 - **World-map "where I was" timeline** *(added 2026-05-06T14:05Z)* — small globe icon next to ⚙️ in the top bar opens a landscape map screen. Shows continents drawn from a 75 KB Natural Earth polygon asset (`assets/world_land.json`), plus the dim trail of every day with a known location. A small person marker animates between days as the timeline progresses. Bottom timeline has a draggable slider, ⏸/▶ play button, and `« / »` speed buttons (0.5×, 1×, 2×, 5×, 15×, 30×, 60×, 120×, Auto). Side info box shows location label + habits-done / streak / total-points for the selected day. Selected date is shared bidirectionally between the grid and map screens via `HabitViewModel.selectedDate`, so navigation in either direction preserves the day. Coordinates source: `LocationRepository.daily_coords` SharedPrefs key, populated by today's GPS fix or back-filled by [`scripts/seed_locations_from_timeline.py`](scripts/seed_locations_from_timeline.py:1) from a Google Maps Timeline export.
 - **Secondary locations** *(added 2026-05-24T19:41Z, updated 2026-05-24T19:50Z)* — each time the app is opened (foregrounded), the current GPS position is logged as a **secondary location** for that day. These are stored alongside the main daily location in [`LocationRepository`](app/src/main/java/com/example/tail/data/LocationRepository.kt:1) (SharedPrefs key `secondary_locations`, date → JSON array of `{lat, lon, label, time}`). Only unique labels are kept per day (opening the app from the same place twice doesn't duplicate). Labels are derived from the preferred auto-candidate index (same method as the main daily location). Each secondary location also records the **time of day** (minutes since midnight) when it was logged.
@@ -52,7 +54,10 @@ app/src/main/java/com/example/tail/
 │   ├── HabitCalculator.kt    # Streak/antistreak/ATH calculations, display value adjustments
 │   ├── HabitsRepository.kt   # JSON read/write via SAF URI (Gson), habit list builder
 │   ├── LocationRepository.kt # GPS location fetch, reverse-geocode, daily + secondary location storage
-│   └── SettingsRepository.kt # DataStore Preferences (file URI, custom input set)
+│   ├── ChessComRepository.kt # Chess.com API client, game history caching, minutes→increments conversion
+│   ├── ChessComService.kt    # Low-level HTTP client for chess.com public API
+│   ├── GarminRepository.kt  # Garmin health metrics client, monthly caching, threshold→increments conversion
+│   └── SettingsRepository.kt # DataStore Preferences (file URI, custom input set, chess.com/garmin settings)
 ├── ipc/
 │   ├── HabitsContentProvider.kt  # Read-only ContentProvider: exposes habit list to same-keystore apps
 │   └── HabitIncrementReceiver.kt # BroadcastReceiver: increments a habit when triggered by same-keystore app
@@ -223,6 +228,157 @@ Typical scale on a 12-year export: ~3,600 dated entries collapsing into ~700 uni
 | DocumentFile | 1.0.1 | SAF file access |
 | Lifecycle ViewModel Compose | 2.8.0 | MVVM |
 | Coroutines Android | 1.7.3 | Async I/O |
+
+---
+
+## Garmin Integration Setup *(updated 2026-06-16T14:07Z)*
+
+The Garmin integration automatically syncs your health metrics from Garmin Connect to your habits. It runs a Python proxy on your local computer that fetches data from Garmin and makes it available to your Android app over Wi-Fi.
+
+### Quick Start (Automatic Setup)
+
+**1. Start the Python Proxy on your computer**
+
+First, generate a secure app token (this is essentially a password you choose):
+
+```bash
+# Option 1: Use openssl (Linux/macOS)
+openssl rand -hex 16
+
+# Option 2: Use Python
+python -c "import secrets; print(secrets.token_hex(16))"
+
+# Option 3: Just pick a long random string
+# Example: "my-secret-garmin-token-abc123xyz"
+```
+
+Then start the proxy with your Garmin credentials and the generated token:
+
+```bash
+cd garmin_proxy
+pip install -r requirements.txt
+export GARMIN_EMAIL="your.email@example.com"
+export GARMIN_PASSWORD="your_garmin_password"
+export ANDROID_PROXY_KEY="paste-your-generated-token-here"
+python app.py
+```
+
+The proxy will start on `http://0.0.0.0:8000` and listen for connections from your phone.
+
+**2. Find your computer's IP address**
+
+- **Linux**: `ip addr show | grep "inet " | grep -v 127.0.0.1`
+- **macOS**: `ipconfig getifaddr en0`
+- **Windows**: `ipconfig | findstr "IPv4"`
+
+Example output: `192.168.1.100`
+
+**3. Configure the Android app**
+
+1. Open Settings → Garmin Integration
+2. Enable Garmin Integration
+3. Enter your proxy URL: `http://192.168.1.100:8000` (use your actual IP)
+4. Enter the app token: **paste the same token you generated in step 1**
+5. Set thresholds for each metric (e.g., VO2 Max ≥ 45 = 1 point)
+
+**4. Link habits to Garmin metrics**
+
+1. Go to Edit Mode on the main screen
+2. Select a habit
+3. Choose a Garmin metric type from the dropdown
+4. The habit will now auto-increment based on your Garmin data
+
+### How It Works
+
+- **Automatic Sync**: The app polls your proxy once a day while Garmin integration is enabled *(updated 2026-06-16T18:01Z)*
+- **On-Demand Sync**: Clicking "Test Connection" in Settings runs a full connection health check and, on success, immediately fetches and applies the current month's Garmin data to linked habits *(added 2026-06-16T18:01Z)*
+- **Backlog Sync**: Use "Fetch Entire Backlog" to import up to 2 years of historical data
+- **Threshold System**: Each day where your metric meets or exceeds the threshold = 1 increment
+- **Local Network Only**: Your Garmin credentials stay on your computer; the app only receives processed metrics
+- **Secure**: The app token prevents unauthorized access - only your phone with the correct token can access your data
+
+### Available Metrics
+
+| Metric | Description | Typical Threshold |
+|--------|-------------|-------------------|
+| **VO2 Max** | Cardiovascular fitness score | 45-55 |
+| **Fitness Age** | Biological age based on fitness level | ≤ your actual age |
+| **Resting HR** | Resting heart rate in BPM | ≤ 60 |
+| **HRV Last Night** | Heart rate variability from last night | ≥ 50 ms |
+| **HRV Weekly Avg** | Average heart rate variability over 7 days | ≥ 50 ms |
+| **Sleep Score** | Overall sleep quality score (0-100) | ≥ 80 |
+
+### Troubleshooting
+
+**No data appearing for linked habits?** The Garmin integration fetches data from Garmin's training status API. If Garmin rate-limits your account (HTTP 429), data won't be available until the limit expires. Fixed data extraction paths *(2026-06-17T07:28Z)*:
+- VO2max: `mostRecentVO2Max.generic.vo2MaxValue`
+- Resting HR: `stats_and_body.restingHeartRate`
+- HRV last night: `sleep_data.avgOvernightHrv` (not in HRV data)
+- Sleep score: `sleep_data.dailySleepDTO.sleepScores.overall.value`
+- Fitness age: Garmin doesn't provide this data
+- HRV weekly avg: Not available in Garmin's API
+
+**Connection Issues:**
+- Ensure your phone and computer are on the same Wi-Fi network
+- Check that the Python proxy is running (`python app.py`)
+- Verify the IP address is correct
+- Try accessing `http://YOUR_IP:8000/health` in a browser on your phone
+
+**403 Forbidden:**
+- Check that the app token in Settings matches the `ANDROID_PROXY_KEY` environment variable
+- Remember: YOU create this token - it's not generated for you
+- Restart the proxy after changing environment variables
+
+**No Data Showing:**
+- Verify your Garmin credentials are correct
+- Ensure you have recent data in Garmin Connect (sync your Garmin device first)
+- Check the proxy logs for errors
+
+**App Won't Connect:**
+- Android may block cleartext HTTP by default. The app includes a network security config that allows local network HTTP
+- If still blocked, try using HTTPS (requires SSL certificate setup)
+
+### Running the Proxy as a Service (Linux)
+
+To keep the proxy running in the background as a user service *(updated 2026-06-18T07:49Z)*:
+
+```bash
+# Create a systemd user service file
+nano ~/.config/systemd/user/garmin-proxy.service
+```
+
+Add this content (replace paths with your actual paths):
+```ini
+[Unit]
+Description=Garmin Proxy for Tail App
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/twain/AndroidStudioProjects/tail/garmin_proxy
+Environment="GARMIN_EMAIL=your.email@example.com"
+Environment="GARMIN_PASSWORD=your_garmin_password"
+Environment="ANDROID_PROXY_KEY=paste-your-generated-token-here"
+ExecStart=/bin/sh -c 'cd /home/twain/AndroidStudioProjects/tail/garmin_proxy && /home/twain/AndroidStudioProjects/tail/garmin_proxy/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+Then:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable garmin-proxy
+systemctl --user start garmin-proxy
+systemctl --user status garmin-proxy
+```
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable garmin-proxy
+sudo systemctl start garmin-proxy
+```
 
 ---
 

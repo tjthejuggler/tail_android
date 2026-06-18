@@ -54,6 +54,8 @@ private val KEY_TIMELESS_HABITS = stringSetPreferencesKey("timeless_habits")
 private val KEY_HIDDEN_SCREENS = stringSetPreferencesKey("hidden_screens")
 // Disabled habits (set of habit names)
 private val KEY_DISABLED_HABITS = stringSetPreferencesKey("disabled_habits")
+// No-points habits (set of habit names)
+private val KEY_NO_POINTS_HABITS = stringSetPreferencesKey("no_points_habits")
 // AI icon generation settings
 private val KEY_AI_ICONS_ENABLED = booleanPreferencesKey("ai_icons_enabled")
 private val KEY_AI_ICONS_API_KEY = stringPreferencesKey("ai_icons_api_key")
@@ -68,6 +70,14 @@ private val KEY_CHESS_COM_USERNAME = stringPreferencesKey("chess_com_username")
 private val KEY_CHESS_COM_MINUTES_PER_INCREMENT = stringPreferencesKey("chess_com_minutes_per_increment")
 // Stored as "habitName\x00TYPE|||habitName\x00TYPE" pairs
 private val KEY_CHESS_COM_HABIT_LINKS = stringPreferencesKey("chess_com_habit_links")
+// Garmin integration settings
+private val KEY_GARMIN_ENABLED = booleanPreferencesKey("garmin_enabled")
+private val KEY_GARMIN_PROXY_URL = stringPreferencesKey("garmin_proxy_url")
+private val KEY_GARMIN_APP_TOKEN = stringPreferencesKey("garmin_app_token")
+// Stored as "TYPE\x00threshold|||TYPE\x00threshold" pairs
+private val KEY_GARMIN_THRESHOLDS = stringPreferencesKey("garmin_thresholds")
+// Stored as "habitName\x00TYPE|||habitName\x00TYPE" pairs
+private val KEY_GARMIN_HABIT_LINKS = stringPreferencesKey("garmin_habit_links")
 // Voice trigger feature keys
 private val KEY_VOICE_TRIGGER_ENABLED = booleanPreferencesKey("voice_trigger_enabled")
 private val KEY_VOICE_TRIGGER_HABITS = stringSetPreferencesKey("voice_trigger_habits")
@@ -412,6 +422,8 @@ class SettingsRepository(private val context: Context) {
         val voiceTriggerIncrementsRaw = prefs[KEY_VOICE_TRIGGER_INCREMENTS] ?: ""
         val customInputAmountsRaw = prefs[KEY_CUSTOM_INPUT_AMOUNTS] ?: ""
         val customInputRecentAmountsRaw = prefs[KEY_CUSTOM_INPUT_RECENT_AMOUNTS] ?: ""
+        val garminThresholdsRaw = prefs[KEY_GARMIN_THRESHOLDS] ?: ""
+        val garminHabitLinksRaw = prefs[KEY_GARMIN_HABIT_LINKS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -439,6 +451,7 @@ class SettingsRepository(private val context: Context) {
             timelessHabits = prefs[KEY_TIMELESS_HABITS] ?: emptySet(),
             hiddenScreens = prefs[KEY_HIDDEN_SCREENS] ?: emptySet(),
             disabledHabits = prefs[KEY_DISABLED_HABITS] ?: emptySet(),
+            noPointsHabits = prefs[KEY_NO_POINTS_HABITS] ?: emptySet(),
             aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
             aiIconsApiKey = prefs[KEY_AI_ICONS_API_KEY] ?: "",
             aiIconsBaseUrl = prefs[KEY_AI_ICONS_BASE_URL] ?: "",
@@ -461,7 +474,12 @@ class SettingsRepository(private val context: Context) {
             customInputAmounts = decodeIntListMap(customInputAmountsRaw),
             customInputRecentAmounts = decodeIntListMap(customInputRecentAmountsRaw),
             mapStatsHabits = prefs[KEY_MAP_STATS_HABITS] ?: emptySet(),
-            mapStatsShowTextHabits = prefs[KEY_MAP_STATS_SHOW_TEXT_HABITS] ?: emptySet()
+            mapStatsShowTextHabits = prefs[KEY_MAP_STATS_SHOW_TEXT_HABITS] ?: emptySet(),
+            garminEnabled = prefs[KEY_GARMIN_ENABLED] ?: false,
+            garminProxyUrl = prefs[KEY_GARMIN_PROXY_URL] ?: "",
+            garminAppToken = prefs[KEY_GARMIN_APP_TOKEN] ?: "",
+            garminThresholds = decodeIntMap(garminThresholdsRaw),
+            garminHabitLinks = decodeFileUriMap(garminHabitLinksRaw)
         )
     }
 
@@ -659,6 +677,11 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_DISABLED_HABITS] = habits }
     }
 
+    /** Saves the set of habits that don't affect point totals. */
+    suspend fun saveNoPointsHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_NO_POINTS_HABITS] = habits }
+    }
+
     /** Saves all AI icon generation settings at once. */
     suspend fun saveAiIconSettings(
         enabled: Boolean,
@@ -714,6 +737,52 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_CHESS_COM_ENABLED] = enabled
             prefs[KEY_CHESS_COM_USERNAME] = username
             prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] = encodeIntMap(minutesPerIncrement)
+        }
+    }
+
+    // ── Garmin Integration ────────────────────────────────────────────────
+
+    /** Saves the Garmin enabled flag. */
+    suspend fun saveGarminEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_GARMIN_ENABLED] = enabled }
+    }
+
+    /** Saves the Garmin proxy URL. */
+    suspend fun saveGarminProxyUrl(url: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_GARMIN_PROXY_URL] = url }
+    }
+
+    /** Saves the Garmin app token. */
+    suspend fun saveGarminAppToken(token: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_GARMIN_APP_TOKEN] = token }
+    }
+
+    /** Saves the threshold map for Garmin metric types. */
+    suspend fun saveGarminThresholds(thresholds: Map<String, Int>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GARMIN_THRESHOLDS] = encodeIntMap(thresholds)
+        }
+    }
+
+    /** Saves the map of habit name → Garmin type link. */
+    suspend fun saveGarminHabitLinks(links: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GARMIN_HABIT_LINKS] = encodeFileUriMap(links)
+        }
+    }
+
+    /** Saves all Garmin settings at once. */
+    suspend fun saveGarminSettings(
+        enabled: Boolean,
+        proxyUrl: String,
+        appToken: String,
+        thresholds: Map<String, Int>
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GARMIN_ENABLED] = enabled
+            prefs[KEY_GARMIN_PROXY_URL] = proxyUrl
+            prefs[KEY_GARMIN_APP_TOKEN] = appToken
+            prefs[KEY_GARMIN_THRESHOLDS] = encodeIntMap(thresholds)
         }
     }
 

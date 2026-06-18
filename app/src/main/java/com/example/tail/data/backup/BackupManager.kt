@@ -414,6 +414,7 @@ class BackupManager(
 
         settingsRepo.saveHiddenScreens(s.hiddenScreens.toSet())
         settingsRepo.saveDisabledHabits(s.disabledHabits.toSet())
+        settingsRepo.saveNoPointsHabits(s.noPointsHabits.toSet())
 
         settingsRepo.saveAiIconSettings(
             enabled = s.aiIconsEnabled,
@@ -657,6 +658,7 @@ class BackupManager(
         timelessHabits = s.timelessHabits.toList(),
         hiddenScreens = s.hiddenScreens.toList(),
         disabledHabits = s.disabledHabits.toList(),
+        noPointsHabits = s.noPointsHabits.toList(),
         aiIconsEnabled = s.aiIconsEnabled,
         aiIconsApiKey = s.aiIconsApiKey,
         aiIconsBaseUrl = s.aiIconsBaseUrl,

@@ -262,6 +262,15 @@ data class AppSettings(
      */
     val disabledHabits: Set<String> = emptySet(),
 
+    /**
+     * Habits that don't affect point totals.
+     * When a habit is in this set, it can still be incremented and tracked,
+     * but its points are NOT included in any totals (daily totals, averages,
+     * streaks, ATH stats, etc.). Useful for tracking metrics (like Garmin data)
+     * without them affecting your overall habit count.
+     */
+    val noPointsHabits: Set<String> = emptySet(),
+
     // ── AI Icon Generation settings ──────────────────────────────────────
     /** Whether AI icon generation is enabled (user must opt in via Settings). */
     val aiIconsEnabled: Boolean = false,
@@ -376,7 +385,27 @@ data class AppSettings(
      * Text-input habits whose text entries should be shown in the map stats panel.
      * Only meaningful for habits that are also in [mapStatsHabits] AND [textInputHabits].
      */
-    val mapStatsShowTextHabits: Set<String> = emptySet()
+    val mapStatsShowTextHabits: Set<String> = emptySet(),
+
+    // ── Garmin Integration settings ────────────────────────────────────────
+    /** Whether Garmin integration is enabled. */
+    val garminEnabled: Boolean = false,
+    /** URL of the Garmin proxy API (e.g., "https://your-proxy.onrender.com"). */
+    val garminProxyUrl: String = "",
+    /** Authentication token for the Garmin proxy API. */
+    val garminAppToken: String = "",
+    /**
+     * Threshold values for each Garmin metric type.
+     * Key is GarminType.name (VO2_MAX, FITNESS_AGE, etc.).
+     * Value is the threshold that must be met or exceeded to count as 1 habit increment.
+     * 0 means disabled for that type.
+     */
+    val garminThresholds: Map<String, Int> = emptyMap(),
+    /**
+     * Maps habit name → GarminType.name for habits linked to Garmin data.
+     * When a habit is in this map, its daily count is auto-set from Garmin data.
+     */
+    val garminHabitLinks: Map<String, String> = emptyMap()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */
