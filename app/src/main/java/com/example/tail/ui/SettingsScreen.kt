@@ -328,6 +328,20 @@ fun SettingsScreen(
                     Text("Change Tasker File")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "If the totals look wrong (e.g. after a Garmin import), tap below to " +
+                           "rewrite the file now. \"Don't affect points\" habits are excluded.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Button(
+                    onClick = { viewModel.refreshTaskerStatsFile() },
+                    enabled = settings.taskerFileUri.isNotEmpty()
+                ) {
+                    Text("🔄 Recalculate Stats File Now")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
             }

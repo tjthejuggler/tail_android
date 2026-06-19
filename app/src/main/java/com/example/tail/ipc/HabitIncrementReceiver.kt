@@ -12,6 +12,7 @@ import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.applyDivider
+import com.example.tail.data.buildTaskerStatsContent
 import com.example.tail.data.dateString
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -139,7 +140,7 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                 // Update the Tasker stats file so external apps see the new total immediately
                 val taskerUri = settings.taskerFileUri
                 if (taskerUri.isNotEmpty()) {
-                    writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers)
+                    writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits)
                 }
 
                 // Broadcast a generic "habit incremented" event for same-keystore listeners
@@ -173,40 +174,19 @@ class HabitIncrementReceiver : BroadcastReceiver() {
         habitsRepo: HabitsRepository,
         habitsUri: Uri,
         taskerUriString: String,
-        dividers: Map<String, Int>
+        dividers: Map<String, Int>,
+        noPointsHabits: Set<String>
     ) {
         try {
             val db = habitsRepo.loadDatabase(habitsUri, context)
-            val today = LocalDate.now()
-            val todayStr = dateString(today)
-
-            val todayCount = db.entries.sumOf { (habitName, entries) ->
-                val raw = entries[todayStr] ?: 0
-                applyDivider(raw, dividers[habitName] ?: 1)
-            }
-
-            fun avgOverDays(days: Int): Double {
-                var total = 0
-                for (i in 0 until days) {
-                    val ds = dateString(today.minusDays(i.toLong()))
-                    total += db.entries.sumOf { (habitName, entries) ->
-                        val raw = entries[ds] ?: 0
-                        applyDivider(raw, dividers[habitName] ?: 1)
-                    }
-                }
-                return total.toDouble() / days
-            }
-
-            val avg7 = avgOverDays(7)
-            val avg30 = avgOverDays(30)
-
-            val content = "today=$todayCount\navg7=${"%.2f".format(avg7)}\navg30=${"%.2f".format(avg30)}\n"
+            // Shared helper excludes "Don't affect points" habits (e.g. Garmin imports)
+            val content = buildTaskerStatsContent(db, dividers, noPointsHabits)
 
             val taskerUri = Uri.parse(taskerUriString)
             context.contentResolver.openOutputStream(taskerUri, "wt")?.use { stream ->
                 stream.bufferedWriter().use { it.write(content) }
             }
-            Log.i(TAG, "Tasker file updated: today=$todayCount")
+            Log.i(TAG, "Tasker file updated")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to write Tasker file: ${e.message}")
         }

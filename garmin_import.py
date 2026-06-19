@@ -8,21 +8,33 @@ the Tail Android app's Garmin cache format.
 This script extracts all available daily metrics from the ZIP archive and
 outputs them in a format that can be imported directly into the app.
 
+Supported Metrics:
+    - VO2_MAX: From ActivityVo2Max.json or .FIT files (message type 140)
+    - FITNESS_AGE: From fitnessAgeData.json
+    - RESTING_HR: From UDSFile daily metrics
+    - HRV_LAST_NIGHT: From HRV JSON files or .FIT files (HRV_STATUS)
+    - HRV_WEEKLY_AVG: Computed 7-day rolling average
+    - SLEEP_SCORE: From sleepData.json
+    - SLEEP_DURATION_MINUTES: Total sleep time
+    - DEEP_SLEEP_MINUTES, LIGHT_SLEEP_MINUTES, REM_SLEEP_MINUTES, AWAKE_MINUTES
+    - RESPIRATION_RATE: Average breathing rate during sleep
+    - SLEEP_STRESS: Average stress during sleep
+    - STEPS: Daily step count
+    - DISTANCE_METERS: Total distance traveled
+    - CALORIES: Total kilocalories burned
+    - ACTIVE_MINUTES: Moderate + vigorous intensity minutes
+    - FLOORS_CLIMBED: Elevation climbed in meters
+    - MIN_HR, MAX_HR: Daily heart rate extremes
+    - STRESS_LEVEL: From StressDetailSummary files
+    - ALTITUDE_ASCENT: From _summarizedActivities.json
+
 Usage:
     python garmin_import.py <path_to_garmin_export.zip> [output.json]
 
-Output format:
-    {
-        "VO2_MAX": {"2024-01-01": 45, "2024-01-02": 46, ...},
-        "FITNESS_AGE": {"2024-01-01": 32, ...},
-        "RESTING_HR": {"2024-01-01": 58, ...},
-        "HRV_LAST_NIGHT": {"2024-01-01": 65, ...},
-        "HRV_WEEKLY_AVG": {"2024-01-01": 67, ...},
-        "SLEEP_SCORE": {"2024-01-01": 85, ...},
-        "STEPS": {"2024-01-01": 10000, ...},  // Additional metric
-        "ALTITUDE_ASCENT": {"2024-01-01": 150, ...},  // Additional metric
-        ...
-    }
+Requirements:
+    pip install fitparse  # Required for .FIT file parsing
+
+See garmin_import_README.md for detailed documentation.
 """
 
 import zipfile
@@ -32,6 +44,15 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Dict, Any, Optional
 from collections import defaultdict
+from pathlib import Path
+
+# Try to import fitparse for .FIT file parsing
+try:
+    from fitparse import FitFile
+    FITPARSE_AVAILABLE = True
+except ImportError:
+    FITPARSE_AVAILABLE = False
+    print("Warning: fitparse library not available. Install with: pip install fitparse")
 
 # Configuration
 TARGET_TZ = ZoneInfo("Europe/Dublin")  # Using Dublin as default, can be changed
@@ -45,15 +66,26 @@ class GarminDataExtractor:
         self.data: Dict[str, Dict[str, Any]] = defaultdict(dict)
         self.hrv_values: Dict[str, int] = {}  # Store for weekly baseline calculation
     
-    def extract_local_date(self, timestamp_str: Optional[str]) -> Optional[str]:
-        """Convert Garmin timestamp to local YYYY-MM-DD format."""
-        if not timestamp_str:
+    def extract_local_date(self, timestamp_raw: Any) -> Optional[str]:
+        """Convert Garmin timestamp (ISO or Epoch) to local YYYY-MM-DD format."""
+        if not timestamp_raw:
             return None
         try:
-            # Handle various timestamp formats
-            ts = timestamp_str.split('.')[0]
-            dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
-            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+            # Handle Unix Epoch
+            if isinstance(timestamp_raw, (int, float)):
+                # Garmin sometimes uses milliseconds, sometimes seconds
+                ts_seconds = timestamp_raw / 1000 if timestamp_raw > 2e9 else timestamp_raw
+                dt = datetime.fromtimestamp(ts_seconds, tz=ZoneInfo("UTC"))
+            else:
+                # Handle String formats
+                timestamp_str = str(timestamp_raw).strip()
+                if " " in timestamp_str:
+                    timestamp_str = timestamp_str.replace(" ", "T")
+                
+                ts = timestamp_str.split('.')[0]
+                dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+                
             dt_local = dt.astimezone(TARGET_TZ)
             return dt_local.strftime("%Y-%m-%d")
         except Exception:
@@ -224,25 +256,167 @@ class GarminDataExtractor:
             print(f"Warning: Failed to process fitness age data from {file_name}: {e}")
     
     def process_hrv_data(self, file_name: str, z: zipfile.ZipFile):
-        """Process HRV data from DI-Connect-Wellness/*HRV*.json files."""
+        """Process HRV data from GarminHrvSummary files."""
         try:
             data = json.loads(z.read(file_name).decode('utf-8'))
+            hrv_array = data if isinstance(data, list) else [data]
             
-            # Handle different HRV data structures
-            if isinstance(data, dict):
-                hrv_array = data.get("hrv", data.get("hrvSummary", []))
-            else:
-                hrv_array = data
-            
-            for entry in hrv_array if isinstance(hrv_array, list) else [hrv_array]:
-                hrv_val = entry.get("nightlyAverage", entry.get("lastNightAvg", entry.get("value")))
-                date = entry.get("calendarDate")
+            for entry in hrv_array:
+                # Check for CalendarDate first, fall back to timestamp conversion
+                date = entry.get("calendarDate", entry.get("CalendarDate"))
+                if not date:
+                    ts = entry.get("startTimeInSeconds", entry.get("StartTimeInSeconds"))
+                    date = self.extract_local_date(ts)
                 
-                if hrv_val and date:
+                if not date:
+                    continue
+                
+                # Extract using Garmin's newest keys
+                hrv_val = entry.get("LastNightAvg", entry.get("lastNightAvg", entry.get("nightlyAverage", entry.get("value"))))
+                
+                if hrv_val:
                     self.hrv_values[date] = int(hrv_val)
                     self.data["HRV_LAST_NIGHT"][date] = int(hrv_val)
         except Exception as e:
             print(f"Warning: Failed to process HRV data from {file_name}: {e}")
+    
+    def process_stress_data(self, file_name: str, z: zipfile.ZipFile):
+        """Process stress data from StressDetailSummary files."""
+        try:
+            data = json.loads(z.read(file_name).decode('utf-8'))
+            stress_array = data if isinstance(data, list) else [data]
+            
+            for entry in stress_array:
+                date = entry.get("calendarDate", entry.get("CalendarDate"))
+                if not date:
+                    continue
+                
+                # Try the legacy keys first
+                stress_val = entry.get("averageStressLevel", entry.get("stressLevel", entry.get("avgStress")))
+                if stress_val and stress_val > 0:
+                    self.data["STRESS_LEVEL"][date] = int(stress_val)
+                    continue
+                
+                # Calculate from the 3-minute buckets if legacy keys are gone
+                buckets = entry.get("TimeOffsetStressLevelValues", entry.get("timeOffsetStressLevelValues", {}))
+                if isinstance(buckets, dict) and buckets:
+                    # Filter out -1 and -2 (unmeasured/active states)
+                    valid_scores = [int(v) for v in buckets.values() if int(v) >= 0]
+                    if valid_scores:
+                        avg_stress = sum(valid_scores) / len(valid_scores)
+                        self.data["STRESS_LEVEL"][date] = int(avg_stress)
+                        
+        except Exception as e:
+            print(f"Warning: Failed to process stress data from {file_name}: {e}")
+    
+    def process_activity_data(self, file_name: str, z: zipfile.ZipFile):
+        """Process activity data (altitude ascent, VO2 Max) from _summarizedActivities.json files."""
+        try:
+            data = json.loads(z.read(file_name).decode('utf-8'))
+            
+            # Handle different activity data structures
+            # Garmin wraps activities in a list with a "summarizedActivitiesExport" key
+            if isinstance(data, list) and len(data) > 0:
+                activity_array = data[0].get("summarizedActivitiesExport", [])
+            elif isinstance(data, dict):
+                activity_array = data.get("summarizedActivitiesExport",
+                                         data.get("activities",
+                                                data.get("activityList", [])))
+            else:
+                activity_array = []
+            
+            for entry in activity_array if isinstance(activity_array, list) else [activity_array]:
+                # Get activity date - try multiple case variations
+                start_time = (entry.get("startTimeGMT") or
+                              entry.get("startTimeGmt") or
+                              entry.get("startTimeLocal") or
+                              entry.get("beginTimestamp") or
+                              entry.get("startTime"))
+                if not start_time:
+                    continue
+                
+                date = self.extract_local_date(start_time)
+                if not date:
+                    continue
+                
+                # Extract elevation gain (altitude ascent) - try multiple key variations
+                elevation_gain = (entry.get("elevationGain") or
+                                  entry.get("totalElevationGain") or
+                                  entry.get("ascent") or
+                                  entry.get("elevationGainMeters"))
+                if elevation_gain and elevation_gain > 0:
+                    # Sum up altitude ascent for the day
+                    if date in self.data["ALTITUDE_ASCENT_METERS"]:
+                        self.data["ALTITUDE_ASCENT_METERS"][date] += int(elevation_gain)
+                    else:
+                        self.data["ALTITUDE_ASCENT_METERS"][date] = int(elevation_gain)
+                
+                # Extract VO2 Max from activity data (some activities have this)
+                vo2_value = (entry.get("vO2MaxValue") or
+                           entry.get("vo2MaxValue") or
+                           entry.get("vo2_max"))
+                if vo2_value and vo2_value > 0:
+                    self.data["VO2_MAX"][date] = int(vo2_value)
+        except Exception as e:
+            print(f"Warning: Failed to process activity data from {file_name}: {e}")
+    
+    def process_fit_file(self, file_name: str, z: zipfile.ZipFile):
+        """Process binary .FIT files for VO2 Max and HRV_STATUS data."""
+        if not FITPARSE_AVAILABLE:
+            return
+        
+        try:
+            fit_data = z.read(file_name)
+            fit_file = FitFile(fit_data)
+            
+            for message in fit_file:
+                # VO2 Max is in message type 140
+                if message.mesg_type == 140:
+                    vo2_value = message.get('effective_vo2_max') or message.get('vo2_max')
+                    timestamp = message.get('timestamp')
+                    
+                    if vo2_value and timestamp:
+                        # Convert timestamp to date
+                        try:
+                            if isinstance(timestamp, datetime):
+                                dt = timestamp
+                            else:
+                                # Handle Garmin timestamp format
+                                dt = datetime.strptime(str(timestamp), "%Y-%m-%dT%H:%M:%S")
+                            
+                            # Convert to local timezone
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+                            dt_local = dt.astimezone(TARGET_TZ)
+                            date = dt_local.strftime("%Y-%m-%d")
+                            
+                            self.data["VO2_MAX"][date] = int(vo2_value)
+                        except Exception:
+                            pass
+                
+                # HRV Status data
+                elif message.mesg_name == 'hrv_status' or 'hrv' in str(message.mesg_type).lower():
+                    hrv_value = message.get('nightly_hrv') or message.get('avg_hrv') or message.get('hrv_value')
+                    timestamp = message.get('timestamp')
+                    
+                    if hrv_value and timestamp:
+                        try:
+                            if isinstance(timestamp, datetime):
+                                dt = timestamp
+                            else:
+                                dt = datetime.strptime(str(timestamp), "%Y-%m-%dT%H:%M:%S")
+                            
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+                            dt_local = dt.astimezone(TARGET_TZ)
+                            date = dt_local.strftime("%Y-%m-%d")
+                            
+                            self.hrv_values[date] = int(hrv_value)
+                            self.data["HRV_LAST_NIGHT"][date] = int(hrv_value)
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f"Warning: Failed to process FIT file {file_name}: {e}")
     
     def compute_hrv_weekly_baseline(self):
         """Compute 7-day rolling average for HRV."""
@@ -277,29 +451,40 @@ class GarminDataExtractor:
             for file_name in z.namelist():
                 file_count += 1
                 
+                # Convert to lowercase once for safe, bulletproof matching
+                fname_lower = file_name.lower()
+                
                 # Process sleep data
-                if "DI-Connect-Wellness" in file_name and file_name.endswith("_sleepData.json"):
+                if "di-connect-wellness" in fname_lower and "sleepdata" in fname_lower and fname_lower.endswith(".json"):
                     self.process_sleep_data(file_name, z)
                 
                 # Process RHR data
-                elif "DI-Connect-Aggregator" in file_name and "UDSFile" in file_name and file_name.endswith(".json"):
+                elif "di-connect-aggregator" in fname_lower and "udsfile" in fname_lower and fname_lower.endswith(".json"):
                     self.process_rhr_data(file_name, z)
                 
-                # Process VO2 Max data
-                elif "DI-Connect-Metrics" in file_name and "ActivityVo2Max" in file_name and file_name.endswith(".json"):
+                # Process VO2 Max data from JSON
+                elif "di-connect-metrics" in fname_lower and "vo2max" in fname_lower and fname_lower.endswith(".json"):
                     self.process_vo2_data(file_name, z)
                 
                 # Process Fitness Age data
-                elif "DI-Connect-Wellness" in file_name and "fitnessAgeData" in file_name and file_name.endswith(".json"):
+                elif "di-connect-wellness" in fname_lower and "fitnessage" in fname_lower and fname_lower.endswith(".json"):
                     self.process_fitness_age_data(file_name, z)
                 
-                # Process HRV data
-                elif "DI-Connect-Wellness" in file_name and "HRV" in file_name.upper() and file_name.endswith(".json"):
+                # Process HRV data from JSON
+                elif "di-connect-wellness" in fname_lower and "hrv" in fname_lower and fname_lower.endswith(".json"):
                     self.process_hrv_data(file_name, z)
                 
-                # Process daily summary data (steps, altitude, etc.) - REMOVED, now handled in UDSFile
-                elif "DI-Connect-Daily" in file_name and file_name.endswith(".json"):
-                    self.process_daily_summary(file_name, z)
+                # Process stress data from StressDetailSummary files
+                elif "di-connect-wellness" in fname_lower and "stress" in fname_lower and fname_lower.endswith(".json"):
+                    self.process_stress_data(file_name, z)
+                
+                # Process activity data (altitude ascent) from summarized activities
+                elif "di-connect-fitness" in fname_lower and "summarizedactivities" in fname_lower and fname_lower.endswith(".json"):
+                    self.process_activity_data(file_name, z)
+                
+                # Process binary .FIT files for VO2 Max and HRV_STATUS
+                elif fname_lower.endswith(".fit"):
+                    self.process_fit_file(file_name, z)
         
         print(f"Processed {file_count} files")
         

@@ -249,3 +249,46 @@ fun buildHabit(
         allTimeHighYear = allTimeHighYear
     )
 }
+
+/**
+ * Builds the Tasker relay file content (today / avg7 / avg30 point totals).
+ *
+ * This is the single source of truth for the Tasker stats file across every
+ * write site (HabitViewModel + the IPC services). It applies dividers and,
+ * crucially, EXCLUDES any habit listed in [noPointsHabits] (the "Don't affect
+ * points" setting) so Garmin-imported and other no-points habits never inflate
+ * the relayed totals.
+ *
+ * Format (matches the in-app daily-total logic in computeAppStats/getDailyTotals):
+ *   today=<N>
+ *   avg7=<X.XX>
+ *   avg30=<X.XX>
+ */
+fun buildTaskerStatsContent(
+    db: HabitsDatabase,
+    dividers: Map<String, Int>,
+    noPointsHabits: Set<String>,
+    today: LocalDate = LocalDate.now()
+): String {
+    fun dayTotal(date: LocalDate): Int {
+        val ds = dateString(date)
+        return db.entries.sumOf { (habitName, entries) ->
+            if (habitName in noPointsHabits) return@sumOf 0
+            applyDivider(entries[ds] ?: 0, dividers[habitName] ?: 1)
+        }
+    }
+
+    val todayCount = dayTotal(today)
+
+    fun avgOverDays(days: Int): Double {
+        var total = 0
+        for (i in 0 until days) {
+            total += dayTotal(today.minusDays(i.toLong()))
+        }
+        return total.toDouble() / days
+    }
+
+    val avg7 = avgOverDays(7)
+    val avg30 = avgOverDays(30)
+    return "today=$todayCount\navg7=${"%.2f".format(avg7)}\navg30=${"%.2f".format(avg30)}\n"
+}

@@ -423,34 +423,17 @@ class HabitViewModel(
     private fun writeTaskerFile(taskerUriString: String) {
         if (taskerUriString.isEmpty()) return
         val db = cachedPhoneDb
-        val today = LocalDate.now()
-        val todayStr = com.example.tail.data.dateString(today)
         val dividers = _settings.value.habitDividers
+        // Exclude "Don't affect points" habits (e.g. Garmin imports) from totals
+        val noPointsHabits = _settings.value.noPointsHabits
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Sum divided (points) values for each habit
-                val todayCount = db.entries.sumOf { (habitName, entries) ->
-                    val raw = entries[todayStr] ?: 0
-                    applyDivider(raw, dividers[habitName] ?: 1)
-                }
-
-                fun avgOverDays(days: Int): Double {
-                    var total = 0
-                    for (i in 0 until days) {
-                        val ds = com.example.tail.data.dateString(today.minusDays(i.toLong()))
-                        total += db.entries.sumOf { (habitName, entries) ->
-                            val raw = entries[ds] ?: 0
-                            applyDivider(raw, dividers[habitName] ?: 1)
-                        }
-                    }
-                    return total.toDouble() / days
-                }
-
-                val avg7 = avgOverDays(7)
-                val avg30 = avgOverDays(30)
-
-                val content = "today=$todayCount\navg7=${"%.2f".format(avg7)}\navg30=${"%.2f".format(avg30)}\n"
+                val content = com.example.tail.data.buildTaskerStatsContent(
+                    db = db,
+                    dividers = dividers,
+                    noPointsHabits = noPointsHabits
+                )
 
                 val uri = Uri.parse(taskerUriString)
                 context.contentResolver.openOutputStream(uri, "wt")?.use { stream ->
@@ -460,6 +443,24 @@ class HabitViewModel(
                 Log.w(TAG, "Failed to write Tasker file: ${e.message}")
             }
         }
+    }
+
+    /**
+     * Forces an immediate recalculation of the Tasker stats file from the current
+     * database, correctly excluding "Don't affect points" habits.
+     *
+     * Use this to repair a stale/corrupted stats file (e.g. after the Garmin
+     * no-points fix) without waiting for the next habit increment. Surfaces a
+     * one-shot message via [_errorMessage] so the UI can confirm to the user.
+     */
+    fun refreshTaskerStatsFile() {
+        val uri = _settings.value.taskerFileUri
+        if (uri.isEmpty()) {
+            _errorMessage.value = "No Tasker stats file is configured."
+            return
+        }
+        writeTaskerFile(uri)
+        _errorMessage.value = "Tasker stats file recalculated."
     }
 
     /**
@@ -3251,12 +3252,25 @@ class HabitViewModel(
         )
     }
 
-    /** All habit names that appear on any screen (or in habitOrder if no screens). */
+    /**
+     * All habit names that appear on any screen (or in habitOrder if no screens),
+     * EXCLUDING habits flagged "Don't affect points" (noPointsHabits).
+     *
+     * Used by the point/total calculations behind the world-map day stats
+     * (getDayStats / getDayStatsLight / getDayHabitBreakdown). Garmin-imported
+     * metric habits (steps, altitude, distance, …) live on real screens but store
+     * raw metric values; including them here inflated the map's daily / weekly /
+     * monthly totals so heavily that every day saturated to the top colour tier
+     * (all-white map). Excluding noPointsHabits keeps these totals consistent with
+     * the in-app stats (computeAppStats / getDailyTotals), which already exclude them.
+     */
     private fun trackedHabitNames(): Set<String> {
         val s = _settings.value
+        val noPoints = s.noPointsHabits
         val fromScreens = s.habitScreens.flatMap { it.habitNames }.toSet()
-        return if (fromScreens.isNotEmpty()) fromScreens else s.habitOrder.toSet()
-            .ifEmpty { cachedPhoneDb.keys }
+        val base = if (fromScreens.isNotEmpty()) fromScreens
+                   else s.habitOrder.toSet().ifEmpty { cachedPhoneDb.keys }
+        return base - noPoints
     }
 
     /** Saves the SAF URI for the voice note markdown file. */
