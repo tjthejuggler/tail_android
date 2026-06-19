@@ -929,16 +929,6 @@ class LocationRepository(private val context: Context) {
             return
         }
 
-        // 1b. Skip if the label is the same place as today's PRIMARY location.
-        //     A secondary that resolves to the same name as the primary (e.g.
-        //     "NYC, New York" when the primary is already "NYC, New York") is
-        //     redundant — the primary already represents that location.
-        val primaryLabel = getLocationForDate(today)
-        if (primaryLabel != null && isSameLocationLabel(label, primaryLabel)) {
-            Log.d(TAG, "Secondary location '$label' same as primary '$primaryLabel' for $today — skipping")
-            return
-        }
-
         // 2. Skip if within SECONDARY_DEDUP_METERS of today's PRIMARY coords —
         //    this means the user just opened the app from "home" / the place
         //    they woke up in; that's already captured as the primary.
@@ -1015,20 +1005,24 @@ class LocationRepository(private val context: Context) {
         val existingArr = map[date.toString()]
         val existing = parseSecondaryArray(existingArr ?: "[]")
 
-        // Skip if this label already exists for this date OR a sample within
-        // SECONDARY_DEDUP_METERS already exists (same physical place).
+        // Skip if this label already exists for this date.
         if (existing.any { it.label == label }) {
             Log.d(TAG, "Manual secondary location '$label' already exists for $date — skipping")
             return label
         }
 
-        // Skip if the label is the same place as the PRIMARY location for this date.
-        val primaryLabel = getLocationForDate(date)
-        if (primaryLabel != null && isSameLocationLabel(label, primaryLabel)) {
-            Log.d(TAG, "Manual secondary location '$label' same as primary '$primaryLabel' for $date — skipping")
+        // Skip if within SECONDARY_DEDUP_METERS of today's PRIMARY coords —
+        // this means the user is manually adding the same place they woke up in.
+        val primaryCoords = getCoordsForDate(date)
+        if (primaryCoords != null &&
+            haversineMeters(coords.first, coords.second, primaryCoords.first, primaryCoords.second) < SECONDARY_DEDUP_METERS
+        ) {
+            Log.d(TAG, "Manual secondary location (${coords.first},${coords.second}) within ${SECONDARY_DEDUP_METERS}m of primary — skipping")
             return label
         }
 
+        // Skip if within SECONDARY_DEDUP_METERS of an existing secondary
+        // for this date (no point adding the same coffee shop twice).
         if (existing.any { haversineMeters(coords.first, coords.second, it.lat, it.lon) < SECONDARY_DEDUP_METERS }) {
             Log.d(TAG, "Manual secondary location (${coords.first},${coords.second}) within ${SECONDARY_DEDUP_METERS}m of existing — skipping")
             return label
