@@ -1,7 +1,12 @@
 package com.example.tail.ui
 
+import android.content.Context
 import android.net.Uri
+import android.util.Log
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
+import com.example.tail.data.GarminType
+import com.example.tail.data.ImportResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
@@ -62,7 +67,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.tail.data.AiModelInfo
 import com.example.tail.data.ChessComType
-import com.example.tail.data.GarminType
 import com.example.tail.data.backup.AutoBackupManager
 import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.debug.DebugPreferences
@@ -347,7 +351,7 @@ fun SettingsScreen(
 
             // ── Garmin Integration ────────────────────────────────────────────
             item {
-                GarminSettingsSection(viewModel = viewModel, settings = settings)
+                GarminSettingsSection(viewModel = viewModel, settings = settings, context = context)
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
@@ -853,7 +857,8 @@ private fun ChessComSettingsSection(
 @Composable
 private fun GarminSettingsSection(
     viewModel: HabitViewModel,
-    settings: com.example.tail.data.AppSettings
+    settings: com.example.tail.data.AppSettings,
+    context: Context
 ) {
     val garminSyncStatus by viewModel.garminSyncStatus.collectAsState()
 
@@ -881,6 +886,33 @@ private fun GarminSettingsSection(
     var sleepScoreThreshold by remember(settings.garminThresholds) {
         mutableStateOf((settings.garminThresholds["SLEEP_SCORE"] ?: 0).let { if (it == 0) "" else it.toString() })
     }
+    var stepsThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["STEPS"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var altitudeAscentThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["ALTITUDE_ASCENT_METERS"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var distanceThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["DISTANCE_METERS"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var caloriesThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["CALORIES"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var activeMinutesThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["ACTIVE_MINUTES"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var floorsClimbedThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["FLOORS_CLIMBED"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var minHrThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["MIN_HR"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var maxHrThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["MAX_HR"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var stressLevelThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["STRESS_LEVEL"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
 
     fun getThresholdFor(type: GarminType): String = when (type) {
         GarminType.VO2_MAX -> vo2MaxThreshold
@@ -889,6 +921,15 @@ private fun GarminSettingsSection(
         GarminType.HRV_LAST_NIGHT -> hrvLastNightThreshold
         GarminType.HRV_WEEKLY_AVG -> hrvWeeklyAvgThreshold
         GarminType.SLEEP_SCORE -> sleepScoreThreshold
+        GarminType.STEPS -> stepsThreshold
+        GarminType.ALTITUDE_ASCENT_METERS -> altitudeAscentThreshold
+        GarminType.DISTANCE_METERS -> distanceThreshold
+        GarminType.CALORIES -> caloriesThreshold
+        GarminType.ACTIVE_MINUTES -> activeMinutesThreshold
+        GarminType.FLOORS_CLIMBED -> floorsClimbedThreshold
+        GarminType.MIN_HR -> minHrThreshold
+        GarminType.MAX_HR -> maxHrThreshold
+        GarminType.STRESS_LEVEL -> stressLevelThreshold
     }
 
     fun setThresholdFor(type: GarminType, value: String) {
@@ -900,6 +941,15 @@ private fun GarminSettingsSection(
             GarminType.HRV_LAST_NIGHT -> hrvLastNightThreshold = filtered
             GarminType.HRV_WEEKLY_AVG -> hrvWeeklyAvgThreshold = filtered
             GarminType.SLEEP_SCORE -> sleepScoreThreshold = filtered
+            GarminType.STEPS -> stepsThreshold = filtered
+            GarminType.ALTITUDE_ASCENT_METERS -> altitudeAscentThreshold = filtered
+            GarminType.DISTANCE_METERS -> distanceThreshold = filtered
+            GarminType.CALORIES -> caloriesThreshold = filtered
+            GarminType.ACTIVE_MINUTES -> activeMinutesThreshold = filtered
+            GarminType.FLOORS_CLIMBED -> floorsClimbedThreshold = filtered
+            GarminType.MIN_HR -> minHrThreshold = filtered
+            GarminType.MAX_HR -> maxHrThreshold = filtered
+            GarminType.STRESS_LEVEL -> stressLevelThreshold = filtered
         }
     }
 
@@ -1033,6 +1083,15 @@ private fun GarminSettingsSection(
                             GarminType.HRV_LAST_NIGHT -> "ms"
                             GarminType.HRV_WEEKLY_AVG -> "ms"
                             GarminType.SLEEP_SCORE -> "pts"
+                            GarminType.STEPS -> "steps"
+                            GarminType.ALTITUDE_ASCENT_METERS -> "m"
+                            GarminType.DISTANCE_METERS -> "m"
+                            GarminType.CALORIES -> "kcal"
+                            GarminType.ACTIVE_MINUTES -> "min"
+                            GarminType.FLOORS_CLIMBED -> "floors"
+                            GarminType.MIN_HR -> "bpm"
+                            GarminType.MAX_HR -> "bpm"
+                            GarminType.STRESS_LEVEL -> "level"
                         },
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1080,7 +1139,70 @@ private fun GarminSettingsSection(
             ) {
                 Text("Fetch Entire Backlog", fontSize = 12.sp)
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Historic Data Import section
+            Text(
+                "Historic Data Import",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Import historic Garmin data from a JSON file generated " +
+                       "by the desktop import script. Use this to fill in your " +
+                       "history with past data from your Garmin GDPR export.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            val historicImportLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.GetContent()
+            ) { uri: Uri? ->
+                uri?.let {
+                    viewModel.importGarminHistoricData(
+                        jsonFile = uriToFile(context, it),
+                        onComplete = { result ->
+                            if (result.success) {
+                                val summary = result.metricsImported.entries.joinToString("\n") {
+                                    "${it.key.label}: ${it.value} entries"
+                                }
+                                Log.d("GarminImport", "Import succeeded:\n$summary")
+                            }
+                        }
+                    )
+                }
+            }
+            
+            Button(
+                onClick = { historicImportLauncher.launch("application/json") },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary
+                )
+            ) {
+                Text("Import Historic Data", fontSize = 12.sp)
+            }
         }
+    }
+}
+
+/**
+ * Converts a content URI to a File for the Garmin import.
+ * Creates a temporary copy if the URI is not a file:// scheme.
+ */
+private fun uriToFile(context: Context, uri: Uri): File {
+    return if (uri.scheme == "file") {
+        File(uri.path ?: throw IllegalArgumentException("Invalid file URI"))
+    } else {
+        // For content URIs, copy to a temp file
+        val tempFile = File(context.cacheDir, "garmin_import_${System.currentTimeMillis()}.json")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            tempFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        } ?: throw IllegalArgumentException("Failed to open URI")
+        tempFile
     }
 }
 

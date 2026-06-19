@@ -1,6 +1,6 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-06-03T07:26Z
+**Last updated:** 2026-06-18T16:36Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
@@ -25,7 +25,7 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 - **Add habit to JSON files** — when adding a new habit via the placeholder cell, it is automatically written to all currently configured JSON files (`habitsdb_phone.txt`, `habitsdb.txt`, `habitsdb_without_phone_totals.txt`)
 - **Icon picker** — in edit mode, select a habit → tap 🎨 Icon → scrollable 6-column grid of all 269 available icons; tap to assign, "No icon" to clear override
 - **Conditional habit type** *(added 2026-03-24T16:57Z)* — in edit mode, select a habit → toggle **Conditional** on → tap **Set Links** to open a multi-select popup of all other habits; any habits chosen are auto-incremented by +1 whenever the conditional habit is tapped; the linked set is shown inline in the edit bar and persisted to DataStore
-- **Garmin health integration** *(added 2026-06-16T13:31Z, updated 2026-06-16T15:28Z)* — in Settings → **❤️ Garmin Integration**, configure your Garmin proxy URL and app token, then set thresholds for health metrics (VO2 Max, Fitness Age, Resting HR, HRV, Sleep Score). Link habits to Garmin metric types in edit mode. The app polls every 15 minutes and automatically increments habits when metrics meet or exceed your thresholds. Use "Fetch Entire Backlog" to retroactively fill historical data. Use the "Test Connection" button to verify the full connection chain (proxy server, app token, Garmin API, and data availability) before enabling. Requires deploying the Python proxy (see `garmin_proxy/` directory).
+- **Garmin health integration** *(added 2026-06-16T13:31Z, updated 2026-06-16T15:28Z, updated 2026-06-18T16:36Z)* — in Settings → **❤️ Garmin Integration**, configure your Garmin proxy URL and app token, then set thresholds for health metrics (VO2 Max, Fitness Age, Resting HR, HRV, Sleep Score). Link habits to Garmin metric types in edit mode. The app polls every 15 minutes and automatically increments habits when metrics meet or exceed your thresholds. Use "Fetch Entire Backlog" to retroactively fill historical data from the Garmin API. Use "Import Historic Data" to import data from a Garmin GDPR ZIP export processed by the desktop script. Use the "Test Connection" button to verify the full connection chain (proxy server, app token, Garmin API, and data availability) before enabling. Requires deploying the Python proxy (see `garmin_proxy/` directory).
 - **Chess.com integration** *(added 2026-03-12T20:12Z)* — in Settings → **♟ Chess.com Integration**, enter your username and set minutes-per-increment for Bullet/Blitz/Rapid games. Link habits to game types in edit mode. The app polls every 15 minutes and automatically increments habits based on your chess activity. Use "Fetch Entire Backlog" to retroactively fill historical data.
 - **DataStore habit-name migration** *(added 2026-03-29T03:02Z)* — one-time migration renames legacy "Launch Pushups/Situps/Squats Widget" to "Pushups"/"Situps"/"Squats" across all persisted DataStore keys (custom input set, habit order, screens, icon maps, dividers, etc.); runs automatically on first launch after update; guarded by a boolean flag so it only executes once
 - **World-map "where I was" timeline** *(added 2026-05-06T14:05Z)* — small globe icon next to ⚙️ in the top bar opens a landscape map screen. Shows continents drawn from a 75 KB Natural Earth polygon asset (`assets/world_land.json`), plus the dim trail of every day with a known location. A small person marker animates between days as the timeline progresses. Bottom timeline has a draggable slider, ⏸/▶ play button, and `« / »` speed buttons (0.5×, 1×, 2×, 5×, 15×, 30×, 60×, 120×, Auto). Side info box shows location label + habits-done / streak / total-points for the selected day. Selected date is shared bidirectionally between the grid and map screens via `HabitViewModel.selectedDate`, so navigation in either direction preserves the day. Coordinates source: `LocationRepository.daily_coords` SharedPrefs key, populated by today's GPS fix or back-filled by [`scripts/seed_locations_from_timeline.py`](scripts/seed_locations_from_timeline.py:1) from a Google Maps Timeline export.
@@ -56,7 +56,7 @@ app/src/main/java/com/example/tail/
 │   ├── LocationRepository.kt # GPS location fetch, reverse-geocode, daily + secondary location storage
 │   ├── ChessComRepository.kt # Chess.com API client, game history caching, minutes→increments conversion
 │   ├── ChessComService.kt    # Low-level HTTP client for chess.com public API
-│   ├── GarminRepository.kt  # Garmin health metrics client, monthly caching, threshold→increments conversion
+│   ├── GarminRepository.kt  # Garmin health metrics client, monthly caching, threshold→increments conversion, historic data import
 │   └── SettingsRepository.kt # DataStore Preferences (file URI, custom input set, chess.com/garmin settings)
 ├── ipc/
 │   ├── HabitsContentProvider.kt  # Read-only ContentProvider: exposes habit list to same-keystore apps
@@ -290,9 +290,10 @@ Example output: `192.168.1.100`
 
 ### How It Works
 
-- **Automatic Sync**: The app polls your proxy once a day while Garmin integration is enabled *(updated 2026-06-16T18:01Z)*
-- **On-Demand Sync**: Clicking "Test Connection" in Settings runs a full connection health check and, on success, immediately fetches and applies the current month's Garmin data to linked habits *(added 2026-06-16T18:01Z)*
-- **Backlog Sync**: Use "Fetch Entire Backlog" to import up to 2 years of historical data
+- **Automatic Sync**: The app polls your proxy once a day while Garmin integration is enabled. By default, it fetches **yesterday's** data (today's data is incomplete since the day hasn't finished) *(updated 2026-06-19T07:02Z)*
+- **On-Demand Sync**: Clicking "Test Connection" in Settings runs a full connection health check and, on success, immediately fetches and applies yesterday's Garmin data to linked habits *(updated 2026-06-19T07:02Z)*
+- **Backlog Sync**: Use "Fetch Entire Backlog" to import up to 2 years of historical data from the Garmin API
+- **Historic Data Import**: Use "Import Historic Data" to import data from a Garmin GDPR ZIP export. This is useful for filling in your history with past data that may not be available through the Garmin API *(added 2026-06-18T16:36Z)*
 - **Threshold System**: Each day where your metric meets or exceeds the threshold = 1 increment
 - **Local Network Only**: Your Garmin credentials stay on your computer; the app only receives processed metrics
 - **Secure**: The app token prevents unauthorized access - only your phone with the correct token can access your data
@@ -307,16 +308,31 @@ Example output: `192.168.1.100`
 | **HRV Last Night** | Heart rate variability from last night | ≥ 50 ms |
 | **HRV Weekly Avg** | Average heart rate variability over 7 days | ≥ 50 ms |
 | **Sleep Score** | Overall sleep quality score (0-100) | ≥ 80 |
+| **Steps** | Daily step count | ≥ 10,000 |
+| **Altitude Ascent** | Total elevation climbed in meters | ≥ 100 |
+| **Distance** | Total distance traveled in meters | ≥ 5,000 |
+| **Calories** | Total calories burned | ≥ 2,000 |
+| **Active Minutes** | Total active minutes | ≥ 30 |
+| **Floors Climbed** | Total floors climbed | ≥ 10 |
+| **Min HR** | Minimum heart rate in BPM | ≤ 50 |
+| **Max HR** | Maximum heart rate in BPM | ≤ 180 |
+| **Stress Level** | Average daily stress level (0-100) | ≤ 50 |
 
 ### Troubleshooting
 
-**No data appearing for linked habits?** The Garmin integration fetches data from Garmin's training status API. If Garmin rate-limits your account (HTTP 429), data won't be available until the limit expires. Fixed data extraction paths *(2026-06-17T07:28Z)*:
+**No data appearing for linked habits?** The Garmin integration fetches data from Garmin's training status API. If Garmin rate-limits your account (HTTP 429), data won't be available until the limit expires. Fixed data extraction paths *(updated 2026-06-18T18:20Z)*:
 - VO2max: `mostRecentVO2Max.generic.vo2MaxValue`
 - Resting HR: `stats_and_body.restingHeartRate`
-- HRV last night: `sleep_data.avgOvernightHrv` (not in HRV data)
+- HRV last night: `sleep_data.avgOvernightHrv`
 - Sleep score: `sleep_data.dailySleepDTO.sleepScores.overall.value`
-- Fitness age: Garmin doesn't provide this data
-- HRV weekly avg: Not available in Garmin's API
+- Fitness age: `get_my_fitness_age().fitnessAge` (dedicated microservice)
+- HRV weekly avg: `get_hrv_data().hrvSummary.weeklyAvg` with fallback to baseline history calculation
+- Steps: `stats_and_body.steps`
+- Altitude ascent: `stats_and_body.elevationGain`
+- Distance: `stats_and_body.distance`
+- Calories: `stats_and_body.calories`
+- Active minutes: `stats_and_body.activeMinutes`
+- Floors climbed: `stats_and_body.floorsClimbed`
 
 **Connection Issues:**
 - Ensure your phone and computer are on the same Wi-Fi network
@@ -378,6 +394,56 @@ systemctl --user status garmin-proxy
 sudo systemctl daemon-reload
 sudo systemctl enable garmin-proxy
 sudo systemctl start garmin-proxy
+```
+
+---
+
+## Importing Historic Garmin Data *(added 2026-06-18T16:36Z)*
+
+If you have a Garmin GDPR export ZIP file with your historical health data, you can import it directly into the app to fill in your history with past data.
+
+### Step 1: Process the Garmin ZIP Export
+
+Use the provided Python script to extract and convert your Garmin data:
+
+```bash
+python garmin_import.py /path/to/Garmin_Export.zip
+```
+
+This will create a `garmin_import.json` file containing all your daily health metrics in a format compatible with the app.
+
+**Supported Metrics:**
+- VO2 Max
+- Fitness Age
+- Resting Heart Rate
+- HRV Last Night
+- HRV Weekly Average (computed from 7-day rolling average)
+- Sleep Score
+- Sleep Duration (minutes)
+- Sleep Stages (Deep, Light, REM, Awake minutes)
+- Steps
+- Altitude Ascent (meters)
+- Distance (meters)
+- Calories
+- Active Minutes
+- Floors Climbed
+
+### Step 2: Import into the App
+
+1. Transfer the `garmin_import.json` file to your Android device
+2. Open Settings → Garmin Integration
+3. Tap the **"Import Historic Data"** button
+4. Select the JSON file from your device storage
+5. The app will process the file and apply the data to your linked habits
+
+**Note:** The import merges with existing data - it won't overwrite days that already have Garmin data from the API. If you want to completely refresh your Garmin history, clear the Garmin cache first (this is done automatically when using "Fetch Entire Backlog").
+
+### Timezone Handling
+
+The import script uses the Europe/Dublin timezone by default. If you're in a different timezone, edit the `TARGET_TZ` constant in `garmin_import.py`:
+
+```python
+TARGET_TZ = ZoneInfo("Your/Timezone")  # e.g., "America/New_York"
 ```
 
 ---

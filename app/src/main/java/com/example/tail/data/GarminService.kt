@@ -236,7 +236,13 @@ class GarminService {
             restingHr = json.optInt("resting_hr").takeIf { it > 0 },
             hrvWeeklyAvg = json.optInt("hrv_weekly_avg").takeIf { it > 0 },
             hrvLastNight = json.optInt("hrv_last_night").takeIf { it > 0 },
-            sleepScore = json.optInt("sleep_score").takeIf { it > 0 }
+            sleepScore = json.optInt("sleep_score").takeIf { it > 0 },
+            steps = json.optInt("steps").takeIf { it > 0 },
+            altitudeAscentMeters = json.optInt("altitude_ascent_meters").takeIf { it > 0 },
+            distanceMeters = json.optInt("distance_meters").takeIf { it > 0 },
+            calories = json.optInt("calories").takeIf { it > 0 },
+            activeMinutes = json.optInt("active_minutes").takeIf { it > 0 },
+            floorsClimbed = json.optInt("floors_climbed").takeIf { it > 0 }
         )
     }
 }
@@ -251,7 +257,13 @@ data class GarminMetricsDto(
     val restingHr: Int?,
     val hrvWeeklyAvg: Int?,
     val hrvLastNight: Int?,
-    val sleepScore: Int?
+    val sleepScore: Int?,
+    val steps: Int?,
+    val altitudeAscentMeters: Int?,
+    val distanceMeters: Int?,
+    val calories: Int?,
+    val activeMinutes: Int?,
+    val floorsClimbed: Int?
 )
 
 /**

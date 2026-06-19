@@ -689,6 +689,7 @@ fun HabitGridScreen(
                         garminHabitLinks = settings.garminHabitLinks,
                         onSetGarminLink = { name, type -> viewModel.setGarminHabitLink(name, type) },
                         garminMonthlyData = garminMonthlyData,
+                        selectedDate = selectedDate,
                         voiceTriggerEnabled = settings.voiceTriggerEnabled,
                         voiceTriggerHabits = settings.voiceTriggerHabits,
                         voiceTriggerWords = settings.voiceTriggerWords,
@@ -1289,6 +1290,7 @@ private fun EditModeControlBar(
     subtypeDataFileUris: Map<String, String>,
     allHabitNames: List<String>,
     garminMonthlyData: Map<com.example.tail.data.GarminType, Map<String, Int>> = emptyMap(),
+    selectedDate: java.time.LocalDate = java.time.LocalDate.now(),
     onStartMove: () -> Unit,
     onAddHabit: () -> Unit,
     onMoveToScreen: (Int) -> Unit,
@@ -1581,10 +1583,9 @@ private fun EditModeControlBar(
                     // a "Test Connection" sync). Caching it in remember() keyed only on the
                     // habit name would leave a stale "-" when the data lands after selection.
                     val garminValueText: String = if (isGarminLinked) {
-                        val today = LocalDate.now().toString()
                         val garminType = garminHabitLinks[selectedHabitName]?.let { GarminType.fromKey(it) }
                         val dailyValues = garminType?.let { garminMonthlyData[it] }
-                        dailyValues?.get(today)?.toString() ?: "-"
+                        dailyValues?.get(selectedDate.toString())?.toString() ?: "-"
                     } else {
                         "-"
                     }
