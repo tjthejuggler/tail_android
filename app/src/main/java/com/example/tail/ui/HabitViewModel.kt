@@ -2086,8 +2086,8 @@ class HabitViewModel(
 
     /**
      * Called when the app comes to the foreground (via ON_RESUME lifecycle event).
-     * Reloads the phone DB and syncs dated entries. Does NOT reset the selected date
-     * so that in-app navigation (e.g. map → grid) preserves the current date.
+     * Reloads the phone DB, syncs dated entries, and fetches new Garmin data from the proxy.
+     * Does NOT reset the selected date so that in-app navigation (e.g. map → grid) preserves the current date.
      */
     fun onAppForegrounded() {
         viewModelScope.launch {
@@ -2105,6 +2105,11 @@ class HabitViewModel(
                     Log.w(TAG, "onAppForegrounded: failed to reload phone DB: ${e.message}")
                 }
             }
+            
+            // Automatically sync Garmin data when app comes to foreground
+            // This fetches any new data that the PC fetcher has accumulated
+            syncGarminCurrentMonth()
+            
             syncAllDatedEntries(forceReparse = false)
         }
         // Log current position as a secondary location for today.
