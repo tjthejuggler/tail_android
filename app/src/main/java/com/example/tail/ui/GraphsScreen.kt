@@ -106,7 +106,8 @@ private val FULL_DATE_FMT = DateTimeFormatter.ofPattern("MMM d, yyyy")
 fun GraphsPanel(
     viewModel: HabitViewModel,
     isLandscape: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    garminHabitLinks: Map<String, String> = emptyMap()
 ) {
     val graphSelectedHabits by viewModel.graphSelectedHabits.collectAsState()
     val selectedPeriod by viewModel.graphTimePeriod.collectAsState()
@@ -417,7 +418,8 @@ fun GraphsPanel(
                             habit = habit,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            garminHabitLinks = garminHabitLinks
                         )
                     }
                 }

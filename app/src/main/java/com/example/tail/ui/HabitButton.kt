@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.AiIconRepository
+import com.example.tail.data.GarminType
 import com.example.tail.data.Habit
 
 // Shared style that strips the extra font padding Compose adds above/below text glyphs
@@ -65,7 +66,9 @@ fun HabitButton(
     /** True when this habit is disabled (red ✕ overlay in top-left corner). */
     isDisabled: Boolean = false,
     /** Optional AI icon repository for loading file-based AI icons. */
-    aiIconRepo: AiIconRepository? = null
+    aiIconRepo: AiIconRepository? = null,
+    /** Map of habit name → GarminType.name for Garmin-linked habits. Used to format values (e.g. metres → km). */
+    garminHabitLinks: Map<String, String> = emptyMap()
 ) {
     val habitStyle = getHabitStyle(habit.todayCount)
     val bgColor = habitStyle.background
@@ -76,6 +79,10 @@ fun HabitButton(
         if (aiIconId != null && aiIconRepo != null) aiIconRepo.loadBitmap(aiIconId) else null
     }
     val streakText = if (habit.currentStreak >= 0) "+${habit.currentStreak}" else "${habit.currentStreak}"
+    
+    // Format allTimeHighDay for Garmin distance habits (metres → km whole number)
+    val highDayText = garminHabitLinks[habit.name]?.let { GarminType.fromKey(it) }?.formatDisplayValue(habit.allTimeHighDay)
+        ?: habit.allTimeHighDay.toString()
 
     val shape = RoundedCornerShape(6.dp)
 
@@ -116,9 +123,9 @@ fun HabitButton(
                 onLongClick = onLongClick
             )
     ) {
-        // Top-left: all-time high day
+        // Top-left: all-time high day (formatted for Garmin distance habits)
         Text(
-            text = habit.allTimeHighDay.toString(),
+            text = highDayText,
             color = Color.White,
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,

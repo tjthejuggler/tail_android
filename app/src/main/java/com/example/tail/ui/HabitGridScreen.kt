@@ -486,7 +486,8 @@ fun HabitGridScreen(
                     isLandscape = true,
                     modifier = Modifier
                         .fillMaxSize()
-                        .weight(1f)
+                        .weight(1f),
+                    garminHabitLinks = settings.garminHabitLinks
                 )
             } else {
                 // ── Portrait (or landscape without graph mode) ─────────────
@@ -527,6 +528,7 @@ fun HabitGridScreen(
                         customIconOverrides = settings.habitIcons,
                         disabledHabits = settings.disabledHabits,
                         aiIconRepo = if (settings.aiIconsEnabled) viewModel.getAiIconRepo() else null,
+                        garminHabitLinks = settings.garminHabitLinks,
                         onHabitClick = { habit, index ->
                             when {
                                 graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
@@ -605,7 +607,8 @@ fun HabitGridScreen(
                         GraphsPanel(
                             viewModel = viewModel,
                             isLandscape = false,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            garminHabitLinks = settings.garminHabitLinks
                         )
                     }
                 }
@@ -1145,6 +1148,7 @@ private fun HabitGrid(
     customIconOverrides: Map<String, String> = emptyMap(),
     disabledHabits: Set<String> = emptySet(),
     aiIconRepo: AiIconRepository? = null,
+    garminHabitLinks: Map<String, String> = emptyMap(),
     onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit,
     onPlaceholderClick: (Int) -> Unit
@@ -1183,7 +1187,8 @@ private fun HabitGrid(
                     graphMode = graphMode,
                     isGraphSelected = isGraphSelected,
                     isDisabled = habit.name in disabledHabits,
-                    aiIconRepo = aiIconRepo
+                    aiIconRepo = aiIconRepo,
+                    garminHabitLinks = garminHabitLinks
                 )
             } else if (editMode) {
                 // In edit mode, placeholders are selectable cells
@@ -1585,7 +1590,9 @@ private fun EditModeControlBar(
                     val garminValueText: String = if (isGarminLinked) {
                         val garminType = garminHabitLinks[selectedHabitName]?.let { GarminType.fromKey(it) }
                         val dailyValues = garminType?.let { garminMonthlyData[it] }
-                        dailyValues?.get(selectedDate.toString())?.toString() ?: "-"
+                        val rawValue = dailyValues?.get(selectedDate.toString())
+                        // Format per-metric for display (e.g. distance metres → km, 1 decimal).
+                        rawValue?.let { garminType?.formatDisplayValue(it) ?: it.toString() } ?: "-"
                     } else {
                         "-"
                     }
@@ -3652,7 +3659,8 @@ private fun IconPickerDialog(
 @Composable
 fun HabitInfoPanel(
     habit: Habit?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    garminHabitLinks: Map<String, String> = emptyMap()
 ) {
     val panelBg = Color(0xFF1A2E1A)
     val labelColor = Color(0xFF88CC88)
@@ -3701,30 +3709,33 @@ fun HabitInfoPanel(
                 )
                 Spacer(modifier = Modifier.height(3.dp))
 
+                val garminType = garminHabitLinks[habit.name]?.let { GarminType.fromKey(it) }
+
                 InfoRow(
                     label = "day",
                     value = formatRollingRow(
                         currentVal = habit.currentDayValue.toDouble(),
-                        high = RollingHigh(habit.allTimeHighDay.toDouble(), habit.allTimeHighDayDate)
+                        high = RollingHigh(habit.allTimeHighDay.toDouble(), habit.allTimeHighDayDate),
+                        garminType = garminType
                     ),
                     valueColor = valueColor,
                     labelColor = dimColor
                 )
                 InfoRow(
                     label = "week",
-                    value = formatRollingRow(currentVal = habit.avgLast7Days, high = habit.allTimeHighWeek),
+                    value = formatRollingRow(currentVal = habit.avgLast7Days, high = habit.allTimeHighWeek, garminType = garminType),
                     valueColor = valueColor,
                     labelColor = dimColor
                 )
                 InfoRow(
                     label = "month",
-                    value = formatRollingRow(currentVal = habit.avgLast30Days, high = habit.allTimeHighMonth),
+                    value = formatRollingRow(currentVal = habit.avgLast30Days, high = habit.allTimeHighMonth, garminType = garminType),
                     valueColor = valueColor,
                     labelColor = dimColor
                 )
                 InfoRow(
                     label = "year",
-                    value = formatRollingRow(currentVal = habit.avgLast365Days, high = habit.allTimeHighYear),
+                    value = formatRollingRow(currentVal = habit.avgLast365Days, high = habit.allTimeHighYear, garminType = garminType),
                     valueColor = valueColor,
                     labelColor = dimColor
                 )
@@ -3733,13 +3744,21 @@ fun HabitInfoPanel(
     }
 }
 
-private fun formatRollingRow(currentVal: Double, high: RollingHigh): String {
-    val cur = if (currentVal == currentVal.toLong().toDouble()) {
+private fun formatRollingRow(
+    currentVal: Double,
+    high: RollingHigh,
+    garminType: GarminType? = null
+): String {
+    val cur = if (garminType == GarminType.DISTANCE_METERS) {
+        "${currentVal.toInt() / 1000} km"
+    } else if (currentVal == currentVal.toLong().toDouble()) {
         currentVal.toLong().toString()
     } else {
         "%.2f".format(currentVal)
     }
-    val highVal = if (high.value == high.value.toLong().toDouble()) {
+    val highVal = if (garminType == GarminType.DISTANCE_METERS) {
+        "${high.value.toInt() / 1000} km"
+    } else if (high.value == high.value.toLong().toDouble()) {
         high.value.toLong().toString()
     } else {
         "%.2f".format(high.value)

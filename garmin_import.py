@@ -23,10 +23,10 @@ Supported Metrics:
     - DISTANCE_METERS: Total distance traveled
     - CALORIES: Total kilocalories burned
     - ACTIVE_MINUTES: Moderate + vigorous intensity minutes
-    - FLOORS_CLIMBED: Elevation climbed in meters
+    - FLOORS_CLIMBED: Elevation climbed in meters (from floorsAscendedInMeters)
     - MIN_HR, MAX_HR: Daily heart rate extremes
     - STRESS_LEVEL: From StressDetailSummary files
-    - ALTITUDE_ASCENT: From _summarizedActivities.json
+    - ALTITUDE_ASCENT_METERS: From _summarizedActivities.json (elevationGain in cm, converted to m)
 
 Usage:
     python garmin_import.py <path_to_garmin_export.zip> [output.json]
@@ -65,6 +65,7 @@ class GarminDataExtractor:
         self.zip_path = zip_path
         self.data: Dict[str, Dict[str, Any]] = defaultdict(dict)
         self.hrv_values: Dict[str, int] = {}  # Store for weekly baseline calculation
+        self.processed_activity_ids = set()  # Track processed activities to avoid duplicates
     
     def extract_local_date(self, timestamp_raw: Any) -> Optional[str]:
         """Convert Garmin timestamp (ISO or Epoch) to local YYYY-MM-DD format."""
@@ -75,7 +76,11 @@ class GarminDataExtractor:
             if isinstance(timestamp_raw, (int, float)):
                 # Garmin sometimes uses milliseconds, sometimes seconds
                 ts_seconds = timestamp_raw / 1000 if timestamp_raw > 2e9 else timestamp_raw
-                dt = datetime.fromtimestamp(ts_seconds, tz=ZoneInfo("UTC"))
+                # For activity data, startTimeGMT is in UTC, startTimeLocal is in device local time
+                # Both are Unix timestamps, so we treat them as UTC and convert to TARGET_TZ
+                dt_utc = datetime.fromtimestamp(ts_seconds, tz=ZoneInfo("UTC"))
+                dt_local = dt_utc.astimezone(TARGET_TZ)
+                return dt_local.strftime("%Y-%m-%d")
             else:
                 # Handle String formats
                 timestamp_str = str(timestamp_raw).strip()
@@ -84,10 +89,13 @@ class GarminDataExtractor:
                 
                 ts = timestamp_str.split('.')[0]
                 dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
-                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
-                
-            dt_local = dt.astimezone(TARGET_TZ)
-            return dt_local.strftime("%Y-%m-%d")
+                # For ISO strings, assume they're already in local time
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=TARGET_TZ)
+                else:
+                    dt = dt.astimezone(TARGET_TZ)
+            
+            return dt.strftime("%Y-%m-%d")
         except Exception:
             return None
     
@@ -326,30 +334,54 @@ class GarminDataExtractor:
                 activity_array = []
             
             for entry in activity_array if isinstance(activity_array, list) else [activity_array]:
-                # Get activity date - try multiple case variations
-                start_time = (entry.get("startTimeGMT") or
-                              entry.get("startTimeGmt") or
-                              entry.get("startTimeLocal") or
-                              entry.get("beginTimestamp") or
-                              entry.get("startTime"))
-                if not start_time:
+                # Skip already processed activities (deduplication)
+                activity_id = entry.get("activityId")
+                if activity_id and activity_id in self.processed_activity_ids:
                     continue
-                
-                date = self.extract_local_date(start_time)
+                if activity_id:
+                    self.processed_activity_ids.add(activity_id)
+                # Determine the activity's calendar date.
+                #
+                # An activity belongs to the date on which it happened in the
+                # *device's* local timezone (e.g. a 22:07 EDT run is July 16th,
+                # even though that is already July 17th in UTC/Dublin).
+                #
+                # Garmin gives us `startTimeLocal`, a Unix epoch that already
+                # encodes the device's wall-clock time. Reading it as if it were
+                # UTC (no further tz conversion) therefore yields the correct
+                # local calendar date. We prefer it over the GMT/begin timestamps
+                # precisely to avoid late-night activities being shifted to the
+                # next day when converted to TARGET_TZ.
+                date = None
+                start_time_local = entry.get("startTimeLocal")
+                if start_time_local:
+                    ts_seconds = start_time_local / 1000 if start_time_local > 2e9 else start_time_local
+                    dt = datetime.fromtimestamp(ts_seconds, tz=ZoneInfo("UTC"))
+                    date = dt.strftime("%Y-%m-%d")
+                else:
+                    # Fallback: GMT/begin timestamps converted to TARGET_TZ.
+                    start_time = (entry.get("startTimeGMT") or
+                                  entry.get("startTimeGmt") or
+                                  entry.get("beginTimestamp") or
+                                  entry.get("startTime"))
+                    date = self.extract_local_date(start_time)
                 if not date:
                     continue
                 
                 # Extract elevation gain (altitude ascent) - try multiple key variations
+                # Garmin stores elevationGain in CENTIMETERS, need to convert to meters
                 elevation_gain = (entry.get("elevationGain") or
                                   entry.get("totalElevationGain") or
                                   entry.get("ascent") or
                                   entry.get("elevationGainMeters"))
                 if elevation_gain and elevation_gain > 0:
+                    # Convert from centimeters to meters (divide by 100)
+                    ascent_meters = elevation_gain / 100
                     # Sum up altitude ascent for the day
                     if date in self.data["ALTITUDE_ASCENT_METERS"]:
-                        self.data["ALTITUDE_ASCENT_METERS"][date] += int(elevation_gain)
+                        self.data["ALTITUDE_ASCENT_METERS"][date] += int(ascent_meters)
                     else:
-                        self.data["ALTITUDE_ASCENT_METERS"][date] = int(elevation_gain)
+                        self.data["ALTITUDE_ASCENT_METERS"][date] = int(ascent_meters)
                 
                 # Extract VO2 Max from activity data (some activities have this)
                 vo2_value = (entry.get("vO2MaxValue") or

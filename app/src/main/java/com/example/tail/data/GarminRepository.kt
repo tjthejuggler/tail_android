@@ -35,6 +35,19 @@ enum class GarminType(val label: String, val description: String) {
     MAX_HR("Max HR", "Maximum heart rate in BPM"),
     STRESS_LEVEL("Stress Level", "Average daily stress level (0-100)");
 
+    /**
+     * Formats a raw stored daily value for human display.
+     *
+     * Values are stored in their native unit (e.g. distance in metres) so the
+     * data layer stays integer-clean and matches the import format. Distance is
+     * the only metric we present in a derived unit: metres → kilometres as a
+     * whole number (e.g. 12345 → "12 km"). All other metrics display as-is.
+     */
+    fun formatDisplayValue(rawValue: Int): String = when (this) {
+        DISTANCE_METERS -> "${rawValue / 1000} km"
+        else -> rawValue.toString()
+    }
+
     companion object {
         fun fromKey(key: String): GarminType? = entries.find { it.name == key }
     }

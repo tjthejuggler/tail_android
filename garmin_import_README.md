@@ -134,6 +134,28 @@ Without `fitparse`, the script will still process JSON files but won't be able t
 
 ## Version History
 
+- **2026-06-20 (later)** - Distance display and activity date fixes:
+  - **Activity date bug**: Activities were assigned to the wrong calendar date
+    because GMT/begin timestamps were converted to `TARGET_TZ` (Dublin).
+    Late-night Eastern activities (e.g. 22:07 EDT) therefore rolled over
+    to the next day. Activity dates now derive from `startTimeLocal` (the
+    device's wall-clock epoch), read as UTC so the local calendar date is
+    preserved regardless of the machine's timezone. GMT/begin timestamps
+    remain a fallback only.
+  - **Verified**: 2020-07-16 ascent now 1256 m and 2020-07-17 now 961 m (the
+    two late-night July 16th activities no longer leak into July 17th).
+  - **Distance display**: The Android app now displays Garmin distance as
+    whole-number kilometres (e.g. `12 km`) instead of metres, via
+    `GarminType.formatDisplayValue`. This applies to the habit square
+    (all-time high), the detail panel "garmin value", and the graphs/stats
+    popup (day/week/month/year rolling averages). Stored/imported values stay
+    in metres.
+
+- **2026-06-20** - Fixed critical bug:
+  - Altitude Ascent was incorrectly treating Garmin's centimeter values as meters (100x inflation)
+  - Added proper unit conversion: elevationGain (cm) → meters
+  - Created diagnostic script `diagnose_ascent_data.py` for troubleshooting
+
 - **2026-06-19** - Added support for:
   - Stress Level extraction from StressDetailSummary files
   - Altitude Ascent from activity summaries
