@@ -405,7 +405,12 @@ data class AppSettings(
      * Maps habit name → GarminType.name for habits linked to Garmin data.
      * When a habit is in this map, its daily count is auto-set from Garmin data.
      */
-    val garminHabitLinks: Map<String, String> = emptyMap()
+    val garminHabitLinks: Map<String, String> = emptyMap(),
+    /**
+     * User's date of birth in ISO format (YYYY-MM-DD).
+     * Used to calculate biological age for fitness age distance calculations.
+     */
+    val garminDateOfBirth: String = ""
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

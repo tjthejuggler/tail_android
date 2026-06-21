@@ -879,6 +879,7 @@ private fun GarminSettingsSection(
     var enabled by remember(settings.garminEnabled) { mutableStateOf(settings.garminEnabled) }
     var proxyUrl by remember(settings.garminProxyUrl) { mutableStateOf(settings.garminProxyUrl) }
     var appToken by remember(settings.garminAppToken) { mutableStateOf(settings.garminAppToken) }
+    var dateOfBirth by remember(settings.garminDateOfBirth) { mutableStateOf(settings.garminDateOfBirth) }
 
     // Thresholds for each type — individual mutableStateOf for recomposition
     val types = GarminType.entries
@@ -887,6 +888,9 @@ private fun GarminSettingsSection(
     }
     var fitnessAgeThreshold by remember(settings.garminThresholds) {
         mutableStateOf((settings.garminThresholds["FITNESS_AGE"] ?: 0).let { if (it == 0) "" else it.toString() })
+    }
+    var fitnessAgeDistanceThreshold by remember(settings.garminThresholds) {
+        mutableStateOf((settings.garminThresholds["FITNESS_AGE_DISTANCE"] ?: 0).let { if (it == 0) "" else it.toString() })
     }
     var restingHrThreshold by remember(settings.garminThresholds) {
         mutableStateOf((settings.garminThresholds["RESTING_HR"] ?: 0).let { if (it == 0) "" else it.toString() })
@@ -931,6 +935,7 @@ private fun GarminSettingsSection(
     fun getThresholdFor(type: GarminType): String = when (type) {
         GarminType.VO2_MAX -> vo2MaxThreshold
         GarminType.FITNESS_AGE -> fitnessAgeThreshold
+        GarminType.FITNESS_AGE_DISTANCE -> fitnessAgeDistanceThreshold
         GarminType.RESTING_HR -> restingHrThreshold
         GarminType.HRV_LAST_NIGHT -> hrvLastNightThreshold
         GarminType.HRV_WEEKLY_AVG -> hrvWeeklyAvgThreshold
@@ -947,10 +952,16 @@ private fun GarminSettingsSection(
     }
 
     fun setThresholdFor(type: GarminType, value: String) {
-        val filtered = value.filter { it.isDigit() }
+        // For FITNESS_AGE_DISTANCE, allow negative numbers
+        val filtered = if (type == GarminType.FITNESS_AGE_DISTANCE) {
+            value.filter { it.isDigit() || it == '-' }
+        } else {
+            value.filter { it.isDigit() }
+        }
         when (type) {
             GarminType.VO2_MAX -> vo2MaxThreshold = filtered
             GarminType.FITNESS_AGE -> fitnessAgeThreshold = filtered
+            GarminType.FITNESS_AGE_DISTANCE -> fitnessAgeDistanceThreshold = filtered
             GarminType.RESTING_HR -> restingHrThreshold = filtered
             GarminType.HRV_LAST_NIGHT -> hrvLastNightThreshold = filtered
             GarminType.HRV_WEEKLY_AVG -> hrvWeeklyAvgThreshold = filtered
@@ -971,9 +982,9 @@ private fun GarminSettingsSection(
         val thresholdsMap = mutableMapOf<String, Int>()
         types.forEach { type ->
             val value = getThresholdFor(type).toIntOrNull() ?: 0
-            if (value > 0) thresholdsMap[type.name] = value
+            if (value != 0) thresholdsMap[type.name] = value  // Allow 0 or non-zero for FITNESS_AGE_DISTANCE
         }
-        viewModel.saveGarminSettings(enabled, proxyUrl, appToken, thresholdsMap)
+        viewModel.saveGarminSettings(enabled, proxyUrl, appToken, dateOfBirth, thresholdsMap)
     }
 
     Column {
@@ -1025,6 +1036,22 @@ private fun GarminSettingsSection(
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(4.dp))
+
+            // Date of Birth
+            OutlinedTextField(
+                value = dateOfBirth,
+                onValueChange = { dateOfBirth = it },
+                label = { Text("Date of Birth") },
+                placeholder = { Text("YYYY-MM-DD") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                text = "Required for Fitness Age Distance calculation (e.g., 1990-01-15)",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
             Button(onClick = { save() }) {
                 Text("Save Connection Settings", fontSize = 12.sp)
             }
@@ -1058,7 +1085,9 @@ private fun GarminSettingsSection(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Set the minimum value for each metric type to count as 1 habit increment. " +
+                text = "Set the threshold for each metric type to count as 1 habit increment. " +
+                       "For most metrics, higher values are better. " +
+                       "For Fitness Age Distance, negative values are better (younger fitness age). " +
                        "Leave blank or 0 to disable that type.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1080,9 +1109,15 @@ private fun GarminSettingsSection(
                     OutlinedTextField(
                         value = getThresholdFor(type),
                         onValueChange = { newVal -> setThresholdFor(type, newVal) },
-                        placeholder = { Text("0") },
+                        placeholder = { Text(if (type == GarminType.FITNESS_AGE_DISTANCE) "-5" else "0") },
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = if (type == GarminType.FITNESS_AGE_DISTANCE) {
+                                KeyboardType.Text  // Allow negative numbers
+                            } else {
+                                KeyboardType.Number
+                            }
+                        ),
                         modifier = Modifier
                             .weight(1f)
                             .height(56.dp),
@@ -1093,6 +1128,7 @@ private fun GarminSettingsSection(
                         text = when (type) {
                             GarminType.VO2_MAX -> "ml/kg/min"
                             GarminType.FITNESS_AGE -> "years"
+                            GarminType.FITNESS_AGE_DISTANCE -> "years"
                             GarminType.RESTING_HR -> "bpm"
                             GarminType.HRV_LAST_NIGHT -> "ms"
                             GarminType.HRV_WEEKLY_AVG -> "ms"

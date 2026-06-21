@@ -46,6 +46,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 private const val TAG = "HabitVM"
@@ -2454,6 +2455,7 @@ class HabitViewModel(
         enabled: Boolean,
         proxyUrl: String,
         appToken: String,
+        dateOfBirth: String,
         thresholds: Map<String, Int>
     ) {
         viewModelScope.launch {
@@ -2461,11 +2463,12 @@ class HabitViewModel(
             // space (common when pasting) can never corrupt later URL parsing.
             val cleanProxyUrl = proxyUrl.trim().trimEnd('/')
             val cleanToken = appToken.trim()
-            settingsRepo.saveGarminSettings(enabled, cleanProxyUrl, cleanToken, thresholds)
+            settingsRepo.saveGarminSettings(enabled, cleanProxyUrl, cleanToken, dateOfBirth, thresholds)
             _settings.value = _settings.value.copy(
                 garminEnabled = enabled,
                 garminProxyUrl = cleanProxyUrl,
                 garminAppToken = cleanToken,
+                garminDateOfBirth = dateOfBirth,
                 garminThresholds = thresholds
             )
             // Start or stop polling based on enabled state
@@ -2521,7 +2524,7 @@ class HabitViewModel(
 
         try {
             _garminSyncStatus.value = "Syncing Garmin data…"
-            val monthData = garminRepo.fetchCurrentMonthData(s.garminProxyUrl, s.garminAppToken)
+            val monthData = garminRepo.fetchCurrentMonthData(s.garminProxyUrl, s.garminAppToken, s.garminDateOfBirth)
             val today = LocalDate.now().toString()
             Log.d(TAG, "Garmin sync: fetched types=${monthData.keys}, " +
                 "links=${s.garminHabitLinks}, " +
@@ -2563,7 +2566,8 @@ class HabitViewModel(
                 _garminSyncStatus.value = "Fetching entire backlog…"
                 val allData = garminRepo.fetchEntireBacklog(
                     s.garminProxyUrl,
-                    s.garminAppToken
+                    s.garminAppToken,
+                    s.garminDateOfBirth
                 ) { done, total ->
                     _garminSyncStatus.value = "Fetching archives: $done / $total months"
                 }
@@ -2672,9 +2676,47 @@ class HabitViewModel(
 
         for ((habitName, garminTypeStr) in linkedHabits) {
             val garminType = GarminType.fromKey(garminTypeStr) ?: continue
-            val dailyValues = allData[garminType] ?: continue
+            
+            // For FITNESS_AGE_DISTANCE, calculate it on-demand from FITNESS_AGE
+            val dailyValues = if (garminType == GarminType.FITNESS_AGE_DISTANCE) {
+                try {
+                    val fitnessAgeData = allData[GarminType.FITNESS_AGE] ?: emptyMap()
+                    if (fitnessAgeData.isEmpty()) {
+                        Log.w(TAG, "No fitness age data available to calculate fitness age distance")
+                        emptyMap()
+                    } else {
+                        val dob = if (settings.garminDateOfBirth.isNotEmpty()) {
+                            LocalDate.parse(settings.garminDateOfBirth)
+                        } else {
+                            // Fallback: use a reasonable default age (30 years old) based on first fitness age entry
+                            val firstDate = fitnessAgeData.keys.first()
+                            LocalDate.parse(firstDate).minusYears(30)
+                        }
+                        val distanceData = mutableMapOf<String, Int>()
+                        
+                        for ((dateStr, fitnessAge) in fitnessAgeData) {
+                            val metricDate = LocalDate.parse(dateStr)
+                            val biologicalAge = ChronoUnit.YEARS.between(dob, metricDate).toInt()
+                            distanceData[dateStr] = fitnessAge - biologicalAge
+                        }
+                        
+                        Log.d(TAG, "Calculated ${distanceData.size} fitness age distance values from ${fitnessAgeData.size} fitness age entries (DOB: $dob)")
+                        distanceData.toMap()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to calculate fitness age distance: ${e.message}", e)
+                    emptyMap()
+                }
+            } else {
+                allData[garminType] ?: continue
+            }
+            
+            if (dailyValues.isEmpty()) continue
+            
             val threshold = settings.garminThresholds[garminTypeStr] ?: continue
-            if (threshold <= 0) continue
+            if (threshold == 0) continue  // Allow negative thresholds for FITNESS_AGE_DISTANCE
+
+            Log.d(TAG, "Processing habit '$habitName' linked to $garminTypeStr, threshold=$threshold, values=${dailyValues.size}")
 
             // Ensure habit exists in DB
             if (habitName !in mutableDb) {
@@ -2682,9 +2724,20 @@ class HabitViewModel(
             }
 
             val habitData = mutableDb[habitName]!!.toMutableMap()
+            var appliedCount = 0
             for ((date, value) in dailyValues) {
-                // Only apply the value if it meets or exceeds the threshold
-                if (value >= threshold) {
+                // Check if value meets the threshold condition
+                val meetsThreshold = if (garminType == GarminType.FITNESS_AGE_DISTANCE) {
+                    // For fitness age distance, more negative is better (younger fitness age)
+                    value <= threshold
+                } else {
+                    // For other metrics, higher is better
+                    value >= threshold
+                }
+                
+                Log.d(TAG, "  Date: $date, Value: $value, Meets threshold ($threshold): $meetsThreshold")
+                
+                if (meetsThreshold) {
                     val existing = habitData[date] ?: 0
                     // Store the actual Garmin value instead of incrementing by 1
                     val newValue = value
@@ -2704,6 +2757,7 @@ class HabitViewModel(
                     }
                 }
             }
+            Log.d(TAG, "Applied $appliedCount values for habit '$habitName'")
             mutableDb[habitName] = habitData
         }
 

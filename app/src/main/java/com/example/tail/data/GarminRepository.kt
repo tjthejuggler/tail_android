@@ -21,6 +21,7 @@ typealias DailyValueMap = Map<String, Int>
 enum class GarminType(val label: String, val description: String) {
     VO2_MAX("VO2 Max", "Cardiovascular fitness score"),
     FITNESS_AGE("Fitness Age", "Biological age based on fitness level"),
+    FITNESS_AGE_DISTANCE("Fitness Age Distance", "Difference between fitness age and biological age"),
     RESTING_HR("Resting HR", "Resting heart rate in BPM"),
     HRV_LAST_NIGHT("HRV Last Night", "Heart rate variability from last night"),
     HRV_WEEKLY_AVG("HRV Weekly Avg", "Average heart rate variability over 7 days"),
@@ -78,14 +79,15 @@ class GarminRepository(private val context: Context) {
      */
     suspend fun fetchCurrentMonthData(
         proxyUrl: String,
-        appToken: String
+        appToken: String,
+        dateOfBirth: String = ""
     ): Map<GarminType, DailyValueMap> = withContext(Dispatchers.IO) {
         try {
             val today = LocalDate.now().toString()
             val result = mutableMapOf<GarminType, MutableMap<String, Int>>()
             val metrics = service.fetchDailyMetrics(proxyUrl, appToken, today)
             if (metrics != null) {
-                processMetricsToDaily(metrics, result)
+                processMetricsToDaily(metrics, result, dateOfBirth)
             }
             result.mapValues { it.value.toMap() }
         } catch (e: Exception) {
@@ -104,6 +106,7 @@ class GarminRepository(private val context: Context) {
     suspend fun fetchEntireBacklog(
         proxyUrl: String,
         appToken: String,
+        dateOfBirth: String = "",
         onProgress: (Int, Int) -> Unit = { _, _ -> }
     ): Map<GarminType, DailyValueMap> = withContext(Dispatchers.IO) {
         val now = LocalDate.now()
@@ -118,7 +121,7 @@ class GarminRepository(private val context: Context) {
         while (!current.isAfter(YearMonth.from(now))) {
             try {
                 val monthData = getCachedOrFetch(
-                    proxyUrl, appToken, current.year, current.monthValue
+                    proxyUrl, appToken, current.year, current.monthValue, dateOfBirth
                 )
                 mergeInto(allDaily, monthData)
                 completedMonths++
@@ -163,7 +166,8 @@ class GarminRepository(private val context: Context) {
         proxyUrl: String,
         appToken: String,
         year: Int,
-        month: Int
+        month: Int,
+        dateOfBirth: String = ""
     ): Map<GarminType, DailyValueMap> {
         val now = YearMonth.now()
         val isCurrentMonth = year == now.year && month == now.monthValue
@@ -175,7 +179,7 @@ class GarminRepository(private val context: Context) {
         }
 
         // Fetch from API - fetch each day of the month
-        val daily = fetchMonthData(proxyUrl, appToken, year, month)
+        val daily = fetchMonthData(proxyUrl, appToken, year, month, dateOfBirth)
 
         // Cache completed months
         if (!isCurrentMonth) {
@@ -192,7 +196,8 @@ class GarminRepository(private val context: Context) {
         proxyUrl: String,
         appToken: String,
         year: Int,
-        month: Int
+        month: Int,
+        dateOfBirth: String = ""
     ): Map<GarminType, DailyValueMap> {
         val result = mutableMapOf<GarminType, MutableMap<String, Int>>()
         val yearMonth = YearMonth.of(year, month)
@@ -203,7 +208,7 @@ class GarminRepository(private val context: Context) {
             try {
                 val metrics = service.fetchDailyMetrics(proxyUrl, appToken, dateStr)
                 if (metrics != null) {
-                    processMetricsToDaily(metrics, result)
+                    processMetricsToDaily(metrics, result, dateOfBirth)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to fetch $dateStr: ${e.message}")
@@ -218,7 +223,8 @@ class GarminRepository(private val context: Context) {
      */
     private fun processMetricsToDaily(
         metrics: GarminMetricsDto,
-        result: MutableMap<GarminType, MutableMap<String, Int>>
+        result: MutableMap<GarminType, MutableMap<String, Int>>,
+        dateOfBirth: String = ""
     ) {
         val date = metrics.date
 
@@ -230,6 +236,20 @@ class GarminRepository(private val context: Context) {
         metrics.fitnessAge?.let {
             val dayMap = result.getOrPut(GarminType.FITNESS_AGE) { mutableMapOf() }
             dayMap[date] = it
+            
+            // Calculate fitness age distance if date of birth is provided
+            if (dateOfBirth.isNotEmpty()) {
+                try {
+                    val dob = LocalDate.parse(dateOfBirth)
+                    val metricDate = LocalDate.parse(date)
+                    val biologicalAge = ChronoUnit.YEARS.between(dob, metricDate).toInt()
+                    val fitnessAgeDistance = it - biologicalAge
+                    val distanceMap = result.getOrPut(GarminType.FITNESS_AGE_DISTANCE) { mutableMapOf() }
+                    distanceMap[date] = fitnessAgeDistance
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to calculate fitness age distance: ${e.message}")
+                }
+            }
         }
 
         metrics.restingHr?.let {
@@ -285,17 +305,27 @@ class GarminRepository(private val context: Context) {
 
     /**
      * Computes habit increments from daily values using the configured threshold.
-     * Any value >= threshold gives 1 point. Values below threshold give 0 points.
+     *
+     * For most metrics: any value >= threshold gives 1 point.
+     * For FITNESS_AGE_DISTANCE: any value <= threshold gives 1 point (more negative is better).
+     * Values below/above threshold give 0 points.
      *
      * Returns a map of date → increment count (0 or 1).
      */
     fun computeIncrements(
         dailyValues: DailyValueMap,
-        threshold: Int
+        threshold: Int,
+        type: GarminType
     ): Map<String, Int> {
-        if (threshold <= 0) return emptyMap()
+        if (threshold == 0) return emptyMap()
         return dailyValues.mapValues { (_, value) ->
-            if (value >= threshold) 1 else 0
+            if (type == GarminType.FITNESS_AGE_DISTANCE) {
+                // For fitness age distance, more negative is better (younger fitness age)
+                if (value <= threshold) 1 else 0
+            } else {
+                // For other metrics, higher is better
+                if (value >= threshold) 1 else 0
+            }
         }
     }
 

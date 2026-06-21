@@ -511,14 +511,23 @@ private fun HabitLineChart(
         visTotalDays = ChronoUnit.DAYS.between(visStartDate, visEndDate).toInt() + 1
     }
 
-    // Find global max for Y axis (over the visible range)
+    // Find global min and max for Y axis (over the visible range)
     val globalMax = seriesData.maxOfOrNull { series ->
         series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
             .maxOfOrNull { it.pointsValue } ?: 0
     } ?: 1
+    val globalMin = seriesData.minOfOrNull { series ->
+        series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
+            .minOfOrNull { it.pointsValue } ?: 0
+    } ?: 0
+    
+    // For charts with negative values, we need to adjust the range
+    val yMin = globalMin
     val yMax = if (globalMax == 0) 1 else globalMax
-    val yTicks = calculateYTicks(yMax)
+    val yTicks = calculateYTicks(yMin, yMax)
+    val effectiveYMin = yTicks.firstOrNull() ?: yMin
     val effectiveYMax = yTicks.lastOrNull() ?: yMax
+    val yRange = effectiveYMax - effectiveYMin
 
     val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
         val newScale = (zoomScale * zoomChange).coerceIn(1f, fullTotalDays.toFloat().coerceAtLeast(2f))
@@ -569,7 +578,7 @@ private fun HabitLineChart(
                             if (dp.date < visStartDate || dp.date > visEndDate) continue
                             val dayIdx = ChronoUnit.DAYS.between(visStartDate, dp.date).toInt()
                             val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
-                            val y = chartBottom - (dp.pointsValue.toFloat() / effectiveYMax) * chartHeight
+                            val y = chartBottom - ((dp.pointsValue - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
 
                             val dist = kotlin.math.sqrt(
                                 (tapX - x) * (tapX - x) + (tapY - y) * (tapY - y)
@@ -608,7 +617,7 @@ private fun HabitLineChart(
         }
 
         for (tick in yTicks) {
-            val y = chartBottom - (tick.toFloat() / effectiveYMax) * chartHeight
+            val y = chartBottom - ((tick - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
             drawLine(
                 color = Color(0xFF1A2E1A),
                 start = Offset(chartLeft, y),
@@ -661,13 +670,16 @@ private fun HabitLineChart(
             )
         }
 
-        // ── Zero line ─────────────────────────────────────────────────────
-        drawLine(
-            color = Color(0xFF334433),
-            start = Offset(chartLeft, chartBottom),
-            end = Offset(chartRight, chartBottom),
-            strokeWidth = 1.dp.toPx()
-        )
+        // ── Zero line (if visible within the range) ─────────────────────────
+        if (effectiveYMin <= 0 && effectiveYMax >= 0) {
+            val zeroY = chartBottom - ((0 - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
+            drawLine(
+                color = Color(0xFF334433),
+                start = Offset(chartLeft, zeroY),
+                end = Offset(chartRight, zeroY),
+                strokeWidth = 1.dp.toPx()
+            )
+        }
 
         // ── Each series ───────────────────────────────────────────────────
         for (series in seriesData) {
@@ -680,16 +692,21 @@ private fun HabitLineChart(
             val points = visibleData.map { dp ->
                 val dayIdx = ChronoUnit.DAYS.between(visStartDate, dp.date).toInt()
                 val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
-                val y = chartBottom - (dp.pointsValue.toFloat() / effectiveYMax) * chartHeight
+                val y = chartBottom - ((dp.pointsValue - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
                 Offset(x, y)
             }
 
-            // Filled area
+            // Filled area (fill to zero line if visible, otherwise to bottom)
             if (points.size >= 2) {
+                val zeroY = if (effectiveYMin <= 0 && effectiveYMax >= 0) {
+                    chartBottom - ((0 - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
+                } else {
+                    chartBottom
+                }
                 val areaPath = Path().apply {
-                    moveTo(points.first().x, chartBottom)
+                    moveTo(points.first().x, zeroY)
                     points.forEach { lineTo(it.x, it.y) }
-                    lineTo(points.last().x, chartBottom)
+                    lineTo(points.last().x, zeroY)
                     close()
                 }
                 drawPath(path = areaPath, color = series.color.copy(alpha = 0.08f))
@@ -715,7 +732,8 @@ private fun HabitLineChart(
                     val isSelected = selectedPoint?.habitName == series.habitName &&
                             selectedPoint?.date == dp.date
                     val dotRadius = if (isSelected) 5.dp.toPx() else 2.5.dp.toPx()
-                    if (dp.pointsValue > 0 || isSelected) {
+                    // Show dots for all values when negative values are present
+                    if (dp.pointsValue != 0 || isSelected || effectiveYMin < 0) {
                         drawCircle(
                             color = if (isSelected) Color.White else series.color,
                             radius = dotRadius,
@@ -740,6 +758,7 @@ private fun HabitLineChart(
                     color = series.color.copy(alpha = 0.4f),
                     startDate = visStartDate,
                     totalDays = visTotalDays,
+                    effectiveYMin = effectiveYMin,
                     effectiveYMax = effectiveYMax,
                     chartLeft = chartLeft,
                     chartBottom = chartBottom,
@@ -755,7 +774,7 @@ private fun HabitLineChart(
             if (sp.date < visStartDate || sp.date > visEndDate) return@let
             val dayIdx = ChronoUnit.DAYS.between(visStartDate, sp.date).toInt()
             val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
-            val y = chartBottom - (sp.value.toFloat() / effectiveYMax) * chartHeight
+            val y = chartBottom - ((sp.value - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
 
             drawLine(
                 color = Color(0x44FFFFFF),
@@ -810,6 +829,7 @@ private fun DrawScope.drawMovingAverage(
     color: Color,
     startDate: LocalDate,
     totalDays: Int,
+    effectiveYMin: Int,
     effectiveYMax: Int,
     chartLeft: Float,
     chartBottom: Float,
@@ -819,6 +839,7 @@ private fun DrawScope.drawMovingAverage(
 ) {
     if (data.size < windowSize) return
 
+    val yRange = (effectiveYMax - effectiveYMin).coerceAtLeast(1)
     val maPoints = mutableListOf<Offset>()
     for (i in windowSize - 1 until data.size) {
         val windowAvg = data.subList(i - windowSize + 1, i + 1)
@@ -828,7 +849,7 @@ private fun DrawScope.drawMovingAverage(
         val dp = data[i]
         val dayIdx = ChronoUnit.DAYS.between(startDate, dp.date).toInt()
         val x = chartLeft + (dayIdx.toFloat() / (totalDays - 1).coerceAtLeast(1)) * chartWidth
-        val y = chartBottom - (windowAvg / effectiveYMax) * chartHeight
+        val y = chartBottom - ((windowAvg - effectiveYMin) / yRange) * chartHeight
         maPoints.add(Offset(x, y))
     }
 
@@ -852,26 +873,28 @@ private fun DrawScope.drawMovingAverage(
 /**
  * Calculate nice Y axis tick values.
  */
-private fun calculateYTicks(maxValue: Int): List<Int> {
-    if (maxValue <= 0) return listOf(0, 1)
+private fun calculateYTicks(minValue: Int, maxValue: Int): List<Int> {
+    if (maxValue <= minValue) return listOf(minValue, maxValue + 1)
 
+    val range = maxValue - minValue
     val step = when {
-        maxValue <= 5 -> 1
-        maxValue <= 10 -> 2
-        maxValue <= 25 -> 5
-        maxValue <= 50 -> 10
-        maxValue <= 100 -> 20
-        maxValue <= 250 -> 50
-        maxValue <= 500 -> 100
-        maxValue <= 1000 -> 200
-        else -> (maxValue / 5.0).roundToInt().let { s ->
+        range <= 5 -> 1
+        range <= 10 -> 2
+        range <= 25 -> 5
+        range <= 50 -> 10
+        range <= 100 -> 20
+        range <= 250 -> 50
+        range <= 500 -> 100
+        range <= 1000 -> 200
+        else -> (range / 5.0).roundToInt().let { s ->
             val magnitude = Math.pow(10.0, Math.floor(Math.log10(s.toDouble()))).toInt()
             if (magnitude > 0) ((s + magnitude - 1) / magnitude) * magnitude else s
         }
-    }
+    }.coerceAtLeast(1)
 
     val ticks = mutableListOf<Int>()
-    var tick = 0
+    // Start from a tick value at or below minValue
+    var tick = if (minValue % step == 0) minValue else minValue - (minValue % step) - step
     while (tick <= maxValue + step) {
         ticks.add(tick)
         tick += step

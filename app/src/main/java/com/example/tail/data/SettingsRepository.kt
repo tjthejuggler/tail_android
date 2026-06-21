@@ -74,6 +74,7 @@ private val KEY_CHESS_COM_HABIT_LINKS = stringPreferencesKey("chess_com_habit_li
 private val KEY_GARMIN_ENABLED = booleanPreferencesKey("garmin_enabled")
 private val KEY_GARMIN_PROXY_URL = stringPreferencesKey("garmin_proxy_url")
 private val KEY_GARMIN_APP_TOKEN = stringPreferencesKey("garmin_app_token")
+private val KEY_GARMIN_DATE_OF_BIRTH = stringPreferencesKey("garmin_date_of_birth")
 // Stored as "TYPE\x00threshold|||TYPE\x00threshold" pairs
 private val KEY_GARMIN_THRESHOLDS = stringPreferencesKey("garmin_thresholds")
 // Stored as "habitName\x00TYPE|||habitName\x00TYPE" pairs
@@ -478,6 +479,7 @@ class SettingsRepository(private val context: Context) {
             garminEnabled = prefs[KEY_GARMIN_ENABLED] ?: false,
             garminProxyUrl = prefs[KEY_GARMIN_PROXY_URL] ?: "",
             garminAppToken = prefs[KEY_GARMIN_APP_TOKEN] ?: "",
+            garminDateOfBirth = prefs[KEY_GARMIN_DATE_OF_BIRTH] ?: "",
             garminThresholds = decodeIntMap(garminThresholdsRaw),
             garminHabitLinks = decodeFileUriMap(garminHabitLinksRaw)
         )
@@ -757,6 +759,10 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_GARMIN_APP_TOKEN] = token }
     }
 
+    suspend fun saveGarminDateOfBirth(dateOfBirth: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_GARMIN_DATE_OF_BIRTH] = dateOfBirth }
+    }
+
     /** Saves the threshold map for Garmin metric types. */
     suspend fun saveGarminThresholds(thresholds: Map<String, Int>) {
         context.dataStore.edit { prefs ->
@@ -776,12 +782,14 @@ class SettingsRepository(private val context: Context) {
         enabled: Boolean,
         proxyUrl: String,
         appToken: String,
+        dateOfBirth: String,
         thresholds: Map<String, Int>
     ) {
         context.dataStore.edit { prefs ->
             prefs[KEY_GARMIN_ENABLED] = enabled
             prefs[KEY_GARMIN_PROXY_URL] = proxyUrl
             prefs[KEY_GARMIN_APP_TOKEN] = appToken
+            prefs[KEY_GARMIN_DATE_OF_BIRTH] = dateOfBirth
             prefs[KEY_GARMIN_THRESHOLDS] = encodeIntMap(thresholds)
         }
     }
