@@ -9,6 +9,16 @@ data class RollingHigh(
 )
 
 /**
+ * Represents a single point range for custom point calculation.
+ * Each range has a min and max value (inclusive) that determines which point value
+ * is assigned based on the "true value" or "garmin value" of a habit.
+ */
+data class PointRange(
+    val min: Int = Int.MIN_VALUE,
+    val max: Int = Int.MAX_VALUE
+)
+
+/**
  * Represents a single habit with all computed stats for display.
  */
 data class Habit(
@@ -80,6 +90,20 @@ fun applyDivider(rawCount: Int, divider: Int): Int {
     if (rawCount <= 0) return 0
     val divided = Math.round(rawCount.toDouble() / divider).toInt()
     return maxOf(divided, 1)
+}
+
+/**
+ * Calculates points from custom point ranges.
+ * Returns the index (0-6) of the first range that contains [value], or 0 if no match.
+ * Ranges are checked in order; the first matching range wins.
+ */
+fun calculatePointsFromRanges(value: Int, ranges: List<PointRange>): Int {
+    for ((index, range) in ranges.withIndex()) {
+        if (value >= range.min && value <= range.max) {
+            return index
+        }
+    }
+    return 0
 }
 
 /**
@@ -410,7 +434,24 @@ data class AppSettings(
      * User's date of birth in ISO format (YYYY-MM-DD).
      * Used to calculate biological age for fitness age distance calculations.
      */
-    val garminDateOfBirth: String = ""
+    val garminDateOfBirth: String = "",
+
+    // ── Custom Point Ranges settings ────────────────────────────────────────
+    /**
+     * Habits that have custom point ranges enabled.
+     * When enabled, the habit's points are calculated based on which range
+     * the "true value" or "garmin value" falls into, rather than using the
+     * standard divider or raw count.
+     */
+    val customPointRangesHabits: Set<String> = emptySet(),
+    /**
+     * Maps habit name → list of 7 point ranges (indices 0-6).
+     * Each range has a min and max value (inclusive).
+     * The "true value" or "garmin value" is checked against each range in order,
+     * and the index of the first matching range becomes the point value.
+     * Ranges can overlap; the first match wins.
+     */
+    val customPointRanges: Map<String, List<PointRange>> = emptyMap()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

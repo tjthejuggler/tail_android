@@ -3340,6 +3340,108 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Toggles custom point ranges on/off for [habitName].
+     * When enabled, the habit's points are calculated based on which range
+     * the "true value" or "garmin value" falls into.
+     */
+    fun toggleCustomPointRanges(habitName: String) {
+        val current = _settings.value.customPointRangesHabits.toMutableSet()
+        if (habitName in current) {
+            current.remove(habitName)
+            val ranges = _settings.value.customPointRanges.toMutableMap()
+            ranges.remove(habitName)
+            _settings.value = _settings.value.copy(
+                customPointRangesHabits = current,
+                customPointRanges = ranges
+            )
+            viewModelScope.launch {
+                settingsRepo.saveCustomPointRangesHabits(current)
+                settingsRepo.saveCustomPointRanges(ranges)
+            }
+        } else {
+            current.add(habitName)
+            val ranges = _settings.value.customPointRanges.toMutableMap()
+            if (habitName !in ranges) {
+                ranges[habitName] = List(7) { com.example.tail.data.PointRange() }
+            }
+            _settings.value = _settings.value.copy(
+                customPointRangesHabits = current,
+                customPointRanges = ranges
+            )
+            viewModelScope.launch {
+                settingsRepo.saveCustomPointRangesHabits(current)
+                settingsRepo.saveCustomPointRanges(ranges)
+                recalculateHabitPointsForCustomRanges(habitName)
+            }
+        }
+    }
+
+    /**
+     * Sets the custom point ranges for [habitName].
+     * When ranges change, all historical entries for the habit are recalculated.
+     */
+    fun setCustomPointRanges(habitName: String, ranges: List<com.example.tail.data.PointRange>) {
+        val rangesMap = _settings.value.customPointRanges.toMutableMap()
+        rangesMap[habitName] = ranges
+        _settings.value = _settings.value.copy(customPointRanges = rangesMap)
+        viewModelScope.launch {
+            settingsRepo.saveCustomPointRanges(rangesMap)
+            recalculateHabitPointsForCustomRanges(habitName)
+        }
+    }
+
+    /**
+     * Recalculates all historical entries for [habitName] based on custom point ranges.
+     * This is called when custom point ranges are enabled or modified.
+     */
+    private suspend fun recalculateHabitPointsForCustomRanges(habitName: String) {
+        val settings = _settings.value
+        if (habitName !in settings.customPointRangesHabits) return
+
+        val ranges = settings.customPointRanges[habitName] ?: return
+        val uri = settings.fileUri
+        if (uri.isEmpty()) return
+
+        val loadResult = habitsRepo.loadDatabaseResult(
+            android.net.Uri.parse(uri),
+            context
+        )
+        if (loadResult !is com.example.tail.data.HabitsLoadResult.Success) return
+
+        val db = loadResult.db.toMutableMap()
+        val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
+        if (habitEntries.isEmpty()) return
+
+        val isGarminLinked = habitName in settings.garminHabitLinks
+        val isDivider = (settings.habitDividers[habitName] ?: 1) > 1
+
+        for ((dateStr, rawCount) in habitEntries) {
+            val trueValue: Int = when {
+                isGarminLinked -> {
+                    val garminType = com.example.tail.data.GarminType.fromKey(settings.garminHabitLinks[habitName]!!)
+                    val monthlyData = _garminMonthlyData.value[garminType]
+                    monthlyData?.get(dateStr) ?: rawCount
+                }
+                isDivider -> rawCount
+                else -> rawCount
+            }
+
+            val newPoints = com.example.tail.data.calculatePointsFromRanges(trueValue, ranges)
+            habitEntries[dateStr] = newPoints
+        }
+
+        db[habitName] = habitEntries.toSortedMap()
+
+        habitsRepo.saveDatabase(
+            android.net.Uri.parse(uri),
+            context,
+            db
+        )
+
+        cachedPhoneDb = db
+        rebuildHabitList()
+    }
 }
 
 class HabitViewModelFactory(

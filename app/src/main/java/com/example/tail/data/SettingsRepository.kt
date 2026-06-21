@@ -102,6 +102,11 @@ private val KEY_CUSTOM_INPUT_RECENT_AMOUNTS = stringPreferencesKey("custom_input
 private val KEY_MAP_STATS_HABITS = stringSetPreferencesKey("map_stats_habits")
 private val KEY_MAP_STATS_SHOW_TEXT_HABITS = stringSetPreferencesKey("map_stats_show_text_habits")
 
+// Custom point ranges settings
+private val KEY_CUSTOM_POINT_RANGES_HABITS = stringSetPreferencesKey("custom_point_ranges_habits")
+// Stored as "habitName\x00min0,max0|min1,max1|...|min6,max6|||habitName\x00..." pairs
+private val KEY_CUSTOM_POINT_RANGES = stringPreferencesKey("custom_point_ranges")
+
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
 
@@ -315,6 +320,38 @@ private fun decodeLinkedHabitsMap(raw: String): Map<String, Set<String>> {
     }.toMap()
 }
 
+// Serialisation helpers for Map<String, List<PointRange>> (habit name → 7 point ranges).
+// Format: "habitName\x00min0,max0|min1,max1|...|min6,max6|||habitName\x00..."
+// Each range is stored as "min,max" with pipe separators between ranges.
+private fun encodePointRangesMap(map: Map<String, List<PointRange>>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) ->
+        val rangesStr = v.joinToString("|") { range -> "${range.min},${range.max}" }
+        "$k$KV_SEP$rangesStr"
+    }
+
+private fun decodePointRangesMap(raw: String): Map<String, List<PointRange>> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null
+        else {
+            val key = pair.substring(0, idx)
+            val rangesStr = pair.substring(idx + 1)
+            val ranges = rangesStr.split("|").mapNotNull { rangeStr ->
+                val parts = rangeStr.split(",")
+                if (parts.size == 2) {
+                    val min = parts[0].toIntOrNull()
+                    val max = parts[1].toIntOrNull()
+                    if (min != null && max != null) PointRange(min, max) else null
+                } else null
+            }
+            // Ensure we always have exactly 7 ranges (0-6)
+            val paddedRanges = ranges + List(7 - ranges.size) { PointRange() }
+            key to paddedRanges.take(7)
+        }
+    }.toMap()
+}
+
 /**
  * Persists app settings (file URIs, custom input habits, custom habit order, habit screens)
  * using DataStore.
@@ -349,6 +386,7 @@ class SettingsRepository(private val context: Context) {
             migrateStringSet(KEY_TIMED_HABITS)
             migrateStringSet(KEY_TIMELESS_HABITS)
             migrateStringSet(KEY_VOICE_TRIGGER_HABITS)
+            migrateStringSet(KEY_CUSTOM_POINT_RANGES_HABITS)
 
             // --- Delimited-string keys (habit order) ---
             val orderRaw = prefs[KEY_HABIT_ORDER] ?: ""
@@ -379,6 +417,7 @@ class SettingsRepository(private val context: Context) {
             migrateKvKey(KEY_HABIT_SUBTYPES)
             migrateKvKey(KEY_SUBTYPE_DATA_FILE_URIS)
             migrateKvKey(KEY_TIMED_DATA_FILE_URIS)
+            migrateKvKey(KEY_CUSTOM_POINT_RANGES)
 
             // --- Linked-habits map: rename both keys and values ---
             val linkedRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
@@ -425,6 +464,7 @@ class SettingsRepository(private val context: Context) {
         val customInputRecentAmountsRaw = prefs[KEY_CUSTOM_INPUT_RECENT_AMOUNTS] ?: ""
         val garminThresholdsRaw = prefs[KEY_GARMIN_THRESHOLDS] ?: ""
         val garminHabitLinksRaw = prefs[KEY_GARMIN_HABIT_LINKS] ?: ""
+        val customPointRangesRaw = prefs[KEY_CUSTOM_POINT_RANGES] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -481,7 +521,9 @@ class SettingsRepository(private val context: Context) {
             garminAppToken = prefs[KEY_GARMIN_APP_TOKEN] ?: "",
             garminDateOfBirth = prefs[KEY_GARMIN_DATE_OF_BIRTH] ?: "",
             garminThresholds = decodeIntMap(garminThresholdsRaw),
-            garminHabitLinks = decodeFileUriMap(garminHabitLinksRaw)
+            garminHabitLinks = decodeFileUriMap(garminHabitLinksRaw),
+            customPointRangesHabits = prefs[KEY_CUSTOM_POINT_RANGES_HABITS] ?: emptySet(),
+            customPointRanges = decodePointRangesMap(customPointRangesRaw)
         )
     }
 
@@ -847,5 +889,19 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of text-input habits whose text should be shown in the map stats panel. */
     suspend fun saveMapStatsShowTextHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_MAP_STATS_SHOW_TEXT_HABITS] = habits }
+    }
+
+    // ── Custom Point Ranges Settings ────────────────────────────────────────
+
+    /** Saves the set of habits that have custom point ranges enabled. */
+    suspend fun saveCustomPointRangesHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_CUSTOM_POINT_RANGES_HABITS] = habits }
+    }
+
+    /** Saves the map of habit name → list of 7 point ranges. */
+    suspend fun saveCustomPointRanges(ranges: Map<String, List<PointRange>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CUSTOM_POINT_RANGES] = encodePointRangesMap(ranges)
+        }
     }
 }

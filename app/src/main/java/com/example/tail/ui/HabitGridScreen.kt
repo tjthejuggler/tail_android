@@ -1,5 +1,6 @@
 package com.example.tail.ui
 
+import kotlin.text.toIntOrNull
 import android.Manifest
 import android.app.Activity
 import android.content.pm.ActivityInfo
@@ -78,6 +79,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -704,6 +706,10 @@ fun HabitGridScreen(
                         onToggleVoiceSubtype = { name -> viewModel.toggleVoiceSubtype(name) },
                         timelessHabits = settings.timelessHabits,
                         onToggleTimeless = { name -> viewModel.toggleTimeless(name) },
+                        customPointRangesHabits = settings.customPointRangesHabits,
+                        customPointRanges = settings.customPointRanges,
+                        onToggleCustomPointRanges = { name -> viewModel.toggleCustomPointRanges(name) },
+                        onSetCustomPointRanges = { name, ranges -> viewModel.setCustomPointRanges(name, ranges) },
                         selectedHabitTimestampCount = selectedHabitTimestampCount,
                         onShowTimestamps = { name ->
                             timestampScope.launch {
@@ -1341,6 +1347,10 @@ private fun EditModeControlBar(
     onToggleVoiceSubtype: (String) -> Unit = {},
     timelessHabits: Set<String> = emptySet(),
     onToggleTimeless: (String) -> Unit = {},
+    customPointRangesHabits: Set<String> = emptySet(),
+    customPointRanges: Map<String, List<com.example.tail.data.PointRange>> = emptyMap(),
+    onToggleCustomPointRanges: (String) -> Unit = {},
+    onSetCustomPointRanges: (String, List<com.example.tail.data.PointRange>) -> Unit = { _, _ -> },
     /** Number of timestamps for the selected habit on the current day. */
     selectedHabitTimestampCount: Int = 0,
     /** Called when the user taps the timestamps button. */
@@ -2415,6 +2425,89 @@ private fun EditModeControlBar(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
+                    // ── Custom Point Ranges toggle ────────────────────────────
+                    val isCustomPointRanges = selectedHabitName in customPointRangesHabits
+                    var showPointRangesDialog by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "Custom Point Ranges", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isCustomPointRanges) "Points based on value ranges"
+                                       else "Standard point calculation",
+                                color = if (isCustomPointRanges) Color(0xFFBB88FF) else Color(0xFF888888),
+                                fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isCustomPointRanges,
+                            onCheckedChange = { onToggleCustomPointRanges(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFFBB88FF),
+                                checkedTrackColor = Color(0xFF4A2A6A),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    if (isCustomPointRanges) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val currentRanges = customPointRanges[selectedHabitName] ?: List(7) { com.example.tail.data.PointRange() }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "  Point ranges (0-6)",
+                                    color = Color(0xFFAAAAAA), fontSize = 12.sp
+                                )
+                                val rangeSummary = currentRanges.mapIndexed { idx, range ->
+                                    if (range.min == Int.MIN_VALUE && range.max == Int.MAX_VALUE) {
+                                        "[$idx]: ∞"
+                                    } else if (range.min == Int.MIN_VALUE) {
+                                        "[$idx]: ≤${range.max}"
+                                    } else if (range.max == Int.MAX_VALUE) {
+                                        "[$idx]: ≥${range.min}"
+                                    } else {
+                                        "[$idx]: ${range.min}-${range.max}"
+                                    }
+                                }.joinToString(", ")
+                                Text(
+                                    text = rangeSummary,
+                                    color = Color(0xFF888888), fontSize = 10.sp
+                                )
+                            }
+                            Button(
+                                onClick = { showPointRangesDialog = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A2A6A)),
+                                modifier = Modifier.height(32.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                            ) {
+                                Text("Edit", fontSize = 11.sp, color = Color(0xFFBB88FF))
+                            }
+                        }
+
+                        if (showPointRangesDialog) {
+                            PointRangesEditorDialog(
+                                habitName = selectedHabitName,
+                                currentRanges = currentRanges,
+                                onSave = { ranges ->
+                                    onSetCustomPointRanges(selectedHabitName, ranges)
+                                    showPointRangesDialog = false
+                                },
+                                onDismiss = { showPointRangesDialog = false }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
                     // ── Timeless toggle ────────────────────────────────────
                     val isTimeless = selectedHabitName in timelessHabits
                     Row(
@@ -3153,6 +3246,150 @@ private fun IncrementAmountsEditorDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2800))
                 ) {
                     Text("Save", color = Color(0xFFFFCC44))
+                }
+            }
+        }
+    }
+}
+
+// ── Custom Point Ranges dialog ─────────────────────────────────────────────────
+@Composable
+private fun PointRangesEditorDialog(
+    habitName: String,
+    currentRanges: List<com.example.tail.data.PointRange>,
+    onSave: (List<com.example.tail.data.PointRange>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // State for each range's min and max values
+    val rangeStates = remember(currentRanges) {
+        mutableStateListOf(
+            *currentRanges.map { range ->
+                mutableStateOf(Pair(
+                    if (range.min == Int.MIN_VALUE) "" else range.min.toString(),
+                    if (range.max == Int.MAX_VALUE) "" else range.max.toString()
+                ))
+            }.toTypedArray()
+        )
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = "Custom Point Ranges",
+                color = Color(0xFFBB88FF),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = habitName,
+                color = Color(0xFF888888),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = "Enter min/max values for each point level (0-6):",
+                color = Color(0xFFAAAAAA),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Leave min empty for no minimum, leave max empty for no maximum.",
+                color = Color(0xFF666666),
+                fontSize = 10.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Range rows for each point level (0-6)
+            for (i in 0..6) {
+                val (minText, maxText) = rangeStates[i].value
+                var localMin by remember { mutableStateOf(minText) }
+                var localMax by remember { mutableStateOf(maxText) }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "$i",
+                        color = Color(0xFFBB88FF),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.width(24.dp)
+                    )
+                    OutlinedTextField(
+                        value = localMin,
+                        onValueChange = {
+                            localMin = it
+                            rangeStates[i].value = Pair(localMin, localMax)
+                        },
+                        label = { Text("Min", fontSize = 10.sp, color = Color(0xFF666666)) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFFBB88FF),
+                            unfocusedBorderColor = Color(0xFF554488),
+                            cursorColor = Color(0xFFBB88FF)
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        textStyle = TextStyle(fontSize = 12.sp)
+                    )
+                    OutlinedTextField(
+                        value = localMax,
+                        onValueChange = {
+                            localMax = it
+                            rangeStates[i].value = Pair(localMin, localMax)
+                        },
+                        label = { Text("Max", fontSize = 10.sp, color = Color(0xFF666666)) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFFBB88FF),
+                            unfocusedBorderColor = Color(0xFF554488),
+                            cursorColor = Color(0xFFBB88FF)
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        textStyle = TextStyle(fontSize = 12.sp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.padding(horizontal = 4.dp))
+                Button(
+                    onClick = {
+                        val ranges = rangeStates.map { state -> val (minText, maxText) = state.value
+                            com.example.tail.data.PointRange(
+                                min = minText.toIntOrNull() ?: Int.MIN_VALUE,
+                                max = maxText.toIntOrNull() ?: Int.MAX_VALUE
+                            )
+                        }
+                        onSave(ranges)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A2A6A))
+                ) {
+                    Text("Save", color = Color(0xFFBB88FF))
                 }
             }
         }
