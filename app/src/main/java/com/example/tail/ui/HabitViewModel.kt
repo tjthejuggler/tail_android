@@ -231,6 +231,19 @@ class HabitViewModel(
         // Load AI icons from disk on startup
         refreshAiIcons()
 
+        // Load cached Garmin data on startup so garminMonthlyData is populated
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cachedData = garminRepo.loadAllCachedData()
+                if (cachedData.isNotEmpty()) {
+                    _garminMonthlyData.value = cachedData
+                    Log.d(TAG, "Loaded ${cachedData.size} Garmin metric types from cache")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to load cached Garmin data: ${e.message}")
+            }
+        }
+
         // Collect in-process increment events from VoiceHabitService / IPC receivers
         // so the UI updates instantly without waiting for ON_RESUME.
         viewModelScope.launch {
@@ -2529,13 +2542,40 @@ class HabitViewModel(
             Log.d(TAG, "Garmin sync: fetched types=${monthData.keys}, " +
                 "links=${s.garminHabitLinks}, " +
                 "todayValues=" + monthData.mapValues { it.value[today] })
-            _garminMonthlyData.value = monthData  // Store for UI display
+            // Persist the freshly-fetched recent days to cache so they survive
+            // restarts. The proxy/fetch pipeline is the source of truth for recent
+            // days, so these values overwrite any stale cached value for the same date.
+            withContext(Dispatchers.IO) { garminRepo.mergeAndCacheDailyData(monthData) }
+            // MERGE into the displayed map — never REPLACE. Replacing here was the
+            // bug that wiped historic "garmin value" fields down to the last 7 days.
+            mergeIntoGarminMonthlyData(monthData)
             applyGarminData(monthData, s)
             _garminSyncStatus.value = "Last sync: ${java.time.LocalTime.now().toString().take(5)}"
         } catch (e: Exception) {
             Log.e(TAG, "Garmin sync failed: ${e.message}", e)
             _garminSyncStatus.value = "Sync failed: ${e.message?.take(50)}"
         }
+    }
+
+    /**
+     * Merges freshly-fetched Garmin data into the displayed [_garminMonthlyData]
+     * StateFlow WITHOUT discarding the historic backlog.
+     *
+     * This is the fix for the "all garmin values show '-'" regression: the 7-day
+     * poll used to do `_garminMonthlyData.value = monthData`, which replaced the
+     * full 5-year map with just the last week, so every older date rendered '-'.
+     * Fresh values win for the dates they cover; every other date is preserved.
+     */
+    private fun mergeIntoGarminMonthlyData(fresh: Map<GarminType, Map<String, Int>>) {
+        if (fresh.isEmpty()) return
+        val merged = _garminMonthlyData.value.mapValues { it.value.toMutableMap() }.toMutableMap()
+        for ((type, dayMap) in fresh) {
+            val target = merged.getOrPut(type) { mutableMapOf() }
+            for ((date, value) in dayMap) {
+                target[date] = value
+            }
+        }
+        _garminMonthlyData.value = merged.mapValues { it.value.toMap() }
     }
 
     /**
@@ -2572,7 +2612,10 @@ class HabitViewModel(
                     _garminSyncStatus.value = "Fetching archives: $done / $total months"
                 }
                 _garminSyncStatus.value = "Applying backlog data to habits…"
-                _garminMonthlyData.value = allData  // Store for UI display
+                // Merge (cache was already cleared above for a full refresh, so this
+                // is effectively a fresh population, but merging keeps it consistent
+                // with the poll path and avoids dropping any concurrently-loaded data).
+                mergeIntoGarminMonthlyData(allData)
                 applyGarminData(allData, s)
                 _garminSyncStatus.value = "Backlog sync complete!"
             } catch (e: Exception) {
@@ -2723,36 +2766,44 @@ class HabitViewModel(
                 mutableDb[habitName] = mutableMapOf()
             }
 
+            // Custom point ranges (if enabled for this habit) map the raw Garmin
+            // value directly to a points tier; otherwise we fall back to the simple
+            // threshold → 0/1 rule.
+            val useCustomRanges = habitName in settings.customPointRangesHabits
+            val customRanges = settings.customPointRanges[habitName]
+
             val habitData = mutableDb[habitName]!!.toMutableMap()
             var appliedCount = 0
             for ((date, value) in dailyValues) {
-                // Check if value meets the threshold condition
-                val meetsThreshold = if (garminType == GarminType.FITNESS_AGE_DISTANCE) {
-                    // For fitness age distance, more negative is better (younger fitness age)
-                    value <= threshold
+                // Compute the points for this date DETERMINISTICALLY from the current
+                // (read-only) Garmin value. We always write the computed result —
+                // including 0 — so that a corrected value from the laptop proxy/fetch
+                // pipeline flips the point both UP and DOWN. Previously we only wrote
+                // on threshold-met, so a downward correction left a stale point.
+                val newValue: Int = if (useCustomRanges && customRanges != null) {
+                    com.example.tail.data.calculatePointsFromRanges(value, customRanges)
                 } else {
-                    // For other metrics, higher is better
-                    value >= threshold
+                    val meetsThreshold = if (garminType == GarminType.FITNESS_AGE_DISTANCE) {
+                        // For fitness age distance, more negative is better.
+                        value <= threshold
+                    } else {
+                        value >= threshold
+                    }
+                    if (meetsThreshold) 1 else 0
                 }
-                
-                Log.d(TAG, "  Date: $date, Value: $value, Meets threshold ($threshold): $meetsThreshold")
-                
-                if (meetsThreshold) {
-                    val existing = habitData[date] ?: 0
-                    // Store the increment (1) instead of the raw Garmin value
-                    val newValue = 1
-                    if (newValue != existing) {
-                        habitData[date] = newValue
-                        dbChanged = true
 
-                        // Track delta for today (for timestamp recording)
-                        val today = LocalDate.now().toString()
-                        if (date == today) {
-                            // Calculate delta: if existing was 0, add 1; otherwise no new timestamps
-                            val delta = if (existing == 0) 1 else 0
-                            if (delta > 0) {
-                                todayDeltas[habitName] = (todayDeltas[habitName] ?: 0) + delta
-                            }
+                val existing = habitData[date] ?: 0
+                if (newValue != existing) {
+                    habitData[date] = newValue
+                    dbChanged = true
+                    appliedCount++
+
+                    // Track delta for today (for timestamp recording)
+                    val today = LocalDate.now().toString()
+                    if (date == today) {
+                        val delta = newValue - existing
+                        if (delta > 0) {
+                            todayDeltas[habitName] = (todayDeltas[habitName] ?: 0) + delta
                         }
                     }
                 }
@@ -2793,6 +2844,9 @@ class HabitViewModel(
     fun importGarminHistoricData(jsonFile: File, onComplete: (ImportResult) -> Unit = {}) {
         viewModelScope.launch {
             try {
+                _garminSyncStatus.value = "Clearing old cache…"
+                garminRepo.clearCache()
+                
                 _garminSyncStatus.value = "Importing historic data…"
                 val result = garminRepo.importFromJson(jsonFile) { processed, total ->
                     _garminSyncStatus.value = "Processing: $processed / $total dates"
@@ -2800,38 +2854,30 @@ class HabitViewModel(
                 
                 if (result.success) {
                     _garminSyncStatus.value = result.message
+                    Log.d(TAG, "Import result: success=${result.success}, message=${result.message}")
                     
                     // Apply the imported data to linked habits
                     val s = _settings.value
+                    Log.d(TAG, "Import: garminHabitLinks=${s.garminHabitLinks}, fileUri=${s.fileUri.isNotEmpty()}")
+                    
                     if (s.garminHabitLinks.isNotEmpty() && s.fileUri.isNotEmpty()) {
-                        // Load all imported data from cache
-                        val allData = mutableMapOf<GarminType, Map<String, Int>>()
-                        val cacheDir = File(context.filesDir, "garmin_cache")
-                        cacheDir.listFiles()?.forEach { file ->
-                            if (file.name.endsWith(".json")) {
-                                val parts = file.nameWithoutExtension.split("_")
-                                if (parts.size == 2) {
-                                    val year = parts[0].toIntOrNull()
-                                    val month = parts[1].toIntOrNull()
-                                    if (year != null && month != null) {
-                                        val monthData = garminRepo.loadFromCache(year, month)
-                                        if (monthData != null) {
-                                            for ((type, dayMap) in monthData) {
-                                                val existing = allData[type] ?: emptyMap()
-                                                allData[type] = existing + dayMap
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // Load all imported data from cache using the new method
+                        val allData = garminRepo.loadAllCachedData()
+                        Log.d(TAG, "Import: Loaded ${allData.size} Garmin types from cache")
                         
                         if (allData.isNotEmpty()) {
                             _garminSyncStatus.value = "Applying data to habits…"
-                            _garminMonthlyData.value = allData
+                            mergeIntoGarminMonthlyData(allData)
                             applyGarminData(allData, s)
                             _garminSyncStatus.value = "Import complete! Data applied to linked habits."
+                            Log.d(TAG, "Import: Successfully applied data to ${allData.size} Garmin types")
+                        } else {
+                            _garminSyncStatus.value = "Import complete but no data found in cache."
+                            Log.w(TAG, "Import: No data found in cache after import")
                         }
+                    } else {
+                        _garminSyncStatus.value = "Import complete but no habits linked or no file set."
+                        Log.w(TAG, "Import: No habits linked (${s.garminHabitLinks.size}) or no file (${s.fileUri.isEmpty()})")
                     }
                 } else {
                     _garminSyncStatus.value = "Import failed: ${result.message}"
