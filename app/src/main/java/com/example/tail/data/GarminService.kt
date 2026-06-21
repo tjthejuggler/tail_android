@@ -234,6 +234,8 @@ class GarminService {
             vo2Max = json.optDouble("vo2_max").takeIf { !it.isNaN() },
             fitnessAge = json.optInt("fitness_age").takeIf { it > 0 },
             restingHr = json.optInt("resting_hr").takeIf { it > 0 },
+            minHr = json.optInt("min_hr").takeIf { it > 0 },
+            maxHr = json.optInt("max_hr").takeIf { it > 0 },
             hrvWeeklyAvg = json.optInt("hrv_weekly_avg").takeIf { it > 0 },
             hrvLastNight = json.optInt("hrv_last_night").takeIf { it > 0 },
             sleepScore = json.optInt("sleep_score").takeIf { it > 0 },
@@ -242,7 +244,8 @@ class GarminService {
             distanceMeters = json.optInt("distance_meters").takeIf { it > 0 },
             calories = json.optInt("calories").takeIf { it > 0 },
             activeMinutes = json.optInt("active_minutes").takeIf { it > 0 },
-            floorsClimbed = json.optInt("floors_climbed").takeIf { it > 0 }
+            floorsClimbed = json.optInt("floors_climbed").takeIf { it > 0 },
+            stressScore = json.optInt("stress_score").takeIf { it > 0 }
         )
     }
 }
@@ -255,6 +258,8 @@ data class GarminMetricsDto(
     val vo2Max: Double?,
     val fitnessAge: Int?,
     val restingHr: Int?,
+    val minHr: Int?,
+    val maxHr: Int?,
     val hrvWeeklyAvg: Int?,
     val hrvLastNight: Int?,
     val sleepScore: Int?,
@@ -263,7 +268,8 @@ data class GarminMetricsDto(
     val distanceMeters: Int?,
     val calories: Int?,
     val activeMinutes: Int?,
-    val floorsClimbed: Int?
+    val floorsClimbed: Int?,
+    val stressScore: Int?
 )
 
 /**

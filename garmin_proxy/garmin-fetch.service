@@ -1,0 +1,13 @@
+[Unit]
+Description=Garmin Data Fetcher
+After=network.target
+
+[Service]
+Type=oneshot
+User=twain
+WorkingDirectory=/home/twain/AndroidStudioProjects/tail/garmin_proxy
+Environment="PATH=/home/twain/AndroidStudioProjects/tail/garmin_proxy/venv/bin:/usr/bin:/bin"
+EnvironmentFile=/home/twain/AndroidStudioProjects/tail/garmin_proxy/.env
+ExecStart=/home/twain/AndroidStudioProjects/tail/garmin_proxy/venv/bin/python3 /home/twain/AndroidStudioProjects/tail/garmin_proxy/fetch_data.py
+StandardOutput=append:/home/twain/AndroidStudioProjects/tail/garmin_proxy/fetch.log
+StandardError=append:/home/twain/AndroidStudioProjects/tail/garmin_proxy/fetch.log

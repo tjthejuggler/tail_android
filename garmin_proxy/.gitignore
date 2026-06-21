@@ -1,0 +1,34 @@
+# Virtual environment
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Generated files (contain sensitive data)
+garmin_session.json
+garmin_cache.json
+.last_fetch_timestamp
+
+# OAuth session file (contains sensitive tokens)
+.garth_oauth_session
+
+# Logs
+*.log
+fetch.log
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

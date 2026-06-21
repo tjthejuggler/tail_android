@@ -68,14 +68,13 @@ class GarminRepository(private val context: Context) {
         get() = File(context.filesDir, "garmin_cache").also { it.mkdirs() }
 
     /**
-     * Fetches and processes metrics for TODAY only (for regular polling / test-connection).
-     * Returns per-day values for each metric type, keyed by today's date.
+     * Fetches and processes metrics for the last 7 days (for regular polling / test-connection).
+     * Returns per-day values for each metric type, keyed by date.
      *
-     * The Garmin proxy exposes a single-date endpoint and performs a full Garmin
-     * login on every call, so looping over an entire month is prohibitively slow
-     * (≈15 s timeout × 30 days). The metrics we surface ("most recent" VO2 max,
-     * fitness age, resting HR, last-night HRV, sleep score) are point-in-time
-     * values that only matter for today, so a single fetch is both correct and fast.
+     * The Garmin proxy caches the last 7 days of data locally, so we can fetch
+     * all of them without hitting Garmin's rate limits. The metrics we surface
+     * (VO2 max, fitness age, resting HR, last-night HRV, sleep score) are
+     * point-in-time values that matter for recent days.
      */
     suspend fun fetchCurrentMonthData(
         proxyUrl: String,
@@ -83,15 +82,20 @@ class GarminRepository(private val context: Context) {
         dateOfBirth: String = ""
     ): Map<GarminType, DailyValueMap> = withContext(Dispatchers.IO) {
         try {
-            val today = LocalDate.now().toString()
             val result = mutableMapOf<GarminType, MutableMap<String, Int>>()
-            val metrics = service.fetchDailyMetrics(proxyUrl, appToken, today)
-            if (metrics != null) {
-                processMetricsToDaily(metrics, result, dateOfBirth)
+            val today = LocalDate.now()
+            
+            // Fetch last 7 days (including today)
+            repeat(7) { daysAgo ->
+                val date = today.minusDays(daysAgo.toLong()).toString()
+                val metrics = service.fetchDailyMetrics(proxyUrl, appToken, date)
+                if (metrics != null) {
+                    processMetricsToDaily(metrics, result, dateOfBirth)
+                }
             }
             result.mapValues { it.value.toMap() }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch today's Garmin data: ${e.message}")
+            Log.e(TAG, "Failed to fetch Garmin data: ${e.message}")
             emptyMap()
         }
     }
@@ -257,6 +261,16 @@ class GarminRepository(private val context: Context) {
             dayMap[date] = it
         }
 
+        metrics.minHr?.let {
+            val dayMap = result.getOrPut(GarminType.MIN_HR) { mutableMapOf() }
+            dayMap[date] = it
+        }
+
+        metrics.maxHr?.let {
+            val dayMap = result.getOrPut(GarminType.MAX_HR) { mutableMapOf() }
+            dayMap[date] = it
+        }
+
         metrics.hrvLastNight?.let {
             val dayMap = result.getOrPut(GarminType.HRV_LAST_NIGHT) { mutableMapOf() }
             dayMap[date] = it
@@ -299,6 +313,11 @@ class GarminRepository(private val context: Context) {
 
         metrics.floorsClimbed?.let {
             val dayMap = result.getOrPut(GarminType.FLOORS_CLIMBED) { mutableMapOf() }
+            dayMap[date] = it
+        }
+
+        metrics.stressScore?.let {
+            val dayMap = result.getOrPut(GarminType.STRESS_LEVEL) { mutableMapOf() }
             dayMap[date] = it
         }
     }

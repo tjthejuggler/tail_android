@@ -1,0 +1,10 @@
+[Unit]
+Description=Timer for Garmin Data Fetcher (runs every 30 minutes)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Unit=garmin-fetch.service
+
+[Install]
+WantedBy=timers.target

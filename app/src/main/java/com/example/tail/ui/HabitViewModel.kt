@@ -2739,8 +2739,8 @@ class HabitViewModel(
                 
                 if (meetsThreshold) {
                     val existing = habitData[date] ?: 0
-                    // Store the actual Garmin value instead of incrementing by 1
-                    val newValue = value
+                    // Store the increment (1) instead of the raw Garmin value
+                    val newValue = 1
                     if (newValue != existing) {
                         habitData[date] = newValue
                         dbChanged = true
