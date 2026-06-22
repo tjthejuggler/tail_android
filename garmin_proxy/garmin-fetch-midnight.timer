@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer for Garmin Data Fetcher (runs at midnight for new day data)
+
+[Timer]
+OnBootSec=1min
+OnCalendar=*-*-* 00:05:00
+Unit=garmin-fetch-midnight.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -399,7 +399,7 @@ sudo systemctl start garmin-proxy
 
 ---
 
-## Garmin "garmin value" / points data flow *(fixed 2026-06-21T20:30Z)*
+## Garmin "garmin value" / points data flow *(fixed 2026-06-22T07:35Z)*
 
 The "garmin value" field shown under each Garmin-linked habit is **read-only** and is
 fed exclusively from the on-disk monthly cache in the app's internal storage
@@ -417,6 +417,9 @@ What changed:
 - The 7-day poll now **merges** fresh data into the displayed map instead of replacing
   it (`mergeIntoGarminMonthlyData`), and **writes the fresh days through to the cache**
   (`GarminRepository.mergeAndCacheDailyData`) so recent data survives restarts.
+- **"Test Connection" is now the authoritative "sync from laptop" button** — it fetches
+  the entire proxy backlog (whatever your laptop script has cached) and merges it, with
+  laptop values winning for the dates they cover. Historic JSON data is preserved.
 - **Laptop proxy/fetch data wins on conflict**: when the proxy reports a value that
   differs from what is cached for the same date, the fresh value overwrites the cached
   one (both in memory and on disk).
@@ -426,9 +429,8 @@ What changed:
   left a stale point).
 - "Import Historic Data" remains the authoritative path for the deep past: it
   `clearCache()`s then re-imports `garmin_import.json` (back to 2019/2020), so a reimport
-  cleanly overwrites whatever was there. The proxy "Fetch Entire Backlog" button is
-  limited to what Garmin's API serves for recent days (~the last few months) — use the
-  JSON historic import for the full multi-year history.
+  cleanly overwrites whatever was there. The proxy "Fetch Entire Backlog" button clears
+  the cache and re-fetches from Garmin's API (useful for a full refresh from Garmin).
 
 ## Importing Historic Garmin Data *(added 2026-06-18T16:36Z)*
 

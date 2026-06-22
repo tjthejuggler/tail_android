@@ -2,7 +2,7 @@
 
 A secure Python proxy that bridges Garmin Connect data to the Tail Android habit tracker app. Authentication uses the `garminconnect` / `garth` library with **persisted OAuth tokens** so the system logs in exactly once and reuses the tokens for every subsequent fetch.
 
-**Last Updated:** 2026-06-21
+**Last Updated:** 2026-06-22
 
 ## Architecture
 
@@ -112,6 +112,7 @@ nano .env  # Edit with your actual credentials
 This will:
 - Start the API server automatically on boot
 - Fetch data every 30 minutes (respects 15-minute rate limit)
+- **NEW:** Fetch fresh data at midnight (00:05) for the new day
 - Restart services automatically if they crash
 
 **Manual Control:**
@@ -120,14 +121,19 @@ This will:
 # Check status
 systemctl --user status garmin-proxy.service
 systemctl --user status garmin-fetch.timer
+systemctl --user status garmin-fetch-midnight.timer
 
 # View logs
 journalctl --user -u garmin-proxy.service -f
 journalctl --user -u garmin-fetch.service -f
+journalctl --user -u garmin-fetch-midnight.service -f
 
 # Stop/start services
 systemctl --user stop garmin-proxy.service
 systemctl --user start garmin-proxy.service
+
+# Trigger a forced fetch immediately (bypasses rate limit)
+systemctl --user start garmin-fetch-midnight.service
 ```
 
 **Alternative: Cron Job**
@@ -261,6 +267,30 @@ Comprehensive health check that validates proxy status and cache freshness.
 }
 ```
 
+### POST `/api/v1/force-fetch`
+
+**NEW:** Trigger a forced fetch of Garmin data, bypassing the 15-minute rate limit. This is useful for manually refreshing data or ensuring the latest data is available after a new day starts.
+
+**Headers:**
+- `X-App-Auth`: Your secret token (must match `ANDROID_PROXY_KEY`)
+
+**Query Parameters:**
+- `days`: Number of days to fetch (default: 7)
+
+**Response:**
+```json
+{
+  "status": "fetch_started",
+  "message": "Forced fetch started in background for 7 days"
+}
+```
+
+**Example:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/force-fetch?days=7" \
+  -H "X-App-Auth: your_secret_token_here"
+```
+
 ## Data Schema
 
 | Field | Type | Description | Source |
@@ -284,7 +314,7 @@ To avoid getting your Garmin account banned, the system enforces these rules:
 
 1. **Never loop the auth script:** [`auth_bridge.py`](auth_bridge.py) should only be executed manually or *only* when [`fetch_data.py`](fetch_data.py) reports the saved tokens have expired. Repeated logins are what get rate-limited.
 
-2. **Polling Frequency:** The API should not be polled more than once every 15 minutes. This is enforced in [`fetch_data.py`](fetch_data.py).
+2. **Polling Frequency:** The API should not be polled more than once every 15 minutes. This is enforced in [`fetch_data.py`](fetch_data.py). However, you can bypass this limit using the `--force` flag or the `/api/v1/force-fetch` endpoint for manual refreshes.
 
 3. **Local Caching:** All JSON responses from Garmin are written directly to [`garmin_cache.json`](garmin_cache.json). The application layer queries the local datastore, not the Garmin API directly.
 

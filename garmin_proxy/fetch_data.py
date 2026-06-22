@@ -27,6 +27,7 @@ import json
 import time
 import logging
 import datetime
+import argparse
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -305,13 +306,17 @@ def fetch_fitness_age(client: Garmin, date_str: str) -> Optional[int]:
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
-def fetch_garmin_data(days: int = DEFAULT_DAYS) -> Dict[str, Any]:
+def fetch_garmin_data(days: int = DEFAULT_DAYS, force: bool = False) -> Dict[str, Any]:
     """
     Fetch Garmin data for the last `days` days and update the local cache.
 
+    Args:
+        days: Number of days to fetch (default: 7)
+        force: Bypass rate limiting and force a fresh fetch
+
     Returns the cache dict. On token expiry, raises TokenExpiredError.
     """
-    if not can_fetch_now():
+    if not force and not can_fetch_now():
         logger.info("Skipping fetch due to rate limiting; returning existing cache.")
         return load_cache()
 
@@ -346,8 +351,15 @@ def fetch_garmin_data(days: int = DEFAULT_DAYS) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Fetch Garmin health data")
+    parser.add_argument("--days", type=int, default=DEFAULT_DAYS,
+                        help=f"Number of days to fetch (default: {DEFAULT_DAYS})")
+    parser.add_argument("--force", action="store_true",
+                        help="Bypass rate limiting and force a fresh fetch")
+    args = parser.parse_args()
+
     try:
-        cache = fetch_garmin_data(days=DEFAULT_DAYS)
+        cache = fetch_garmin_data(days=args.days, force=args.force)
         print(f"\nCache contains data for {len(cache.get('data', {}))} days")
         print(f"Last updated: {cache.get('metadata', {}).get('last_updated', 'Unknown')}")
     except TokenExpiredError as e:

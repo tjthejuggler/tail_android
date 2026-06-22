@@ -18,9 +18,11 @@ This approach avoids 429 rate limiting by:
 import os
 import json
 import logging
+import subprocess
+import sys
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Security
+from fastapi import FastAPI, HTTPException, Security, BackgroundTasks
 from fastapi.security import APIKeyHeader
 from fastapi.responses import JSONResponse
 
@@ -234,4 +236,56 @@ def comprehensive_health_check(api_key: str = Security(api_key_header)):
         "cache_last_updated": cache.get("metadata", {}).get("last_updated"),
         "available_dates_count": len(available_dates),
         "has_recent_data": has_recent_data
+    }
+
+
+def _run_fetch_in_background(days: int = 7, force: bool = False):
+    """Run fetch_data.py in the background."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_path = os.path.join(script_dir, "fetch_data.py")
+    # Use the same Python interpreter that's running this app
+    python_exe = sys.executable
+    cmd = [python_exe, script_path, "--days", str(days)]
+    if force:
+        cmd.append("--force")
+    try:
+        subprocess.run(
+            cmd,
+            cwd=script_dir,
+            capture_output=True,
+            timeout=300,  # 5 minute timeout
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("Fetch operation timed out")
+    except Exception as e:
+        logger.error(f"Fetch operation failed: {e}")
+
+
+@app.post("/api/v1/force-fetch")
+def trigger_force_fetch(
+    background_tasks: BackgroundTasks,
+    days: int = 7,
+    api_key: str = Security(api_key_header)
+):
+    """
+    Trigger a forced fetch of Garmin data, bypassing rate limiting.
+    
+    Query Parameters:
+    - days: Number of days to fetch (default: 7)
+    
+    Response:
+    {
+        "status": "fetch_started",
+        "message": "Forced fetch started in background"
+    }
+    """
+    if api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid App Token")
+    
+    background_tasks.add_task(_run_fetch_in_background, days=days, force=True)
+    
+    logger.info(f"Forced fetch triggered for {days} days")
+    return {
+        "status": "fetch_started",
+        "message": f"Forced fetch started in background for {days} days"
     }

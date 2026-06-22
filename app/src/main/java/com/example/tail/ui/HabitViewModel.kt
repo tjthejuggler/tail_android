@@ -2660,6 +2660,12 @@ class HabitViewModel(
     /**
      * Tests the Garmin connection by performing a comprehensive health check.
      * Validates the full chain: proxy server, app token, Garmin API, and data availability.
+     *
+     * On success, fetches the entire proxy backlog (whatever the laptop has cached)
+     * and merges it into the displayed data, with laptop values winning for the dates
+     * they cover. This makes "Test Connection" the authoritative "sync from laptop"
+     * button — historic JSON data is preserved, but recent days are refreshed from
+     * the proxy/fetch pipeline.
      */
     fun testGarminConnection() {
         val s = _settings.value
@@ -2672,7 +2678,7 @@ class HabitViewModel(
             try {
                 _garminSyncStatus.value = "Testing connection…"
                 val result = garminRepo.performHealthCheck(s.garminProxyUrl, s.garminAppToken)
-                
+
                 if (result.success) {
                     val message = buildString {
                         append("✓ Connection successful!\n")
@@ -2684,12 +2690,13 @@ class HabitViewModel(
                     }
                     _garminSyncStatus.value = message
 
-                    // After a successful test, immediately fetch and apply Garmin data
-                    // to linked habits (in addition to the once-a-day automatic poll).
+                    // After a successful test, fetch the full proxy backlog and merge it.
+                    // This is the "sync from laptop" path: historic JSON data stays intact,
+                    // but any dates the laptop has (recent days, corrected values) overwrite.
                     Log.d(TAG, "Garmin test ok: enabled=${s.garminEnabled}, " +
                         "links=${s.garminHabitLinks.size}, fileUriSet=${s.fileUri.isNotEmpty()}")
                     if (s.garminEnabled && s.garminHabitLinks.isNotEmpty() && s.fileUri.isNotEmpty()) {
-                        syncGarminCurrentMonth()
+                        syncGarminBacklog()
                     } else {
                         Log.w(TAG, "Garmin sync skipped after test — guard not satisfied")
                     }
@@ -2699,6 +2706,44 @@ class HabitViewModel(
             } catch (e: Exception) {
                 _garminSyncStatus.value = "✗ Error: ${e.message}"
             }
+        }
+    }
+
+    /**
+     * Fetches the entire proxy backlog (whatever the laptop has cached) and merges it
+     * into the displayed data and cache, WITHOUT clearing the historic JSON data.
+     *
+     * This is the "sync from laptop" path used by "Test Connection". The laptop's
+     * values win for the dates they cover; all other dates (deep historic past from
+     * JSON) are preserved. This is distinct from `fetchGarminBacklog()` which does
+     * a full clear+fetch from the proxy (useful when you want to discard everything
+     * and re-fetch from Garmin's API).
+     */
+    private suspend fun syncGarminBacklog() {
+        val s = _settings.value
+        if (!s.garminEnabled || s.garminProxyUrl.isEmpty() || s.garminAppToken.isEmpty()) return
+        if (s.garminHabitLinks.isEmpty()) return
+        if (s.fileUri.isEmpty()) return
+
+        try {
+            _garminSyncStatus.value = "Fetching laptop data…"
+            val allData = garminRepo.fetchEntireBacklog(
+                s.garminProxyUrl,
+                s.garminAppToken,
+                s.garminDateOfBirth
+            ) { done, total ->
+                _garminSyncStatus.value = "Fetching: $done / $total months"
+            }
+            _garminSyncStatus.value = "Merging laptop data…"
+            // Persist to cache so laptop data survives restarts.
+            withContext(Dispatchers.IO) { garminRepo.mergeAndCacheDailyData(allData) }
+            // Merge (no clear) — laptop values win for dates they have, historic JSON stays.
+            mergeIntoGarminMonthlyData(allData)
+            applyGarminData(allData, s)
+            _garminSyncStatus.value = "Sync complete! Laptop data merged."
+        } catch (e: Exception) {
+            Log.e(TAG, "Garmin backlog sync failed: ${e.message}")
+            _garminSyncStatus.value = "Failed: ${e.message?.take(50)}"
         }
     }
 
