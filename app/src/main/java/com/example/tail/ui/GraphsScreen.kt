@@ -201,6 +201,58 @@ fun GraphsPanel(
             }
         }
 
+        // ── Points/Value toggle — shown when exactly one habit is selected ────
+        if (graphSelectedHabits.size == 1) {
+            val selectedHabit = graphSelectedHabits.first()
+            val showValue = viewModel.getGraphValueMode(selectedHabit) == 1
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Points",
+                    color = if (!showValue) Color(0xFF000000) else Color(0xFF88AA88),
+                    fontSize = 11.sp,
+                    fontWeight = if (!showValue) FontWeight.Bold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .background(
+                            if (!showValue) Color(0xFF66DD66) else Color(0xFF1A2E1A),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {
+                            if (showValue) viewModel.toggleGraphValueMode(selectedHabit)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+                Text(
+                    text = "Value",
+                    color = if (showValue) Color(0xFF000000) else Color(0xFF88AA88),
+                    fontSize = 11.sp,
+                    fontWeight = if (showValue) FontWeight.Bold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .background(
+                            if (showValue) Color(0xFF66DD66) else Color(0xFF1A2E1A),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {
+                            if (!showValue) viewModel.toggleGraphValueMode(selectedHabit)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
+
         // ── Chart area ────────────────────────────────────────────────────
         if (graphSelectedHabits.isNotEmpty()) {
             val today = LocalDate.now()
@@ -246,6 +298,7 @@ fun GraphsPanel(
                         viewModel.setGraphZoomRange(newStart, newEnd)
                     },
                     onZoomReset = { viewModel.clearGraphZoom() },
+                    valueModeMap = graphSelectedHabits.associateWith { viewModel.getGraphValueMode(it) },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -371,6 +424,7 @@ fun GraphsPanel(
                 if (!isLandscape && selectedDataPoint == null) {
                     StatsSummary(
                         seriesData = allSeriesData,
+                        valueModeMap = graphSelectedHabits.associateWith { viewModel.getGraphValueMode(it) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -482,6 +536,7 @@ private fun HabitLineChart(
     selectedPoint: SelectedPoint?,
     onZoom: (LocalDate, LocalDate) -> Unit,
     onZoomReset: () -> Unit,
+    valueModeMap: Map<String, Int> = emptyMap(),  // habitName -> mode (0=points, 1=rawValue)
     modifier: Modifier = Modifier
 ) {
     val fullTotalDays = ChronoUnit.DAYS.between(fullStartDate, fullEndDate).toInt() + 1
@@ -512,13 +567,30 @@ private fun HabitLineChart(
     }
 
     // Find global min and max for Y axis (over the visible range)
+    // Use pointsValue or rawValue/garminValue based on the habit's value mode
     val globalMax = seriesData.maxOfOrNull { series ->
+        val useRawValue = (valueModeMap[series.habitName] ?: 0) == 1
         series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
-            .maxOfOrNull { it.pointsValue } ?: 0
+            .maxOfOrNull { dp ->
+                if (useRawValue) {
+                    // Use Garmin value if available, otherwise raw value
+                    dp.garminValue ?: dp.rawValue
+                } else {
+                    dp.pointsValue
+                }
+            } ?: 0
     } ?: 1
     val globalMin = seriesData.minOfOrNull { series ->
+        val useRawValue = (valueModeMap[series.habitName] ?: 0) == 1
         series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
-            .minOfOrNull { it.pointsValue } ?: 0
+            .minOfOrNull { dp ->
+                if (useRawValue) {
+                    // Use Garmin value if available, otherwise raw value
+                    dp.garminValue ?: dp.rawValue
+                } else {
+                    dp.pointsValue
+                }
+            } ?: 0
     } ?: 0
     
     // For charts with negative values, we need to adjust the range
@@ -574,11 +646,18 @@ private fun HabitLineChart(
                     var closestDist = Float.MAX_VALUE
 
                     for (series in seriesData) {
+                        val useRawValue = (valueModeMap[series.habitName] ?: 0) == 1
                         for (dp in series.data) {
                             if (dp.date < visStartDate || dp.date > visEndDate) continue
                             val dayIdx = ChronoUnit.DAYS.between(visStartDate, dp.date).toInt()
                             val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
-                            val y = chartBottom - ((dp.pointsValue - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
+                            val displayValue = if (useRawValue) {
+                                // Use Garmin value if available, otherwise raw value
+                                dp.garminValue ?: dp.rawValue
+                            } else {
+                                dp.pointsValue
+                            }
+                            val y = chartBottom - ((displayValue - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
 
                             val dist = kotlin.math.sqrt(
                                 (tapX - x) * (tapX - x) + (tapY - y) * (tapY - y)
@@ -588,8 +667,8 @@ private fun HabitLineChart(
                                 closestPoint = SelectedPoint(
                                     habitName = series.habitName,
                                     date = dp.date,
-                                    value = dp.pointsValue,
-                                    rawValue = dp.rawValue,
+                                    value = displayValue,
+                                    rawValue = dp.garminValue ?: dp.rawValue,
                                     color = series.color
                                 )
                             }
@@ -689,10 +768,17 @@ private fun HabitLineChart(
             val visibleData = series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
             if (visibleData.isEmpty()) continue
 
+            val useRawValue = (valueModeMap[series.habitName] ?: 0) == 1
             val points = visibleData.map { dp ->
                 val dayIdx = ChronoUnit.DAYS.between(visStartDate, dp.date).toInt()
                 val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
-                val y = chartBottom - ((dp.pointsValue - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
+                val displayValue = if (useRawValue) {
+                    // Use Garmin value if available, otherwise raw value
+                    dp.garminValue ?: dp.rawValue
+                } else {
+                    dp.pointsValue
+                }
+                val y = chartBottom - ((displayValue - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
                 Offset(x, y)
             }
 
@@ -732,8 +818,9 @@ private fun HabitLineChart(
                     val isSelected = selectedPoint?.habitName == series.habitName &&
                             selectedPoint?.date == dp.date
                     val dotRadius = if (isSelected) 5.dp.toPx() else 2.5.dp.toPx()
+                    val displayValue = if (useRawValue) dp.rawValue else dp.pointsValue
                     // Show dots for all values when negative values are present
-                    if (dp.pointsValue != 0 || isSelected || effectiveYMin < 0) {
+                    if (displayValue != 0 || isSelected || effectiveYMin < 0) {
                         drawCircle(
                             color = if (isSelected) Color.White else series.color,
                             radius = dotRadius,
@@ -908,6 +995,7 @@ private fun calculateYTicks(minValue: Int, maxValue: Int): List<Int> {
 @Composable
 private fun StatsSummary(
     seriesData: List<GraphSeries>,
+    valueModeMap: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -917,7 +1005,15 @@ private fun StatsSummary(
     ) {
         for (series in seriesData) {
             if (series.data.isEmpty()) continue
-            val values = series.data.map { it.pointsValue }
+            val useRawValue = (valueModeMap[series.habitName] ?: 0) == 1
+            val values = series.data.map { dp ->
+                if (useRawValue) {
+                    // Use Garmin value if available, otherwise raw value
+                    dp.garminValue ?: dp.rawValue
+                } else {
+                    dp.pointsValue
+                }
+            }
             val nonZeroValues = values.filter { it > 0 }
             val total = values.sum()
             val avg = if (values.isNotEmpty()) values.average() else 0.0

@@ -451,7 +451,14 @@ data class AppSettings(
      * and the index of the first matching range becomes the point value.
      * Ranges can overlap; the first match wins.
      */
-    val customPointRanges: Map<String, List<PointRange>> = emptyMap()
+    val customPointRanges: Map<String, List<PointRange>> = emptyMap(),
+
+    /**
+     * Maps habit name → graph value mode (0 = points, 1 = value/raw).
+     * When a habit is in this map with value 1, the graph shows the raw value
+     * (true value or garmin value) instead of points. When absent or 0, points are shown.
+     */
+    val graphValueModeHabits: Map<String, Int> = emptyMap()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

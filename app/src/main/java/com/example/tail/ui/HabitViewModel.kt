@@ -1766,6 +1766,30 @@ class HabitViewModel(
         _graphSelectedHabits.value = current
     }
 
+    /**
+     * Toggles the graph value mode for [habitName] between points (0) and raw value (1).
+     * When toggled to raw value, the graph shows the true value or garmin value instead of points.
+     * The setting is persisted per-habit.
+     */
+    fun toggleGraphValueMode(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.graphValueModeHabits.toMutableMap()
+            val currentMode = current[habitName] ?: 0
+            val newMode = if (currentMode == 0) 1 else 0
+            current[habitName] = newMode
+            settingsRepo.saveGraphValueModeHabits(current)
+            _settings.value = _settings.value.copy(graphValueModeHabits = current)
+        }
+    }
+
+    /**
+     * Returns the graph value mode for [habitName].
+     * 0 = points (default), 1 = raw value (true value or garmin value).
+     */
+    fun getGraphValueMode(habitName: String): Int {
+        return _settings.value.graphValueModeHabits[habitName] ?: 0
+    }
+
     fun clearGraphSelection() {
         _graphSelectedHabits.value = emptySet()
     }
@@ -1778,7 +1802,8 @@ class HabitViewModel(
         val dateStr: String,
         val rawValue: Int,
         val pointsValue: Int,
-        val textEntry: String? = null  // for text-input habits
+        val textEntry: String? = null,  // for text-input habits
+        val garminValue: Int? = null   // for Garmin-linked habits (actual metric value)
     )
 
     /**
@@ -1795,17 +1820,28 @@ class HabitViewModel(
         val startStr = dateString(startDate)
         val endStr = dateString(endDate)
 
+        // Check if this is a Garmin-linked habit
+        val garminTypeStr = _settings.value.garminHabitLinks[habitName]
+        val garminType = garminTypeStr?.let { GarminType.fromKey(it) }
+
         val result = mutableListOf<GraphDataPoint>()
         var cursor = startDate
         while (!cursor.isAfter(endDate)) {
             val ds = dateString(cursor)
             val raw = entries[ds] ?: 0
+            
+            // Get Garmin value if this is a Garmin-linked habit
+            val garminVal = if (garminType != null) {
+                _garminMonthlyData.value[garminType]?.get(ds)
+            } else null
+            
             result.add(
                 GraphDataPoint(
                     date = cursor,
                     dateStr = ds,
                     rawValue = raw,
-                    pointsValue = applyDivider(raw, divider)
+                    pointsValue = applyDivider(raw, divider),
+                    garminValue = garminVal
                 )
             )
             cursor = cursor.plusDays(1)

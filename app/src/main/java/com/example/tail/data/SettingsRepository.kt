@@ -101,6 +101,8 @@ private val KEY_CUSTOM_INPUT_RECENT_AMOUNTS = stringPreferencesKey("custom_input
 // Map screen stats settings
 private val KEY_MAP_STATS_HABITS = stringSetPreferencesKey("map_stats_habits")
 private val KEY_MAP_STATS_SHOW_TEXT_HABITS = stringSetPreferencesKey("map_stats_show_text_habits")
+// Stored as "habitName\x000|||habitName\x001" pairs (0 = points, 1 = value/raw)
+private val KEY_GRAPH_VALUE_MODE_HABITS = stringPreferencesKey("graph_value_mode_habits")
 
 // Custom point ranges settings
 private val KEY_CUSTOM_POINT_RANGES_HABITS = stringSetPreferencesKey("custom_point_ranges_habits")
@@ -418,6 +420,7 @@ class SettingsRepository(private val context: Context) {
             migrateKvKey(KEY_SUBTYPE_DATA_FILE_URIS)
             migrateKvKey(KEY_TIMED_DATA_FILE_URIS)
             migrateKvKey(KEY_CUSTOM_POINT_RANGES)
+            migrateKvKey(KEY_GRAPH_VALUE_MODE_HABITS)
 
             // --- Linked-habits map: rename both keys and values ---
             val linkedRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
@@ -465,6 +468,7 @@ class SettingsRepository(private val context: Context) {
         val garminThresholdsRaw = prefs[KEY_GARMIN_THRESHOLDS] ?: ""
         val garminHabitLinksRaw = prefs[KEY_GARMIN_HABIT_LINKS] ?: ""
         val customPointRangesRaw = prefs[KEY_CUSTOM_POINT_RANGES] ?: ""
+        val graphValueModeHabitsRaw = prefs[KEY_GRAPH_VALUE_MODE_HABITS] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -523,7 +527,8 @@ class SettingsRepository(private val context: Context) {
             garminThresholds = decodeIntMap(garminThresholdsRaw),
             garminHabitLinks = decodeFileUriMap(garminHabitLinksRaw),
             customPointRangesHabits = prefs[KEY_CUSTOM_POINT_RANGES_HABITS] ?: emptySet(),
-            customPointRanges = decodePointRangesMap(customPointRangesRaw)
+            customPointRanges = decodePointRangesMap(customPointRangesRaw),
+            graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw)
         )
     }
 
@@ -902,6 +907,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveCustomPointRanges(ranges: Map<String, List<PointRange>>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_CUSTOM_POINT_RANGES] = encodePointRangesMap(ranges)
+        }
+    }
+
+    /** Saves the map of habit name → graph value mode (0 = points, 1 = value/raw). */
+    suspend fun saveGraphValueModeHabits(modes: Map<String, Int>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GRAPH_VALUE_MODE_HABITS] = encodeIntMap(modes)
         }
     }
 }

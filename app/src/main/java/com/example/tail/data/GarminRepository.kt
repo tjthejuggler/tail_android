@@ -205,9 +205,17 @@ class GarminRepository(private val context: Context) {
     ): Map<GarminType, DailyValueMap> {
         val result = mutableMapOf<GarminType, MutableMap<String, Int>>()
         val yearMonth = YearMonth.of(year, month)
-        val daysInMonth = yearMonth.lengthOfMonth()
 
-        for (day in 1..daysInMonth) {
+        // Never request days that haven't happened yet. For the current month
+        // we stop at today; for past months we use the full month length.
+        val today = LocalDate.now()
+        val lastDay = if (year == today.year && month == today.monthValue) {
+            today.dayOfMonth
+        } else {
+            yearMonth.lengthOfMonth()
+        }
+
+        for (day in 1..lastDay) {
             val dateStr = String.format("%04d-%02d-%02d", year, month, day)
             try {
                 val metrics = service.fetchDailyMetrics(proxyUrl, appToken, dateStr)

@@ -134,6 +134,31 @@ Without `fitparse`, the script will still process JSON files but won't be able t
 
 ## Version History
 
+- **2026-06-22** - Garmin investigation + future-date fix:
+  - **Future-date requests (Android)**: `GarminRepository.fetchMonthData`
+    looped `1..daysInMonth` for every month including the current one, so it
+    requested days that haven't happened yet (the "next 7 days into the future"
+    requests). The day loop is now capped at today for the current month; past
+    months are unaffected.
+  - **"garmin value" showing "1" on some days (display glitch, fixed)**: The
+    generated `garmin_import.json` is correct (verified: 2026-05-15 = 12,366
+    steps; zero days have a literal 1-step total), so this was never a data bug.
+    The "garmin value" in the habit detail panel was an editable
+    `OutlinedTextField` with a no-op `onValueChange` for Garmin-linked habits.
+    A controlled `TextField` keeps its own internal text buffer from first
+    composition; when `garminMonthlyData` arrived/updated asynchronously the
+    field could latch a stale value (e.g. "1") and never refresh — typing any
+    digit forced the controlled path and snapped it to the correct number.
+    Since this value is read-only by design, it is now rendered as a plain
+    `Text` label (HabitGridScreen.kt), which always reflects the live derived
+    value. The editable field remains only for the divider "true value" case.
+  - **Note on rate limiting**: A 7-day proxy refetch is safe — the proxy
+    resumes from saved OAuth tokens (`fetch_data.py`) and performs no login, so
+    it never triggers Garmin's login throttle; a polite 1 s delay separates
+    calls and a 15-minute interval gates whole runs (bypassable with `force`).
+    The ZIP/JSON import is retained as the deep-history source because a full
+    multi-year proxy backlog would be thousands of reads and risk 429s.
+
 - **2026-06-20 (later)** - Distance display and activity date fixes:
   - **Activity date bug**: Activities were assigned to the wrong calendar date
     because GMT/begin timestamps were converted to `TARGET_TZ` (Dublin).

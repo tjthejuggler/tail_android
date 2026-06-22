@@ -1625,31 +1625,49 @@ private fun EditModeControlBar(
                             fontSize = 10.sp
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        OutlinedTextField(
-                            value = if (isGarminLinked) garminValueText else trueValueText,
-                            onValueChange = { v: String ->
-                                if (!isGarminLinked) {
+                        if (isGarminLinked) {
+                            // Garmin value is read-only — it is derived from
+                            // garminMonthlyData. Render it as a plain label.
+                            //
+                            // It must NOT be an editable text field: a TextField
+                            // with a no-op onValueChange keeps its own internal
+                            // text buffer from first composition, which could latch
+                            // a stale value (e.g. "1") that never refreshed when the
+                            // real value arrived asynchronously — the user had to
+                            // type into it to force it to the correct number. A
+                            // Text always reflects the live derived value.
+                            Text(
+                                text = garminValueText,
+                                color = Color(0xFFAA88FF),
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.width(64.dp)
+                            )
+                        } else {
+                            OutlinedTextField(
+                                value = trueValueText,
+                                onValueChange = { v: String ->
                                     trueValueText = v.filter { it.isDigit() }
                                     val newCount = trueValueText.toIntOrNull() ?: 0
                                     onSetCount(selectedHabitName, newCount)
-                                }
-                            },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Number
-                            ),
-                            modifier = Modifier.width(64.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color(0xFFAA88FF),
-                                unfocusedTextColor = Color(0xFFAA88FF),
-                                focusedBorderColor = Color(0xFFAA88FF),
-                                unfocusedBorderColor = Color(0xFF664488)
-                            ),
-                            textStyle = TextStyle(
-                                fontSize = 12.sp,
-                                textAlign = TextAlign.Center
+                                },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number
+                                ),
+                                modifier = Modifier.width(64.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color(0xFFAA88FF),
+                                    unfocusedTextColor = Color(0xFFAA88FF),
+                                    focusedBorderColor = Color(0xFFAA88FF),
+                                    unfocusedBorderColor = Color(0xFF664488)
+                                ),
+                                textStyle = TextStyle(
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center
+                                )
                             )
-                        )
+                        }
                     }
                 }
                 // Timestamps button — shown when the habit has timestamps for today
