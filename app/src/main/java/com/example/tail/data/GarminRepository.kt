@@ -21,6 +21,7 @@ typealias DailyValueMap = Map<String, Int>
 enum class GarminType(val label: String, val description: String) {
     VO2_MAX("VO2 Max", "Cardiovascular fitness score"),
     FITNESS_AGE("Fitness Age", "Biological age based on fitness level"),
+    // Derived metric: calculated on-demand as FITNESS_AGE - biological_age
     FITNESS_AGE_DISTANCE("Fitness Age Distance", "Difference between fitness age and biological age"),
     RESTING_HR("Resting HR", "Resting heart rate in BPM"),
     HRV_LAST_NIGHT("HRV Last Night", "Heart rate variability from last night"),
@@ -248,20 +249,6 @@ class GarminRepository(private val context: Context) {
         metrics.fitnessAge?.let {
             val dayMap = result.getOrPut(GarminType.FITNESS_AGE) { mutableMapOf() }
             dayMap[date] = it
-            
-            // Calculate fitness age distance if date of birth is provided
-            if (dateOfBirth.isNotEmpty()) {
-                try {
-                    val dob = LocalDate.parse(dateOfBirth)
-                    val metricDate = LocalDate.parse(date)
-                    val biologicalAge = ChronoUnit.YEARS.between(dob, metricDate).toInt()
-                    val fitnessAgeDistance = it - biologicalAge
-                    val distanceMap = result.getOrPut(GarminType.FITNESS_AGE_DISTANCE) { mutableMapOf() }
-                    distanceMap[date] = fitnessAgeDistance
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to calculate fitness age distance: ${e.message}")
-                }
-            }
         }
 
         metrics.restingHr?.let {
@@ -394,6 +381,8 @@ class GarminRepository(private val context: Context) {
             val result = mutableMapOf<GarminType, DailyValueMap>()
             for (typeName in json.keys()) {
                 val type = GarminType.fromKey(typeName) ?: continue
+                // Skip derived metrics - they are calculated on-demand
+                if (type == GarminType.FITNESS_AGE_DISTANCE) continue
                 val typeJson = json.getJSONObject(typeName)
                 val dayMap = mutableMapOf<String, Int>()
                 for (date in typeJson.keys()) {
@@ -543,6 +532,8 @@ class GarminRepository(private val context: Context) {
             // Parse all metrics from JSON
             for (typeName in json.keys()) {
                 val type = GarminType.fromKey(typeName) ?: continue
+                // Skip derived metrics - they are calculated on-demand
+                if (type == GarminType.FITNESS_AGE_DISTANCE) continue
                 val typeJson = json.getJSONObject(typeName)
                 val dayMap = mutableMapOf<String, Int>()
                 

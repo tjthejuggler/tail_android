@@ -693,6 +693,7 @@ fun HabitGridScreen(
                         garminEnabled = settings.garminEnabled,
                         garminHabitLinks = settings.garminHabitLinks,
                         onSetGarminLink = { name, type -> viewModel.setGarminHabitLink(name, type) },
+                        garminDateOfBirth = settings.garminDateOfBirth,
                         garminMonthlyData = garminMonthlyData,
                         selectedDate = selectedDate,
                         voiceTriggerEnabled = settings.voiceTriggerEnabled,
@@ -1336,6 +1337,7 @@ private fun EditModeControlBar(
     garminEnabled: Boolean = false,
     garminHabitLinks: Map<String, String> = emptyMap(),
     onSetGarminLink: (String, String?) -> Unit = { _, _ -> },
+    garminDateOfBirth: String = "",
     voiceTriggerEnabled: Boolean = false,
     voiceTriggerHabits: Set<String> = emptySet(),
     voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
@@ -1599,8 +1601,28 @@ private fun EditModeControlBar(
                     // habit name would leave a stale "-" when the data lands after selection.
                     val garminValueText: String = if (isGarminLinked) {
                         val garminType = garminHabitLinks[selectedHabitName]?.let { GarminType.fromKey(it) }
-                        val dailyValues = garminType?.let { garminMonthlyData[it] }
-                        val rawValue = dailyValues?.get(selectedDate.toString())
+                        val rawValue: Int? = when (garminType) {
+                            GarminType.FITNESS_AGE_DISTANCE -> {
+                                // Calculate fitness age distance on-demand from FITNESS_AGE
+                                try {
+                                    val fitnessAgeData = garminMonthlyData[GarminType.FITNESS_AGE]
+                                    if (fitnessAgeData != null && garminDateOfBirth.isNotEmpty()) {
+                                        val fitnessAge = fitnessAgeData[selectedDate.toString()]
+                                        if (fitnessAge != null) {
+                                            val dob = java.time.LocalDate.parse(garminDateOfBirth)
+                                            val biologicalAge = java.time.temporal.ChronoUnit.YEARS.between(dob, selectedDate).toInt()
+                                            fitnessAge - biologicalAge
+                                        } else null
+                                    } else null
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                            else -> {
+                                val dailyValues = garminType?.let { garminMonthlyData[it] }
+                                dailyValues?.get(selectedDate.toString())
+                            }
+                        }
                         // Format per-metric for display (e.g. distance metres → km, 1 decimal).
                         rawValue?.let { garminType?.formatDisplayValue(it) ?: it.toString() } ?: "-"
                     } else {

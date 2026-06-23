@@ -1832,7 +1832,27 @@ class HabitViewModel(
             
             // Get Garmin value if this is a Garmin-linked habit
             val garminVal = if (garminType != null) {
-                _garminMonthlyData.value[garminType]?.get(ds)
+                when (garminType) {
+                    GarminType.FITNESS_AGE_DISTANCE -> {
+                        // Calculate fitness age distance on-demand from FITNESS_AGE
+                        try {
+                            val fitnessAgeData = _garminMonthlyData.value[GarminType.FITNESS_AGE]
+                            val dobStr = _settings.value.garminDateOfBirth
+                            if (fitnessAgeData != null && dobStr.isNotEmpty()) {
+                                val fitnessAge = fitnessAgeData[ds]
+                                if (fitnessAge != null) {
+                                    val dob = LocalDate.parse(dobStr)
+                                    val biologicalAge = ChronoUnit.YEARS.between(dob, cursor).toInt()
+                                    fitnessAge - biologicalAge
+                                } else null
+                            } else null
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to calculate fitness age distance for graph: ${e.message}")
+                            null
+                        }
+                    }
+                    else -> _garminMonthlyData.value[garminType]?.get(ds)
+                }
             } else null
             
             result.add(
@@ -2802,25 +2822,26 @@ class HabitViewModel(
             val garminType = GarminType.fromKey(garminTypeStr) ?: continue
             
             // For FITNESS_AGE_DISTANCE, calculate it on-demand from FITNESS_AGE
+            // This is a derived metric: distance = fitness_age - biological_age
             val dailyValues = if (garminType == GarminType.FITNESS_AGE_DISTANCE) {
                 try {
                     val fitnessAgeData = allData[GarminType.FITNESS_AGE] ?: emptyMap()
                     if (fitnessAgeData.isEmpty()) {
                         Log.w(TAG, "No fitness age data available to calculate fitness age distance")
                         emptyMap()
+                    } else if (settings.garminDateOfBirth.isEmpty()) {
+                        Log.w(TAG, "Date of birth not set - cannot calculate fitness age distance")
+                        emptyMap()
                     } else {
-                        val dob = if (settings.garminDateOfBirth.isNotEmpty()) {
-                            LocalDate.parse(settings.garminDateOfBirth)
-                        } else {
-                            // Fallback: use a reasonable default age (30 years old) based on first fitness age entry
-                            val firstDate = fitnessAgeData.keys.first()
-                            LocalDate.parse(firstDate).minusYears(30)
-                        }
+                        val dob = LocalDate.parse(settings.garminDateOfBirth)
                         val distanceData = mutableMapOf<String, Int>()
                         
                         for ((dateStr, fitnessAge) in fitnessAgeData) {
                             val metricDate = LocalDate.parse(dateStr)
                             val biologicalAge = ChronoUnit.YEARS.between(dob, metricDate).toInt()
+                            // Distance = fitness_age - biological_age
+                            // Negative means younger fitness age than biological age (good)
+                            // Positive means older fitness age than biological age (bad)
                             distanceData[dateStr] = fitnessAge - biologicalAge
                         }
                         
