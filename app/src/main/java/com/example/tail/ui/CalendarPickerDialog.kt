@@ -223,13 +223,17 @@ fun CalendarPickerDialog(
                 )
             }
 
-            // ── Footer: Cancel ────────────────────────────────────────────
+            // ── Footer: Today, Cancel ────────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.End
             ) {
+                TextButton(onClick = { onDateSelected(today) }) {
+                    Text("Today", color = Color(0xFF4FC3F7), fontSize = 13.sp)
+                }
+                Spacer(modifier = Modifier.width(8.dp))
                 TextButton(onClick = onDismiss) {
                     Text("Cancel", color = Color(0xFF888899), fontSize = 13.sp)
                 }
