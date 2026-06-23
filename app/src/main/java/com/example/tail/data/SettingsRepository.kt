@@ -347,9 +347,8 @@ private fun decodePointRangesMap(raw: String): Map<String, List<PointRange>> {
                     if (min != null && max != null) PointRange(min, max) else null
                 } else null
             }
-            // Ensure we always have exactly 7 ranges (0-6)
-            val paddedRanges = ranges + List(7 - ranges.size) { PointRange() }
-            key to paddedRanges.take(7)
+            // Support unlimited ranges - no padding or truncation
+            key to ranges
         }
     }.toMap()
 }

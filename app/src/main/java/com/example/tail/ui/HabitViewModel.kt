@@ -3599,6 +3599,13 @@ class HabitViewModel(
         _settings.value = _settings.value.copy(customPointRanges = rangesMap)
         viewModelScope.launch {
             settingsRepo.saveCustomPointRanges(rangesMap)
+            // Ensure the habit is in the customPointRangesHabits set
+            val currentHabits = _settings.value.customPointRangesHabits.toMutableSet()
+            if (habitName !in currentHabits) {
+                currentHabits.add(habitName)
+                _settings.value = _settings.value.copy(customPointRangesHabits = currentHabits)
+                settingsRepo.saveCustomPointRangesHabits(currentHabits)
+            }
             recalculateHabitPointsForCustomRanges(habitName)
         }
     }

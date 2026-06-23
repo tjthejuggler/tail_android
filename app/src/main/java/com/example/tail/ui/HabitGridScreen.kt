@@ -2500,15 +2500,16 @@ private fun EditModeControlBar(
 
                     if (isCustomPointRanges) {
                         Spacer(modifier = Modifier.height(4.dp))
-                        val currentRanges = customPointRanges[selectedHabitName] ?: List(7) { com.example.tail.data.PointRange() }
+                        val currentRanges = customPointRanges[selectedHabitName] ?: listOf(com.example.tail.data.PointRange())
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
+                                val rangeCountText = if (currentRanges.size == 7) "Point ranges (0-6)" else "Point ranges (0-${currentRanges.size - 1})"
                                 Text(
-                                    text = "  Point ranges (0-6)",
+                                    text = "  $rangeCountText",
                                     color = Color(0xFFAAAAAA), fontSize = 12.sp
                                 )
                                 val rangeSummary = currentRanges.mapIndexed { idx, range ->
@@ -3304,7 +3305,7 @@ private fun PointRangesEditorDialog(
     onSave: (List<com.example.tail.data.PointRange>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    // State for each range's min and max values
+    // State for each range's min and max values - dynamic list
     val rangeStates = remember(currentRanges) {
         mutableStateListOf(
             *currentRanges.map { range ->
@@ -3338,7 +3339,7 @@ private fun PointRangesEditorDialog(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Enter min/max values for each point level (0-6):",
+                text = "Enter min/max values for each point level:",
                 color = Color(0xFFAAAAAA),
                 fontSize = 12.sp
             )
@@ -3350,8 +3351,8 @@ private fun PointRangesEditorDialog(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Range rows for each point level (0-6)
-            for (i in 0..6) {
+            // Range rows for each point level (dynamic)
+            for (i in rangeStates.indices) {
                 val (minText, maxText) = rangeStates[i].value
                 var localMin by remember { mutableStateOf(minText) }
                 var localMax by remember { mutableStateOf(maxText) }
@@ -3408,6 +3409,39 @@ private fun PointRangesEditorDialog(
                     )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Add Range button
+            Button(
+                onClick = {
+                    // Auto-calculate new range based on the previous one
+                    val lastIndex = rangeStates.size - 1
+                    val (prevMinText, prevMaxText) = rangeStates[lastIndex].value
+                    
+                    val newMin = if (prevMaxText.isNotEmpty()) {
+                        val prevMax = prevMaxText.toIntOrNull() ?: 0
+                        (prevMax + 1).toString()
+                    } else {
+                        ""
+                    }
+                    
+                    val newMax = if (prevMinText.isNotEmpty() && prevMaxText.isNotEmpty()) {
+                        val prevMin = prevMinText.toIntOrNull() ?: 0
+                        val prevMax = prevMaxText.toIntOrNull() ?: 0
+                        val range = prevMax - prevMin
+                        (prevMax + 1 + range).toString()
+                    } else {
+                        ""
+                    }
+                    
+                    rangeStates.add(mutableStateOf(Pair(newMin, newMax)))
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A2A6A)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("+ Add Point Range", color = Color(0xFFBB88FF), fontSize = 12.sp)
             }
 
             Spacer(modifier = Modifier.height(16.dp))
