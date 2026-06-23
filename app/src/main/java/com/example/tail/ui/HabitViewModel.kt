@@ -3001,6 +3001,63 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Recalculates fitness age distance for all dates based on current fitness age data
+     * and the currently configured date of birth.
+     * This is useful when the date of birth is changed or when fitness age data is updated.
+     */
+    fun recalculateFitnessAgeDistance() {
+        val s = _settings.value
+        if (s.garminDateOfBirth.isEmpty()) {
+            _garminSyncStatus.value = "Date of birth not set - cannot calculate fitness age distance"
+            return
+        }
+        if (s.fileUri.isEmpty()) {
+            _garminSyncStatus.value = "Set habit database file first"
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                _garminSyncStatus.value = "Recalculating fitness age distance..."
+                
+                // Get fitness age data from cache
+                val fitnessAgeData = garminRepo.loadAllCachedData()[com.example.tail.data.GarminType.FITNESS_AGE]
+                if (fitnessAgeData == null || fitnessAgeData.isEmpty()) {
+                    _garminSyncStatus.value = "No fitness age data available"
+                    return@launch
+                }
+
+                val dob = LocalDate.parse(s.garminDateOfBirth)
+                val distanceData = mutableMapOf<String, Int>()
+                
+                for ((dateStr, fitnessAge) in fitnessAgeData) {
+                    val metricDate = LocalDate.parse(dateStr)
+                    // Calculate biological age in hundredths of a year
+                    val biologicalAgeYears = ChronoUnit.YEARS.between(dob, metricDate).toDouble()
+                    val biologicalAgeHundredths = (biologicalAgeYears * 100).toInt()
+                    // Distance = fitness_age - biological_age (both in hundredths of a year)
+                    distanceData[dateStr] = fitnessAge - biologicalAgeHundredths
+                }
+                
+                Log.d(TAG, "Recalculated ${distanceData.size} fitness age distance values (DOB: $dob)")
+                
+                // Create a map with just FITNESS_AGE_DISTANCE data
+                val allData = mapOf(
+                    com.example.tail.data.GarminType.FITNESS_AGE_DISTANCE to distanceData.toMap()
+                )
+                
+                // Apply the recalculated data to linked habits
+                applyGarminData(allData, s)
+                
+                _garminSyncStatus.value = "Recalculated ${distanceData.size} fitness age distance values"
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to recalculate fitness age distance: ${e.message}", e)
+                _garminSyncStatus.value = "Failed: ${e.message?.take(50)}"
+            }
+        }
+    }
+
     // ── Voice Trigger Methods ────────────────────────────────────────────────
 
     /** Saves the global voice trigger enabled flag (called from Settings screen). */

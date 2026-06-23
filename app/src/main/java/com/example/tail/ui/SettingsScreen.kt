@@ -1075,6 +1075,19 @@ private fun GarminSettingsSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(4.dp))
+            
+            // Recalculate Fitness Age Distance button
+            Button(
+                onClick = { viewModel.recalculateFitnessAgeDistance() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Recalculate Fitness Age Distance", fontSize = 12.sp)
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            
             Button(onClick = { save() }) {
                 Text("Save Connection Settings", fontSize = 12.sp)
             }

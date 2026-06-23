@@ -299,6 +299,7 @@ fun GraphsPanel(
                     },
                     onZoomReset = { viewModel.clearGraphZoom() },
                     valueModeMap = graphSelectedHabits.associateWith { viewModel.getGraphValueMode(it) },
+                    garminHabitLinks = garminHabitLinks,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -333,8 +334,15 @@ fun GraphsPanel(
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.weight(1f)
                             )
+                            val garminType = garminHabitLinks[point.habitName]?.let { com.example.tail.data.GarminType.fromKey(it) }
+                            val valueText = if (garminType == com.example.tail.data.GarminType.FITNESS_AGE ||
+                                                garminType == com.example.tail.data.GarminType.FITNESS_AGE_DISTANCE) {
+                                String.format("%.2f", point.value / 100.0)
+                            } else {
+                                point.value.toString()
+                            }
                             Text(
-                                text = "${point.habitName}: ${point.value}",
+                                text = "${point.habitName}: $valueText",
                                 color = point.color,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
@@ -537,6 +545,7 @@ private fun HabitLineChart(
     onZoom: (LocalDate, LocalDate) -> Unit,
     onZoomReset: () -> Unit,
     valueModeMap: Map<String, Int> = emptyMap(),  // habitName -> mode (0=points, 1=rawValue)
+    garminHabitLinks: Map<String, String> = emptyMap(),  // habitName -> GarminType key
     modifier: Modifier = Modifier
 ) {
     val fullTotalDays = ChronoUnit.DAYS.between(fullStartDate, fullEndDate).toInt() + 1
@@ -695,6 +704,13 @@ private fun HabitLineChart(
             textAlign = android.graphics.Paint.Align.RIGHT
         }
 
+        // Check if any series is a Garmin fitness age metric that needs decimal formatting
+        val needsDecimalFormatting = seriesData.any { series ->
+            val garminType = garminHabitLinks[series.habitName]?.let { com.example.tail.data.GarminType.fromKey(it) }
+            garminType == com.example.tail.data.GarminType.FITNESS_AGE ||
+            garminType == com.example.tail.data.GarminType.FITNESS_AGE_DISTANCE
+        }
+
         for (tick in yTicks) {
             val y = chartBottom - ((tick - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
             drawLine(
@@ -704,8 +720,14 @@ private fun HabitLineChart(
                 strokeWidth = 0.5.dp.toPx(),
                 pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
             )
+            val tickLabel = if (needsDecimalFormatting) {
+                // Convert from hundredths of a year to years with 2 decimal places
+                String.format("%.2f", tick / 100.0)
+            } else {
+                tick.toString()
+            }
             drawContext.canvas.nativeCanvas.drawText(
-                tick.toString(),
+                tickLabel,
                 chartLeft - 4.dp.toPx(),
                 y + 4.dp.toPx(),
                 textPaint
@@ -889,7 +911,14 @@ private fun HabitLineChart(
                 color = 0xCC1A2E1A.toInt()
                 isAntiAlias = true
             }
-            val label = sp.value.toString()
+            // Format fitness age values with 2 decimal places
+            val garminType = garminHabitLinks[sp.habitName]?.let { com.example.tail.data.GarminType.fromKey(it) }
+            val label = if (garminType == com.example.tail.data.GarminType.FITNESS_AGE ||
+                           garminType == com.example.tail.data.GarminType.FITNESS_AGE_DISTANCE) {
+                String.format("%.2f", sp.value / 100.0)
+            } else {
+                sp.value.toString()
+            }
             val labelWidth = valuePaint.measureText(label)
             val labelX = x
             val labelY = y - 12.dp.toPx()
