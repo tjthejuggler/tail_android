@@ -332,7 +332,14 @@ fun GraphsPanel(
                                 color = Color(0xFFCCEECC),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable(
+                                        indication = null,
+                                        interactionSource = remember { MutableInteractionSource() }
+                                    ) {
+                                        viewModel.navigateToDate(point.date)
+                                    }
                             )
                             val garminType = garminHabitLinks[point.habitName]?.let { com.example.tail.data.GarminType.fromKey(it) }
                             val valueText = if (garminType == com.example.tail.data.GarminType.FITNESS_AGE ||
@@ -612,8 +619,10 @@ private fun HabitLineChart(
 
     val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
         val newScale = (zoomScale * zoomChange).coerceIn(1f, fullTotalDays.toFloat().coerceAtLeast(2f))
-        val panFraction = if (fullTotalDays > 1) panChange.x / 1000f else 0f
-        val newCenter = (zoomCenter - panFraction / newScale).coerceIn(0f, 1f)
+        // Improved pan calculation: pan directly affects the visible window position
+        // panChange.x is in pixels, we need to convert it to a fraction of the visible range
+        val panFraction = if (fullTotalDays > 1) panChange.x / 500f else 0f
+        val newCenter = (zoomCenter + panFraction / newScale).coerceIn(0f, 1f)
 
         zoomScale = newScale
         zoomCenter = newCenter
