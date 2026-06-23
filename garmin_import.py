@@ -257,7 +257,10 @@ class GarminDataExtractor:
                     date = date_str.split('T')[0]
                     bio_age = entry.get("currentBioAge")
                     if bio_age:
-                        self.data["FITNESS_AGE"][date] = int(bio_age)
+                        # Garmin returns fitness age as decimal (e.g., 37.03692930253995)
+                        # Store as hundredths of a year (e.g., 3704 for 37.04) to preserve 2 decimal places
+                        # while keeping the data structure integer-based for JSON compatibility
+                        self.data["FITNESS_AGE"][date] = int(round(float(bio_age) * 100))
                 except Exception:
                     pass
         except Exception as e:

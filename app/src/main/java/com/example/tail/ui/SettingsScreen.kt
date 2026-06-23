@@ -887,10 +887,22 @@ private fun GarminSettingsSection(
         mutableStateOf((settings.garminThresholds["VO2_MAX"] ?: 0).let { if (it == 0) "" else it.toString() })
     }
     var fitnessAgeThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["FITNESS_AGE"] ?: 0).let { if (it == 0) "" else it.toString() })
+        // Fitness age is stored as hundredths of a year, display with 2 decimal places
+        mutableStateOf((settings.garminThresholds["FITNESS_AGE"] ?: 0).let {
+            if (it == 0) "" else {
+                val years = it / 100.0
+                String.format("%.2f", years)
+            }
+        })
     }
     var fitnessAgeDistanceThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["FITNESS_AGE_DISTANCE"] ?: 0).let { if (it == 0) "" else it.toString() })
+        // Fitness age distance is stored as hundredths of a year, display with 2 decimal places
+        mutableStateOf((settings.garminThresholds["FITNESS_AGE_DISTANCE"] ?: 0).let {
+            if (it == 0) "" else {
+                val years = it / 100.0
+                String.format("%.2f", years)
+            }
+        })
     }
     var restingHrThreshold by remember(settings.garminThresholds) {
         mutableStateOf((settings.garminThresholds["RESTING_HR"] ?: 0).let { if (it == 0) "" else it.toString() })
@@ -953,10 +965,11 @@ private fun GarminSettingsSection(
 
     fun setThresholdFor(type: GarminType, value: String) {
         // For FITNESS_AGE_DISTANCE, allow negative numbers
-        val filtered = if (type == GarminType.FITNESS_AGE_DISTANCE) {
-            value.filter { it.isDigit() || it == '-' }
-        } else {
-            value.filter { it.isDigit() }
+        // For FITNESS_AGE and FITNESS_AGE_DISTANCE, allow decimal point
+        val filtered = when (type) {
+            GarminType.FITNESS_AGE_DISTANCE -> value.filter { it.isDigit() || it == '-' || it == '.' }
+            GarminType.FITNESS_AGE -> value.filter { it.isDigit() || it == '.' }
+            else -> value.filter { it.isDigit() }
         }
         when (type) {
             GarminType.VO2_MAX -> vo2MaxThreshold = filtered
@@ -981,7 +994,17 @@ private fun GarminSettingsSection(
     fun save() {
         val thresholdsMap = mutableMapOf<String, Int>()
         types.forEach { type ->
-            val value = getThresholdFor(type).toIntOrNull() ?: 0
+            val rawValue = getThresholdFor(type)
+            val value = when (type) {
+                GarminType.FITNESS_AGE, GarminType.FITNESS_AGE_DISTANCE -> {
+                    // Convert decimal input to hundredths of a year (e.g., "37.04" -> 3704, "37.5" -> 3750)
+                    val parsed = rawValue.toDoubleOrNull() ?: 0.0
+                    if (parsed == 0.0) 0 else {
+                        (parsed * 100).toInt()
+                    }
+                }
+                else -> rawValue.toIntOrNull() ?: 0
+            }
             if (value != 0) thresholdsMap[type.name] = value  // Allow 0 or non-zero for FITNESS_AGE_DISTANCE
         }
         viewModel.saveGarminSettings(enabled, proxyUrl, appToken, dateOfBirth, thresholdsMap)
@@ -1109,13 +1132,17 @@ private fun GarminSettingsSection(
                     OutlinedTextField(
                         value = getThresholdFor(type),
                         onValueChange = { newVal -> setThresholdFor(type, newVal) },
-                        placeholder = { Text(if (type == GarminType.FITNESS_AGE_DISTANCE) "-5" else "0") },
+                        placeholder = { Text(when (type) {
+                            GarminType.FITNESS_AGE -> "37.04"
+                            GarminType.FITNESS_AGE_DISTANCE -> "-5.00"
+                            else -> "0"
+                        }) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
-                            keyboardType = if (type == GarminType.FITNESS_AGE_DISTANCE) {
-                                KeyboardType.Text  // Allow negative numbers
-                            } else {
-                                KeyboardType.Number
+                            keyboardType = when (type) {
+                                GarminType.FITNESS_AGE -> KeyboardType.Decimal
+                                GarminType.FITNESS_AGE_DISTANCE -> KeyboardType.Text  // Allow negative numbers
+                                else -> KeyboardType.Number
                             }
                         ),
                         modifier = Modifier

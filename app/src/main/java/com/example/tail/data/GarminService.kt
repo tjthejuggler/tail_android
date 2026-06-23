@@ -229,10 +229,15 @@ class GarminService {
     }
 
     private fun parseMetrics(json: JSONObject): GarminMetricsDto {
+        // Fitness age is returned as float from Python (e.g., 37.04)
+        // Store as hundredths of a year (e.g., 3704 for 37.04) to preserve 2 decimal places
+        val fitnessAgeDouble = json.optDouble("fitness_age").takeIf { !it.isNaN() && it > 0 }
+        val fitnessAgeInt = fitnessAgeDouble?.let { (it * 100).toInt() }
+        
         return GarminMetricsDto(
             date = json.optString("date", ""),
             vo2Max = json.optDouble("vo2_max").takeIf { !it.isNaN() },
-            fitnessAge = json.optInt("fitness_age").takeIf { it > 0 },
+            fitnessAge = fitnessAgeInt,
             restingHr = json.optInt("resting_hr").takeIf { it > 0 },
             minHr = json.optInt("min_hr").takeIf { it > 0 },
             maxHr = json.optInt("max_hr").takeIf { it > 0 },

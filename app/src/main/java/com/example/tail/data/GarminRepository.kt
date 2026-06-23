@@ -43,10 +43,20 @@ enum class GarminType(val label: String, val description: String) {
      * Values are stored in their native unit (e.g. distance in metres) so the
      * data layer stays integer-clean and matches the import format. Distance is
      * the only metric we present in a derived unit: metres → kilometres as a
-     * whole number (e.g. 12345 → "12 km"). All other metrics display as-is.
+     * whole number (e.g. 12345 → "12 km").
+     *
+     * Fitness age is stored as hundredths of a year (e.g., 3704 for 37.04) to preserve
+     * 2 decimal places from Garmin's API. Display shows 2 decimal places
+     * (e.g., 3704 → "37.04", 3750 → "37.50").
+     * Fitness Age Distance is also stored as hundredths of a year.
      */
     fun formatDisplayValue(rawValue: Int): String = when (this) {
         DISTANCE_METERS -> "${rawValue / 1000} km"
+        FITNESS_AGE, FITNESS_AGE_DISTANCE -> {
+            // Convert from hundredths to years and display with 2 decimal places
+            val years = rawValue / 100.0
+            String.format("%.2f", years)
+        }
         else -> rawValue.toString()
     }
 

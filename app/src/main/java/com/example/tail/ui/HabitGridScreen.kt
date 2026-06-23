@@ -1604,14 +1604,18 @@ private fun EditModeControlBar(
                         val rawValue: Int? = when (garminType) {
                             GarminType.FITNESS_AGE_DISTANCE -> {
                                 // Calculate fitness age distance on-demand from FITNESS_AGE
+                                // Fitness age is stored as hundredths of a year (e.g., 3704 for 37.04)
                                 try {
                                     val fitnessAgeData = garminMonthlyData[GarminType.FITNESS_AGE]
                                     if (fitnessAgeData != null && garminDateOfBirth.isNotEmpty()) {
                                         val fitnessAge = fitnessAgeData[selectedDate.toString()]
                                         if (fitnessAge != null) {
                                             val dob = java.time.LocalDate.parse(garminDateOfBirth)
-                                            val biologicalAge = java.time.temporal.ChronoUnit.YEARS.between(dob, selectedDate).toInt()
-                                            fitnessAge - biologicalAge
+                                            // Calculate biological age in hundredths of a year
+                                            val biologicalAgeYears = java.time.temporal.ChronoUnit.YEARS.between(dob, selectedDate).toDouble()
+                                            val biologicalAgeHundredths = (biologicalAgeYears * 100).toInt()
+                                            // Distance = fitness_age - biological_age (both in hundredths of a year)
+                                            fitnessAge - biologicalAgeHundredths
                                         } else null
                                     } else null
                                 } catch (e: Exception) {

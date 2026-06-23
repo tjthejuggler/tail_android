@@ -1835,6 +1835,7 @@ class HabitViewModel(
                 when (garminType) {
                     GarminType.FITNESS_AGE_DISTANCE -> {
                         // Calculate fitness age distance on-demand from FITNESS_AGE
+                        // Fitness age is stored as hundredths of a year (e.g., 3704 for 37.04)
                         try {
                             val fitnessAgeData = _garminMonthlyData.value[GarminType.FITNESS_AGE]
                             val dobStr = _settings.value.garminDateOfBirth
@@ -1842,8 +1843,11 @@ class HabitViewModel(
                                 val fitnessAge = fitnessAgeData[ds]
                                 if (fitnessAge != null) {
                                     val dob = LocalDate.parse(dobStr)
-                                    val biologicalAge = ChronoUnit.YEARS.between(dob, cursor).toInt()
-                                    fitnessAge - biologicalAge
+                                    // Calculate biological age in hundredths of a year
+                                    val biologicalAgeYears = ChronoUnit.YEARS.between(dob, cursor).toDouble()
+                                    val biologicalAgeHundredths = (biologicalAgeYears * 100).toInt()
+                                    // Distance = fitness_age - biological_age (both in hundredths of a year)
+                                    fitnessAge - biologicalAgeHundredths
                                 } else null
                             } else null
                         } catch (e: Exception) {
@@ -2823,6 +2827,7 @@ class HabitViewModel(
             
             // For FITNESS_AGE_DISTANCE, calculate it on-demand from FITNESS_AGE
             // This is a derived metric: distance = fitness_age - biological_age
+            // Fitness age is stored as hundredths of a year (e.g., 3704 for 37.04)
             val dailyValues = if (garminType == GarminType.FITNESS_AGE_DISTANCE) {
                 try {
                     val fitnessAgeData = allData[GarminType.FITNESS_AGE] ?: emptyMap()
@@ -2838,11 +2843,13 @@ class HabitViewModel(
                         
                         for ((dateStr, fitnessAge) in fitnessAgeData) {
                             val metricDate = LocalDate.parse(dateStr)
-                            val biologicalAge = ChronoUnit.YEARS.between(dob, metricDate).toInt()
-                            // Distance = fitness_age - biological_age
+                            // Calculate biological age in hundredths of a year
+                            val biologicalAgeYears = ChronoUnit.YEARS.between(dob, metricDate).toDouble()
+                            val biologicalAgeHundredths = (biologicalAgeYears * 100).toInt()
+                            // Distance = fitness_age - biological_age (both in hundredths of a year)
                             // Negative means younger fitness age than biological age (good)
                             // Positive means older fitness age than biological age (bad)
-                            distanceData[dateStr] = fitnessAge - biologicalAge
+                            distanceData[dateStr] = fitnessAge - biologicalAgeHundredths
                         }
                         
                         Log.d(TAG, "Calculated ${distanceData.size} fitness age distance values from ${fitnessAgeData.size} fitness age entries (DOB: $dob)")

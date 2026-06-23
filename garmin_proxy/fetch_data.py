@@ -299,7 +299,9 @@ def fetch_fitness_age(client: Garmin, date_str: str) -> Optional[int]:
     """Fitness age may be unsupported on some devices/accounts."""
     data = _safe(client.get_fitnessage_data, date_str)
     if isinstance(data, dict) and data.get("fitnessAge") is not None:
-        return int(data["fitnessAge"])
+        # Garmin returns fitness age as decimal (e.g., 37.03692930253995)
+        # Store as hundredths of a year (e.g., 3704 for 37.04) to preserve 2 decimal places
+        return int(round(float(data["fitnessAge"]) * 100))
     return None
 
 

@@ -206,7 +206,9 @@ class GarminFetcher:
                     if fitness_data and isinstance(fitness_data, dict):
                         value = fitness_data.get("fitnessAge")
                         if value is not None:
-                            return {"date": target_date, "fitness_age": int(value)}
+                            # Garmin returns fitness age as decimal (e.g., 37.03692930253995)
+                            # Store as hundredths of a year (e.g., 3704 for 37.04) to preserve 2 decimal places
+                            return {"date": target_date, "fitness_age": int(round(float(value) * 100))}
                 except Exception:
                     # Some devices don't support fitness age
                     pass
