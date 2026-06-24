@@ -214,9 +214,11 @@ def fetch_daily_metrics(client: Garmin, date_str: str) -> Dict[str, Any]:
             metrics["calories"] = int(stats["totalKilocalories"])
         elif stats.get("calories") is not None:
             metrics["calories"] = int(stats["calories"])
-        active = stats.get("activeMinutes") or stats.get("moderateIntensityMinutes")
-        if active is not None:
-            metrics["active_minutes"] = int(active)
+        # Active minutes = moderate + vigorous intensity minutes
+        moderate = stats.get("moderateIntensityMinutes") or 0
+        vigorous = stats.get("vigorousIntensityMinutes") or 0
+        if moderate is not None or vigorous is not None:
+            metrics["active_minutes"] = int((moderate or 0) + (vigorous or 0))
         if stats.get("floorsAscended") is not None:
             metrics["floors_climbed"] = int(stats["floorsAscended"])
         elif stats.get("floorsClimbed") is not None:

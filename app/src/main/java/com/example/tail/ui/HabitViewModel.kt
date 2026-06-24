@@ -2905,7 +2905,7 @@ class HabitViewModel(
             if (dailyValues.isEmpty()) continue
             
             val threshold = settings.garminThresholds[garminTypeStr] ?: continue
-            if (threshold == 0) continue  // Allow negative thresholds for FITNESS_AGE_DISTANCE
+            // Don't skip threshold=0 - it's valid for FITNESS_AGE_DISTANCE (any negative value is good)
 
             Log.d(TAG, "Processing habit '$habitName' linked to $garminTypeStr, threshold=$threshold, values=${dailyValues.size}")
 
