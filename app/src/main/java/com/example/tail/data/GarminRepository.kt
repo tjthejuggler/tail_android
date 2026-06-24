@@ -327,31 +327,6 @@ class GarminRepository(private val context: Context) {
         }
     }
 
-    /**
-     * Computes habit increments from daily values using the configured threshold.
-     *
-     * For most metrics: any value >= threshold gives 1 point.
-     * For FITNESS_AGE_DISTANCE: any value <= threshold gives 1 point (more negative is better).
-     * Values below/above threshold give 0 points.
-     *
-     * Returns a map of date → increment count (0 or 1).
-     */
-    fun computeIncrements(
-        dailyValues: DailyValueMap,
-        threshold: Int,
-        type: GarminType
-    ): Map<String, Int> {
-        if (threshold == 0) return emptyMap()
-        return dailyValues.mapValues { (_, value) ->
-            if (type == GarminType.FITNESS_AGE_DISTANCE) {
-                // For fitness age distance, more negative is better (younger fitness age)
-                if (value <= threshold) 1 else 0
-            } else {
-                // For other metrics, higher is better
-                if (value >= threshold) 1 else 0
-            }
-        }
-    }
 
     // ── Cache I/O ────────────────────────────────────────────────────────────
 

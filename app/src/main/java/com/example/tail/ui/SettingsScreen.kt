@@ -866,7 +866,7 @@ private fun ChessComSettingsSection(
 }
 
 /**
- * Garmin Integration settings section — proxy URL, app token, and thresholds.
+ * Garmin Integration settings section — proxy URL, app token, and date of birth.
  */
 @Composable
 private fun GarminSettingsSection(
@@ -881,140 +881,15 @@ private fun GarminSettingsSection(
     var appToken by remember(settings.garminAppToken) { mutableStateOf(settings.garminAppToken) }
     var dateOfBirth by remember(settings.garminDateOfBirth) { mutableStateOf(settings.garminDateOfBirth) }
 
-    // Thresholds for each type — individual mutableStateOf for recomposition
-    val types = GarminType.entries
-    var vo2MaxThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["VO2_MAX"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var fitnessAgeThreshold by remember(settings.garminThresholds) {
-        // Fitness age is stored as hundredths of a year, display with 2 decimal places
-        mutableStateOf((settings.garminThresholds["FITNESS_AGE"] ?: 0).let {
-            if (it == 0) "" else {
-                val years = it / 100.0
-                String.format("%.2f", years)
-            }
-        })
-    }
-    var fitnessAgeDistanceThreshold by remember(settings.garminThresholds) {
-        // Fitness age distance is stored as hundredths of a year, display with 2 decimal places
-        mutableStateOf((settings.garminThresholds["FITNESS_AGE_DISTANCE"] ?: 0).let {
-            if (it == 0) "" else {
-                val years = it / 100.0
-                String.format("%.2f", years)
-            }
-        })
-    }
-    var restingHrThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["RESTING_HR"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var hrvLastNightThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["HRV_LAST_NIGHT"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var hrvWeeklyAvgThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["HRV_WEEKLY_AVG"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var sleepScoreThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["SLEEP_SCORE"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var stepsThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["STEPS"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var altitudeAscentThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["ALTITUDE_ASCENT_METERS"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var distanceThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["DISTANCE_METERS"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var caloriesThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["CALORIES"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var activeMinutesThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["ACTIVE_MINUTES"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var floorsClimbedThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["FLOORS_CLIMBED"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var minHrThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["MIN_HR"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var maxHrThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["MAX_HR"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var stressLevelThreshold by remember(settings.garminThresholds) {
-        mutableStateOf((settings.garminThresholds["STRESS_LEVEL"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-
-    fun getThresholdFor(type: GarminType): String = when (type) {
-        GarminType.VO2_MAX -> vo2MaxThreshold
-        GarminType.FITNESS_AGE -> fitnessAgeThreshold
-        GarminType.FITNESS_AGE_DISTANCE -> fitnessAgeDistanceThreshold
-        GarminType.RESTING_HR -> restingHrThreshold
-        GarminType.HRV_LAST_NIGHT -> hrvLastNightThreshold
-        GarminType.HRV_WEEKLY_AVG -> hrvWeeklyAvgThreshold
-        GarminType.SLEEP_SCORE -> sleepScoreThreshold
-        GarminType.STEPS -> stepsThreshold
-        GarminType.ALTITUDE_ASCENT_METERS -> altitudeAscentThreshold
-        GarminType.DISTANCE_METERS -> distanceThreshold
-        GarminType.CALORIES -> caloriesThreshold
-        GarminType.ACTIVE_MINUTES -> activeMinutesThreshold
-        GarminType.FLOORS_CLIMBED -> floorsClimbedThreshold
-        GarminType.MIN_HR -> minHrThreshold
-        GarminType.MAX_HR -> maxHrThreshold
-        GarminType.STRESS_LEVEL -> stressLevelThreshold
-    }
-
-    fun setThresholdFor(type: GarminType, value: String) {
-        // For FITNESS_AGE_DISTANCE, allow negative numbers
-        // For FITNESS_AGE and FITNESS_AGE_DISTANCE, allow decimal point
-        val filtered = when (type) {
-            GarminType.FITNESS_AGE_DISTANCE -> value.filter { it.isDigit() || it == '-' || it == '.' }
-            GarminType.FITNESS_AGE -> value.filter { it.isDigit() || it == '.' }
-            else -> value.filter { it.isDigit() }
-        }
-        when (type) {
-            GarminType.VO2_MAX -> vo2MaxThreshold = filtered
-            GarminType.FITNESS_AGE -> fitnessAgeThreshold = filtered
-            GarminType.FITNESS_AGE_DISTANCE -> fitnessAgeDistanceThreshold = filtered
-            GarminType.RESTING_HR -> restingHrThreshold = filtered
-            GarminType.HRV_LAST_NIGHT -> hrvLastNightThreshold = filtered
-            GarminType.HRV_WEEKLY_AVG -> hrvWeeklyAvgThreshold = filtered
-            GarminType.SLEEP_SCORE -> sleepScoreThreshold = filtered
-            GarminType.STEPS -> stepsThreshold = filtered
-            GarminType.ALTITUDE_ASCENT_METERS -> altitudeAscentThreshold = filtered
-            GarminType.DISTANCE_METERS -> distanceThreshold = filtered
-            GarminType.CALORIES -> caloriesThreshold = filtered
-            GarminType.ACTIVE_MINUTES -> activeMinutesThreshold = filtered
-            GarminType.FLOORS_CLIMBED -> floorsClimbedThreshold = filtered
-            GarminType.MIN_HR -> minHrThreshold = filtered
-            GarminType.MAX_HR -> maxHrThreshold = filtered
-            GarminType.STRESS_LEVEL -> stressLevelThreshold = filtered
-        }
-    }
-
     fun save() {
-        val thresholdsMap = mutableMapOf<String, Int>()
-        types.forEach { type ->
-            val rawValue = getThresholdFor(type)
-            val value = when (type) {
-                GarminType.FITNESS_AGE, GarminType.FITNESS_AGE_DISTANCE -> {
-                    // Convert decimal input to hundredths of a year (e.g., "37.04" -> 3704, "37.5" -> 3750)
-                    val parsed = rawValue.toDoubleOrNull() ?: 0.0
-                    if (parsed == 0.0) 0 else {
-                        (parsed * 100).toInt()
-                    }
-                }
-                else -> rawValue.toIntOrNull() ?: 0
-            }
-            if (value != 0) thresholdsMap[type.name] = value  // Allow 0 or non-zero for FITNESS_AGE_DISTANCE
-        }
-        viewModel.saveGarminSettings(enabled, proxyUrl, appToken, dateOfBirth, thresholdsMap)
+        viewModel.saveGarminSettings(enabled, proxyUrl, appToken, dateOfBirth)
     }
 
     Column {
         Text("❤️ Garmin Integration", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Text(
             text = "Link habits to your Garmin health metrics. Metrics are automatically " +
-                   "tracked and converted to habit increments when thresholds are met.",
+                   "tracked and converted to habit increments.",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1113,88 +988,6 @@ private fun GarminSettingsSection(
 
         if (enabled) {
             Spacer(modifier = Modifier.height(12.dp))
-
-            // Thresholds for each type
-            Text(
-                "Thresholds",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "Set the threshold for each metric type to count as 1 habit increment. " +
-                       "For most metrics, higher values are better. " +
-                       "For Fitness Age Distance, negative values are better (younger fitness age). " +
-                       "Leave blank or 0 to disable that type.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-
-            types.forEach { type ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp)
-                ) {
-                    Text(
-                        text = type.label,
-                        fontSize = 13.sp,
-                        modifier = Modifier.width(140.dp)
-                    )
-                    OutlinedTextField(
-                        value = getThresholdFor(type),
-                        onValueChange = { newVal -> setThresholdFor(type, newVal) },
-                        placeholder = { Text(when (type) {
-                            GarminType.FITNESS_AGE -> "37.04"
-                            GarminType.FITNESS_AGE_DISTANCE -> "-5.00"
-                            else -> "0"
-                        }) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = when (type) {
-                                GarminType.FITNESS_AGE -> KeyboardType.Decimal
-                                GarminType.FITNESS_AGE_DISTANCE -> KeyboardType.Text  // Allow negative numbers
-                                else -> KeyboardType.Number
-                            }
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(56.dp),
-                        textStyle = TextStyle(fontSize = 13.sp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = when (type) {
-                            GarminType.VO2_MAX -> "ml/kg/min"
-                            GarminType.FITNESS_AGE -> "years"
-                            GarminType.FITNESS_AGE_DISTANCE -> "years"
-                            GarminType.RESTING_HR -> "bpm"
-                            GarminType.HRV_LAST_NIGHT -> "ms"
-                            GarminType.HRV_WEEKLY_AVG -> "ms"
-                            GarminType.SLEEP_SCORE -> "pts"
-                            GarminType.STEPS -> "steps"
-                            GarminType.ALTITUDE_ASCENT_METERS -> "m"
-                            GarminType.DISTANCE_METERS -> "m"
-                            GarminType.CALORIES -> "kcal"
-                            GarminType.ACTIVE_MINUTES -> "min"
-                            GarminType.FLOORS_CLIMBED -> "floors"
-                            GarminType.MIN_HR -> "bpm"
-                            GarminType.MAX_HR -> "bpm"
-                            GarminType.STRESS_LEVEL -> "level"
-                        },
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = { save() }) {
-                Text("Save Garmin Settings", fontSize = 12.sp)
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
             HorizontalDivider()
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -1208,30 +1001,6 @@ private fun GarminSettingsSection(
                 Spacer(modifier = Modifier.height(4.dp))
             }
 
-            // Backlog fetch button
-            Text(
-                "Backlog Sync",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "Fetch your entire Garmin health history and retroactively " +
-                       "fill in habit data for all past days. This may take a while.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Button(
-                onClick = { viewModel.fetchGarminBacklog() },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondary
-                )
-            ) {
-                Text("Fetch Entire Backlog", fontSize = 12.sp)
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            
             // Historic Data Import section
             Text(
                 "Historic Data Import",

@@ -2567,21 +2567,19 @@ class HabitViewModel(
         enabled: Boolean,
         proxyUrl: String,
         appToken: String,
-        dateOfBirth: String,
-        thresholds: Map<String, Int>
+        dateOfBirth: String
     ) {
         viewModelScope.launch {
             // Normalise the URL/token at the source so a stray trailing newline or
             // space (common when pasting) can never corrupt later URL parsing.
             val cleanProxyUrl = proxyUrl.trim().trimEnd('/')
             val cleanToken = appToken.trim()
-            settingsRepo.saveGarminSettings(enabled, cleanProxyUrl, cleanToken, dateOfBirth, thresholds)
+            settingsRepo.saveGarminSettings(enabled, cleanProxyUrl, cleanToken, dateOfBirth)
             _settings.value = _settings.value.copy(
                 garminEnabled = enabled,
                 garminProxyUrl = cleanProxyUrl,
                 garminAppToken = cleanToken,
-                garminDateOfBirth = dateOfBirth,
-                garminThresholds = thresholds
+                garminDateOfBirth = dateOfBirth
             )
             // Start or stop polling based on enabled state
             if (enabled && proxyUrl.isNotEmpty() && appToken.isNotEmpty() && lastLoadedUri.isNotEmpty()) {
@@ -2848,7 +2846,7 @@ class HabitViewModel(
 
     /**
      * Applies Garmin data to linked habits in the database.
-     * For each linked habit, computes increments based on the threshold and applies them.
+     * For each linked habit, computes increments and applies them.
      */
     private suspend fun applyGarminData(
         allData: Map<GarminType, Map<String, Int>>,
@@ -2903,11 +2901,8 @@ class HabitViewModel(
             }
             
             if (dailyValues.isEmpty()) continue
-            
-            val threshold = settings.garminThresholds[garminTypeStr] ?: continue
-            // Don't skip threshold=0 - it's valid for FITNESS_AGE_DISTANCE (any negative value is good)
 
-            Log.d(TAG, "Processing habit '$habitName' linked to $garminTypeStr, threshold=$threshold, values=${dailyValues.size}")
+            Log.d(TAG, "Processing habit '$habitName' linked to $garminTypeStr, values=${dailyValues.size}")
 
             // Ensure habit exists in DB
             if (habitName !in mutableDb) {
@@ -2915,8 +2910,7 @@ class HabitViewModel(
             }
 
             // Custom point ranges (if enabled for this habit) map the raw Garmin
-            // value directly to a points tier; otherwise we fall back to the simple
-            // threshold → 0/1 rule.
+            // value directly to a points tier; otherwise we always count as 1 point.
             val useCustomRanges = habitName in settings.customPointRangesHabits
             val customRanges = settings.customPointRanges[habitName]
 
@@ -2926,18 +2920,12 @@ class HabitViewModel(
                 // Compute the points for this date DETERMINISTICALLY from the current
                 // (read-only) Garmin value. We always write the computed result —
                 // including 0 — so that a corrected value from the laptop proxy/fetch
-                // pipeline flips the point both UP and DOWN. Previously we only wrote
-                // on threshold-met, so a downward correction left a stale point.
+                // pipeline flips the point both UP and DOWN.
                 val newValue: Int = if (useCustomRanges && customRanges != null) {
                     com.example.tail.data.calculatePointsFromRanges(value, customRanges)
                 } else {
-                    val meetsThreshold = if (garminType == GarminType.FITNESS_AGE_DISTANCE) {
-                        // For fitness age distance, more negative is better.
-                        value <= threshold
-                    } else {
-                        value >= threshold
-                    }
-                    if (meetsThreshold) 1 else 0
+                    // Always accept Garmin data - count as 1 point if data exists
+                    1
                 }
 
                 val existing = habitData[date] ?: 0

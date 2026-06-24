@@ -419,13 +419,6 @@ data class AppSettings(
     /** Authentication token for the Garmin proxy API. */
     val garminAppToken: String = "",
     /**
-     * Threshold values for each Garmin metric type.
-     * Key is GarminType.name (VO2_MAX, FITNESS_AGE, etc.).
-     * Value is the threshold that must be met or exceeded to count as 1 habit increment.
-     * 0 means disabled for that type.
-     */
-    val garminThresholds: Map<String, Int> = emptyMap(),
-    /**
      * Maps habit name → GarminType.name for habits linked to Garmin data.
      * When a habit is in this map, its daily count is auto-set from Garmin data.
      */

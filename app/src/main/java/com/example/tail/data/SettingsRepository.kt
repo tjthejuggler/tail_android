@@ -75,8 +75,6 @@ private val KEY_GARMIN_ENABLED = booleanPreferencesKey("garmin_enabled")
 private val KEY_GARMIN_PROXY_URL = stringPreferencesKey("garmin_proxy_url")
 private val KEY_GARMIN_APP_TOKEN = stringPreferencesKey("garmin_app_token")
 private val KEY_GARMIN_DATE_OF_BIRTH = stringPreferencesKey("garmin_date_of_birth")
-// Stored as "TYPE\x00threshold|||TYPE\x00threshold" pairs
-private val KEY_GARMIN_THRESHOLDS = stringPreferencesKey("garmin_thresholds")
 // Stored as "habitName\x00TYPE|||habitName\x00TYPE" pairs
 private val KEY_GARMIN_HABIT_LINKS = stringPreferencesKey("garmin_habit_links")
 // Voice trigger feature keys
@@ -467,7 +465,6 @@ class SettingsRepository(private val context: Context) {
         val voiceTriggerIncrementsRaw = prefs[KEY_VOICE_TRIGGER_INCREMENTS] ?: ""
         val customInputAmountsRaw = prefs[KEY_CUSTOM_INPUT_AMOUNTS] ?: ""
         val customInputRecentAmountsRaw = prefs[KEY_CUSTOM_INPUT_RECENT_AMOUNTS] ?: ""
-        val garminThresholdsRaw = prefs[KEY_GARMIN_THRESHOLDS] ?: ""
         val garminHabitLinksRaw = prefs[KEY_GARMIN_HABIT_LINKS] ?: ""
         val customPointRangesRaw = prefs[KEY_CUSTOM_POINT_RANGES] ?: ""
         val graphValueModeHabitsRaw = prefs[KEY_GRAPH_VALUE_MODE_HABITS] ?: ""
@@ -529,7 +526,6 @@ class SettingsRepository(private val context: Context) {
             garminProxyUrl = prefs[KEY_GARMIN_PROXY_URL] ?: "",
             garminAppToken = prefs[KEY_GARMIN_APP_TOKEN] ?: "",
             garminDateOfBirth = prefs[KEY_GARMIN_DATE_OF_BIRTH] ?: "",
-            garminThresholds = decodeIntMap(garminThresholdsRaw),
             garminHabitLinks = decodeFileUriMap(garminHabitLinksRaw),
             customPointRangesHabits = prefs[KEY_CUSTOM_POINT_RANGES_HABITS] ?: emptySet(),
             customPointRanges = decodePointRangesMap(customPointRangesRaw),
@@ -816,12 +812,6 @@ class SettingsRepository(private val context: Context) {
     }
 
     /** Saves the threshold map for Garmin metric types. */
-    suspend fun saveGarminThresholds(thresholds: Map<String, Int>) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_GARMIN_THRESHOLDS] = encodeIntMap(thresholds)
-        }
-    }
-
     /** Saves the map of habit name → Garmin type link. */
     suspend fun saveGarminHabitLinks(links: Map<String, String>) {
         context.dataStore.edit { prefs ->
@@ -834,15 +824,13 @@ class SettingsRepository(private val context: Context) {
         enabled: Boolean,
         proxyUrl: String,
         appToken: String,
-        dateOfBirth: String,
-        thresholds: Map<String, Int>
+        dateOfBirth: String
     ) {
         context.dataStore.edit { prefs ->
             prefs[KEY_GARMIN_ENABLED] = enabled
             prefs[KEY_GARMIN_PROXY_URL] = proxyUrl
             prefs[KEY_GARMIN_APP_TOKEN] = appToken
             prefs[KEY_GARMIN_DATE_OF_BIRTH] = dateOfBirth
-            prefs[KEY_GARMIN_THRESHOLDS] = encodeIntMap(thresholds)
         }
     }
 
