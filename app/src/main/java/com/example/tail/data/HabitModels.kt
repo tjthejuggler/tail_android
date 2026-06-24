@@ -458,7 +458,26 @@ data class AppSettings(
      * When a habit is in this map with value 1, the graph shows the raw value
      * (true value or garmin value) instead of points. When absent or 0, points are shown.
      */
-    val graphValueModeHabits: Map<String, Int> = emptyMap()
+    val graphValueModeHabits: Map<String, Int> = emptyMap(),
+
+    // ── Map Settings ────────────────────────────────────────────────────────
+    /**
+     * The habit name that determines map dot coloring. When set, the dots on the map
+     * are colored based on this habit's daily value for each location. When null,
+     * the monthly average of all points is used instead.
+     */
+    val mapMainHabit: String? = null,
+    /**
+     * When true, days where the main habit value is 0 (or monthly average is 0 if
+     * no main habit is set) will not show a dot on the map.
+     */
+    val mapHideZeroDays: Boolean = false,
+    /**
+     * Custom begin date for the map timeline in ISO format (YYYY-MM-DD).
+     * When empty, the map shows from the earliest location or habit date.
+     * When set, the map timeline starts from this date instead.
+     */
+    val mapBeginDate: String = ""
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

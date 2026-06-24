@@ -101,6 +101,9 @@ private val KEY_CUSTOM_INPUT_RECENT_AMOUNTS = stringPreferencesKey("custom_input
 // Map screen stats settings
 private val KEY_MAP_STATS_HABITS = stringSetPreferencesKey("map_stats_habits")
 private val KEY_MAP_STATS_SHOW_TEXT_HABITS = stringSetPreferencesKey("map_stats_show_text_habits")
+private val KEY_MAP_MAIN_HABIT = stringPreferencesKey("map_main_habit")
+private val KEY_MAP_HIDE_ZERO_DAYS = booleanPreferencesKey("map_hide_zero_days")
+private val KEY_MAP_BEGIN_DATE = stringPreferencesKey("map_begin_date")
 // Stored as "habitName\x000|||habitName\x001" pairs (0 = points, 1 = value/raw)
 private val KEY_GRAPH_VALUE_MODE_HABITS = stringPreferencesKey("graph_value_mode_habits")
 
@@ -519,6 +522,9 @@ class SettingsRepository(private val context: Context) {
             customInputRecentAmounts = decodeIntListMap(customInputRecentAmountsRaw),
             mapStatsHabits = prefs[KEY_MAP_STATS_HABITS] ?: emptySet(),
             mapStatsShowTextHabits = prefs[KEY_MAP_STATS_SHOW_TEXT_HABITS] ?: emptySet(),
+            mapMainHabit = prefs[KEY_MAP_MAIN_HABIT]?.takeIf { it.isNotEmpty() },
+            mapHideZeroDays = prefs[KEY_MAP_HIDE_ZERO_DAYS] ?: false,
+            mapBeginDate = prefs[KEY_MAP_BEGIN_DATE] ?: "",
             garminEnabled = prefs[KEY_GARMIN_ENABLED] ?: false,
             garminProxyUrl = prefs[KEY_GARMIN_PROXY_URL] ?: "",
             garminAppToken = prefs[KEY_GARMIN_APP_TOKEN] ?: "",
@@ -893,6 +899,23 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of text-input habits whose text should be shown in the map stats panel. */
     suspend fun saveMapStatsShowTextHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_MAP_STATS_SHOW_TEXT_HABITS] = habits }
+    }
+
+    /** Saves the main habit that determines map dot colors. Pass null to use default monthly average. */
+    suspend fun saveMapMainHabit(habitName: String?) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_MAP_MAIN_HABIT] = habitName ?: ""
+        }
+    }
+
+    /** Saves whether to hide days with 0 value (or 0 monthly average if no main habit). */
+    suspend fun saveMapHideZeroDays(hide: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_MAP_HIDE_ZERO_DAYS] = hide }
+    }
+
+    /** Saves the custom start date for the map timeline. Pass empty string to use default earliest date. */
+    suspend fun saveMapBeginDate(date: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_MAP_BEGIN_DATE] = date }
     }
 
     // ── Custom Point Ranges Settings ────────────────────────────────────────

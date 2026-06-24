@@ -2073,6 +2073,45 @@ class HabitViewModel(
     }
 
     /**
+     * Toggles whether a habit is the "main" habit that determines map dot colors.
+     * Only one habit can be the main habit at a time. If the habit is already the main habit,
+     * it is set to null (turning off the feature). Otherwise, it is set to the habit name.
+     */
+    fun toggleMapMainHabit(habitName: String) {
+        viewModelScope.launch {
+            val newMainHabit = if (_settings.value.mapMainHabit == habitName) {
+                null // Toggle off if already the main habit
+            } else {
+                habitName // Set as new main habit
+            }
+            settingsRepo.saveMapMainHabit(newMainHabit)
+            _settings.value = _settings.value.copy(mapMainHabit = newMainHabit)
+        }
+    }
+
+    /**
+     * Toggles whether to hide days with 0 value (or 0 monthly average if no main habit).
+     */
+    fun toggleMapHideZeroDays() {
+        viewModelScope.launch {
+            val newValue = !_settings.value.mapHideZeroDays
+            settingsRepo.saveMapHideZeroDays(newValue)
+            _settings.value = _settings.value.copy(mapHideZeroDays = newValue)
+        }
+    }
+
+    /**
+     * Sets the custom start date for the map timeline.
+     * Pass empty string to use the default earliest date.
+     */
+    fun setMapBeginDate(date: String) {
+        viewModelScope.launch {
+            settingsRepo.saveMapBeginDate(date)
+            _settings.value = _settings.value.copy(mapBeginDate = date)
+        }
+    }
+
+    /**
      * Returns the points value for [habitName] on [date].
      * Returns 0 if the habit has no data for that date.
      */

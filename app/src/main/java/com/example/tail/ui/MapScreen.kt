@@ -212,20 +212,40 @@ fun MapScreen(
     var countryTimeline by remember { mutableStateOf<List<Pair<LocalDate, String>>>(emptyList()) }
     // Per-date accent colours — each dot is locked to the colour of the day it
     // represents, so dots don't all shift when the current day changes.
-    var dotColorsByDate by remember { mutableStateOf<Map<LocalDate, Color>>(emptyMap()) }
+    var dotColorsByDate by remember { mutableStateOf<Map<LocalDate, Color?>>(emptyMap()) }
     // Secondary locations per date — logged each time the app is opened.
     var secondaryByDate by remember { mutableStateOf<Map<LocalDate, List<SecondaryLocation>>>(emptyMap()) }
     val locationVersion = viewModel.locationDataVersion
-    LaunchedEffect(locationVersion) {
+    LaunchedEffect(locationVersion, settings.mapMainHabit, settings.mapHideZeroDays) {
         val (coords, countries, colors, secondaries) = withContext(Dispatchers.Default) {
             // Single SharedPrefs read + single JSON parse → O(N) instead of
             // O(N²) date-by-date lookups.
             val c = viewModel.getAllStoredCoordsParsed()
             val ct = viewModel.buildCountryTimeline()
-            // Compute each date's accent colour from its own monthly average.
+            
+            // Compute each date's accent colour based on main habit or monthly average.
+            val mainHabit = settings.mapMainHabit
+            val hideZero = settings.mapHideZeroDays
             val dc = c.keys.associateWith { date ->
-                accentColorForPoints(kotlin.math.round(viewModel.getDayStatsLight(date).monthlyAverage).toInt())
+                val points = if (mainHabit != null) {
+                    // Use main habit value for this date
+                    viewModel.getHabitValueForDate(mainHabit, date)
+                } else {
+                    // Use monthly average
+                    kotlin.math.round(viewModel.getDayStatsLight(date).monthlyAverage).toInt()
+                }
+                
+                // Skip zero values if hideZero is enabled
+                if (hideZero && points == 0) null
+                else if (mainHabit != null) {
+                    // Use vivid border colors for main habit (same as monthly average)
+                    habitPointColorForPoints(points)
+                } else {
+                    // Use accent coloring for monthly average
+                    accentColorForPoints(points)
+                }
             }
+            
             // Load secondary locations in one pass
             val sec = viewModel.getAllSecondaryLocations()
                 .mapNotNull { (dateStr, list) ->
@@ -241,8 +261,18 @@ fun MapScreen(
         dataLoaded = true
     }
 
-    val firstDate = remember(coordsByDate) {
-        coordsByDate.keys.minOrNull() ?: selectedDate
+    val firstDate = remember(coordsByDate, settings.mapBeginDate) {
+        if (settings.mapBeginDate.isNotEmpty()) {
+            runCatching { LocalDate.parse(settings.mapBeginDate) }.getOrNull()
+                ?.let { customDate ->
+                    // Use custom date, but ensure it's not after the last date
+                    val last = coordsByDate.keys.maxOrNull() ?: selectedDate
+                    if (customDate.isAfter(last)) last else customDate
+                }
+                ?: (coordsByDate.keys.minOrNull() ?: selectedDate)
+        } else {
+            coordsByDate.keys.minOrNull() ?: selectedDate
+        }
     }
     val lastDate = remember(coordsByDate) {
         coordsByDate.keys.maxOrNull() ?: selectedDate
@@ -443,7 +473,19 @@ fun MapScreen(
     // Full stats (streak/anti-streak) are debounced: only computed after the user
     // pauses on a day for 400ms, so rapid playback stays smooth.
     val lightStats = remember(selectedDate) { viewModel.getDayStatsLight(selectedDate) }
-    val accent = remember(lightStats.monthlyAverage) { accentColorForPoints(kotlin.math.round(lightStats.monthlyAverage).toInt()) }
+    val accent = remember(selectedDate, settings.mapMainHabit, lightStats.monthlyAverage) {
+        val mainHabit = settings.mapMainHabit
+        val points = if (mainHabit != null) {
+            viewModel.getHabitValueForDate(mainHabit, selectedDate)
+        } else {
+            kotlin.math.round(lightStats.monthlyAverage).toInt()
+        }
+        if (mainHabit != null) {
+            habitPointColorForPoints(points)
+        } else {
+            accentColorForPoints(points)
+        }
+    }
 
     // ── Day secondaries (raw + distinct-from-primary, GPS distance based) ──
     // `daySecondaries` = ALL secondaries logged for the day (sorted by time).
@@ -621,8 +663,14 @@ fun MapScreen(
                     selectedHabits = settings.mapStatsHabits,
                     textInputHabits = settings.textInputHabits,
                     showTextHabits = settings.mapStatsShowTextHabits,
+                    mapMainHabit = settings.mapMainHabit,
+                    mapHideZeroDays = settings.mapHideZeroDays,
+                    mapBeginDate = settings.mapBeginDate,
                     onToggleHabit = { viewModel.toggleMapStatsHabit(it) },
                     onToggleShowText = { viewModel.toggleMapStatsShowText(it) },
+                    onToggleMainHabit = { viewModel.toggleMapMainHabit(it) },
+                    onToggleHideZeroDays = { viewModel.toggleMapHideZeroDays() },
+                    onSetBeginDate = { viewModel.setMapBeginDate(it) },
                     onDismiss = { showMapSettingsDialog = false }
                 )
             }
@@ -850,6 +898,21 @@ private fun accentColorForPoints(points: Int): Color = when {
     else         -> BorderRed
 }
 
+// ── Habit point → vivid colour mapping ─────────────────────────────────────
+// Maps habit point values (0-6+) to the same vivid Border* palette used for
+// monthly average coloring. This ensures consistency when using a main habit
+// for map dot coloring.
+// Mapping: 0=red · 1=orange · 2=green · 3=blue · 4=pink · 5=yellow · 6+=white
+private fun habitPointColorForPoints(points: Int): Color = when {
+    points >= 6 -> BorderGlass
+    points == 5 -> BorderYellow
+    points == 4 -> BorderPink
+    points == 3 -> BorderBlue
+    points == 2 -> BorderGreen
+    points == 1 -> BorderOrange
+    else         -> BorderRed
+}
+
 /** Slightly darker variant of [c], used for slider active track. */
 private fun Color.darker(factor: Float = 0.75f): Color =
     Color(
@@ -943,7 +1006,7 @@ private fun WorldMapWithMarker(
     currentCoords: Pair<Double, Double>?,
     allCoordsTrail: Map<LocalDate, Pair<Double, Double>>,
     selectedDate: LocalDate,
-    dotColorsByDate: Map<LocalDate, Color>,
+    dotColorsByDate: Map<LocalDate, Color?>,
     secondaryByDate: Map<LocalDate, List<SecondaryLocation>>,
     accent: Color,
     speed: Float = 2f,
@@ -1164,12 +1227,14 @@ private fun WorldMapWithMarker(
         // Trail of visited dots — only show dots for days up to the selected
         // date, so they appear progressively as the timeline advances.
         // Each dot is locked to the accent colour of its own day.
+        // Skip dots when color is null (hide zero days feature).
         for ((date, coord) in allCoordsTrail) {
             if (date.isAfter(selectedDate)) continue
+            val dotColor = dotColorsByDate[date]
+            if (dotColor == null) continue  // Skip hidden zero days
             val (lat, lon) = coord
-            val dotColor = (dotColorsByDate[date] ?: accent).copy(alpha = 0.55f)
             drawCircle(
-                color = dotColor,
+                color = dotColor.copy(alpha = 0.55f),
                 radius = 2.0f,
                 center = Offset(lonToX(lon, size.width), latToY(lat, size.height))
             )
@@ -1178,12 +1243,14 @@ private fun WorldMapWithMarker(
         // Secondary location dots — smaller, slightly more transparent dots
         // for positions logged each time the app was opened throughout the day.
         // Only shown for days up to the selected date.
+        // Skip dots when color is null (hide zero days feature).
         for ((date, secondaries) in secondaryByDate) {
             if (date.isAfter(selectedDate)) continue
-            val secColor = (dotColorsByDate[date] ?: accent).copy(alpha = 0.35f)
+            val secColor = dotColorsByDate[date]
+            if (secColor == null) continue  // Skip hidden zero days
             for (sec in secondaries) {
                 drawCircle(
-                    color = secColor,
+                    color = secColor.copy(alpha = 0.35f),
                     radius = 1.3f,
                     center = Offset(lonToX(sec.lon, size.width), latToY(sec.lat, size.height))
                 )
