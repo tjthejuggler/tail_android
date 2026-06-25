@@ -617,10 +617,10 @@ class HabitViewModel(
 
         for (linkedName in linkedHabits) {
             val linkedEntries = updatedDb[linkedName] ?: emptyMap()
-            val linkedRaw = (linkedEntries[dateStr] ?: 0) + 1
+            val linkedRaw = (linkedEntries[dateStr] ?: 0) + amount
             val linkedClamped = if (linkedName in _settings.value.maxOneHabits) linkedRaw.coerceAtMost(1) else linkedRaw
             if (linkedClamped != (linkedEntries[dateStr] ?: 0)) {
-                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, linkedName, 1, _selectedDate.value)
+                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, linkedName, amount, _selectedDate.value)
                 val linkedDivider = _settings.value.habitDividers[linkedName] ?: 1
                 _habits.value = _habits.value.map { h ->
                     if (h.name == linkedName) h.copy(
