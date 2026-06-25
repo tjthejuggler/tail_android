@@ -16,3 +16,11 @@ local.properties
 /venv
 scripts/_seed_locations_out/
 /garmin_proxy/venv
+
+# Garmin data files (contain personal health data)
+garmin_cache.json
+garmin_fetcher_state.json
+garmin_import.json
+
+# Dream data
+dream_recorded_history.json
