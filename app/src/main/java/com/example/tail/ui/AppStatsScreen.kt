@@ -140,6 +140,36 @@ fun AppStatsScreen(
             GoldValue,
             stats.totalPointsAllTime.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         )
+        "avg_last_7_days" -> GraphInfo(
+            "7-Day Rolling Average Over Time",
+            stats.dailyAvgLast7Days.map { Pair(it.first, it.second.toInt()) },
+            ValueColor,
+            stats.avgLast7Days.toInt()
+        )
+        "avg_last_30_days" -> GraphInfo(
+            "30-Day Rolling Average Over Time",
+            stats.dailyAvgLast30Days.map { Pair(it.first, it.second.toInt()) },
+            ValueColor,
+            stats.avgLast30Days.toInt()
+        )
+        "avg_last_90_days" -> GraphInfo(
+            "90-Day Rolling Average Over Time",
+            stats.dailyAvgLast90Days.map { Pair(it.first, it.second.toInt()) },
+            ValueColor,
+            stats.avgLast90Days.toInt()
+        )
+        "avg_last_365_days" -> GraphInfo(
+            "365-Day Rolling Average Over Time",
+            stats.dailyAvgLast365Days.map { Pair(it.first, it.second.toInt()) },
+            ValueColor,
+            stats.avgLast365Days.toInt()
+        )
+        "avg_all_time" -> GraphInfo(
+            "All-Time Rolling Average Over Time",
+            stats.dailyAvgAllTime.map { Pair(it.first, it.second.toInt()) },
+            ValueColor,
+            stats.avgAllTime.toInt()
+        )
         else -> null
     }
 
@@ -281,11 +311,36 @@ fun AppStatsScreen(
                 // ── Daily Averages ────────────────────────────────────────────
                 StatsSection(title = "📈 Daily Averages") {
                     StatRow("Today's points", stats.todayPoints.toString())
-                    StatRow("Average (last 7 days)", "%.2f".format(stats.avgLast7Days))
-                    StatRow("Average (last 30 days)", "%.2f".format(stats.avgLast30Days))
-                    StatRow("Average (last 90 days)", "%.2f".format(stats.avgLast90Days))
-                    StatRow("Average (last 365 days)", "%.2f".format(stats.avgLast365Days))
-                    StatRow("Average (all time)", "%.2f".format(stats.avgAllTime))
+                    StatGraphableRow(
+                        label = "Average (last 7 days)",
+                        value = "%.2f".format(stats.avgLast7Days),
+                        valueColor = ValueColor,
+                        onClick = { graphPopupKey = "avg_last_7_days" }
+                    )
+                    StatGraphableRow(
+                        label = "Average (last 30 days)",
+                        value = "%.2f".format(stats.avgLast30Days),
+                        valueColor = ValueColor,
+                        onClick = { graphPopupKey = "avg_last_30_days" }
+                    )
+                    StatGraphableRow(
+                        label = "Average (last 90 days)",
+                        value = "%.2f".format(stats.avgLast90Days),
+                        valueColor = ValueColor,
+                        onClick = { graphPopupKey = "avg_last_90_days" }
+                    )
+                    StatGraphableRow(
+                        label = "Average (last 365 days)",
+                        value = "%.2f".format(stats.avgLast365Days),
+                        valueColor = ValueColor,
+                        onClick = { graphPopupKey = "avg_last_365_days" }
+                    )
+                    StatGraphableRow(
+                        label = "Average (all time)",
+                        value = "%.2f".format(stats.avgAllTime),
+                        valueColor = ValueColor,
+                        onClick = { graphPopupKey = "avg_all_time" }
+                    )
                 }
 
                 // ── Streaks (aggregate) ───────────────────────────────────────
@@ -981,6 +1036,12 @@ private data class AppStats(
     val avgLast90Days: Double = 0.0,
     val avgLast365Days: Double = 0.0,
     val avgAllTime: Double = 0.0,
+    // Historical daily averages for graphing
+    val dailyAvgLast7Days: List<Pair<String, Double>> = emptyList(),
+    val dailyAvgLast30Days: List<Pair<String, Double>> = emptyList(),
+    val dailyAvgLast90Days: List<Pair<String, Double>> = emptyList(),
+    val dailyAvgLast365Days: List<Pair<String, Double>> = emptyList(),
+    val dailyAvgAllTime: List<Pair<String, Double>> = emptyList(),
 
     // Aggregate streaks
     val currentAggregateStreak: Int = 0,
@@ -1164,6 +1225,31 @@ private fun computeAppStats(
 
     // ── Aggregate streaks (days with any points > 0) ──────────────────────
     val sortedDatesList = sortedDates.toList()
+
+    // ── Historical daily averages for graphing ─────────────────────────────
+    // For each date, compute the rolling average as of that date
+    fun computeHistoricalAvg(n: Int): List<Pair<String, Double>> {
+        val result = mutableListOf<Pair<String, Double>>()
+        for ((idx, dateStr) in sortedDatesList.withIndex()) {
+            var sum = 0
+            var count = 0
+            for (i in 0 until n) {
+                if (idx - i < 0) break
+                val ds = sortedDatesList[idx - i]
+                val pts = dailyTotals[ds]
+                if (pts != null) { sum += pts; count++ }
+            }
+            val avg = if (count > 0) sum.toDouble() / count else 0.0
+            result.add(Pair(dateStr, avg))
+        }
+        return result
+    }
+
+    val dailyAvgLast7Days = computeHistoricalAvg(7)
+    val dailyAvgLast30Days = computeHistoricalAvg(30)
+    val dailyAvgLast90Days = computeHistoricalAvg(90)
+    val dailyAvgLast365Days = computeHistoricalAvg(365)
+    val dailyAvgAllTime = computeHistoricalAvg(sortedDatesList.size) // All-time average as of each date
 
     var currentStreak = 0
     var cursor = today
@@ -1454,6 +1540,11 @@ private fun computeAppStats(
         avgLast90Days = avgLast90,
         avgLast365Days = avgLast365,
         avgAllTime = avgAllTime,
+        dailyAvgLast7Days = dailyAvgLast7Days,
+        dailyAvgLast30Days = dailyAvgLast30Days,
+        dailyAvgLast90Days = dailyAvgLast90Days,
+        dailyAvgLast365Days = dailyAvgLast365Days,
+        dailyAvgAllTime = dailyAvgAllTime,
         currentAggregateStreak = currentStreak,
         longestAggregateStreak = longestStreak,
         longestAggregateStreakStartDate = longestStreakStart.ifEmpty { null },
