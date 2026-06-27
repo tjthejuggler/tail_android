@@ -306,6 +306,20 @@ fun AppStatsScreen(
                         onNavigateToDate = onNavigateToDate,
                         dateLabel = "(ending)"
                     )
+                    StatDateValueRow(
+                        label = "Best 90-day average",
+                        value = "%.2f".format(stats.highestPoints90Days.second),
+                        date = stats.highestPoints90Days.first,
+                        onNavigateToDate = onNavigateToDate,
+                        dateLabel = "(ending)"
+                    )
+                    StatDateValueRow(
+                        label = "Best 365-day average",
+                        value = "%.2f".format(stats.highestPoints365Days.second),
+                        date = stats.highestPoints365Days.first,
+                        onNavigateToDate = onNavigateToDate,
+                        dateLabel = "(ending)"
+                    )
                 }
 
                 // ── Daily Averages ────────────────────────────────────────────
@@ -1028,6 +1042,8 @@ private data class AppStats(
     val highestPointsDay: Pair<String?, Int> = Pair(null, 0),
     val highestPointsWeek: Pair<String?, Double> = Pair(null, 0.0),
     val highestPointsMonth: Pair<String?, Double> = Pair(null, 0.0),
+    val highestPoints90Days: Pair<String?, Double> = Pair(null, 0.0),
+    val highestPoints365Days: Pair<String?, Double> = Pair(null, 0.0),
 
     // Daily averages
     val todayPoints: Int = 0,
@@ -1201,6 +1217,40 @@ private fun computeAppStats(
     } else if (sortedDailyEntries.isNotEmpty()) {
         bestMonthAvg = sortedDailyEntries.map { it.value }.average()
         bestMonthEndDate = sortedDailyEntries.last().key
+    }
+
+    // ── Highest points 90-day rolling average ───────────────────────────
+    var best90DayAvg = 0.0
+    var best90DayEndDate: String? = null
+    if (sortedDailyEntries.size >= 90) {
+        for (i in 89 until sortedDailyEntries.size) {
+            val windowSum = (i - 89..i).sumOf { sortedDailyEntries[it].value }
+            val avg = windowSum / 90.0
+            if (avg > best90DayAvg) {
+                best90DayAvg = avg
+                best90DayEndDate = sortedDailyEntries[i].key
+            }
+        }
+    } else if (sortedDailyEntries.isNotEmpty()) {
+        best90DayAvg = sortedDailyEntries.map { it.value }.average()
+        best90DayEndDate = sortedDailyEntries.last().key
+    }
+
+    // ── Highest points 365-day rolling average ──────────────────────────
+    var best365DayAvg = 0.0
+    var best365DayEndDate: String? = null
+    if (sortedDailyEntries.size >= 365) {
+        for (i in 364 until sortedDailyEntries.size) {
+            val windowSum = (i - 364..i).sumOf { sortedDailyEntries[it].value }
+            val avg = windowSum / 365.0
+            if (avg > best365DayAvg) {
+                best365DayAvg = avg
+                best365DayEndDate = sortedDailyEntries[i].key
+            }
+        }
+    } else if (sortedDailyEntries.isNotEmpty()) {
+        best365DayAvg = sortedDailyEntries.map { it.value }.average()
+        best365DayEndDate = sortedDailyEntries.last().key
     }
 
     // ── Daily averages ────────────────────────────────────────────────────
@@ -1534,6 +1584,8 @@ private fun computeAppStats(
         highestPointsDay = highestPointsDay,
         highestPointsWeek = Pair(bestWeekEndDate, bestWeekAvg),
         highestPointsMonth = Pair(bestMonthEndDate, bestMonthAvg),
+        highestPoints90Days = Pair(best90DayEndDate, best90DayAvg),
+        highestPoints365Days = Pair(best365DayEndDate, best365DayAvg),
         todayPoints = todayPoints,
         avgLast7Days = avgLast7,
         avgLast30Days = avgLast30,
