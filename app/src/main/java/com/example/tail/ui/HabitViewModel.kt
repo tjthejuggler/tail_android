@@ -1434,6 +1434,23 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Sets or clears the note for [habitName].
+     * [note] is the note text, or empty string to clear the note.
+     */
+    fun setHabitNote(habitName: String, note: String) {
+        viewModelScope.launch {
+            val current = _settings.value.habitNotes.toMutableMap()
+            if (note.isEmpty()) {
+                current.remove(habitName)
+            } else {
+                current[habitName] = note
+            }
+            settingsRepo.saveHabitNotes(current)
+            _settings.value = _settings.value.copy(habitNotes = current)
+        }
+    }
+
     // ── AI Icon Generation methods ───────────────────────────────────────────
 
     /** Available models fetched from the API (or fallback). */

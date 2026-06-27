@@ -470,7 +470,13 @@ data class AppSettings(
      * When empty, the map shows from the earliest location or habit date.
      * When set, the map timeline starts from this date instead.
      */
-    val mapBeginDate: String = ""
+    val mapBeginDate: String = "",
+
+    /**
+     * Maps habit name → note text for per-habit notes.
+     * Users can write notes about each habit in edit mode.
+     */
+    val habitNotes: Map<String, String> = emptyMap()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

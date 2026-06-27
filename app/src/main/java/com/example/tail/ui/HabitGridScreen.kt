@@ -735,7 +735,9 @@ fun HabitGridScreen(
                             viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
                                 editModeTextEntries = entries
                             }
-                        }
+                        },
+                        habitNotes = settings.habitNotes,
+                        onSetHabitNote = { name, note -> viewModel.setHabitNote(name, note) }
                     )
                 }
             }
@@ -1364,7 +1366,11 @@ private fun EditModeControlBar(
     /** Called when the user edits an existing text entry. */
     onEditTextEntry: (String, String, String) -> Unit = { _, _, _ -> },
     /** Called when the user deletes an existing text entry. */
-    onDeleteTextEntry: (String, String) -> Unit = { _, _ -> }
+    onDeleteTextEntry: (String, String) -> Unit = { _, _ -> },
+    /** Map of habit name → note text. */
+    habitNotes: Map<String, String> = emptyMap(),
+    /** Called when the user edits the note for a habit. */
+    onSetHabitNote: (String, String) -> Unit = { _, _ -> }
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -1868,6 +1874,57 @@ private fun EditModeControlBar(
                                 )
                             )
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // ── Note section ───────────────────────────────────────────
+                    val currentNote = habitNotes[selectedHabitName] ?: ""
+                    var noteText by remember(selectedHabitName) {
+                        mutableStateOf(currentNote)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Note", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (currentNote.isNotEmpty()) "Has note" else "No note",
+                                color = Color(0xFF888888), fontSize = 10.sp
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                onSetHabitNote(selectedHabitName, noteText)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Save", fontSize = 11.sp, color = Color(0xFFFFCC44))
+                        }
+                    }
+                    
+                    if (currentNote.isNotEmpty() || noteText.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = noteText,
+                            onValueChange = { noteText = it },
+                            placeholder = { Text("Add a note about this habit...", color = Color(0xFF666666), fontSize = 11.sp) },
+                            singleLine = false,
+                            minLines = 2,
+                            maxLines = 4,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color(0xFFFFCC44),
+                                unfocusedTextColor = Color(0xFFFFCC44),
+                                focusedBorderColor = Color(0xFF664400),
+                                unfocusedBorderColor = Color(0xFF443300),
+                                cursorColor = Color(0xFFFFCC44)
+                            ),
+                            textStyle = TextStyle(fontSize = 12.sp)
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))

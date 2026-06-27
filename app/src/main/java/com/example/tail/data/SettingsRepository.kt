@@ -109,6 +109,8 @@ private val KEY_GRAPH_VALUE_MODE_HABITS = stringPreferencesKey("graph_value_mode
 private val KEY_CUSTOM_POINT_RANGES_HABITS = stringSetPreferencesKey("custom_point_ranges_habits")
 // Stored as "habitName\x00min0,max0|min1,max1|...|min6,max6|||habitName\x00..." pairs
 private val KEY_CUSTOM_POINT_RANGES = stringPreferencesKey("custom_point_ranges")
+// Stored as "habitName\x00note text|||habitName\x00another note" pairs (note text can contain any chars)
+private val KEY_HABIT_NOTES = stringPreferencesKey("habit_notes")
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
@@ -208,6 +210,19 @@ private fun encodeFileUriMap(map: Map<String, String>): String =
     map.entries.joinToString(PAIR_SEP) { (k, v) -> "$k$KV_SEP$v" }
 
 private fun decodeFileUriMap(raw: String): Map<String, String> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null else pair.substring(0, idx) to pair.substring(idx + 1)
+    }.toMap()
+}
+
+// Serialisation helpers for habit notes (habit name → note text).
+// Reuses the same PAIR_SEP / KV_SEP scheme as file URI maps.
+private fun encodeHabitNotesMap(map: Map<String, String>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) -> "$k$KV_SEP$v" }
+
+private fun decodeHabitNotesMap(raw: String): Map<String, String> {
     if (raw.isBlank()) return emptyMap()
     return raw.split(PAIR_SEP).mapNotNull { pair ->
         val idx = pair.indexOf(KV_SEP)
@@ -421,6 +436,7 @@ class SettingsRepository(private val context: Context) {
             migrateKvKey(KEY_TIMED_DATA_FILE_URIS)
             migrateKvKey(KEY_CUSTOM_POINT_RANGES)
             migrateKvKey(KEY_GRAPH_VALUE_MODE_HABITS)
+            migrateKvKey(KEY_HABIT_NOTES)
 
             // --- Linked-habits map: rename both keys and values ---
             val linkedRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
@@ -468,6 +484,7 @@ class SettingsRepository(private val context: Context) {
         val garminHabitLinksRaw = prefs[KEY_GARMIN_HABIT_LINKS] ?: ""
         val customPointRangesRaw = prefs[KEY_CUSTOM_POINT_RANGES] ?: ""
         val graphValueModeHabitsRaw = prefs[KEY_GRAPH_VALUE_MODE_HABITS] ?: ""
+        val habitNotesRaw = prefs[KEY_HABIT_NOTES] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
@@ -529,7 +546,8 @@ class SettingsRepository(private val context: Context) {
             garminHabitLinks = decodeFileUriMap(garminHabitLinksRaw),
             customPointRangesHabits = prefs[KEY_CUSTOM_POINT_RANGES_HABITS] ?: emptySet(),
             customPointRanges = decodePointRangesMap(customPointRangesRaw),
-            graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw)
+            graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw),
+            habitNotes = decodeHabitNotesMap(habitNotesRaw)
         )
     }
 
@@ -924,6 +942,15 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveGraphValueModeHabits(modes: Map<String, Int>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_GRAPH_VALUE_MODE_HABITS] = encodeIntMap(modes)
+        }
+    }
+
+    // ── Habit Notes ────────────────────────────────────────────────────────
+
+    /** Saves the map of habit name → note text. */
+    suspend fun saveHabitNotes(notes: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_HABIT_NOTES] = encodeHabitNotesMap(notes)
         }
     }
 }
