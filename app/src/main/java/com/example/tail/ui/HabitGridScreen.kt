@@ -1880,9 +1880,8 @@ private fun EditModeControlBar(
 
                     // ── Note section ───────────────────────────────────────────
                     val currentNote = habitNotes[selectedHabitName] ?: ""
-                    var noteText by remember(selectedHabitName) {
-                        mutableStateOf(currentNote)
-                    }
+                    var showNoteDialog by remember { mutableStateOf(false) }
+                    
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1896,34 +1895,23 @@ private fun EditModeControlBar(
                             )
                         }
                         Button(
-                            onClick = {
-                                onSetHabitNote(selectedHabitName, noteText)
-                            },
+                            onClick = { showNoteDialog = true },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
                             modifier = Modifier.height(32.dp)
                         ) {
-                            Text("Save", fontSize = 11.sp, color = Color(0xFFFFCC44))
+                            Text("Edit", fontSize = 11.sp, color = Color(0xFFFFCC44))
                         }
                     }
                     
-                    if (currentNote.isNotEmpty() || noteText.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedTextField(
-                            value = noteText,
-                            onValueChange = { noteText = it },
-                            placeholder = { Text("Add a note about this habit...", color = Color(0xFF666666), fontSize = 11.sp) },
-                            singleLine = false,
-                            minLines = 2,
-                            maxLines = 4,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color(0xFFFFCC44),
-                                unfocusedTextColor = Color(0xFFFFCC44),
-                                focusedBorderColor = Color(0xFF664400),
-                                unfocusedBorderColor = Color(0xFF443300),
-                                cursorColor = Color(0xFFFFCC44)
-                            ),
-                            textStyle = TextStyle(fontSize = 12.sp)
+                    if (showNoteDialog) {
+                        HabitNoteDialog(
+                            habitName = selectedHabitName!!,
+                            initialNote = currentNote,
+                            onConfirm = { newNote ->
+                                onSetHabitNote(selectedHabitName!!, newNote)
+                                showNoteDialog = false
+                            },
+                            onDismiss = { showNoteDialog = false }
                         )
                     }
 
@@ -3660,6 +3648,79 @@ private fun SetCountDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A3A00))
                 ) {
                     Text("Set", color = Color(0xFFFFAA00))
+                }
+            }
+        }
+    }
+}
+
+// ── Habit note dialog ──────────────────────────────────────────────────────────
+
+/**
+ * Dialog for editing a habit's note.
+ */
+@Composable
+private fun HabitNoteDialog(
+    habitName: String,
+    initialNote: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var noteText by remember { mutableStateOf(initialNote) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Edit Note",
+                color = Color(0xFFFFCC44),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = habitName,
+                color = Color(0xFF888888),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = noteText,
+                onValueChange = { noteText = it },
+                placeholder = { Text("Add a note about this habit...", color = Color(0xFF666666), fontSize = 11.sp) },
+                singleLine = false,
+                minLines = 4,
+                maxLines = 8,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 120.dp, max = 200.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFFFFCC44),
+                    unfocusedBorderColor = Color(0xFF555555),
+                    cursorColor = Color(0xFFFFCC44)
+                ),
+                textStyle = TextStyle(fontSize = 13.sp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = { onConfirm(noteText) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A4A00))
+                ) {
+                    Text("Save", color = Color(0xFFFFCC44))
                 }
             }
         }
