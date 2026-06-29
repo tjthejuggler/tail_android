@@ -84,7 +84,7 @@ fun AdviceNoteDialog(
                             contentColor = Color(0xFF6ECF9A)
                         )
                     ) {
-                        Text("Add advice", fontSize = 13.sp)
+                        Text("Manage advice", fontSize = 13.sp)
                     }
                 }
             }
