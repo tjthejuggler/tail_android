@@ -1252,12 +1252,21 @@ class HabitViewModel(
     /**
      * Toggles the "no points" flag for [habitName].
      * When enabled, the habit's points are NOT included in any totals.
+     * This triggers a full recalculation of all historical data and external files.
      */
     fun toggleNoPointsHabit(habitName: String) {
         val current = _settings.value.noPointsHabits.toMutableSet()
         if (habitName in current) current.remove(habitName) else current.add(habitName)
         _settings.value = _settings.value.copy(noPointsHabits = current)
-        viewModelScope.launch { settingsRepo.saveNoPointsHabits(current) }
+        viewModelScope.launch {
+            settingsRepo.saveNoPointsHabits(current)
+            // Recalculate all historical data by refreshing the Tasker stats file
+            // This ensures external files are updated with the new point calculations
+            val taskerUri = _settings.value.taskerFileUri
+            if (taskerUri.isNotEmpty()) {
+                writeTaskerFile(taskerUri)
+            }
+        }
     }
 
     /**
