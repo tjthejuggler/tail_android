@@ -681,6 +681,85 @@ class HabitViewModel(
         sendHabitIncrementedBroadcast(habitName)
     }
 
+    // ── DB snapshots (crash/wipe recovery) ───────────────────────────────────
+
+    /** UI-facing view of one habit-DB snapshot. */
+    data class SnapshotUi(
+        val fileName: String,
+        val timestamp: Long,
+        val entryCount: Int,
+        val sizeBytes: Long
+    )
+
+    private val _snapshots = MutableStateFlow<List<SnapshotUi>>(emptyList())
+    val snapshots: StateFlow<List<SnapshotUi>> = _snapshots.asStateFlow()
+
+    private val _snapshotStatus = MutableStateFlow<String?>(null)
+    val snapshotStatus: StateFlow<String?> = _snapshotStatus.asStateFlow()
+
+    /** Loads the list of internal DB snapshots for the restore UI. */
+    fun loadSnapshots() {
+        viewModelScope.launch {
+            try {
+                val mgr = habitsRepo.snapshots(context)
+                val infos = mgr.listSnapshots()
+                _snapshots.value = infos.map { info ->
+                    SnapshotUi(
+                        fileName = info.file.name,
+                        timestamp = info.timestamp,
+                        entryCount = mgr.entryCountOf(info.file),
+                        sizeBytes = info.sizeBytes
+                    )
+                }
+            } catch (e: Exception) {
+                _snapshotStatus.value = "Failed to list snapshots: ${e.message}"
+            }
+        }
+    }
+
+    /**
+     * Restores the DB from the snapshot with [fileName], writing it back to the
+     * configured habits file and reloading the in-memory state.
+     */
+    fun restoreSnapshot(fileName: String) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            _snapshotStatus.value = "No habits file configured — cannot restore."
+            return
+        }
+        viewModelScope.launch {
+            _snapshotStatus.value = "Restoring…"
+            try {
+                val mgr = habitsRepo.snapshots(context)
+                val info = mgr.listSnapshots().firstOrNull { it.file.name == fileName }
+                if (info == null) {
+                    _snapshotStatus.value = "Snapshot no longer exists."
+                    return@launch
+                }
+                val db = mgr.readSnapshot(info.file)
+                if (db == null) {
+                    _snapshotStatus.value = "Snapshot is unreadable — cannot restore."
+                    return@launch
+                }
+                val ok = habitsRepo.restoreDatabaseRaw(Uri.parse(uriString), context, db)
+                if (ok) {
+                    cachedPhoneDb = db
+                    rebuildHabitList()
+                    val count = db.values.sumOf { it.size }
+                    _snapshotStatus.value = "Restored $count entries from ${fileName}."
+                    loadSnapshots()
+                } else {
+                    _snapshotStatus.value = "Restore write failed."
+                }
+            } catch (e: Exception) {
+                _snapshotStatus.value = "Restore failed: ${e.message}"
+            }
+        }
+    }
+
+    /** Clears the transient snapshot status message. */
+    fun clearSnapshotStatus() { _snapshotStatus.value = null }
+
     /**
      * Sets the count for [habitName] on the currently selected date to an absolute [newCount].
      * [newCount] is the raw value to store. Clamps to >= 0. Persists to the DB file.

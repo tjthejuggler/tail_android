@@ -434,6 +434,14 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // ── Automatic snapshots (wipe recovery) ──────────────────────────
+            item {
+                SnapshotRestoreSection(viewModel = viewModel)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // ── Debug Mode ───────────────────────────────────────────────────
             item {
                 DebugModeCard(

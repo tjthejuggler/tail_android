@@ -3,6 +3,7 @@ package com.example.tail.data
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.example.tail.data.backup.HabitsSnapshotManager
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
@@ -68,6 +69,16 @@ class HabitsLoadFailedException(val result: HabitsLoadResult) :
  *      we abort and log loudly. This is the last line of defence.
  */
 class HabitsRepository {
+
+    companion object {
+        /**
+         * Process-wide snapshot store, lazily built from the first save's context.
+         * Shared across all [HabitsRepository] instances (widgets, receivers,
+         * services each create their own repo) so retention is consistent.
+         */
+        @Volatile
+        private var snapshotManagerRef: HabitsSnapshotManager? = null
+    }
 
     /**
      * Reads and parses the habits JSON file from the given SAF URI.
@@ -135,6 +146,18 @@ class HabitsRepository {
      * new payload has fewer than half the total entries of the on-disk one),
      * the write is ABORTED and logged. This is the last line of defence against
      * accidentally overwriting a healthy DB with a skeleton/empty one.
+     *
+     * DURABILITY (post-incident hardening, 2026-07-05):
+     *   The SAF write uses truncate-then-stream ("wt"). If it is interrupted
+     *   mid-stream the file is left truncated — this is exactly how the DB
+     *   collapsed to ~100 KB. Two defences:
+     *     1. Every healthy on-disk state we read for the guard is captured to a
+     *        [HabitsSnapshotManager] snapshot in PRIVATE internal storage BEFORE
+     *        we overwrite it, and the new state is snapshotted AFTER a confirmed
+     *        successful write. Snapshots are recoverable via the Settings UI.
+     *     2. The output stream is explicitly flushed and its file descriptor
+     *        synced ("wts") so the bytes are on stable storage before we return,
+     *        shrinking the interruption window as much as SAF allows.
      */
     suspend fun saveDatabase(uri: Uri, context: Context, db: HabitsDatabase) =
         withContext(Dispatchers.IO) {
@@ -178,12 +201,82 @@ class HabitsRepository {
                     )
                     return@withContext
                 }
+
+                // Snapshot the healthy pre-write state so we can always roll back
+                // to what was on disk before this overwrite. Never blocks the save.
+                snapshotManager(context).snapshot(onDisk, reason = "pre-write")
             }
 
+            // ── Durable write ─────────────────────────────────────────────────
+            // "wts": truncate + sync. The 's' asks the provider to fsync the fd on
+            // close, so the bytes are flushed to stable storage before we continue.
             val cr = context.contentResolver
-            cr.openOutputStream(uri, "wt")?.use { stream ->
-                stream.bufferedWriter().use { it.write(json) }
+            val wrote = try {
+                (cr.openOutputStream(uri, "wts") ?: cr.openOutputStream(uri, "wt"))?.use { stream ->
+                    stream.bufferedWriter().use {
+                        it.write(json)
+                        it.flush()
+                    }
+                    true
+                } ?: false
+            } catch (e: Exception) {
+                Log.e(TAG, "saveDatabase: write failed: ${e.message}", e)
+                false
             }
+
+            // Snapshot the newly-written state only after a confirmed write.
+            if (wrote) {
+                snapshotManager(context).snapshot(db, reason = "post-save")
+            }
+        }
+
+    // Lazily-created, process-wide snapshot store. Uses the application context
+    // so it's safe to build from any call site (widgets, receivers, services).
+    private fun snapshotManager(context: Context): HabitsSnapshotManager {
+        val existing = snapshotManagerRef
+        if (existing != null) return existing
+        val created = HabitsSnapshotManager(context.applicationContext)
+        snapshotManagerRef = created
+        return created
+    }
+
+    /** Public accessor so the Settings UI can list/restore snapshots. */
+    fun snapshots(context: Context): HabitsSnapshotManager = snapshotManager(context)
+
+    /**
+     * DELIBERATE restore: writes [db] to [uri] unconditionally, bypassing the
+     * anti-shrinkage guard (the user is intentionally rolling back, which may
+     * legitimately shrink the file). The current on-disk state is still
+     * snapshotted first so an accidental restore is itself recoverable.
+     *
+     * Returns true on a confirmed write.
+     */
+    suspend fun restoreDatabaseRaw(uri: Uri, context: Context, db: HabitsDatabase): Boolean =
+        withContext(Dispatchers.IO) {
+            val json = prettyGson.toJson(db)
+            // Snapshot whatever is currently on disk before we clobber it.
+            try {
+                when (val r = loadDatabaseResult(uri, context)) {
+                    is HabitsLoadResult.Success -> snapshotManager(context).snapshot(r.db, reason = "pre-restore")
+                    else -> {}
+                }
+            } catch (_: Exception) {}
+
+            val cr = context.contentResolver
+            val ok = try {
+                (cr.openOutputStream(uri, "wts") ?: cr.openOutputStream(uri, "wt"))?.use { stream ->
+                    stream.bufferedWriter().use {
+                        it.write(json)
+                        it.flush()
+                    }
+                    true
+                } ?: false
+            } catch (e: Exception) {
+                Log.e(TAG, "restoreDatabaseRaw: write failed: ${e.message}", e)
+                false
+            }
+            if (ok) snapshotManager(context).snapshot(db, reason = "post-restore")
+            ok
         }
 
     /**
