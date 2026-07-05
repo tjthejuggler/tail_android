@@ -208,27 +208,46 @@ class HabitsRepository {
             }
 
             // ── Durable write ─────────────────────────────────────────────────
-            // "wts": truncate + sync. The 's' asks the provider to fsync the fd on
-            // close, so the bytes are flushed to stable storage before we continue.
-            val cr = context.contentResolver
-            val wrote = try {
-                (cr.openOutputStream(uri, "wts") ?: cr.openOutputStream(uri, "wt"))?.use { stream ->
-                    stream.bufferedWriter().use {
-                        it.write(json)
-                        it.flush()
-                    }
-                    true
-                } ?: false
-            } catch (e: Exception) {
-                Log.e(TAG, "saveDatabase: write failed: ${e.message}", e)
-                false
-            }
+            // Use the plain "wt" (write+truncate) mode — the same mode the app has
+            // always used and the only one guaranteed to be supported by every SAF
+            // provider (some, e.g. Samsung's, reject the "wts" sync-mode string with
+            // an exception, which previously caused writes to be silently dropped
+            // and increments to "disappear"). We still flush explicitly, and if the
+            // provider hands us a real FileOutputStream we fsync its descriptor so
+            // the bytes reach stable storage before we return.
+            val wrote = writeJsonToUri(uri, context, json)
 
             // Snapshot the newly-written state only after a confirmed write.
             if (wrote) {
                 snapshotManager(context).snapshot(db, reason = "post-save")
             }
         }
+
+    /**
+     * Writes [json] to [uri] using SAF "wt" mode. Flushes and, when possible,
+     * fsyncs the underlying file descriptor. Returns true only on a confirmed,
+     * exception-free write. Never throws.
+     */
+    private fun writeJsonToUri(uri: Uri, context: Context, json: String): Boolean {
+        val cr = context.contentResolver
+        return try {
+            val stream = cr.openOutputStream(uri, "wt") ?: return false
+            stream.use { out ->
+                out.bufferedWriter().use { w ->
+                    w.write(json)
+                    w.flush()
+                }
+                // Best-effort durability: fsync the fd if this is a plain file stream.
+                if (out is java.io.FileOutputStream) {
+                    try { out.fd.sync() } catch (_: Exception) {}
+                }
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "writeJsonToUri: write failed: ${e.message}", e)
+            false
+        }
+    }
 
     // Lazily-created, process-wide snapshot store. Uses the application context
     // so it's safe to build from any call site (widgets, receivers, services).
@@ -262,19 +281,7 @@ class HabitsRepository {
                 }
             } catch (_: Exception) {}
 
-            val cr = context.contentResolver
-            val ok = try {
-                (cr.openOutputStream(uri, "wts") ?: cr.openOutputStream(uri, "wt"))?.use { stream ->
-                    stream.bufferedWriter().use {
-                        it.write(json)
-                        it.flush()
-                    }
-                    true
-                } ?: false
-            } catch (e: Exception) {
-                Log.e(TAG, "restoreDatabaseRaw: write failed: ${e.message}", e)
-                false
-            }
+            val ok = writeJsonToUri(uri, context, json)
             if (ok) snapshotManager(context).snapshot(db, reason = "post-restore")
             ok
         }
