@@ -1,11 +1,19 @@
 package com.example.tail.ui
 
 import android.graphics.Bitmap
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.padding
@@ -13,13 +21,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -71,7 +84,20 @@ fun HabitButton(
     garminHabitLinks: Map<String, String> = emptyMap()
 ) {
     val habitStyle = getHabitStyle(habit.todayCount)
-    val bgColor = habitStyle.background
+    // Animate color transitions smoothly to prevent flickering
+    val bgColor by animateColorAsState(
+        targetValue = habitStyle.background,
+        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+        label = "habitBackgroundColor"
+    )
+    
+    // Click animation state
+    var isPressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.92f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "habitButtonScale"
+    )
     val iconRes = getHabitIconRes(habit.name, customIconOverrides)
     // Check if this habit uses an AI-generated icon (id starts with "ai_")
     val aiIconId = customIconOverrides[habit.name]?.takeIf { it.startsWith("ai_") }
@@ -114,13 +140,25 @@ fun HabitButton(
     Box(
         modifier = modifier
             .aspectRatio(1f)
+            .graphicsLayer { this.scaleX = scale; this.scaleY = scale }
             .clip(shape)
             .background(effectiveBgColor)
             .then(tierBorderMod)
             .then(modeBorderMod)
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = onLongClick
+                onLongClick = onLongClick,
+                interactionSource = remember { MutableInteractionSource() }.also { source ->
+                    LaunchedEffect(source) {
+                        source.interactions.collect { interaction ->
+                            when (interaction) {
+                                is PressInteraction.Press -> isPressed = true
+                                is PressInteraction.Release -> isPressed = false
+                                is PressInteraction.Cancel -> isPressed = false
+                            }
+                        }
+                    }
+                }
             )
     ) {
         // Top-left: all-time high day (formatted for Garmin distance habits)
