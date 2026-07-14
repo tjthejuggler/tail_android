@@ -1841,8 +1841,8 @@ class HabitViewModel(
     fun setGraphZoomRange(startDate: LocalDate, endDate: LocalDate) {
         _graphZoomStartDate.value = startDate
         _graphZoomEndDate.value = endDate
-        // Deselect the time period bubble
-        _graphTimePeriod.value = null
+        // Don't deselect the time period - it should remain selected during pan/swipe
+        // Time period is only cleared when user taps a period button (in setGraphTimePeriod)
     }
 
     fun clearGraphZoom() {

@@ -4,7 +4,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
@@ -36,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -183,22 +186,6 @@ fun GraphsPanel(
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 )
             }
-            // Show zoom indicator when custom zoom is active
-            if (zoomStartDate != null && zoomEndDate != null) {
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "🔍 ${zoomStartDate!!.format(SHORT_DATE_FMT)}–${zoomEndDate!!.format(SHORT_DATE_FMT)}",
-                    color = Color(0xFFFFCC44),
-                    fontSize = 10.sp,
-                    modifier = Modifier
-                        .background(Color(0xFF2A2A00), RoundedCornerShape(8.dp))
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) { viewModel.clearGraphZoom() }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
         }
 
         // ── Points/Value toggle — shown when exactly one habit is selected ────
@@ -258,16 +245,16 @@ fun GraphsPanel(
             val today = LocalDate.now()
             val earliestDate = viewModel.getEarliestDate(graphSelectedHabits)
 
-            // Full period range — never affected by zoom (stable reference for the chart)
-            val fullStartDate = when {
+            // Use zoom range if set, otherwise use period-based range
+            val fullStartDate = zoomStartDate ?: when {
                 selectedPeriod?.days != null -> today.minusDays(selectedPeriod!!.days!!.toLong() - 1)
                 earliestDate != null -> earliestDate
                 else -> today.minusDays(29)
             }
-            val fullEndDate = today
+            val fullEndDate = zoomEndDate ?: today
 
             // Collect data for all selected habits over the full period range
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod) {
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate) {
                 graphSelectedHabits.toList().mapIndexed { idx, habitName ->
                     val data = viewModel.getGraphData(habitName, fullStartDate, fullEndDate)
                     GraphSeries(
@@ -563,6 +550,10 @@ private fun HabitLineChart(
     var zoomScale by remember(fullStartDate, fullEndDate) { mutableFloatStateOf(1f) }
     var zoomCenter by remember(fullStartDate, fullEndDate) { mutableFloatStateOf(1f) }  // default: right edge (today)
 
+    // Drag state for smooth scrolling
+    var totalDragX by remember { mutableFloatStateOf(0f) }
+    var lastShiftedDays by remember { mutableIntStateOf(0) }
+
     // Derive the visible date range from zoom state
     val visStartDate: LocalDate
     val visEndDate: LocalDate
@@ -617,35 +608,62 @@ private fun HabitLineChart(
     val effectiveYMax = yTicks.lastOrNull() ?: yMax
     val yRange = effectiveYMax - effectiveYMin
 
-    val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
-        val newScale = (zoomScale * zoomChange).coerceIn(1f, fullTotalDays.toFloat().coerceAtLeast(2f))
-        // Improved pan calculation: pan directly affects the visible window position
-        // panChange.x is in pixels, we need to convert it to a fraction of the visible range
-        val panFraction = if (fullTotalDays > 1) panChange.x / 500f else 0f
-        val newCenter = (zoomCenter + panFraction / newScale).coerceIn(0f, 1f)
-
-        zoomScale = newScale
-        zoomCenter = newCenter
-
-        if (newScale <= 1.01f) {
-            // Fully zoomed out — reset to full range
-            onZoomReset()
-        } else {
-            // Notify parent of the current visible range (for the zoom indicator)
-            val visibleDays = (fullTotalDays / newScale).toInt().coerceAtLeast(2)
-            val centerDayIdx = (newCenter * (fullTotalDays - 1)).toInt().coerceIn(0, fullTotalDays - 1)
-            val halfVisible = visibleDays / 2
-            val visStartIdx = (centerDayIdx - halfVisible).coerceIn(0, (fullTotalDays - visibleDays).coerceAtLeast(0))
-            val visEndIdx = (visStartIdx + visibleDays - 1).coerceIn(0, fullTotalDays - 1)
-            val newStart = fullStartDate.plusDays(visStartIdx.toLong())
-            val newEnd = fullStartDate.plusDays(visEndIdx.toLong())
-            onZoom(newStart, newEnd)
-        }
-    }
-
     Canvas(
         modifier = modifier
-            .transformable(state = transformableState)
+            .pointerInput(Unit) {
+                detectTransformGestures { _, _, zoomChange, _ ->
+                    // Handle pinch-to-zoom
+                    val newScale = (zoomScale * zoomChange).coerceIn(1f, fullTotalDays.toFloat().coerceAtLeast(2f))
+                    zoomScale = newScale
+                    zoomCenter = 1f  // Keep at right edge
+
+                    if (newScale <= 1.01f) {
+                        onZoomReset()
+                    } else {
+                        val visibleDays = (fullTotalDays / newScale).toInt().coerceAtLeast(2)
+                        val centerDayIdx = (zoomCenter * (fullTotalDays - 1)).toInt().coerceIn(0, fullTotalDays - 1)
+                        val halfVisible = visibleDays / 2
+                        val visStartIdx = (centerDayIdx - halfVisible).coerceIn(0, (fullTotalDays - visibleDays).coerceAtLeast(0))
+                        val visEndIdx = (visStartIdx + visibleDays - 1).coerceIn(0, fullTotalDays - 1)
+                        val newStart = fullStartDate.plusDays(visStartIdx.toLong())
+                        val newEnd = fullStartDate.plusDays(visEndIdx.toLong())
+                        onZoom(newStart, newEnd)
+                    }
+                }
+            }
+            .pointerInput(fullTotalDays, visStartDate, visEndDate) {
+                detectDragGestures(
+                    onDragEnd = {
+                        totalDragX = 0f
+                        lastShiftedDays = 0
+                    }
+                ) { _, dragAmount ->
+                    totalDragX += dragAmount.x
+                    
+                    // Calculate days to shift based on drag amount
+                    // 50 pixels = 1 day shift (adjustable for sensitivity)
+                    val daysToShift = (totalDragX / 50f).toInt()
+                    
+                    if (daysToShift != lastShiftedDays) {
+                        val deltaDays = daysToShift - lastShiftedDays
+                        lastShiftedDays = daysToShift
+                        
+                        val windowDays = ChronoUnit.DAYS.between(visStartDate, visEndDate).toInt()
+                        val newStart = visStartDate.minusDays(deltaDays.toLong())
+                        val newEnd = newStart.plusDays(windowDays.toLong())
+                        
+                        // Prevent scrolling into the future
+                        val today = LocalDate.now()
+                        if (newEnd.isAfter(today)) {
+                            // Clamp to end at today
+                            val clampedStart = today.minusDays(windowDays.toLong())
+                            onZoom(clampedStart, today)
+                        } else {
+                            onZoom(newStart, newEnd)
+                        }
+                    }
+                }
+            }
             .pointerInput(seriesData, visStartDate, visEndDate) {
                 detectTapGestures { offset ->
                     val chartLeft = 40.dp.toPx()
