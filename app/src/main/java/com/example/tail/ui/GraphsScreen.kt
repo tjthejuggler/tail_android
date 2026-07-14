@@ -41,6 +41,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,8 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -550,9 +553,13 @@ private fun HabitLineChart(
     var zoomScale by remember(fullStartDate, fullEndDate) { mutableFloatStateOf(1f) }
     var zoomCenter by remember(fullStartDate, fullEndDate) { mutableFloatStateOf(1f) }  // default: right edge (today)
 
-    // Drag state for smooth scrolling
-    var totalDragX by remember { mutableFloatStateOf(0f) }
-    var lastShiftedDays by remember { mutableIntStateOf(0) }
+    // Drag state for smooth scrolling.
+    // dragOffsetPx is a continuous horizontal pixel offset applied to the whole
+    // chart while the finger is moving, so the graph pans in real time. Whenever
+    // the accumulated offset exceeds one day's pixel width we commit a whole-day
+    // shift to the visible window and subtract that width back out, keeping the
+    // motion seamless.
+    var dragOffsetPx by remember { mutableFloatStateOf(0f) }
 
     // Derive the visible date range from zoom state
     val visStartDate: LocalDate
@@ -572,6 +579,12 @@ private fun HabitLineChart(
         visEndDate = fullStartDate.plusDays(visEndIdx.toLong())
         visTotalDays = ChronoUnit.DAYS.between(visStartDate, visEndDate).toInt() + 1
     }
+
+    // Fresh snapshots of the visible window, read by the stable (Unit-keyed) drag
+    // gesture so it never needs to be restarted when the window changes.
+    val currentVisStart by rememberUpdatedState(visStartDate)
+    val currentVisEnd by rememberUpdatedState(visEndDate)
+    val currentVisTotalDays by rememberUpdatedState(visTotalDays)
 
     // Find global min and max for Y axis (over the visible range)
     // Use pointsValue or rawValue/garminValue based on the habit's value mode
@@ -631,37 +644,57 @@ private fun HabitLineChart(
                     }
                 }
             }
-            .pointerInput(fullTotalDays, visStartDate, visEndDate) {
+            // Horizontal pan / scroll-through-time gesture.
+            //
+            // Key on Unit so this gesture coroutine is NEVER cancelled/restarted
+            // mid-drag. (If we keyed it on visStartDate/visEndDate, committing an
+            // onZoom during the drag would change those keys, recompose, and
+            // cancel the in-progress drag — which is exactly why it used to move
+            // only one data point per swipe.)
+            //
+            // During the drag we ONLY accumulate a local pixel offset, so the
+            // whole chart translates with the finger in real time for the entire
+            // duration of the swipe. We commit the window shift to onZoom exactly
+            // once, at drag end. currentVis* are rememberUpdatedState wrappers so
+            // we always read the freshest visible window without restarting.
+            .pointerInput(Unit) {
                 detectDragGestures(
                     onDragEnd = {
-                        totalDragX = 0f
-                        lastShiftedDays = 0
-                    }
-                ) { _, dragAmount ->
-                    totalDragX += dragAmount.x
-                    
-                    // Calculate days to shift based on drag amount
-                    // 50 pixels = 1 day shift (adjustable for sensitivity)
-                    val daysToShift = (totalDragX / 50f).toInt()
-                    
-                    if (daysToShift != lastShiftedDays) {
-                        val deltaDays = daysToShift - lastShiftedDays
-                        lastShiftedDays = daysToShift
-                        
-                        val windowDays = ChronoUnit.DAYS.between(visStartDate, visEndDate).toInt()
-                        val newStart = visStartDate.minusDays(deltaDays.toLong())
-                        val newEnd = newStart.plusDays(windowDays.toLong())
-                        
-                        // Prevent scrolling into the future
-                        val today = LocalDate.now()
-                        if (newEnd.isAfter(today)) {
-                            // Clamp to end at today
-                            val clampedStart = today.minusDays(windowDays.toLong())
-                            onZoom(clampedStart, today)
-                        } else {
+                        val visStart = currentVisStart
+                        val visEnd = currentVisEnd
+                        val visDays = currentVisTotalDays
+
+                        val chartLeftPx = 40.dp.toPx()
+                        val chartRightPx = size.width - 12.dp.toPx()
+                        val chartWidthPx = (chartRightPx - chartLeftPx).coerceAtLeast(1f)
+                        val dayWidthPx = chartWidthPx / (visDays - 1).coerceAtLeast(1)
+
+                        // Convert the total accumulated pixel offset into a whole
+                        // number of days to shift the window by. Positive offset =
+                        // finger moved right = go back in time (earlier dates).
+                        val daysToShift = Math.round(dragOffsetPx / dayWidthPx).toLong()
+                        if (daysToShift != 0L) {
+                            val windowDays = ChronoUnit.DAYS.between(visStart, visEnd).toInt()
+                            var newStart = visStart.minusDays(daysToShift)
+                            var newEnd = newStart.plusDays(windowDays.toLong())
+
+                            // Clamp so we never scroll past today into the future.
+                            val today = LocalDate.now()
+                            if (newEnd.isAfter(today)) {
+                                newEnd = today
+                                newStart = today.minusDays(windowDays.toLong())
+                            }
                             onZoom(newStart, newEnd)
                         }
+                        // Reset the live offset; the recomposed window now reflects
+                        // the shift, so the chart lands exactly where the finger left it.
+                        dragOffsetPx = 0f
                     }
+                ) { change, dragAmount ->
+                    change.consume()
+                    // Pan the whole chart with the finger in real time. No onZoom
+                    // here — the render layer applies dragOffsetPx via translate().
+                    dragOffsetPx += dragAmount.x
                 }
             }
             .pointerInput(seriesData, visStartDate, visEndDate) {
@@ -720,6 +753,8 @@ private fun HabitLineChart(
         val chartBottom = size.height - 28.dp.toPx()
         val chartWidth = chartRight - chartLeft
         val chartHeight = chartBottom - chartTop
+        // Pixel width of a single day, used to apply the live drag pan offset.
+        val dayWidthPx = chartWidth / (visTotalDays - 1).coerceAtLeast(1)
 
         if (chartWidth <= 0 || chartHeight <= 0) return@Canvas
 
@@ -781,21 +816,36 @@ private fun HabitLineChart(
 
         val dateFmt = if (visTotalDays <= 30) SHORT_DATE_FMT else MEDIUM_DATE_FMT
 
-        for (i in 0 until visTotalDays step labelInterval) {
-            val date = visStartDate.plusDays(i.toLong())
-            val x = chartLeft + (i.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
-            drawContext.canvas.nativeCanvas.drawText(
-                date.format(dateFmt),
-                x,
-                chartBottom + 16.dp.toPx(),
-                xLabelPaint
-            )
-            drawLine(
-                color = Color(0xFF112211),
-                start = Offset(x, chartTop),
-                end = Offset(x, chartBottom),
-                strokeWidth = 0.5.dp.toPx()
-            )
+        // X-axis gridlines + date labels. Draw extra intervals on each side —
+        // enough to cover the current live drag distance — and translate by the
+        // drag offset so labels/lines scroll smoothly with the finger (matching
+        // the panned series below) instead of popping in/out.
+        val labelPadDays = (kotlin.math.abs(dragOffsetPx) / dayWidthPx).toInt() + labelInterval
+        clipRect(left = chartLeft, top = chartTop, right = chartRight, bottom = chartBottom + 20.dp.toPx()) {
+        translate(left = dragOffsetPx) {
+            val startI = -labelPadDays
+            val endI = visTotalDays + labelPadDays
+            var i = startI - (startI.mod(labelInterval))
+            while (i < endI) {
+                val date = visStartDate.plusDays(i.toLong())
+                val x = chartLeft + (i.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
+                if (x + dragOffsetPx >= chartLeft - dayWidthPx && x + dragOffsetPx <= chartRight + dayWidthPx) {
+                    drawContext.canvas.nativeCanvas.drawText(
+                        date.format(dateFmt),
+                        x,
+                        chartBottom + 16.dp.toPx(),
+                        xLabelPaint
+                    )
+                    drawLine(
+                        color = Color(0xFF112211),
+                        start = Offset(x, chartTop),
+                        end = Offset(x, chartBottom),
+                        strokeWidth = 0.5.dp.toPx()
+                    )
+                }
+                i += labelInterval
+            }
+        }
         }
 
         // ── Zero line (if visible within the range) ─────────────────────────
@@ -810,11 +860,21 @@ private fun HabitLineChart(
         }
 
         // ── Each series ───────────────────────────────────────────────────
+        // Clip to the plotting area and translate by the live drag offset so the
+        // lines/dots pan in real time with the finger. Pad the included data range
+        // on each side by however many days the finger has currently dragged (plus
+        // a one-day margin) so off-screen points slide smoothly into view during
+        // the drag instead of the line abruptly ending at the window edge.
+        val dragDays = (kotlin.math.abs(dragOffsetPx) / dayWidthPx).toInt() + 1
+        val panStartDate = visStartDate.minusDays(dragDays.toLong())
+        val panEndDate = visEndDate.plusDays(dragDays.toLong())
+        clipRect(left = chartLeft, top = chartTop, right = chartRight, bottom = chartBottom) {
+        translate(left = dragOffsetPx) {
         for (series in seriesData) {
             if (series.data.isEmpty()) continue
 
-            // Only include data points within the visible range
-            val visibleData = series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
+            // Only include data points within the (padded) visible range
+            val visibleData = series.data.filter { it.date >= panStartDate && it.date <= panEndDate }
             if (visibleData.isEmpty()) continue
 
             val useRawValue = (valueModeMap[series.habitName] ?: 0) == 1
@@ -904,6 +964,8 @@ private fun HabitLineChart(
                 )
             }
         }
+        } // translate (live drag pan)
+        } // clipRect (plot area)
 
         // ── Selected point crosshair ──────────────────────────────────────
         selectedPoint?.let { sp ->
