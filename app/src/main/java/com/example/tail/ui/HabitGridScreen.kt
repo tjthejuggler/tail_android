@@ -931,7 +931,7 @@ fun HabitGridScreen(
             options = state.options,
             todayEntries = state.todayEntries,
             onConfirm = { text ->
-                viewModel.saveTextEntry(state.habit.name, text)
+                viewModel.saveTextEntry(state.habit.name, text, selectedDate)
                 textInputDialogState = null
             },
             onDismiss = { textInputDialogState = null },

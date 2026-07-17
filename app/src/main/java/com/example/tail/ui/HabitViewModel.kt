@@ -1769,8 +1769,13 @@ class HabitViewModel(
     /**
      * Saves a text entry for [habitName] to its associated log file,
      * then also increments the habit count by 1 (so the habit is marked done for today).
+     *
+     * @param habitName The name of the habit
+     * @param text The text entry to save
+     * @param date The date to use for the timestamp. If null, uses current date/time.
+     *             When provided, uses noon (12:00:00) as the time.
      */
-    fun saveTextEntry(habitName: String, text: String) {
+    fun saveTextEntry(habitName: String, text: String, date: LocalDate? = null) {
         val uriString = _settings.value.textInputFileUris[habitName]
         if (uriString.isNullOrEmpty()) {
             _errorMessage.value = "No text log file set for '$habitName'. Select one in edit mode."
@@ -1778,8 +1783,8 @@ class HabitViewModel(
         }
         viewModelScope.launch {
             try {
-                textInputRepo.appendTextEntry(Uri.parse(uriString), context, text)
-                // Also increment the habit count so it registers as done today
+                textInputRepo.appendTextEntry(Uri.parse(uriString), context, text, date)
+                // Also increment the habit count so it registers as done for today
                 incrementHabit(habitName, 1)
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save text entry: ${e.message}"

@@ -7,7 +7,9 @@ import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 private val gson = Gson()
@@ -47,17 +49,30 @@ class TextInputRepository {
         }
 
     /**
-     * Appends a new text entry to the log file at [uri], keyed by the current timestamp.
+     * Appends a new text entry to the log file at [uri], keyed by a timestamp.
      * Performs atomic read-modify-write.
+     *
+     * @param uri The SAF URI of the text log file
+     * @param context Android context
+     * @param text The text entry to save
+     * @param date The date to use for the timestamp. If null, uses current date/time.
+     *             When provided, uses noon (12:00:00) as the time.
      * Returns the updated log map.
      */
     suspend fun appendTextEntry(
         uri: Uri,
         context: Context,
-        text: String
+        text: String,
+        date: LocalDate? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
         val existing = loadTextLog(uri, context).toMutableMap()
-        val timestamp = LocalDateTime.now().format(TEXT_LOG_DATE_FMT)
+        val timestamp = if (date != null) {
+            // Use the provided date with noon time
+            LocalDateTime.of(date, LocalTime.NOON).format(TEXT_LOG_DATE_FMT)
+        } else {
+            // Use current date/time
+            LocalDateTime.now().format(TEXT_LOG_DATE_FMT)
+        }
         existing[timestamp] = text
         saveTextLog(uri, context, existing)
         existing
