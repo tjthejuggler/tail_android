@@ -1915,13 +1915,13 @@ private fun TimelineBar(
         .coerceIn(0L, totalDays.toLong())
         .toInt()
 
+    // Always round to a single decimal place to prevent layout shifts.
     // For days with secondary locations, add a decimal based on time of day.
-    // Noon = .50, midnight = .00, etc. Precision to .01 (≈14.4 min).
     val daysDisplay = if (dayHasSecondaries && clockTimeMinutes != null) {
-        val fraction = (clockTimeMinutes / 1440.0 * 100).roundToInt() / 100.0
-        String.format("%.2f", daysFromStart + fraction)
+        val fraction = (clockTimeMinutes / 1440.0 * 10).roundToInt() / 10.0
+        String.format("%.1f", daysFromStart + fraction)
     } else {
-        daysFromStart.toString()
+        String.format("%.1f", daysFromStart.toDouble())
     }
     val canStepBack = selectedDate.isAfter(firstDate)
     val canStepForward = selectedDate.isBefore(lastDate)
@@ -2006,7 +2006,8 @@ private fun TimelineBar(
             Text(
                 text = "$daysDisplay / $totalDays",
                 color = Color(0xFFAAAAAA),
-                fontSize = 11.sp
+                fontSize = 11.sp,
+                modifier = Modifier.width(80.dp)
             )
             RepeatIconButton(
                 onClick = { if (canStepForward) onStepDay(1) },
