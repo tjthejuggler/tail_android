@@ -1621,8 +1621,21 @@ private fun LocationTimelinePopup(
     onGetCoords: (LocalDate) -> Pair<Double, Double>?,
     onSetCoords: (LocalDate, Double, Double) -> Unit
 ) {
+    var searchQuery by remember { mutableStateOf("") }
+    
+    val filteredEntries = remember(searchQuery, entries) {
+        if (searchQuery.isBlank()) {
+            entries
+        } else {
+            val query = searchQuery.lowercase().trim()
+            entries.filter { (_, label) ->
+                label.lowercase().contains(query)
+            }
+        }
+    }
+    
     val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = entries.indexOfFirst { it.first == selectedDate }
+        initialFirstVisibleItemIndex = filteredEntries.indexOfFirst { it.first == selectedDate }
             .coerceAtLeast(0)
     )
 
@@ -1645,12 +1658,35 @@ private fun LocationTimelinePopup(
             Text("Location Timeline", color = accent, fontSize = 14.sp)
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(color = Color(0xFF222222))
+            Spacer(Modifier.height(8.dp))
+            
+            // Search input field
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search locations...", fontSize = 12.sp, color = Color(0xFF555555)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = accent,
+                    unfocusedBorderColor = Color(0xFF333333),
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = accent
+                ),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search)
+            )
+            
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF222222))
             Spacer(Modifier.height(4.dp))
+            
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                items(entries) { (date, label) ->
+                items(filteredEntries) { (date, label) ->
                     val isSelected = date == selectedDate
                     val isEditingCoords = editingCoordsDate == date
 
