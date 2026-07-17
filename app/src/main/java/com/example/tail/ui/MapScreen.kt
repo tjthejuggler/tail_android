@@ -1610,6 +1610,16 @@ private fun HabitBreakdownPopup(
 
 // ── Popup: location timeline (all date → location pairs) ────────────────────
 
+/**
+ * Normalizes text by removing diacritics and converting to lowercase.
+ * This makes search more forgiving: 'a' matches 'ā', 'á', 'à', 'ä', etc.,
+ * and Turkish 'i' symbols (İ, ı, I, i) all match each other.
+ */
+private fun normalizeForSearch(text: String): String {
+    val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD)
+    return normalized.replace("\\p{M}".toRegex(), "").lowercase()
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LocationTimelinePopup(
@@ -1627,9 +1637,9 @@ private fun LocationTimelinePopup(
         if (searchQuery.isBlank()) {
             entries
         } else {
-            val query = searchQuery.lowercase().trim()
+            val query = normalizeForSearch(searchQuery.trim())
             entries.filter { (_, label) ->
-                label.lowercase().contains(query)
+                normalizeForSearch(label).contains(query)
             }
         }
     }
