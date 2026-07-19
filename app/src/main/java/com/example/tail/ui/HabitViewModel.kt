@@ -220,6 +220,14 @@ class HabitViewModel(
     // Cache the full unified DB so we can rebuild the habit list without re-reading the file
     private var cachedPhoneDb: HabitsDatabase = emptyMap()
 
+    // TRUE only after the phone DB has been successfully loaded from disk at least
+    // once this session. Background sync writers (chess.com, Garmin) MUST NOT
+    // persist cachedPhoneDb while this is false -- otherwise a startup race (or a
+    // transient load failure during a Syncthing write) lets them build a DB from
+    // an empty cache and clobber the real file (the 2026-07-19 wipe root cause).
+    @Volatile
+    private var dbLoaded: Boolean = false
+
     // Per-screen habit list cache — avoids expensive rebuildHabitList() on every screen switch.
     // Keyed by (screen index, selected date) so switching between screens on the same date is instant.
     private val screenHabitCache = mutableMapOf<Pair<Int, LocalDate>, List<Habit>>()
@@ -256,6 +264,7 @@ class HabitViewModel(
                             habitsRepo.ensureDaysExist(Uri.parse(phoneUriStr), context)
                         }
                         cachedPhoneDb = db
+                        dbLoaded = true
                         rebuildHabitList()
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to reload DB after increment event: ${e.message}")
@@ -362,13 +371,49 @@ class HabitViewModel(
         _isLoading.value = true
         _errorMessage.value = null
         try {
+            runAutoRestoreIfNeeded(uri)
             val db = habitsRepo.ensureDaysExist(uri, context)
             cachedPhoneDb = db
+            // Gate opens ONLY here, after a genuinely successful load. Background
+            // sync writers check this before persisting cachedPhoneDb.
+            dbLoaded = true
             rebuildHabitList()
         } catch (e: Exception) {
+            // Load failed (transient SAF/blank file during a Syncthing write, etc.).
+            // Leave dbLoaded as-is (do NOT flip it true) so sync writers stay blocked.
             _errorMessage.value = "Failed to load file: ${e.message}"
         } finally {
             _isLoading.value = false
+        }
+    }
+
+    /**
+     * AUTO-RESTORE-ON-CATASTROPHIC-LOSS (requirement 3).
+     * Delegates to the repository, which compares the on-disk DB against the best
+     * private snapshot and repairs a catastrophic wipe automatically before any
+     * downstream write can cement the loss. Surfaces a friendly message on repair.
+     */
+    private suspend fun runAutoRestoreIfNeeded(uri: Uri) {
+        try {
+            val restore = habitsRepo.loadWithAutoRestore(uri, context)
+            if (restore is com.example.tail.data.HabitsRepository.AutoRestoreResult.Restored) {
+                Log.e(
+                    TAG,
+                    "runAutoRestoreIfNeeded: AUTO-RESTORED from snapshot '" + restore.snapshotName +
+                            "' (" + restore.onDiskEntryCount + " to " + restore.restoredEntryCount + " entries)."
+                )
+                _errorMessage.value =
+                    "Recovered " + restore.restoredEntryCount +
+                            " entries from an automatic backup after detecting data loss."
+            } else if (restore is com.example.tail.data.HabitsRepository.AutoRestoreResult.Unrecoverable) {
+                Log.e(
+                    TAG,
+                    "runAutoRestoreIfNeeded: catastrophic loss (" + restore.onDiskEntryCount +
+                            " entries) but no snapshot to restore from."
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "runAutoRestoreIfNeeded: failed: " + e.message)
         }
     }
 
@@ -2491,6 +2536,23 @@ class HabitViewModel(
         if (s.chessComHabitLinks.isEmpty()) return
         if (s.fileUri.isEmpty()) return
 
+        // Self-heal: if the initial load failed (dbLoaded==false), try to load the
+        // DB now BEFORE syncing, so a one-off startup read failure doesn't leave the
+        // sync permanently gated. applyChessComData is still gated as a backstop.
+        if (!dbLoaded) {
+            try {
+                val db = withContext(Dispatchers.IO) {
+                    habitsRepo.ensureDaysExist(Uri.parse(s.fileUri), context)
+                }
+                cachedPhoneDb = db
+                dbLoaded = true
+                rebuildHabitList()
+            } catch (e: Exception) {
+                Log.w(TAG, "syncChessComCurrentMonth: DB still not loadable, skipping sync: ${e.message}")
+                return
+            }
+        }
+
         try {
             _chessComSyncStatus.value = "Syncing chess.com data…"
             val monthData = chessComRepo.fetchCurrentMonthData(s.chessComUsername)
@@ -2548,6 +2610,10 @@ class HabitViewModel(
     private suspend fun resetChessComHabitData(s: AppSettings) {
         val phoneUriStr = s.fileUri
         if (phoneUriStr.isEmpty()) return
+        if (!dbLoaded) {
+            Log.w(TAG, "resetChessComHabitData: DB not loaded yet, refusing to persist (anti-wipe gate)")
+            return
+        }
 
         val mutableDb = cachedPhoneDb.toMutableMap()
         var changed = false
@@ -2588,6 +2654,13 @@ class HabitViewModel(
 
         val phoneUriStr = s.fileUri
         if (phoneUriStr.isEmpty()) return
+        // ANTI-WIPE GATE: never merge into and persist cachedPhoneDb before the real
+        // DB has been loaded. Otherwise the polling loop can build a chess-only DB
+        // from an empty cache and overwrite everything (the 2026-07-19 wipe).
+        if (!dbLoaded) {
+            Log.w(TAG, "applyChessComData: DB not loaded yet, skipping persist (anti-wipe gate)")
+            return
+        }
 
         var dbChanged = false
         val mutableDb = cachedPhoneDb.toMutableMap()
@@ -2839,6 +2912,10 @@ class HabitViewModel(
     private suspend fun resetGarminHabitData(settings: AppSettings) {
         val linkedHabits = settings.garminHabitLinks.keys
         if (linkedHabits.isEmpty()) return
+        if (!dbLoaded) {
+            Log.w(TAG, "resetGarminHabitData: DB not loaded yet, refusing to persist (anti-wipe gate)")
+            return
+        }
 
         val mutableDb = cachedPhoneDb.toMutableMap()
         var dbChanged = false
@@ -2964,6 +3041,10 @@ class HabitViewModel(
     ) {
         val linkedHabits = settings.garminHabitLinks
         if (linkedHabits.isEmpty()) return
+        if (!dbLoaded) {
+            Log.w(TAG, "applyGarminData: DB not loaded yet, skipping persist (anti-wipe gate)")
+            return
+        }
 
         val mutableDb = cachedPhoneDb.toMutableMap()
         var dbChanged = false

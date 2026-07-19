@@ -78,6 +78,33 @@ class HabitsRepository {
          */
         @Volatile
         private var snapshotManagerRef: HabitsSnapshotManager? = null
+
+        /**
+         * Process-wide HIGH-WATER MARK of the largest healthy entry count we have
+         * ever observed on disk this process. Used by the anti-shrinkage guard as a
+         * fallback baseline when the on-disk read itself fails (e.g. a blank/partial
+         * file during a Syncthing write). Without this, a failed on-disk read caused
+         * the guard to "fail open" and a near-empty DB could clobber a healthy one --
+         * exactly the 2026-07-19 chess-sync wipe. -1 means "not yet observed".
+         */
+        @Volatile
+        private var lastKnownGoodEntryCount: Int = -1
+
+        /** Records a healthy on-disk entry count, only ever increasing the mark. */
+        fun recordGoodEntryCount(count: Int) {
+            if (count > lastKnownGoodEntryCount) lastKnownGoodEntryCount = count
+        }
+
+        /** The high-water mark, or -1 if nothing healthy has been seen yet. */
+        fun highWaterEntryCount(): Int = lastKnownGoodEntryCount
+
+        /**
+         * A snapshot (or on-disk DB) must have more than this many entries to be
+         * treated as a trustworthy baseline for the anti-shrinkage guard and for
+         * AUTO-RESTORE. Keeps a small brand-new install from "restoring" over
+         * legitimately tiny early data.
+         */
+        const val MIN_RESTORE_BASELINE: Int = 50
     }
 
     /**
@@ -130,7 +157,11 @@ class HabitsRepository {
             }
             try {
                 val parsed: HabitsDatabase? = gson.fromJson(text, dbType)
-                HabitsLoadResult.Success(parsed ?: emptyMap())
+                val db = parsed ?: emptyMap()
+                // Track the largest healthy DB we've ever seen so the anti-shrinkage
+                // guard has a baseline even when a later read fails mid-Syncthing-write.
+                recordGoodEntryCount(db.values.sumOf { it.size })
+                HabitsLoadResult.Success(db)
             } catch (e: Exception) {
                 Log.w(TAG, "loadDatabaseResult: JSON parse failed (${text.length} chars): ${e.message}")
                 HabitsLoadResult.ParseFailure(e, rawBytesLen = text.length)
@@ -175,16 +206,15 @@ class HabitsRepository {
 
             // ── Anti-shrinkage guard ──────────────────────────────────────────
             // Read what is currently on disk and reject the write if we'd be
-            // catastrophically shrinking it. Errors here fall through to "no
-            // guard available" — we still write, because not being able to
-            // check shouldn't block legitimate writes.
+            // catastrophically shrinking it. Errors here fall through to the
+            // fail-closed fallback below, which uses the high-water mark.
             val newEntryCount = db.values.sumOf { it.size }
-            val onDisk: HabitsDatabase? = try {
-                when (val r = loadDatabaseResult(uri, context)) {
-                    is HabitsLoadResult.Success -> r.db
-                    else -> null
-                }
-            } catch (_: Exception) { null }
+            val onDiskResult = try {
+                loadDatabaseResult(uri, context)
+            } catch (e: Exception) {
+                HabitsLoadResult.IoFailure(e)
+            }
+            val onDisk: HabitsDatabase? = (onDiskResult as? HabitsLoadResult.Success)?.db
 
             if (onDisk != null) {
                 val onDiskEntryCount = onDisk.values.sumOf { it.size }
@@ -192,7 +222,7 @@ class HabitsRepository {
                 // (>50 entries) AND we'd be writing fewer than half as many entries.
                 // This catches the full-wipe scenario (writing 0..76 entries on top
                 // of thousands) without blocking legitimate small edits or first writes.
-                if (onDiskEntryCount > 50 && newEntryCount * 2 < onDiskEntryCount) {
+                if (onDiskEntryCount > MIN_RESTORE_BASELINE && newEntryCount * 2 < onDiskEntryCount) {
                     Log.e(
                         TAG,
                         "saveDatabase: ANTI-SHRINKAGE GUARD TRIPPED. Refusing to overwrite " +
@@ -205,6 +235,33 @@ class HabitsRepository {
                 // Snapshot the healthy pre-write state so we can always roll back
                 // to what was on disk before this overwrite. Never blocks the save.
                 snapshotManager(context).snapshot(onDisk, reason = "pre-write")
+            } else {
+                // ── FAIL-CLOSED FALLBACK (2026-07-19 wipe fix) ────────────────────
+                // The on-disk read did NOT succeed (UriNotReadable / ParseFailure /
+                // blank file / IoFailure). This is EXACTLY the dangerous window: a
+                // Syncthing partial write makes the file momentarily unreadable, and
+                // previously the guard "failed open" and let a near-empty payload
+                // clobber a healthy DB. We now refuse to write a shrinking payload
+                // whenever we cannot positively confirm what is on disk, using the
+                // high-water mark of the largest DB we've seen this process as the
+                // baseline. A genuinely large write (e.g. real user data) still goes
+                // through; only suspiciously small writes are blocked.
+                val baseline = highWaterEntryCount()
+                if (baseline > MIN_RESTORE_BASELINE && newEntryCount * 2 < baseline) {
+                    Log.e(
+                        TAG,
+                        "saveDatabase: ANTI-SHRINKAGE GUARD TRIPPED (on-disk unreadable: " +
+                                "$onDiskResult). Refusing to overwrite with only $newEntryCount " +
+                                "entries when high-water mark is $baseline. BLOCKED to prevent " +
+                                "the transient-read-failure wipe."
+                    )
+                    return@withContext
+                }
+                Log.w(
+                    TAG,
+                    "saveDatabase: on-disk read not Success ($onDiskResult) but new payload " +
+                            "($newEntryCount entries vs high-water $baseline) is not a shrink; proceeding."
+                )
             }
 
             // ── Durable write ─────────────────────────────────────────────────
@@ -341,6 +398,100 @@ class HabitsRepository {
         }
         db
     }
+
+    /**
+     * Result of an auto-restore attempt, for logging / UI surfacing.
+     */
+    sealed class AutoRestoreResult {
+        /** On-disk DB was healthy; nothing to do. [db] is the on-disk data. */
+        data class Healthy(val db: HabitsDatabase, val entryCount: Int) : AutoRestoreResult()
+
+        /** A catastrophic loss was detected and repaired from a snapshot. */
+        data class Restored(
+            val db: HabitsDatabase,
+            val onDiskEntryCount: Int,
+            val restoredEntryCount: Int,
+            val snapshotName: String
+        ) : AutoRestoreResult()
+
+        /** Loss suspected but no healthy snapshot was available to restore from. */
+        data class Unrecoverable(val onDiskEntryCount: Int) : AutoRestoreResult()
+    }
+
+    /**
+     * AUTOMATIC RESTORE-ON-CATASTROPHIC-LOSS.
+     *
+     * Loads the on-disk DB and compares its entry count against the newest
+     * HEALTHY snapshot in private storage. If the on-disk DB has catastrophically
+     * fewer entries than the best snapshot (or is entirely unreadable/blank while
+     * a healthy snapshot exists), the snapshot is written back to [uri]
+     * automatically via [restoreDatabaseRaw] (which also snapshots the corrupt
+     * state first, so the auto-restore is itself reversible).
+     *
+     * This is the top-level defence for requirement 3: a wipe from ANY cause is
+     * self-healed on the next load before the user ever sees empty data.
+     *
+     * Heuristic: a snapshot with more than [MIN_RESTORE_BASELINE] entries is a
+     * trustworthy baseline; the on-disk DB is "catastrophically small" when twice
+     * its entry count still does not reach that baseline.
+     */
+    suspend fun loadWithAutoRestore(uri: Uri, context: Context): AutoRestoreResult =
+        withContext(Dispatchers.IO) {
+            val loadResult = loadDatabaseResult(uri, context)
+            val onDiskDb: HabitsDatabase? =
+                if (loadResult is HabitsLoadResult.Success) loadResult.db else null
+            val onDiskCount = onDiskDb?.values?.sumOf { it.size } ?: 0
+
+            // Find the best (largest) recent healthy snapshot to compare against.
+            val mgr = snapshotManager(context)
+            val snapshots = mgr.listSnapshots()
+            var bestCount = 0
+            var bestName = ""
+            // Scan the newest handful; snapshots are content-addressed and GFS-pruned
+            // so the healthiest large one is almost always among the most recent.
+            for (info in snapshots.take(12)) {
+                val cnt = mgr.entryCountOf(info.file)
+                if (cnt > bestCount) {
+                    bestCount = cnt
+                    bestName = info.file.name
+                }
+            }
+
+            val baselineTrustworthy = bestCount > MIN_RESTORE_BASELINE
+            val catastrophic = baselineTrustworthy && (onDiskCount * 2 < bestCount)
+
+            if (!catastrophic) {
+                // Healthy, or no trustworthy baseline to justify a scary rollback.
+                return@withContext AutoRestoreResult.Healthy(onDiskDb ?: emptyMap(), onDiskCount)
+            }
+
+            // Parse the winning snapshot's full contents now that a repair is warranted.
+            val winner = snapshots.firstOrNull { it.file.name == bestName }
+            val restoreDb = winner?.let { mgr.readSnapshot(it.file) }
+            if (restoreDb == null || restoreDb.values.sumOf { it.size } < MIN_RESTORE_BASELINE) {
+                Log.e(
+                    TAG,
+                    "loadWithAutoRestore: CATASTROPHIC LOSS detected (on-disk=" + onDiskCount +
+                            ", baseline=" + bestCount + ") but NO usable snapshot to restore from!"
+                )
+                return@withContext AutoRestoreResult.Unrecoverable(onDiskCount)
+            }
+
+            val restoredCount = restoreDb.values.sumOf { it.size }
+            Log.e(
+                TAG,
+                "loadWithAutoRestore: CATASTROPHIC LOSS detected (on-disk=" + onDiskCount +
+                        " entries, best snapshot=" + restoredCount + " entries '" + bestName +
+                        "'). AUTO-RESTORING from snapshot."
+            )
+            val ok = restoreDatabaseRaw(uri, context, restoreDb)
+            if (!ok) {
+                Log.e(TAG, "loadWithAutoRestore: restore write FAILED; returning snapshot in-memory anyway.")
+            } else {
+                recordGoodEntryCount(restoredCount)
+            }
+            AutoRestoreResult.Restored(restoreDb, onDiskCount, restoredCount, bestName)
+        }
 
     /**
      * Applies an increment to [db] in memory only — no disk I/O.
