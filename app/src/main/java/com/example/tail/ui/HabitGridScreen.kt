@@ -931,7 +931,9 @@ fun HabitGridScreen(
             options = state.options,
             todayEntries = state.todayEntries,
             onConfirm = { text ->
-                viewModel.saveTextEntry(state.habit.name, text, selectedDate)
+                // Only pass selectedDate if it's not today - for today, use current time
+                val dateForEntry = if (selectedDate == today) null else selectedDate
+                viewModel.saveTextEntry(state.habit.name, text, dateForEntry)
                 textInputDialogState = null
             },
             onDismiss = { textInputDialogState = null },

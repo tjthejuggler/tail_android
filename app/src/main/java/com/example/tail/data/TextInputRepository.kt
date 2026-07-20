@@ -80,13 +80,16 @@ class TextInputRepository {
 
     /**
      * Writes the full text log map back to the SAF URI as formatted JSON.
+     * Entries are sorted chronologically by timestamp key before saving.
      */
     private suspend fun saveTextLog(
         uri: Uri,
         context: Context,
         log: Map<String, String>
     ) = withContext(Dispatchers.IO) {
-        val json = prettyGson.toJson(log)
+        // Sort entries chronologically by timestamp (keys are "YYYY-MM-DD HH:mm:ss")
+        val sortedLog = log.toSortedMap()
+        val json = prettyGson.toJson(sortedLog)
         val cr = context.contentResolver
         cr.openOutputStream(uri, "wt")?.use { stream ->
             stream.bufferedWriter().use { it.write(json) }
