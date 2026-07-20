@@ -595,6 +595,50 @@ class HabitsRepository {
     }
 
     /**
+     * Renames a habit in the database.
+     * Reads the file, creates a new entry with the new name, copies all data from the old name,
+     * removes the old entry, then saves.
+     *
+     * SAFETY: If the load fails for any reason, this method LOGS and returns
+     * the empty map WITHOUT writing — so a transient SAF error never wipes out the file.
+     */
+    suspend fun renameHabit(
+        uri: Uri,
+        context: Context,
+        oldName: String,
+        newName: String
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "renameHabit: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+        
+        // Check if old name exists
+        if (!db.containsKey(oldName)) {
+            Log.w(TAG, "renameHabit: old name '$oldName' not found in database")
+            throw IllegalArgumentException("Habit '$oldName' not found in database")
+        }
+        
+        // Check if new name already exists
+        if (db.containsKey(newName)) {
+            Log.w(TAG, "renameHabit: new name '$newName' already exists in database")
+            throw IllegalArgumentException("Habit '$newName' already exists in database")
+        }
+        
+        // Copy data from old name to new name
+        val entries = db[oldName] ?: emptyMap()
+        db[newName] = entries.toSortedMap()
+        
+        // Remove old name
+        db.remove(oldName)
+        
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
      * Builds the display [Habit] list from raw database + settings for a specific [targetDate].
      * Uses the full unified habitsdb.txt — no merging with separate historical DB needed.
      */

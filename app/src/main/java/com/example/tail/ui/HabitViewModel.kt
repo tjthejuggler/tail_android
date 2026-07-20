@@ -1545,6 +1545,159 @@ class HabitViewModel(
     }
 
     /**
+     * Renames a habit from [oldName] to [newName].
+     * Updates the database and all settings that reference the habit name.
+     */
+    fun renameHabit(oldName: String, newName: String) {
+        viewModelScope.launch {
+            if (oldName == newName) return@launch
+            if (newName.isBlank()) return@launch
+            
+            try {
+                val uri = lastLoadedUri
+                if (uri.isEmpty()) {
+                    Log.e(TAG, "renameHabit: no URI loaded")
+                    return@launch
+                }
+                
+                // Rename in database
+                habitsRepo.renameHabit(Uri.parse(uri), context, oldName, newName)
+                
+                // Update all settings that reference the habit name
+                val settings = _settings.value
+                
+                // Update habitOrder
+                val newHabitOrder = settings.habitOrder.map { if (it == oldName) newName else it }
+                
+                // Update habitScreens
+                val newHabitScreens = settings.habitScreens.map { screen ->
+                    screen.copy(habitNames = screen.habitNames.map { if (it == oldName) newName else it })
+                }
+                
+                // Update all maps and sets that reference habit names
+                fun <K, V> Map<K, V>.replaceKey(oldKey: K, newKey: K): Map<K, V> {
+                    if (oldKey !in this) return this
+                    val mutable = this.toMutableMap()
+                    mutable[newKey] = mutable.remove(oldKey)!!
+                    return mutable
+                }
+                
+                fun <T> Set<T>.replaceElement(oldElement: T, newElement: T): Set<T> {
+                    if (oldElement !in this) return this
+                    val mutable = this.toMutableSet()
+                    mutable.remove(oldElement)
+                    mutable.add(newElement)
+                    return mutable
+                }
+                
+                fun <K> Map<K, Set<String>>.replaceInValueSets(oldKey: String, newKey: String): Map<K, Set<String>> {
+                    return mapValues { (_, set) ->
+                        set.map { if (it == oldKey) newKey else it }.toSet()
+                    }
+                }
+                
+                fun <K> Map<K, List<String>>.replaceInValueLists(oldKey: String, newKey: String): Map<K, List<String>> {
+                    return mapValues { (_, list) ->
+                        list.map { if (it == oldKey) newKey else it }
+                    }
+                }
+                
+                val newSettings = settings.copy(
+                    habitOrder = newHabitOrder,
+                    habitScreens = newHabitScreens,
+                    customInputHabits = settings.customInputHabits.replaceElement(oldName, newName),
+                    textInputHabits = settings.textInputHabits.replaceElement(oldName, newName),
+                    textInputOptionsHabits = settings.textInputOptionsHabits.replaceElement(oldName, newName),
+                    textInputFileUris = settings.textInputFileUris.replaceKey(oldName, newName),
+                    habitIcons = settings.habitIcons.replaceKey(oldName, newName),
+                    datedEntryHabits = settings.datedEntryHabits.replaceElement(oldName, newName),
+                    datedEntryFileUris = settings.datedEntryFileUris.replaceKey(oldName, newName),
+                    datedEntryFileSizes = settings.datedEntryFileSizes.replaceKey(oldName, newName),
+                    habitDividers = settings.habitDividers.replaceKey(oldName, newName),
+                    conditionalHabits = settings.conditionalHabits.replaceElement(oldName, newName),
+                    conditionalLinkedHabits = settings.conditionalLinkedHabits.replaceInValueSets(oldName, newName),
+                    subtypedHabits = settings.subtypedHabits.replaceElement(oldName, newName),
+                    habitSubtypes = settings.habitSubtypes.replaceKey(oldName, newName),
+                    subtypeDataFileUris = settings.subtypeDataFileUris.replaceKey(oldName, newName),
+                    timedHabits = settings.timedHabits.replaceElement(oldName, newName),
+                    timedDataFileUris = settings.timedDataFileUris.replaceKey(oldName, newName),
+                    timelessHabits = settings.timelessHabits.replaceElement(oldName, newName),
+                    disabledHabits = settings.disabledHabits.replaceElement(oldName, newName),
+                    noPointsHabits = settings.noPointsHabits.replaceElement(oldName, newName),
+                    voiceTriggerHabits = settings.voiceTriggerHabits.replaceElement(oldName, newName),
+                    voiceTriggerWords = settings.voiceTriggerWords.replaceKey(oldName, newName),
+                    voiceTriggerIncrements = settings.voiceTriggerIncrements.replaceKey(oldName, newName),
+                    voiceSubtypeHabits = settings.voiceSubtypeHabits.replaceElement(oldName, newName),
+                    customInputAmounts = settings.customInputAmounts.replaceKey(oldName, newName),
+                    customInputRecentAmounts = settings.customInputRecentAmounts.replaceKey(oldName, newName),
+                    mapStatsHabits = settings.mapStatsHabits.replaceElement(oldName, newName),
+                    mapStatsShowTextHabits = settings.mapStatsShowTextHabits.replaceElement(oldName, newName),
+                    garminHabitLinks = settings.garminHabitLinks.replaceKey(oldName, newName),
+                    chessComHabitLinks = settings.chessComHabitLinks.replaceKey(oldName, newName),
+                    customPointRangesHabits = settings.customPointRangesHabits.replaceElement(oldName, newName),
+                    customPointRanges = settings.customPointRanges.replaceKey(oldName, newName),
+                    graphValueModeHabits = settings.graphValueModeHabits.replaceKey(oldName, newName),
+                    habitNotes = settings.habitNotes.replaceKey(oldName, newName)
+                )
+                
+                // Save all updated settings
+                settingsRepo.saveHabitOrder(newHabitOrder)
+                settingsRepo.saveHabitScreens(newHabitScreens)
+                settingsRepo.saveCustomInputHabits(newSettings.customInputHabits)
+                settingsRepo.saveTextInputHabits(newSettings.textInputHabits)
+                settingsRepo.saveTextInputOptionsHabits(newSettings.textInputOptionsHabits)
+                settingsRepo.saveTextInputFileUris(newSettings.textInputFileUris)
+                settingsRepo.saveHabitIcons(newSettings.habitIcons)
+                settingsRepo.saveDatedEntryHabits(newSettings.datedEntryHabits)
+                settingsRepo.saveDatedEntryFileUris(newSettings.datedEntryFileUris)
+                settingsRepo.saveDatedEntryFileSizes(newSettings.datedEntryFileSizes)
+                settingsRepo.saveHabitDividers(newSettings.habitDividers)
+                settingsRepo.saveConditionalHabits(newSettings.conditionalHabits)
+                settingsRepo.saveConditionalLinkedHabits(newSettings.conditionalLinkedHabits)
+                settingsRepo.saveSubtypedHabits(newSettings.subtypedHabits)
+                settingsRepo.saveHabitSubtypes(newSettings.habitSubtypes)
+                settingsRepo.saveSubtypeDataFileUris(newSettings.subtypeDataFileUris)
+                settingsRepo.saveTimedHabits(newSettings.timedHabits)
+                settingsRepo.saveTimedDataFileUris(newSettings.timedDataFileUris)
+                settingsRepo.saveTimelessHabits(newSettings.timelessHabits)
+                settingsRepo.saveDisabledHabits(newSettings.disabledHabits)
+                settingsRepo.saveNoPointsHabits(newSettings.noPointsHabits)
+                settingsRepo.saveVoiceTriggerHabits(newSettings.voiceTriggerHabits)
+                settingsRepo.saveVoiceTriggerWords(newSettings.voiceTriggerWords)
+                settingsRepo.saveVoiceTriggerIncrements(newSettings.voiceTriggerIncrements)
+                settingsRepo.saveVoiceSubtypeHabits(newSettings.voiceSubtypeHabits)
+                settingsRepo.saveCustomInputAmounts(newSettings.customInputAmounts)
+                settingsRepo.saveCustomInputRecentAmounts(newSettings.customInputRecentAmounts)
+                settingsRepo.saveMapStatsHabits(newSettings.mapStatsHabits)
+                settingsRepo.saveMapStatsShowTextHabits(newSettings.mapStatsShowTextHabits)
+                settingsRepo.saveGarminHabitLinks(newSettings.garminHabitLinks)
+                settingsRepo.saveChessComHabitLinks(newSettings.chessComHabitLinks)
+                settingsRepo.saveCustomPointRangesHabits(newSettings.customPointRangesHabits)
+                settingsRepo.saveCustomPointRanges(newSettings.customPointRanges)
+                settingsRepo.saveGraphValueModeHabits(newSettings.graphValueModeHabits)
+                settingsRepo.saveHabitNotes(newSettings.habitNotes)
+                
+                _settings.value = newSettings
+                _habitOrder.value = newHabitOrder
+                _habitScreens.value = newHabitScreens
+                
+                // Rebuild habit list with new name
+                rebuildHabitList()
+                
+                // Sync to relay file if configured
+                val relayUri = newSettings.screensRelayFileUri
+                if (relayUri.isNotEmpty()) {
+                    writeScreensRelayFile(newHabitScreens, _activeScreenIndex.value, relayUri)
+                }
+                
+                Log.i(TAG, "renameHabit: successfully renamed '$oldName' to '$newName'")
+            } catch (e: Exception) {
+                Log.e(TAG, "renameHabit: failed to rename habit", e)
+            }
+        }
+    }
+
+    /**
      * Sets or clears the custom icon for [habitName].
      * [iconName] is the drawable resource name without extension (e.g. "bicycle"),
      * or null to clear the override and revert to the default icon.

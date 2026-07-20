@@ -737,7 +737,8 @@ fun HabitGridScreen(
                             }
                         },
                         habitNotes = settings.habitNotes,
-                        onSetHabitNote = { name, note -> viewModel.setHabitNote(name, note) }
+                        onSetHabitNote = { name, note -> viewModel.setHabitNote(name, note) },
+                        onRenameHabit = { oldName, newName -> viewModel.renameHabit(oldName, newName) }
                     )
                 }
             }
@@ -1322,6 +1323,7 @@ private fun EditModeControlBar(
     onPickDatedEntryFile: (String) -> Unit,
     onDeleteHabit: (String) -> Unit,
     onChangeIcon: (String) -> Unit,
+    onRenameHabit: (String, String) -> Unit,
     onSetCount: (String, Int) -> Unit,
     onSetDivider: (String, Int) -> Unit,
     onToggleConditional: (String) -> Unit,
@@ -1384,6 +1386,7 @@ private fun EditModeControlBar(
 
     var moveToScreenExpanded by remember { mutableStateOf(false) }
     var showSetCountDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -1781,7 +1784,26 @@ private fun EditModeControlBar(
                         ) {
                             Text("🎨 Icon", fontSize = 11.sp, color = Color(0xFF88FFFF))
                         }
+                        Button(
+                            onClick = { showRenameDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A00)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("✎ Rename", fontSize = 11.sp, color = Color(0xFFFFCC44))
+                        }
                     }
+                }
+                
+                // Rename habit dialog
+                if (showRenameDialog && selectedHabitName != null) {
+                    RenameHabitDialog(
+                        currentName = selectedHabitName,
+                        onConfirm = { newName ->
+                            onRenameHabit(selectedHabitName, newName)
+                            showRenameDialog = false
+                        },
+                        onDismiss = { showRenameDialog = false }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -3183,6 +3205,122 @@ private fun RenameScreenDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A3A00))
                 ) {
                     Text("Rename", color = Color(0xFFFFAA00))
+                }
+            }
+        }
+    }
+}
+
+// ── Rename habit dialog ────────────────────────────────────────────────────────
+
+@Composable
+private fun RenameHabitDialog(
+    currentName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(currentName) }
+    var showConfirmation by remember { mutableStateOf(false) }
+
+    if (showConfirmation) {
+        // Confirmation dialog
+        Dialog(onDismissRequest = { showConfirmation = false }) {
+            Column(
+                modifier = Modifier
+                    .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Rename Habit",
+                    color = Color(0xFFFFAA00),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Are you sure you want to rename \"$currentName\" to \"$name\"?",
+                    color = Color(0xFFCCCCCC),
+                    fontSize = 14.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "This will update the habit name in the database and all settings.",
+                    color = Color(0xFF888888),
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { showConfirmation = false }) {
+                        Text("Cancel", color = Color(0xFF888888))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            showConfirmation = false
+                            onConfirm(name.trim())
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A3A00))
+                    ) {
+                        Text("Rename", color = Color(0xFFFFAA00))
+                    }
+                }
+            }
+        }
+    } else {
+        // Name entry dialog
+        Dialog(onDismissRequest = onDismiss) {
+            Column(
+                modifier = Modifier
+                    .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Rename Habit",
+                    color = Color(0xFFFFAA00),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Habit name", color = Color(0xFF888888)) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFFFFAA00),
+                        unfocusedBorderColor = Color(0xFF555555)
+                    )
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = Color(0xFF888888))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val trimmed = name.trim()
+                            if (trimmed.isNotEmpty() && trimmed != currentName) {
+                                showConfirmation = true
+                            } else if (trimmed == currentName) {
+                                onDismiss()
+                            }
+                        },
+                        enabled = name.trim().isNotEmpty() && name.trim() != currentName,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A3A00))
+                    ) {
+                        Text("Next", color = Color(0xFFFFAA00))
+                    }
                 }
             }
         }
