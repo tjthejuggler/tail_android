@@ -217,6 +217,12 @@ class HabitViewModel(
     // Flag to suppress settingsFlow reaction while we're saving a new habit order / screens
     private var isSavingOrder: Boolean = false
 
+    // Flag to suppress settingsFlow reaction while we're saving the active screen index
+    // This prevents a race condition where switching screens triggers a settings emission
+    // that overwrites the user's choice back to the previous screen
+    @Volatile
+    private var isSavingScreenIndex: Boolean = false
+
     // Cache the full unified DB so we can rebuild the habit list without re-reading the file
     private var cachedPhoneDb: HabitsDatabase = emptyMap()
 
@@ -307,7 +313,7 @@ class HabitViewModel(
 
             settingsRepo.settingsFlow.collect { s ->
                 _settings.value = s
-                if (!isSavingOrder) {
+                if (!isSavingOrder && !isSavingScreenIndex) {
                     // Sync screens from persisted settings
                     if (s.habitScreens.isNotEmpty()) {
                         _habitScreens.value = s.habitScreens
@@ -1252,8 +1258,13 @@ class HabitViewModel(
         }
         // Always rebuild in background to refresh stats (streaks, etc.)
         viewModelScope.launch {
-            rebuildHabitList()
-            settingsRepo.saveActiveScreenIndex(index)
+            isSavingScreenIndex = true
+            try {
+                rebuildHabitList()
+                settingsRepo.saveActiveScreenIndex(index)
+            } finally {
+                isSavingScreenIndex = false
+            }
         }
     }
 
