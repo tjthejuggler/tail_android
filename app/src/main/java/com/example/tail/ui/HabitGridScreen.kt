@@ -733,6 +733,14 @@ fun HabitGridScreen(
                                 editModeTextEntries = entries
                             }
                         },
+                        onAddTextEntry = { name, newText ->
+                            viewModel.setTextEntryForDate(name, selectedDate, newText) {
+                                // Reload entries after add
+                                viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
+                                    editModeTextEntries = entries
+                                }
+                            }
+                        },
                         onDeleteTextEntry = { name, timestamp ->
                             viewModel.deleteTextEntry(name, timestamp)
                             // Reload entries after delete
@@ -1377,6 +1385,8 @@ private fun EditModeControlBar(
     onLoadTextEntries: (String, (List<Pair<String, String>>) -> Unit) -> Unit = { _, _ -> },
     /** Called when the user edits an existing text entry. */
     onEditTextEntry: (String, String, String) -> Unit = { _, _, _ -> },
+    /** Called when the user adds a new text entry for the selected day (habitName, text). */
+    onAddTextEntry: (String, String) -> Unit = { _, _ -> },
     /** Called when the user deletes an existing text entry. */
     onDeleteTextEntry: (String, String) -> Unit = { _, _ -> },
     /** Map of habit name → note text. */
@@ -2235,11 +2245,83 @@ private fun EditModeControlBar(
                                 }
                             }
                         } else {
+                            // No entries for this day — still offer an edit button so the
+                            // user can set text for a past (or empty) day.
                             Text(
-                                text = "  No text entries today",
-                                color = Color(0xFF666666),
-                                fontSize = 11.sp
+                                text = "  Today's entries",
+                                color = Color(0xFF88CCFF),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
                             )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            var isAdding by remember { mutableStateOf(false) }
+                            var addText by remember { mutableStateOf("") }
+
+                            if (isAdding) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 16.dp, bottom = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = addText,
+                                        onValueChange = { addText = it },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            focusedBorderColor = Color(0xFF44AAFF),
+                                            unfocusedBorderColor = Color(0xFF555555),
+                                            cursorColor = Color(0xFF44AAFF)
+                                        ),
+                                        textStyle = TextStyle(fontSize = 12.sp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    TextButton(
+                                        onClick = {
+                                            if (addText.trim().isNotEmpty()) {
+                                                onAddTextEntry(selectedHabitName, addText.trim())
+                                            }
+                                            isAdding = false
+                                            addText = ""
+                                        }
+                                    ) {
+                                        Text("✓", color = Color(0xFF88FF88), fontSize = 14.sp)
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            addText = ""
+                                            isAdding = false
+                                        }
+                                    ) {
+                                        Text("✕", color = Color(0xFF888888), fontSize = 13.sp)
+                                    }
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 16.dp, bottom = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "(no text)",
+                                        color = Color(0xFF666666),
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    TextButton(
+                                        onClick = { isAdding = true },
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                            start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                                        )
+                                    ) {
+                                        Text("✎", color = Color(0xFF888888), fontSize = 14.sp)
+                                    }
+                                }
+                            }
                         }
                     }
 
