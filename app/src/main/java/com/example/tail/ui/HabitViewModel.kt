@@ -2366,32 +2366,50 @@ class HabitViewModel(
     fun loadTextEntriesWithTimestamps(habitName: String, date: LocalDate, onResult: (List<Pair<String, String>>) -> Unit) {
         val uriString = _settings.value.textInputFileUris[habitName]
         val datePrefix = dateString(date)
+        Log.d(TAG, "loadTextEntriesWithTimestamps: habit=$habitName date=$date prefix=$datePrefix uri=${uriString?.take(50)}")
         viewModelScope.launch {
             try {
                 // Get all increment timestamps for the day
                 val incrementTimestamps = timestampRepo.getTimestampsForDay(habitName, date)
+                Log.d(TAG, "loadTextEntriesWithTimestamps: incrementTimestamps=$incrementTimestamps")
                 
                 // Get text entries if URI is available
                 val textEntries = if (uriString.isNullOrEmpty()) {
+                    Log.d(TAG, "loadTextEntriesWithTimestamps: no URI for habit=$habitName")
                     emptyMap()
                 } else {
                     try {
-                        textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                        val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                        Log.d(TAG, "loadTextEntriesWithTimestamps: loaded ${log.size} total entries, keys sample=${log.keys.take(5)}")
+                        log
                     } catch (e: Exception) {
+                        Log.e(TAG, "loadTextEntriesWithTimestamps: failed to load text log", e)
                         emptyMap()
                     }
                 }
                 
                 // Merge increment timestamps with text entries
                 // Each increment timestamp gets its text if available, or empty string
-                val entries: List<Pair<String, String>> = incrementTimestamps.map { timestamp ->
+                val entries: MutableList<Pair<String, String>> = incrementTimestamps.map { timestamp ->
                     val fullTimestamp = "$datePrefix $timestamp"
                     val text = textEntries[fullTimestamp] ?: ""
                     Pair(fullTimestamp, text)
-                }.sortedBy { entry -> entry.first }
+                }.toMutableList()
                 
-                onResult(entries)
+                // Also include any text entries that match the date prefix but don't correspond
+                // to increment timestamps (e.g., entries added for past days without increments)
+                val usedTimestamps = entries.map { it.first }.toSet()
+                val matchingKeys = textEntries.filterKeys { key -> key.startsWith(datePrefix) }
+                Log.d(TAG, "loadTextEntriesWithTimestamps: matchingKeys for prefix=$datePrefix: ${matchingKeys.keys}")
+                matchingKeys.filterKeys { key -> key !in usedTimestamps }
+                    .forEach { (timestamp, text) ->
+                        entries.add(Pair(timestamp, text))
+                    }
+                
+                Log.d(TAG, "loadTextEntriesWithTimestamps: final entries count=${entries.size}")
+                onResult(entries.sortedBy { it.first })
             } catch (e: Exception) {
+                Log.e(TAG, "loadTextEntriesWithTimestamps: exception", e)
                 onResult(emptyList())
             }
         }

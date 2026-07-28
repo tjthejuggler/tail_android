@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -228,8 +229,10 @@ fun HabitGridScreen(
         habits[selectedEditIndex].name?.takeIf { it.isNotEmpty() } else null
     // Load text entries when the selected edit habit changes and is a text-input habit
     LaunchedEffect(editHabitName, selectedDate) {
+        Log.d("HabitGridScreen", "LaunchedEffect: editHabitName=$editHabitName selectedDate=$selectedDate isTextInput=${editHabitName in settings.textInputHabits}")
         if (editHabitName != null && editHabitName in settings.textInputHabits) {
             viewModel.loadTextEntriesWithTimestamps(editHabitName, selectedDate) { entries ->
+                Log.d("HabitGridScreen", "LaunchedEffect callback: entries count=${entries.size}")
                 editModeTextEntries = entries
             }
         } else {
