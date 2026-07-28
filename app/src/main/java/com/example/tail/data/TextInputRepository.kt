@@ -108,7 +108,7 @@ class TextInputRepository {
     /**
      * Updates an existing text entry in the log file.
      * [oldTimestamp] is the exact key to match; [newText] replaces the old value.
-     * If the key is not found, no change is made.
+     * If the key is not found, it will be added (for adding text to increments without text).
      * Returns the updated log map.
      */
     suspend fun updateTextEntry(
@@ -118,10 +118,8 @@ class TextInputRepository {
         newText: String
     ): Map<String, String> = withContext(Dispatchers.IO) {
         val existing = loadTextLog(uri, context).toMutableMap()
-        if (oldTimestamp in existing) {
-            existing[oldTimestamp] = newText
-            saveTextLog(uri, context, existing)
-        }
+        existing[oldTimestamp] = newText
+        saveTextLog(uri, context, existing)
         existing
     }
 

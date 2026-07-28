@@ -103,13 +103,14 @@ fun TextInputDialog(
                                     .padding(horizontal = 12.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                // Display text or placeholder if empty
                                 Text(
-                                    text = text,
-                                    color = Color(0xFFCCCCCC),
+                                    text = if (text.isBlank()) "(no text)" else text,
+                                    color = if (text.isBlank()) Color(0xFF666666) else Color(0xFFCCCCCC),
                                     fontSize = 13.sp,
                                     modifier = Modifier.weight(1f)
                                 )
-                                // Edit button
+                                // Edit button - always shown for each increment
                                 TextButton(
                                     onClick = {
                                         editingTimestamp = timestamp

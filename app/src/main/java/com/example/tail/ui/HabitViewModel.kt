@@ -2251,20 +2251,35 @@ class HabitViewModel(
      * Loads text entries for a text-input habit on a specific date,
      * returning both timestamps and values (for editing).
      * Returns pairs of (timestamp, text) sorted by timestamp.
+     * Includes all increment timestamps for the day, even those without text entries.
      */
     fun loadTextEntriesWithTimestamps(habitName: String, date: LocalDate, onResult: (List<Pair<String, String>>) -> Unit) {
         val uriString = _settings.value.textInputFileUris[habitName]
-        if (uriString.isNullOrEmpty()) {
-            onResult(emptyList())
-            return
-        }
         val datePrefix = dateString(date)
         viewModelScope.launch {
             try {
-                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
-                val entries = log.filter { (key, _) -> key.startsWith(datePrefix) }
-                    .toList()
-                    .sortedBy { it.first }
+                // Get all increment timestamps for the day
+                val incrementTimestamps = timestampRepo.getTimestampsForDay(habitName, date)
+                
+                // Get text entries if URI is available
+                val textEntries = if (uriString.isNullOrEmpty()) {
+                    emptyMap()
+                } else {
+                    try {
+                        textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                    } catch (e: Exception) {
+                        emptyMap()
+                    }
+                }
+                
+                // Merge increment timestamps with text entries
+                // Each increment timestamp gets its text if available, or empty string
+                val entries: List<Pair<String, String>> = incrementTimestamps.map { timestamp ->
+                    val fullTimestamp = "$datePrefix $timestamp"
+                    val text = textEntries[fullTimestamp] ?: ""
+                    Pair(fullTimestamp, text)
+                }.sortedBy { entry -> entry.first }
+                
                 onResult(entries)
             } catch (e: Exception) {
                 onResult(emptyList())
@@ -2275,15 +2290,21 @@ class HabitViewModel(
     /**
      * Updates an existing text entry for [habitName].
      * [oldTimestamp] is the exact key; [newText] replaces the old value.
+     * [onComplete] is called when the update is finished.
      */
-    fun updateTextEntry(habitName: String, oldTimestamp: String, newText: String) {
+    fun updateTextEntry(habitName: String, oldTimestamp: String, newText: String, onComplete: () -> Unit = {}) {
         val uriString = _settings.value.textInputFileUris[habitName]
-        if (uriString.isNullOrEmpty()) return
+        if (uriString.isNullOrEmpty()) {
+            onComplete()
+            return
+        }
         viewModelScope.launch {
             try {
                 textInputRepo.updateTextEntry(Uri.parse(uriString), context, oldTimestamp, newText)
+                onComplete()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to update text entry: ${e.message}"
+                onComplete()
             }
         }
     }
@@ -2291,15 +2312,21 @@ class HabitViewModel(
     /**
      * Deletes an existing text entry for [habitName].
      * [timestamp] is the exact key to remove.
+     * [onComplete] is called when the deletion is finished.
      */
-    fun deleteTextEntry(habitName: String, timestamp: String) {
+    fun deleteTextEntry(habitName: String, timestamp: String, onComplete: () -> Unit = {}) {
         val uriString = _settings.value.textInputFileUris[habitName]
-        if (uriString.isNullOrEmpty()) return
+        if (uriString.isNullOrEmpty()) {
+            onComplete()
+            return
+        }
         viewModelScope.launch {
             try {
                 textInputRepo.deleteTextEntry(Uri.parse(uriString), context, timestamp)
+                onComplete()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to delete text entry: ${e.message}"
+                onComplete()
             }
         }
     }

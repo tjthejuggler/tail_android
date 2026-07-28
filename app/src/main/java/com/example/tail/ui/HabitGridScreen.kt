@@ -939,17 +939,19 @@ fun HabitGridScreen(
             },
             onDismiss = { textInputDialogState = null },
             onEdit = { oldTimestamp, newText ->
-                viewModel.updateTextEntry(state.habit.name, oldTimestamp, newText)
-                // Reload entries after edit
-                viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
-                    textInputDialogState = state.copy(todayEntries = entries)
+                viewModel.updateTextEntry(state.habit.name, oldTimestamp, newText) {
+                    // Reload entries after edit completes
+                    viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
+                        textInputDialogState = state.copy(todayEntries = entries)
+                    }
                 }
             },
             onDelete = { timestamp ->
-                viewModel.deleteTextEntry(state.habit.name, timestamp)
-                // Reload entries after delete
-                viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
-                    textInputDialogState = state.copy(todayEntries = entries)
+                viewModel.deleteTextEntry(state.habit.name, timestamp) {
+                    // Reload entries after delete completes
+                    viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
+                        textInputDialogState = state.copy(todayEntries = entries)
+                    }
                 }
             }
         )
