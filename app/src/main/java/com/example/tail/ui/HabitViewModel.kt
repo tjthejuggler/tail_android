@@ -775,6 +775,202 @@ class HabitViewModel(
         sendHabitIncrementedBroadcast(habitName)
     }
 
+    /**
+     * Increments a habit's count with roll forward to a specified end date.
+     * This is used when the user confirms the roll forward dialog.
+     */
+    fun incrementHabitWithRollForward(
+        habitName: String,
+        amount: Int = 1,
+        recordTimestamp: Boolean = true,
+        customEndDate: LocalDate? = null
+    ) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            _errorMessage.value = "No file selected. Please pick a file in Settings."
+            return
+        }
+
+        // Step 1: instant targeted update — just flip todayCount for this one habit.
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
+        val rawNewCount = (currentEntries[dateStr] ?: 0) + amount
+        val newCount = if (habitName in _settings.value.maxOneHabits) rawNewCount.coerceAtMost(1) else rawNewCount
+        if (newCount == (currentEntries[dateStr] ?: 0)) return
+        val divider = _settings.value.habitDividers[habitName] ?: 1
+        _habits.value = _habits.value.map { h ->
+            if (h.name == habitName) h.copy(
+                todayCount = applyDivider(newCount, divider),
+                rawTodayCount = newCount
+            ) else h
+        }
+        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
+
+        // Step 2: update in-memory cache
+        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, amount, _selectedDate.value)
+        
+        // Step 2b: Track this date as manually set for roll forward habits
+        if (habitName in _settings.value.rollForwardHabits) {
+            val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+            val currentManualDates = _settings.value.rollForwardManualDates[habitName]?.toMutableSet() ?: mutableSetOf()
+            currentManualDates.add(dateStr)
+            val updatedManualDates = _settings.value.rollForwardManualDates.toMutableMap()
+            updatedManualDates[habitName] = currentManualDates
+            viewModelScope.launch {
+                settingsRepo.saveRollForwardManualDates(updatedManualDates)
+                _settings.value = _settings.value.copy(rollForwardManualDates = updatedManualDates)
+            }
+        }
+
+        // Step 2c: Roll forward logic - fill subsequent days for roll forward habits
+        if (habitName in _settings.value.rollForwardHabits && customEndDate != null) {
+            val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
+            val selectedDate = _selectedDate.value
+            
+            // Fill all dates from selectedDate to customEndDate (inclusive)
+            var currentDate = selectedDate.plusDays(1)
+            val endDate = customEndDate
+            
+            while (currentDate <= endDate) {
+                val currentDateStr = com.example.tail.data.dateString(currentDate)
+                habitEntries[currentDateStr] = newCount
+                currentDate = currentDate.plusDays(1)
+            }
+            
+            // Update the database with the filled entries
+            updatedDb = updatedDb.toMutableMap()
+            updatedDb[habitName] = habitEntries
+        }
+        
+        cachedPhoneDb = updatedDb
+        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
+
+        // Step 3: full rebuild (streak/ATH recalc) + disk write in background
+        viewModelScope.launch {
+            rebuildHabitList()
+            try {
+                val uri = Uri.parse(uriString)
+                habitsRepo.persistDatabase(uri, context, updatedDb)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to save: ${e.message}"
+            }
+            writeTaskerFile(_settings.value.taskerFileUri)
+        }
+
+        // Step 4: if this is a timed habit (and NOT subtyped)
+        if (habitName in _settings.value.timedHabits && habitName !in _settings.value.subtypedHabits) {
+            val timedUri = _settings.value.timedDataFileUris[habitName]
+            if (timedUri != null) {
+                viewModelScope.launch {
+                    timedDataRepo.appendEntries(
+                        Uri.parse(timedUri), context,
+                        mapOf(null to amount)
+                    )
+                }
+            }
+        }
+
+        // Step 5: record timestamp(s) if requested
+        if (recordTimestamp && amount > 0) {
+            viewModelScope.launch {
+                timestampRepo.addTimestamp(habitName, _selectedDate.value)
+            }
+        }
+
+        sendHabitIncrementedBroadcast(habitName)
+    }
+
+    /**
+     * Updates a text entry with roll forward to a specified end date.
+     * This is used when the user confirms the roll forward dialog.
+     */
+    fun updateTextEntryWithRollForward(
+        habitName: String,
+        oldTimestamp: String,
+        newText: String,
+        customEndDate: LocalDate,
+        onComplete: () -> Unit = {}
+    ) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            onComplete()
+            return
+        }
+        viewModelScope.launch {
+            try {
+                // Update the text entry at the old timestamp
+                textInputRepo.updateTextEntry(Uri.parse(uriString), context, oldTimestamp, newText)
+                
+                // Parse the date from the oldTimestamp
+                val dateStr = oldTimestamp.substring(0, 10)
+                val entryDate = com.example.tail.data.parseDate(dateStr)
+                
+                if (entryDate != null && habitName in _settings.value.rollForwardHabits) {
+                    // Roll forward the text to all dates from entryDate+1 to customEndDate
+                    if (entryDate < customEndDate) {
+                        textInputRepo.rollForwardTextEntry(
+                            Uri.parse(uriString),
+                            context,
+                            oldTimestamp,
+                            entryDate.plusDays(1),
+                            customEndDate
+                        )
+                    }
+                }
+                
+                onComplete()
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to update text entry: ${e.message}"
+                onComplete()
+            }
+        }
+    }
+
+    /**
+     * Sets a text entry with roll forward to a specified end date.
+     * This is used when the user confirms the roll forward dialog.
+     */
+    fun setTextEntryForDateWithRollForward(
+        habitName: String,
+        date: LocalDate,
+        text: String,
+        customEndDate: LocalDate,
+        onComplete: () -> Unit = {}
+    ) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            onComplete()
+            return
+        }
+        val timestamp = java.time.LocalDateTime.of(date, java.time.LocalTime.NOON)
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+        viewModelScope.launch {
+            try {
+                // updateTextEntry adds the key if it is missing
+                textInputRepo.updateTextEntry(Uri.parse(uriString), context, timestamp, text)
+                
+                // If this is a roll forward habit, also roll forward the text
+                if (habitName in _settings.value.rollForwardHabits) {
+                    // Roll forward the text to all dates from date+1 to customEndDate
+                    if (date < customEndDate) {
+                        textInputRepo.rollForwardTextEntry(
+                            Uri.parse(uriString),
+                            context,
+                            timestamp,
+                            date.plusDays(1),
+                            customEndDate
+                        )
+                    }
+                }
+                
+                onComplete()
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to set text entry: ${e.message}"
+                onComplete()
+            }
+        }
+    }
+
     // ── DB snapshots (crash/wipe recovery) ───────────────────────────────────
 
     /** UI-facing view of one habit-DB snapshot. */
@@ -2512,6 +2708,28 @@ class HabitViewModel(
             try {
                 // updateTextEntry adds the key if it is missing
                 textInputRepo.updateTextEntry(Uri.parse(uriString), context, timestamp, text)
+                
+                // If this is a roll forward habit, also roll forward the text
+                if (habitName in _settings.value.rollForwardHabits) {
+                    // Find the next manual date (same logic as incrementHabit)
+                    val nextManualDate = _settings.value.rollForwardManualDates[habitName]?.mapNotNull { dateStr ->
+                        com.example.tail.data.parseDate(dateStr)
+                    }?.sorted()?.firstOrNull { it > date }
+                    
+                    val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+                    
+                    // Roll forward the text to all dates from date+1 to endDate
+                    if (date < endDate) {
+                        textInputRepo.rollForwardTextEntry(
+                            Uri.parse(uriString),
+                            context,
+                            timestamp,
+                            date.plusDays(1),
+                            endDate
+                        )
+                    }
+                }
+                
                 onComplete()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to set text entry: ${e.message}"

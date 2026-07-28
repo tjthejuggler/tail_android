@@ -216,6 +216,16 @@ fun HabitGridScreen(
     // Habit name for which the conditional links picker is open (null = none)
     var conditionalLinksPickerHabit by remember { mutableStateOf<String?>(null) }
 
+    // Roll forward confirmation dialog state
+    data class RollForwardDialogState(
+        val habitName: String,
+        val actionType: String, // "increment" or "text"
+        val startDate: LocalDate,
+        val initialEndDate: LocalDate,
+        val onConfirm: (LocalDate) -> Unit
+    )
+    var rollForwardDialogState by remember { mutableStateOf<RollForwardDialogState?>(null) }
+
     // Text-input dialog state: non-null when the dialog should be shown
     var textInputDialogState by remember { mutableStateOf<TextInputDialogState?>(null) }
 
@@ -571,18 +581,58 @@ fun HabitGridScreen(
                                 else -> {
                                     // When viewing a different day or habit is timeless, increment without timestamp
                                     val timeless = !isToday || habit.name in settings.timelessHabits
-                                    viewModel.incrementHabit(habit.name, 1, recordTimestamp = !timeless)
-                                    // Show increment toast with edit-time option
-                                    incrementToastVersion++
-                                    incrementToastHabit = habit.name
-                                    incrementToastIsTimeless = timeless
-                                    incrementToastOriginalTime = if (!timeless) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
-                                    val currentVersion = incrementToastVersion
-                                    toastScope.launch {
-                                        delay(3500)
-                                        // Only clear if no newer toast has replaced this one
-                                        if (incrementToastVersion == currentVersion) {
-                                            incrementToastHabit = null
+                                    
+                                    // Check if this is a roll forward habit and we're viewing a past date
+                                    if (habit.name in settings.rollForwardHabits && !isToday) {
+                                        // Find the next manual date
+                                        val nextManualDate = settings.rollForwardManualDates[habit.name]?.mapNotNull { dateStr ->
+                                            com.example.tail.data.parseDate(dateStr)
+                                        }?.sorted()?.firstOrNull { it > selectedDate }
+                                        
+                                        val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+                                        
+                                        // Show roll forward confirmation dialog
+                                        rollForwardDialogState = RollForwardDialogState(
+                                            habitName = habit.name,
+                                            actionType = "increment",
+                                            startDate = selectedDate,
+                                            initialEndDate = endDate,
+                                            onConfirm = { confirmedEndDate ->
+                                                viewModel.incrementHabitWithRollForward(
+                                                    habitName = habit.name,
+                                                    amount = 1,
+                                                    recordTimestamp = !timeless,
+                                                    customEndDate = confirmedEndDate
+                                                )
+                                                // Show increment toast with edit-time option
+                                                incrementToastVersion++
+                                                incrementToastHabit = habit.name
+                                                incrementToastIsTimeless = timeless
+                                                incrementToastOriginalTime = if (!timeless) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                                                val currentVersion = incrementToastVersion
+                                                toastScope.launch {
+                                                    delay(3500)
+                                                    if (incrementToastVersion == currentVersion) {
+                                                        incrementToastHabit = null
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    } else {
+                                        // Normal increment without roll forward
+                                        viewModel.incrementHabit(habit.name, 1, recordTimestamp = !timeless)
+                                        // Show increment toast with edit-time option
+                                        incrementToastVersion++
+                                        incrementToastHabit = habit.name
+                                        incrementToastIsTimeless = timeless
+                                        incrementToastOriginalTime = if (!timeless) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                                        val currentVersion = incrementToastVersion
+                                        toastScope.launch {
+                                            delay(3500)
+                                            // Only clear if no newer toast has replaced this one
+                                            if (incrementToastVersion == currentVersion) {
+                                                incrementToastHabit = null
+                                            }
                                         }
                                     }
                                 }
@@ -727,6 +777,40 @@ fun HabitGridScreen(
                             viewModel.loadTextEntriesWithTimestamps(name, selectedDate, onResult)
                         },
                         onEditTextEntry = { name, timestamp, newText ->
+                            // Check if this is a roll forward habit and we're viewing a past date
+                            if (name in settings.rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+                                // Parse the date from the timestamp
+                                val dateStr = timestamp.substring(0, 10)
+                                val entryDate = com.example.tail.data.parseDate(dateStr)
+                                
+                                if (entryDate != null) {
+                                    // Find the next manual date
+                                    val nextManualDate = settings.rollForwardManualDates[name]?.mapNotNull { dateStr ->
+                                        com.example.tail.data.parseDate(dateStr)
+                                    }?.sorted()?.firstOrNull { it > entryDate }
+                                    
+                                    val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+                                    
+                                    // Show roll forward confirmation dialog
+                                    rollForwardDialogState = RollForwardDialogState(
+                                        habitName = name,
+                                        actionType = "text",
+                                        startDate = entryDate,
+                                        initialEndDate = endDate,
+                                        onConfirm = { confirmedEndDate ->
+                                            viewModel.updateTextEntryWithRollForward(name, timestamp, newText, confirmedEndDate) {
+                                                // Reload entries after edit
+                                                viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
+                                                    editModeTextEntries = entries
+                                                }
+                                            }
+                                        }
+                                    )
+                                    return@EditModeControlBar
+                                }
+                            }
+                            
+                            // Normal update without roll forward
                             viewModel.updateTextEntry(name, timestamp, newText)
                             // Reload entries after edit
                             viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
@@ -734,6 +818,34 @@ fun HabitGridScreen(
                             }
                         },
                         onAddTextEntry = { name, newText ->
+                            // Check if this is a roll forward habit and we're viewing a past date
+                            if (name in settings.rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+                                // Find the next manual date
+                                val nextManualDate = settings.rollForwardManualDates[name]?.mapNotNull { dateStr ->
+                                    com.example.tail.data.parseDate(dateStr)
+                                }?.sorted()?.firstOrNull { it > selectedDate }
+                                
+                                val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+                                
+                                // Show roll forward confirmation dialog
+                                rollForwardDialogState = RollForwardDialogState(
+                                    habitName = name,
+                                    actionType = "text",
+                                    startDate = selectedDate,
+                                    initialEndDate = endDate,
+                                    onConfirm = { confirmedEndDate ->
+                                        viewModel.setTextEntryForDateWithRollForward(name, selectedDate, newText, confirmedEndDate) {
+                                            // Reload entries after add
+                                            viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
+                                                editModeTextEntries = entries
+                                            }
+                                        }
+                                    }
+                                )
+                                return@EditModeControlBar
+                            }
+                            
+                            // Normal add without roll forward
                             viewModel.setTextEntryForDate(name, selectedDate, newText) {
                                 // Reload entries after add
                                 viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
@@ -947,11 +1059,73 @@ fun HabitGridScreen(
             onConfirm = { text ->
                 // Only pass selectedDate if it's not today - for today, use current time
                 val dateForEntry = if (selectedDate == today) null else selectedDate
-                viewModel.saveTextEntry(state.habit.name, text, dateForEntry)
-                textInputDialogState = null
+                
+                // Check if this is a roll forward habit and we're viewing a past date
+                if (state.habit.name in settings.rollForwardHabits && dateForEntry != null) {
+                    // Find the next manual date
+                    val nextManualDate = settings.rollForwardManualDates[state.habit.name]?.mapNotNull { dateStr ->
+                        com.example.tail.data.parseDate(dateStr)
+                    }?.sorted()?.firstOrNull { it > dateForEntry }
+                    
+                    val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+                    
+                    // Show roll forward confirmation dialog
+                    rollForwardDialogState = RollForwardDialogState(
+                        habitName = state.habit.name,
+                        actionType = "text",
+                        startDate = dateForEntry,
+                        initialEndDate = endDate,
+                        onConfirm = { confirmedEndDate ->
+                            viewModel.setTextEntryForDateWithRollForward(state.habit.name, dateForEntry, text, confirmedEndDate) {
+                                // Reload entries after add completes
+                                viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
+                                    textInputDialogState = state.copy(todayEntries = entries)
+                                }
+                            }
+                            textInputDialogState = null
+                        }
+                    )
+                } else {
+                    viewModel.saveTextEntry(state.habit.name, text, dateForEntry)
+                    textInputDialogState = null
+                }
             },
             onDismiss = { textInputDialogState = null },
             onEdit = { oldTimestamp, newText ->
+                // Check if this is a roll forward habit and we're viewing a past date
+                if (state.habit.name in settings.rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+                    // Parse the date from the timestamp
+                    val dateStr = oldTimestamp.substring(0, 10)
+                    val entryDate = com.example.tail.data.parseDate(dateStr)
+                    
+                    if (entryDate != null) {
+                        // Find the next manual date
+                        val nextManualDate = settings.rollForwardManualDates[state.habit.name]?.mapNotNull { dateStr ->
+                            com.example.tail.data.parseDate(dateStr)
+                        }?.sorted()?.firstOrNull { it > entryDate }
+                        
+                        val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+                        
+                        // Show roll forward confirmation dialog
+                        rollForwardDialogState = RollForwardDialogState(
+                            habitName = state.habit.name,
+                            actionType = "text",
+                            startDate = entryDate,
+                            initialEndDate = endDate,
+                            onConfirm = { confirmedEndDate ->
+                                viewModel.updateTextEntryWithRollForward(state.habit.name, oldTimestamp, newText, confirmedEndDate) {
+                                    // Reload entries after edit completes
+                                    viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
+                                        textInputDialogState = state.copy(todayEntries = entries)
+                                    }
+                                }
+                            }
+                        )
+                        return@TextInputDialog
+                    }
+                }
+                
+                // Normal update without roll forward
                 viewModel.updateTextEntry(state.habit.name, oldTimestamp, newText) {
                     // Reload entries after edit completes
                     viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
@@ -1063,6 +1237,21 @@ fun HabitGridScreen(
                 quickEditHabitName = null
             },
             onDismiss = { quickEditHabitName = null }
+        )
+    }
+
+    // Roll forward confirmation dialog
+    rollForwardDialogState?.let { state ->
+        RollForwardConfirmDialog(
+            habitName = state.habitName,
+            actionType = state.actionType,
+            startDate = state.startDate,
+            initialEndDate = state.initialEndDate,
+            onConfirm = { endDate ->
+                state.onConfirm(endDate)
+                rollForwardDialogState = null
+            },
+            onDismiss = { rollForwardDialogState = null }
         )
     }
 }
@@ -4604,6 +4793,175 @@ private fun VoiceTriggerInfoDialog(onDismiss: () -> Unit) {
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003355))
                 ) {
                     Text("Got it", color = Color(0xFF44BBFF))
+                }
+            }
+        }
+    }
+}
+
+// ── Roll forward confirmation dialog ─────────────────────────────────────────────
+@Composable
+private fun RollForwardConfirmDialog(
+    habitName: String,
+    actionType: String, // "increment" or "text"
+    startDate: LocalDate,
+    initialEndDate: LocalDate,
+    onConfirm: (LocalDate) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var endDate by remember { mutableStateOf(initialEndDate) }
+    var yearText by remember { mutableStateOf(endDate.year.toString()) }
+    var monthText by remember { mutableStateOf(endDate.monthValue.toString()) }
+    var dayText by remember { mutableStateOf(endDate.dayOfMonth.toString()) }
+    
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Roll Forward",
+                color = Color(0xFF44BBFF),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            val actionDescription = when (actionType) {
+                "increment" -> "Increment \"$habitName\" and roll forward"
+                "text" -> "Set text for \"$habitName\" and roll forward"
+                else -> "Roll forward for \"$habitName\""
+            }
+            
+            Text(
+                text = "$actionDescription\nfrom ${startDate.format(DISPLAY_DATE_FMT)} to:",
+                color = Color(0xFFCCCCCC),
+                fontSize = 13.sp
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Simple editable date fields
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Year field
+                OutlinedTextField(
+                    value = yearText,
+                    onValueChange = {
+                        yearText = it.filter { char -> char.isDigit() }
+                        if (yearText.isNotEmpty()) {
+                            val newYear = yearText.toIntOrNull() ?: endDate.year
+                            val newDate = try {
+                                LocalDate.of(newYear, endDate.monthValue, endDate.dayOfMonth)
+                            } catch (e: Exception) {
+                                endDate
+                            }
+                            endDate = newDate
+                        }
+                    },
+                    label = { Text("Year", color = Color(0xFF888888), fontSize = 11.sp) },
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF44BBFF),
+                        unfocusedBorderColor = Color(0xFF444444),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    textStyle = TextStyle(fontSize = 14.sp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                
+                // Month field
+                OutlinedTextField(
+                    value = monthText,
+                    onValueChange = {
+                        monthText = it.filter { char -> char.isDigit() }.take(2)
+                        if (monthText.isNotEmpty()) {
+                            val newMonth = monthText.toIntOrNull()?.coerceIn(1, 12) ?: endDate.monthValue
+                            val newDate = try {
+                                LocalDate.of(endDate.year, newMonth, endDate.dayOfMonth)
+                            } catch (e: Exception) {
+                                endDate.withMonth(newMonth).withDayOfMonth(1)
+                            }
+                            endDate = newDate
+                            monthText = newDate.monthValue.toString()
+                        }
+                    },
+                    label = { Text("Month", color = Color(0xFF888888), fontSize = 11.sp) },
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF44BBFF),
+                        unfocusedBorderColor = Color(0xFF444444),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    textStyle = TextStyle(fontSize = 14.sp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                
+                // Day field
+                OutlinedTextField(
+                    value = dayText,
+                    onValueChange = {
+                        dayText = it.filter { char -> char.isDigit() }.take(2)
+                        if (dayText.isNotEmpty()) {
+                            val newDay = dayText.toIntOrNull()?.coerceIn(1, 31) ?: endDate.dayOfMonth
+                            val newDate = try {
+                                LocalDate.of(endDate.year, endDate.monthValue, newDay)
+                            } catch (e: Exception) {
+                                endDate.withDayOfMonth(1)
+                            }
+                            endDate = newDate
+                            dayText = newDate.dayOfMonth.toString()
+                        }
+                    },
+                    label = { Text("Day", color = Color(0xFF888888), fontSize = 11.sp) },
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF44BBFF),
+                        unfocusedBorderColor = Color(0xFF444444),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    textStyle = TextStyle(fontSize = 14.sp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Display the formatted date
+            Text(
+                text = endDate.format(DISPLAY_DATE_FMT),
+                color = Color(0xFF44BBFF),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = { onConfirm(endDate) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004466))
+                ) {
+                    Text("Roll Forward", color = Color(0xFF44BBFF))
                 }
             }
         }
