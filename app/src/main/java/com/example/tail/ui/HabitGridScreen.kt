@@ -650,6 +650,7 @@ fun HabitGridScreen(
                         habitSubtypes = settings.habitSubtypes,
                         subtypeDataFileUris = settings.subtypeDataFileUris,
                         allHabitNames = viewModel.getAllHabitNames(),
+                        rollForwardHabits = settings.rollForwardHabits,
                         onStartMove = { viewModel.startMoveMode() },
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
@@ -738,6 +739,7 @@ fun HabitGridScreen(
                         },
                         habitNotes = settings.habitNotes,
                         onSetHabitNote = { name, note -> viewModel.setHabitNote(name, note) },
+                        onToggleRollForward = { name -> viewModel.toggleRollForward(name) },
                         onRenameHabit = { oldName, newName -> viewModel.renameHabit(oldName, newName) }
                     )
                 }
@@ -1308,6 +1310,7 @@ private fun EditModeControlBar(
     habitSubtypes: Map<String, List<String>>,
     subtypeDataFileUris: Map<String, String>,
     allHabitNames: List<String>,
+    rollForwardHabits: Set<String> = emptySet(),
     garminMonthlyData: Map<com.example.tail.data.GarminType, Map<String, Int>> = emptyMap(),
     selectedDate: java.time.LocalDate = java.time.LocalDate.now(),
     onStartMove: () -> Unit,
@@ -1376,7 +1379,9 @@ private fun EditModeControlBar(
     /** Map of habit name → note text. */
     habitNotes: Map<String, String> = emptyMap(),
     /** Called when the user edits the note for a habit. */
-    onSetHabitNote: (String, String) -> Unit = { _, _ -> }
+    onSetHabitNote: (String, String) -> Unit = { _, _ -> },
+    /** Called when the user toggles roll forward for a habit. */
+    onToggleRollForward: (String) -> Unit = {}
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -2644,6 +2649,34 @@ private fun EditModeControlBar(
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color(0xFF88CCFF),
                                 checkedTrackColor = Color(0xFF003A5A),
+                                uncheckedThumbColor = Color(0xFF888888),
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // ── Roll Forward toggle ────────────────────────────────────
+                    val isRollForward = selectedHabitName in rollForwardHabits
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "Roll Forward", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (isRollForward) "Auto-rolls to next day & fills past days" else "No auto-roll behavior",
+                                color = Color(0xFF888888), fontSize = 10.sp
+                            )
+                        }
+                        Switch(
+                            checked = isRollForward,
+                            onCheckedChange = { onToggleRollForward(selectedHabitName) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF88FF88),
+                                checkedTrackColor = Color(0xFF1A4A1A),
                                 uncheckedThumbColor = Color(0xFF888888),
                                 uncheckedTrackColor = Color(0xFF333333)
                             )

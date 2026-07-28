@@ -476,7 +476,23 @@ data class AppSettings(
      * Maps habit name → note text for per-habit notes.
      * Users can write notes about each habit in edit mode.
      */
-    val habitNotes: Map<String, String> = emptyMap()
+    val habitNotes: Map<String, String> = emptyMap(),
+
+    /**
+     * Habits that have the "roll forward" feature enabled.
+     * When a habit is in this set, two behaviors apply:
+     * 1. When a new day begins, this habit is automatically set to the value it had on the previous day.
+     * 2. When set in past days, it automatically sets all days after that to the same value up until
+     *    the next day that was manually set. This creates "segments" of consistent values.
+     */
+    val rollForwardHabits: Set<String> = emptySet(),
+
+    /**
+     * Tracks which dates were manually set for roll forward habits.
+     * Maps habit name → set of date strings (YYYY-MM-DD) that were explicitly set by the user.
+     * This distinguishes manually set dates from dates that were automatically filled by roll forward.
+     */
+    val rollForwardManualDates: Map<String, Set<String>> = emptyMap()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

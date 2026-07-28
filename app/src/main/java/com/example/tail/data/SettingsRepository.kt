@@ -111,6 +111,11 @@ private val KEY_CUSTOM_POINT_RANGES_HABITS = stringSetPreferencesKey("custom_poi
 private val KEY_CUSTOM_POINT_RANGES = stringPreferencesKey("custom_point_ranges")
 // Stored as "habitName\x00note text|||habitName\x00another note" pairs (note text can contain any chars)
 private val KEY_HABIT_NOTES = stringPreferencesKey("habit_notes")
+// Roll forward habits (set of habit names)
+private val KEY_ROLL_FORWARD_HABITS = stringSetPreferencesKey("roll_forward_habits")
+
+// Roll forward manual dates (map of habit name → set of date strings)
+private val KEY_ROLL_FORWARD_MANUAL_DATES = stringPreferencesKey("roll_forward_manual_dates")
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
@@ -369,6 +374,29 @@ private fun decodePointRangesMap(raw: String): Map<String, List<PointRange>> {
     }.toMap()
 }
 
+// Serialisation helpers for Map<String, Set<String>> (habit name → set of manually set date strings).
+// Format: "habitName\x00date1,date2,date3|||habitName\x00..."
+// Dates are stored as comma-separated YYYY-MM-DD strings.
+private fun encodeRollForwardManualDates(map: Map<String, Set<String>>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) ->
+        val datesStr = v.joinToString(",")
+        "$k$KV_SEP$datesStr"
+    }
+
+private fun decodeRollForwardManualDates(raw: String): Map<String, Set<String>> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null
+        else {
+            val key = pair.substring(0, idx)
+            val datesStr = pair.substring(idx + 1)
+            val dates = if (datesStr.isBlank()) emptySet() else datesStr.split(",").toSet()
+            key to dates
+        }
+    }.toMap()
+}
+
 /**
  * Persists app settings (file URIs, custom input habits, custom habit order, habit screens)
  * using DataStore.
@@ -547,7 +575,9 @@ class SettingsRepository(private val context: Context) {
             customPointRangesHabits = prefs[KEY_CUSTOM_POINT_RANGES_HABITS] ?: emptySet(),
             customPointRanges = decodePointRangesMap(customPointRangesRaw),
             graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw),
-            habitNotes = decodeHabitNotesMap(habitNotesRaw)
+            habitNotes = decodeHabitNotesMap(habitNotesRaw),
+            rollForwardHabits = prefs[KEY_ROLL_FORWARD_HABITS] ?: emptySet(),
+            rollForwardManualDates = decodeRollForwardManualDates(prefs[KEY_ROLL_FORWARD_MANUAL_DATES] ?: "")
         )
     }
 
@@ -951,6 +981,22 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveHabitNotes(notes: Map<String, String>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_HABIT_NOTES] = encodeHabitNotesMap(notes)
+        }
+    }
+
+    // ── Roll Forward Habits ─────────────────────────────────────────────────
+
+    /** Saves the set of habits that have the "roll forward" feature enabled. */
+    suspend fun saveRollForwardHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_ROLL_FORWARD_HABITS] = habits
+        }
+    }
+
+    /** Saves the map of manually set dates for roll forward habits. */
+    suspend fun saveRollForwardManualDates(dates: Map<String, Set<String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_ROLL_FORWARD_MANUAL_DATES] = encodeRollForwardManualDates(dates)
         }
     }
 }

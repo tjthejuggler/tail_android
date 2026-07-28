@@ -659,9 +659,31 @@ class HabitViewModel(
         screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
 
         // Step 2: update in-memory cache
+        // For roll forward habits, find the next manually set date BEFORE applying the change
+        val nextManualDate = if (habitName in _settings.value.rollForwardHabits) {
+            val manualDates = _settings.value.rollForwardManualDates[habitName] ?: emptySet()
+            manualDates.mapNotNull { dateStr ->
+                com.example.tail.data.parseDate(dateStr)
+            }.sorted()
+            .firstOrNull { it > _selectedDate.value }
+        } else null
+        
         var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, amount, _selectedDate.value)
+        
+        // Step 2b: Track this date as manually set for roll forward habits
+        if (habitName in _settings.value.rollForwardHabits) {
+            val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+            val currentManualDates = _settings.value.rollForwardManualDates[habitName]?.toMutableSet() ?: mutableSetOf()
+            currentManualDates.add(dateStr)
+            val updatedManualDates = _settings.value.rollForwardManualDates.toMutableMap()
+            updatedManualDates[habitName] = currentManualDates
+            viewModelScope.launch {
+                settingsRepo.saveRollForwardManualDates(updatedManualDates)
+                _settings.value = _settings.value.copy(rollForwardManualDates = updatedManualDates)
+            }
+        }
 
-        // Step 2b: if this is a conditional habit, also increment all linked habits
+        // Step 2c: if this is a conditional habit, also increment all linked habits
         val linkedHabits = if (habitName in _settings.value.conditionalHabits) {
             _settings.value.conditionalLinkedHabits[habitName] ?: emptySet()
         } else emptySet()
@@ -688,6 +710,27 @@ class HabitViewModel(
             }
         }
 
+        // Step 2d: Roll forward logic - fill subsequent days for roll forward habits
+        if (habitName in _settings.value.rollForwardHabits) {
+            val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
+            val selectedDate = _selectedDate.value
+            val today = java.time.LocalDate.now()
+            
+            // Fill all dates from selectedDate to nextManualDate (exclusive) or today (inclusive)
+            var currentDate = selectedDate.plusDays(1)
+            val endDate = nextManualDate?.minusDays(1) ?: today
+            
+            while (currentDate <= endDate) {
+                val currentDateStr = com.example.tail.data.dateString(currentDate)
+                habitEntries[currentDateStr] = newCount
+                currentDate = currentDate.plusDays(1)
+            }
+            
+            // Update the database with the filled entries
+            updatedDb = updatedDb.toMutableMap()
+            updatedDb[habitName] = habitEntries
+        }
+        
         cachedPhoneDb = updatedDb
         // Keep per-screen cache in sync after conditional updates
         screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
@@ -839,11 +882,55 @@ class HabitViewModel(
         val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
         val currentCount = currentEntries[dateStr] ?: 0
         val delta = clamped - currentCount
-        val updatedDb = if (delta != 0) {
+        
+        // For roll forward habits, find the next manually set date BEFORE applying the change
+        val nextManualDate = if (habitName in _settings.value.rollForwardHabits && delta != 0) {
+            val manualDates = _settings.value.rollForwardManualDates[habitName] ?: emptySet()
+            manualDates.mapNotNull { dateStr ->
+                com.example.tail.data.parseDate(dateStr)
+            }.sorted()
+            .firstOrNull { it > _selectedDate.value }
+        } else null
+        
+        var updatedDb = if (delta != 0) {
             habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, delta, _selectedDate.value)
         } else {
             cachedPhoneDb
         }
+        
+        // Step 2.5: Track this date as manually set for roll forward habits
+        if (habitName in _settings.value.rollForwardHabits && delta != 0) {
+            val currentManualDates = _settings.value.rollForwardManualDates[habitName]?.toMutableSet() ?: mutableSetOf()
+            currentManualDates.add(dateStr)
+            val updatedManualDates = _settings.value.rollForwardManualDates.toMutableMap()
+            updatedManualDates[habitName] = currentManualDates
+            viewModelScope.launch {
+                settingsRepo.saveRollForwardManualDates(updatedManualDates)
+                _settings.value = _settings.value.copy(rollForwardManualDates = updatedManualDates)
+            }
+        }
+
+        // Step 2.6: Roll forward logic - fill subsequent days for roll forward habits
+        if (habitName in _settings.value.rollForwardHabits && delta != 0) {
+            val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
+            val selectedDate = _selectedDate.value
+            val today = java.time.LocalDate.now()
+            
+            // Fill all dates from selectedDate to nextManualDate (exclusive) or today (inclusive)
+            var currentDate = selectedDate.plusDays(1)
+            val endDate = nextManualDate?.minusDays(1) ?: today
+            
+            while (currentDate <= endDate) {
+                val currentDateStr = com.example.tail.data.dateString(currentDate)
+                habitEntries[currentDateStr] = clamped
+                currentDate = currentDate.plusDays(1)
+            }
+            
+            // Update the database with the filled entries
+            updatedDb = updatedDb.toMutableMap()
+            updatedDb[habitName] = habitEntries
+        }
+        
         cachedPhoneDb = updatedDb
 
         // Step 3: full rebuild + disk write in background
@@ -1076,6 +1163,29 @@ class HabitViewModel(
             if (habitName in current) current.remove(habitName) else current.add(habitName)
             settingsRepo.saveTimelessHabits(current)
             _settings.value = _settings.value.copy(timelessHabits = current)
+        }
+    }
+
+    /** Toggles the "roll forward" feature on/off for [habitName]. */
+    fun toggleRollForward(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.rollForwardHabits.toMutableSet()
+            if (habitName in current) {
+                // Disabling: remove from set and clear manual dates
+                current.remove(habitName)
+                val updatedManualDates = _settings.value.rollForwardManualDates.toMutableMap()
+                updatedManualDates.remove(habitName)
+                settingsRepo.saveRollForwardManualDates(updatedManualDates)
+                _settings.value = _settings.value.copy(
+                    rollForwardHabits = current,
+                    rollForwardManualDates = updatedManualDates
+                )
+            } else {
+                // Enabling: just add to set
+                current.add(habitName)
+                settingsRepo.saveRollForwardHabits(current)
+                _settings.value = _settings.value.copy(rollForwardHabits = current)
+            }
         }
     }
 
@@ -2539,6 +2649,43 @@ class HabitViewModel(
         if (lastDate == null || lastDate != today) {
             if (_selectedDate.value.isBefore(today)) {
                 _selectedDate.value = today
+            }
+            
+            // Roll forward logic: for roll forward habits, set today's value to yesterday's value
+            if (lastDate != null) {
+                viewModelScope.launch {
+                    val uriString = _settings.value.fileUri
+                    if (uriString.isNotEmpty()) {
+                        val yesterday = lastDate
+                        val yesterdayStr = com.example.tail.data.dateString(yesterday)
+                        val todayStr = com.example.tail.data.dateString(today)
+                        
+                        var dbChanged = false
+                        val updatedDb = cachedPhoneDb.toMutableMap()
+                        
+                        for (habitName in _settings.value.rollForwardHabits) {
+                            val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
+                            val yesterdayValue = habitEntries[yesterdayStr]
+                            
+                            // Only set today's value if yesterday had a value and today doesn't already have one
+                            if (yesterdayValue != null && !habitEntries.containsKey(todayStr)) {
+                                habitEntries[todayStr] = yesterdayValue
+                                updatedDb[habitName] = habitEntries
+                                dbChanged = true
+                            }
+                        }
+                        
+                        if (dbChanged) {
+                            cachedPhoneDb = updatedDb
+                            try {
+                                val uri = Uri.parse(uriString)
+                                habitsRepo.persistDatabase(uri, context, updatedDb)
+                            } catch (e: Exception) {
+                                _errorMessage.value = "Failed to save roll forward: ${e.message}"
+                            }
+                        }
+                    }
+                }
             }
         }
     }
