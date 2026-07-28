@@ -704,6 +704,7 @@ fun HabitGridScreen(
                         subtypeDataFileUris = settings.subtypeDataFileUris,
                         allHabitNames = viewModel.getAllHabitNames(),
                         rollForwardHabits = settings.rollForwardHabits,
+                        rollForwardManualDates = settings.rollForwardManualDates,
                         onStartMove = { viewModel.startMoveMode() },
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
@@ -726,6 +727,7 @@ fun HabitGridScreen(
                         onDeleteHabit = { name -> deleteConfirmHabitName = name },
                         onChangeIcon = { name -> iconPickerHabitName = name },
                         onSetCount = { name, count -> viewModel.setHabitCount(name, count) },
+                        onSetCountWithRollForward = { name, count, endDate -> viewModel.setHabitCountWithRollForward(name, count, endDate) },
                         onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
                         onToggleConditional = { name -> viewModel.toggleConditional(name) },
                         onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name },
@@ -1511,6 +1513,7 @@ private fun EditModeControlBar(
     subtypeDataFileUris: Map<String, String>,
     allHabitNames: List<String>,
     rollForwardHabits: Set<String> = emptySet(),
+    rollForwardManualDates: Map<String, Set<String>> = emptyMap(),
     garminMonthlyData: Map<com.example.tail.data.GarminType, Map<String, Int>> = emptyMap(),
     selectedDate: java.time.LocalDate = java.time.LocalDate.now(),
     onStartMove: () -> Unit,
@@ -1530,6 +1533,7 @@ private fun EditModeControlBar(
     onChangeIcon: (String) -> Unit,
     onRenameHabit: (String, String) -> Unit,
     onSetCount: (String, Int) -> Unit,
+    onSetCountWithRollForward: (String, Int, java.time.LocalDate) -> Unit = { _, _, _ -> },
     onSetDivider: (String, Int) -> Unit,
     onToggleConditional: (String) -> Unit,
     onSetConditionalLinks: (String) -> Unit,
@@ -1798,15 +1802,39 @@ private fun EditModeControlBar(
                     }
                     // Set-count dialog — opened by tapping the count number
                     if (showSetCountDialog && selectedHabitName != null) {
-                        SetCountDialog(
-                            habitName = selectedHabitName,
-                            currentCount = selectedHabitRawTodayCount,
-                            onConfirm = { newCount ->
-                                onSetCount(selectedHabitName, newCount)
-                                showSetCountDialog = false
-                            },
-                            onDismiss = { showSetCountDialog = false }
-                        )
+                        // Check if this is a roll forward habit and we're viewing a past date
+                        if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+                            // Find the next manual date
+                            val nextManualDate = rollForwardManualDates[selectedHabitName]?.mapNotNull { dateStr ->
+                                com.example.tail.data.parseDate(dateStr)
+                            }?.sorted()?.firstOrNull { date -> date > selectedDate }
+                            
+                            val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+                            
+                            // Show roll forward confirmation dialog
+                            RollForwardConfirmDialog(
+                                habitName = selectedHabitName,
+                                actionType = "increment",
+                                startDate = selectedDate,
+                                initialEndDate = endDate,
+                                onConfirm = { confirmedEndDate ->
+                                    onSetCountWithRollForward(selectedHabitName, selectedHabitRawTodayCount, confirmedEndDate)
+                                    showSetCountDialog = false
+                                },
+                                onDismiss = { showSetCountDialog = false }
+                            )
+                        } else {
+                            // Normal set count dialog without roll forward
+                            SetCountDialog(
+                                habitName = selectedHabitName,
+                                currentCount = selectedHabitRawTodayCount,
+                                onConfirm = { newCount ->
+                                    onSetCount(selectedHabitName, newCount)
+                                    showSetCountDialog = false
+                                },
+                                onDismiss = { showSetCountDialog = false }
+                            )
+                        }
                     }
                 }
                 // For divider habits, show editable true value (undivided total) under the counter

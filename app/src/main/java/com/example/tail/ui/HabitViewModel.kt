@@ -1144,6 +1144,97 @@ class HabitViewModel(
     }
 
     /**
+     * Sets the count for [habitName] on the currently selected date to an absolute [newCount]
+     * with roll forward to a specified end date.
+     * This is used when the user confirms the roll forward dialog for count changes.
+     */
+    fun setHabitCountWithRollForward(
+        habitName: String,
+        newCount: Int,
+        customEndDate: LocalDate,
+        onComplete: () -> Unit = {}
+    ) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            _errorMessage.value = "No file selected. Please pick a file in Settings."
+            onComplete()
+            return
+        }
+        val clamped = newCount.coerceAtLeast(0)
+        val divider = _settings.value.habitDividers[habitName] ?: 1
+
+        // Step 1: instant targeted UI update
+        _habits.value = _habits.value.map { h ->
+            if (h.name == habitName) h.copy(
+                todayCount = applyDivider(clamped, divider),
+                rawTodayCount = clamped
+            ) else h
+        }
+        // Keep per-screen cache in sync
+        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
+
+        // Step 2: update in-memory cache — compute delta from current stored value
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
+        val currentCount = currentEntries[dateStr] ?: 0
+        val delta = clamped - currentCount
+        
+        var updatedDb = if (delta != 0) {
+            habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, delta, _selectedDate.value)
+        } else {
+            cachedPhoneDb
+        }
+        
+        // Step 2.5: Track this date as manually set for roll forward habits
+        if (habitName in _settings.value.rollForwardHabits && delta != 0) {
+            val currentManualDates = _settings.value.rollForwardManualDates[habitName]?.toMutableSet() ?: mutableSetOf()
+            currentManualDates.add(dateStr)
+            val updatedManualDates = _settings.value.rollForwardManualDates.toMutableMap()
+            updatedManualDates[habitName] = currentManualDates
+            viewModelScope.launch {
+                settingsRepo.saveRollForwardManualDates(updatedManualDates)
+                _settings.value = _settings.value.copy(rollForwardManualDates = updatedManualDates)
+            }
+        }
+
+        // Step 2.6: Roll forward logic - fill subsequent days for roll forward habits
+        if (habitName in _settings.value.rollForwardHabits && delta != 0) {
+            val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
+            val selectedDate = _selectedDate.value
+            
+            // Fill all dates from selectedDate+1 to customEndDate (inclusive)
+            var currentDate = selectedDate.plusDays(1)
+            val endDate = customEndDate
+            
+            while (currentDate <= endDate) {
+                val currentDateStr = com.example.tail.data.dateString(currentDate)
+                habitEntries[currentDateStr] = clamped
+                currentDate = currentDate.plusDays(1)
+            }
+            
+            // Update the database with the filled entries
+            updatedDb = updatedDb.toMutableMap()
+            updatedDb[habitName] = habitEntries
+        }
+        
+        cachedPhoneDb = updatedDb
+
+        // Step 3: full rebuild + disk write in background
+        viewModelScope.launch {
+            rebuildHabitList()
+            try {
+                val uri = Uri.parse(uriString)
+                habitsRepo.persistDatabase(uri, context, updatedDb)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to save: ${e.message}"
+            }
+            // Update Tasker relay file after every count change
+            writeTaskerFile(_settings.value.taskerFileUri)
+            onComplete()
+        }
+    }
+
+    /**
      * Toggles the "1 max" cap on/off for [habitName].
      * When enabled, the habit's daily count can never exceed 1 (binary done/not-done).
      */
