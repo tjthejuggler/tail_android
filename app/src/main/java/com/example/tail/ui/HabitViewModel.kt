@@ -949,7 +949,7 @@ class HabitViewModel(
                 // updateTextEntry adds the key if it is missing
                 textInputRepo.updateTextEntry(Uri.parse(uriString), context, timestamp, text)
                 
-                // If this is a roll forward habit, also roll forward the text
+                // If this is a roll forward habit, also roll forward the text AND increment the habit counts
                 if (habitName in _settings.value.rollForwardHabits) {
                     // Roll forward the text to all dates from date+1 to customEndDate
                     if (date < customEndDate) {
@@ -960,6 +960,51 @@ class HabitViewModel(
                             date.plusDays(1),
                             customEndDate
                         )
+                    }
+                    
+                    // Also increment the habit counts for the roll forward dates
+                    val fileUriString = _settings.value.fileUri
+                    if (fileUriString.isNotEmpty()) {
+                        val dateStr = com.example.tail.data.dateString(date)
+                        val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
+                        val currentCount = currentEntries[dateStr] ?: 0
+                        val newCount = currentCount + 1
+                        
+                        // Update the count for the current date
+                        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, 1, date)
+                        
+                        // Track this date as manually set for roll forward habits
+                        val currentManualDates = _settings.value.rollForwardManualDates[habitName]?.toMutableSet() ?: mutableSetOf()
+                        currentManualDates.add(dateStr)
+                        val updatedManualDates = _settings.value.rollForwardManualDates.toMutableMap()
+                        updatedManualDates[habitName] = currentManualDates
+                        settingsRepo.saveRollForwardManualDates(updatedManualDates)
+                        _settings.value = _settings.value.copy(rollForwardManualDates = updatedManualDates)
+                        
+                        // Roll forward the count to all dates from date+1 to customEndDate
+                        val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
+                        var currentDate = date.plusDays(1)
+                        val endDate = customEndDate
+                        
+                        while (currentDate <= endDate) {
+                            val currentDateStr = com.example.tail.data.dateString(currentDate)
+                            habitEntries[currentDateStr] = newCount
+                            currentDate = currentDate.plusDays(1)
+                        }
+                        
+                        // Update the database with the filled entries
+                        updatedDb = updatedDb.toMutableMap()
+                        updatedDb[habitName] = habitEntries
+                        cachedPhoneDb = updatedDb
+                        
+                        // Persist the database
+                        try {
+                            val uri = Uri.parse(fileUriString)
+                            habitsRepo.persistDatabase(uri, context, updatedDb)
+                            rebuildHabitList()
+                        } catch (e: Exception) {
+                            _errorMessage.value = "Failed to save habit counts: ${e.message}"
+                        }
                     }
                 }
                 

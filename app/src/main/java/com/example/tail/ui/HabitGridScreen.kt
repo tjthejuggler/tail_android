@@ -1079,12 +1079,12 @@ fun HabitGridScreen(
                         initialEndDate = endDate,
                         onConfirm = { confirmedEndDate ->
                             viewModel.setTextEntryForDateWithRollForward(state.habit.name, dateForEntry, text, confirmedEndDate) {
-                                // Reload entries after add completes
+                                // Reload entries after add completes, then dismiss dialog
                                 viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
-                                    textInputDialogState = state.copy(todayEntries = entries)
+                                    // Don't reopen the dialog - just dismiss it
+                                    textInputDialogState = null
                                 }
                             }
-                            textInputDialogState = null
                         }
                     )
                 } else {
@@ -1116,9 +1116,10 @@ fun HabitGridScreen(
                             initialEndDate = endDate,
                             onConfirm = { confirmedEndDate ->
                                 viewModel.updateTextEntryWithRollForward(state.habit.name, oldTimestamp, newText, confirmedEndDate) {
-                                    // Reload entries after edit completes
+                                    // Reload entries after edit completes, then dismiss dialog
                                     viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
-                                        textInputDialogState = state.copy(todayEntries = entries)
+                                        // Don't reopen the dialog - just dismiss it
+                                        textInputDialogState = null
                                     }
                                 }
                             }
@@ -1600,6 +1601,7 @@ private fun EditModeControlBar(
     var moveToScreenExpanded by remember { mutableStateOf(false) }
     var showSetCountDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
+    var pendingCountDelta by remember { mutableStateOf(0) } // 0 = no pending change, 1 = increment, -1 = decrement
 
     Column(
         modifier = Modifier
@@ -1766,7 +1768,17 @@ private fun EditModeControlBar(
                                 fontSize = 10.sp
                             )
                             Button(
-                                onClick = { onSetCount(selectedHabitName, selectedHabitRawTodayCount - 1) },
+                                onClick = {
+                                    // Check if this is a roll forward habit and we're viewing a past date
+                                    if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+                                        // Set pending delta and show roll forward confirmation dialog
+                                        pendingCountDelta = -1
+                                        showSetCountDialog = true
+                                    } else {
+                                        // Normal decrement without roll forward
+                                        onSetCount(selectedHabitName, selectedHabitRawTodayCount - 1)
+                                    }
+                                },
                                 enabled = selectedHabitRawTodayCount > 0,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF3A1A00),
@@ -1791,7 +1803,17 @@ private fun EditModeControlBar(
                                 textAlign = TextAlign.Center
                             )
                             Button(
-                                onClick = { onSetCount(selectedHabitName, selectedHabitRawTodayCount + 1) },
+                                onClick = {
+                                    // Check if this is a roll forward habit and we're viewing a past date
+                                    if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+                                        // Set pending delta and show roll forward confirmation dialog
+                                        pendingCountDelta = 1
+                                        showSetCountDialog = true
+                                    } else {
+                                        // Normal increment without roll forward
+                                        onSetCount(selectedHabitName, selectedHabitRawTodayCount + 1)
+                                    }
+                                },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A00)),
                                 modifier = Modifier.size(28.dp),
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
@@ -1800,7 +1822,7 @@ private fun EditModeControlBar(
                             }
                         }
                     }
-                    // Set-count dialog — opened by tapping the count number
+                    // Set-count dialog — opened by tapping the count number or +/- buttons
                     if (showSetCountDialog && selectedHabitName != null) {
                         // Check if this is a roll forward habit and we're viewing a past date
                         if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
@@ -1818,22 +1840,41 @@ private fun EditModeControlBar(
                                 startDate = selectedDate,
                                 initialEndDate = endDate,
                                 onConfirm = { confirmedEndDate ->
-                                    onSetCountWithRollForward(selectedHabitName, selectedHabitRawTodayCount, confirmedEndDate)
+                                    // Use pending delta if available, otherwise use current count
+                                    val newCount = if (pendingCountDelta != 0) {
+                                        selectedHabitRawTodayCount + pendingCountDelta
+                                    } else {
+                                        selectedHabitRawTodayCount
+                                    }
+                                    onSetCountWithRollForward(selectedHabitName, newCount, confirmedEndDate)
                                     showSetCountDialog = false
+                                    pendingCountDelta = 0
                                 },
-                                onDismiss = { showSetCountDialog = false }
+                                onDismiss = {
+                                    showSetCountDialog = false
+                                    pendingCountDelta = 0
+                                }
                             )
                         } else {
                             // Normal set count dialog without roll forward
-                            SetCountDialog(
-                                habitName = selectedHabitName,
-                                currentCount = selectedHabitRawTodayCount,
-                                onConfirm = { newCount ->
-                                    onSetCount(selectedHabitName, newCount)
-                                    showSetCountDialog = false
-                                },
-                                onDismiss = { showSetCountDialog = false }
-                            )
+                            // Use pending delta if available, otherwise show the dialog
+                            if (pendingCountDelta != 0) {
+                                // Apply the delta directly without showing the dialog
+                                onSetCount(selectedHabitName, selectedHabitRawTodayCount + pendingCountDelta)
+                                showSetCountDialog = false
+                                pendingCountDelta = 0
+                            } else {
+                                // Show the normal set count dialog
+                                SetCountDialog(
+                                    habitName = selectedHabitName,
+                                    currentCount = selectedHabitRawTodayCount,
+                                    onConfirm = { newCount ->
+                                        onSetCount(selectedHabitName, newCount)
+                                        showSetCountDialog = false
+                                    },
+                                    onDismiss = { showSetCountDialog = false }
+                                )
+                            }
                         }
                     }
                 }
