@@ -3107,7 +3107,8 @@ class HabitViewModel(
             }
             
             // Roll forward logic: for roll forward habits, set today's value to yesterday's value
-            if (lastDate != null) {
+            // Only roll forward when the day has changed (lastDate != today)
+            if (lastDate != null && lastDate != today) {
                 viewModelScope.launch {
                     val uriString = _settings.value.fileUri
                     if (uriString.isNotEmpty()) {
