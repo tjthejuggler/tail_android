@@ -97,6 +97,10 @@ class HabitViewModel(
     private val context: Context,
     private val locationRepo: LocationRepository = LocationRepository(context)
 ) : ViewModel() {
+    
+    // Cache for text entries used in graph filtering
+    private val _textEntriesCache = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
+    val textEntriesCache: StateFlow<Map<String, Map<String, String>>> = _textEntriesCache.asStateFlow()
 
     /** Repository for recording habit increment timestamps (internal storage). */
     val timestampRepo = HabitTimestampRepository(context)
@@ -2595,13 +2599,42 @@ class HabitViewModel(
     )
 
     /**
+     * Loads text entries for a text-input habit into the cache for graph filtering.
+     * This should be called before using getGraphData with a text filter.
+     */
+    fun loadTextEntriesForGraph(habitName: String) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            _textEntriesCache.value = _textEntriesCache.value.toMutableMap().apply { remove(habitName) }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                _textEntriesCache.value = _textEntriesCache.value.toMutableMap().apply {
+                    put(habitName, log)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to load text entries for graph: ${e.message}")
+            }
+        }
+    }
+    
+    /**
      * Returns the time-series data for a habit within the given date range.
      * Includes text entries for text-input habits if available.
+     *
+     * @param habitName The name of the habit
+     * @param startDate The start date for the data range
+     * @param endDate The end date for the data range
+     * @param textFilter Optional text filter - for text-input habits, only includes days where
+     *                   the text entry contains this filter string (case-insensitive)
      */
     fun getGraphData(
         habitName: String,
         startDate: LocalDate,
-        endDate: LocalDate
+        endDate: LocalDate,
+        textFilter: String = ""
     ): List<GraphDataPoint> {
         val entries = cachedPhoneDb[habitName] ?: return emptyList()
         val divider = _settings.value.habitDividers[habitName] ?: 1
@@ -2611,12 +2644,36 @@ class HabitViewModel(
         // Check if this is a Garmin-linked habit
         val garminTypeStr = _settings.value.garminHabitLinks[habitName]
         val garminType = garminTypeStr?.let { GarminType.fromKey(it) }
+        
+        // Check if this is a text-input habit
+        val isTextInput = isTextInputHabit(habitName)
+        
+        // Use cached text entries for filtering
+        val textEntriesMap = if (isTextInput && textFilter.isNotEmpty()) {
+            _textEntriesCache.value[habitName] ?: emptyMap()
+        } else {
+            emptyMap()
+        }
 
         val result = mutableListOf<GraphDataPoint>()
         var cursor = startDate
         while (!cursor.isAfter(endDate)) {
             val ds = dateString(cursor)
             val raw = entries[ds] ?: 0
+            
+            // For text-input habits with active filter, convert non-zero values to 0 if text doesn't match
+            var filteredRaw = raw
+            if (isTextInput && textFilter.isNotEmpty() && raw > 0) {
+                val datePrefix = ds // Format: "yyyy-MM-dd"
+                val entriesForDate = textEntriesMap.filter { (key, _) -> key.startsWith(datePrefix) }
+                val hasMatchingText = entriesForDate.values.any { text ->
+                    text.contains(textFilter, ignoreCase = true)
+                }
+                if (!hasMatchingText) {
+                    // Convert to 0 if text doesn't match, but still include the day
+                    filteredRaw = 0
+                }
+            }
             
             // Get Garmin value if this is a Garmin-linked habit
             val garminVal = if (garminType != null) {
@@ -2651,8 +2708,8 @@ class HabitViewModel(
                 GraphDataPoint(
                     date = cursor,
                     dateStr = ds,
-                    rawValue = raw,
-                    pointsValue = applyDivider(raw, divider),
+                    rawValue = filteredRaw,
+                    pointsValue = applyDivider(filteredRaw, divider),
                     garminValue = garminVal
                 )
             )

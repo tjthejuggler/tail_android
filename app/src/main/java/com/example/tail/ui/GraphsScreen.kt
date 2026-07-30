@@ -33,6 +33,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -139,12 +140,26 @@ fun GraphsPanel(
     var selectedDataPoint by remember { mutableStateOf<SelectedPoint?>(null) }
     var textEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
     var datedEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
+    
+    // Text filter state
+    var showFilterDialog by remember { mutableStateOf(false) }
+    var textFilter by remember { mutableStateOf("") }
+    
+    // Check if any selected habit is a text-input habit
+    val hasTextInputHabit = graphSelectedHabits.any { viewModel.isTextInputHabit(it) }
 
     // When selection or period changes, clear the selected data point
     LaunchedEffect(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate) {
         selectedDataPoint = null
         textEntriesForPoint = emptyList()
         datedEntriesForPoint = emptyList()
+        
+        // Load text entries for text-input habits into the cache
+        graphSelectedHabits.forEach { habitName ->
+            if (viewModel.isTextInputHabit(habitName)) {
+                viewModel.loadTextEntriesForGraph(habitName)
+            }
+        }
     }
 
     // When a data point is selected, load text entries and/or dated entries if applicable
@@ -201,6 +216,27 @@ fun GraphsPanel(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() }
                         ) { viewModel.setGraphTimePeriod(period) }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+            
+            // Filter button - only shown for text-input habits
+            if (hasTextInputHabit) {
+                Text(
+                    text = if (textFilter.isEmpty()) "Filter" else "Filter*",
+                    color = if (textFilter.isNotEmpty()) Color(0xFF000000) else Color(0xFF88AA88),
+                    fontSize = 11.sp,
+                    fontWeight = if (textFilter.isNotEmpty()) FontWeight.Bold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .background(
+                            if (textFilter.isNotEmpty()) Color(0xFF66DD66) else Color(0xFF1A2E1A),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { showFilterDialog = true }
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 )
             }
@@ -272,9 +308,9 @@ fun GraphsPanel(
             val fullEndDate = zoomEndDate ?: today
 
             // Collect data for all selected habits over the full period range
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate) {
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, textFilter) {
                 graphSelectedHabits.toList().mapIndexed { idx, habitName ->
-                    val data = viewModel.getGraphData(habitName, fullStartDate, fullEndDate)
+                    val data = viewModel.getGraphData(habitName, fullStartDate, fullEndDate, textFilter)
                     GraphSeries(
                         habitName = habitName,
                         data = data,
@@ -525,6 +561,72 @@ fun GraphsPanel(
                 }
             }
         }
+    }
+    
+    // Text filter dialog
+    if (showFilterDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showFilterDialog = false },
+            title = {
+                Text(
+                    text = "Filter Text Entries",
+                    color = Color(0xFFCCEECC),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Only show habit points where the text contains:",
+                        color = Color(0xFF88AA88),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    androidx.compose.material3.OutlinedTextField(
+                        value = textFilter,
+                        onValueChange = { textFilter = it },
+                        placeholder = { Text("Enter filter text...", color = Color(0xFF668866)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color(0xFFCCEECC),
+                            unfocusedTextColor = Color(0xFFCCEECC),
+                            focusedBorderColor = Color(0xFF66DD66),
+                            unfocusedBorderColor = Color(0xFF446644),
+                            cursorColor = Color(0xFF66DD66),
+                            focusedPlaceholderColor = Color(0xFF668866),
+                            unfocusedPlaceholderColor = Color(0xFF668866)
+                        )
+                    )
+                    if (textFilter.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Leave empty to clear the filter",
+                            color = Color(0xFF668866),
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { showFilterDialog = false }
+                ) {
+                    Text("Apply", color = Color(0xFF66DD66))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        textFilter = ""
+                        showFilterDialog = false
+                    }
+                ) {
+                    Text("Clear", color = Color(0xFF88AA88))
+                }
+            },
+            containerColor = Color(0xFF0D1A0D)
+        )
     }
 }
 
