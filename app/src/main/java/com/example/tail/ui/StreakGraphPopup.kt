@@ -50,6 +50,7 @@ import com.example.tail.data.parseDate
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 import kotlin.math.roundToInt
 
 // ── Color palette ─────────────────────────────────────────────────────────────
@@ -61,9 +62,17 @@ private val GridLineColor = Color(0xFF1E1E30)
 private val AxisLabelColor = Color(0xFF7799AA)
 private val ChartBorderColor = Color(0xFF2A2A40)
 
-private val SHORT_DATE_FMT = DateTimeFormatter.ofPattern("M/d")
-private val MEDIUM_DATE_FMT = DateTimeFormatter.ofPattern("MMM d")
-private val YEAR_DATE_FMT = DateTimeFormatter.ofPattern("MMM ''yy")
+private val SHORT_DATE_FMT = DateTimeFormatter.ofPattern("d/M", Locale.ROOT)
+private val YEAR_DATE_FMT = DateTimeFormatter.ofPattern("M/yy", Locale.ROOT)
+
+// Custom date formatters that guarantee numeric output
+private fun formatShortDate(date: LocalDate): String {
+    return "${date.dayOfMonth}/${date.monthValue}"
+}
+
+private fun formatYearDate(date: LocalDate): String {
+    return "${date.monthValue}/${date.year.toString().takeLast(2)}"
+}
 
 /**
  * A fullscreen landscape popup dialog showing a professional line chart
@@ -322,19 +331,16 @@ private fun StreakLineChart(
         val labelInterval = when {
             visibleDays <= 7 -> 1
             visibleDays <= 14 -> 2
-            visibleDays <= 30 -> 5
+            visibleDays <= 30 -> 3
             visibleDays <= 60 -> 7
-            visibleDays <= 120 -> 14
-            visibleDays <= 365 -> 30
-            visibleDays <= 730 -> 60
-            else -> (visibleDays / 10).coerceAtLeast(30)
+            visibleDays <= 90 -> 14
+            visibleDays <= 180 -> 30
+            visibleDays <= 365 -> 60
+            visibleDays <= 730 -> 90
+            else -> (visibleDays / 8).coerceAtLeast(90)
         }
 
-        val dateFmt = when {
-            visibleDays <= 30 -> SHORT_DATE_FMT
-            visibleDays <= 365 -> MEDIUM_DATE_FMT
-            else -> YEAR_DATE_FMT
-        }
+        val useYearFormat = visibleDays > 365
 
         // Draw x labels within visible range
         val labelStart = ((visibleDaysStart / labelInterval) * labelInterval).coerceAtLeast(0)
@@ -474,7 +480,7 @@ private fun StreakLineChart(
             if (x < chartLeft - 20.dp.toPx() || x > chartRight + 20.dp.toPx()) continue
 
             drawContext.canvas.nativeCanvas.drawText(
-                date.format(dateFmt),
+                if (useYearFormat) formatYearDate(date) else formatShortDate(date),
                 x,
                 chartBottom + 18.dp.toPx(),
                 xLabelPaint

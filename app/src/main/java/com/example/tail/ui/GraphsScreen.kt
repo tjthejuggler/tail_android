@@ -63,7 +63,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -94,9 +96,22 @@ private val GRAPH_COLORS = listOf(
     Color(0xFFF06292),  // pink
 )
 
-private val SHORT_DATE_FMT = DateTimeFormatter.ofPattern("M/d")
-private val MEDIUM_DATE_FMT = DateTimeFormatter.ofPattern("MMM d")
-private val FULL_DATE_FMT = DateTimeFormatter.ofPattern("MMM d, yyyy")
+private val SHORT_DATE_FMT = DateTimeFormatter.ofPattern("d/M", Locale.ROOT)
+private val YEAR_DATE_FMT = DateTimeFormatter.ofPattern("M/yy", Locale.ROOT)
+private val FULL_DATE_FMT = DateTimeFormatter.ofPattern("d/M/yyyy", Locale.ROOT)
+
+// Custom date formatters that guarantee numeric output
+private fun formatShortDate(date: LocalDate): String {
+    return "${date.dayOfMonth}/${date.monthValue}"
+}
+
+private fun formatYearDate(date: LocalDate): String {
+    return "${date.monthValue}/${date.year.toString().takeLast(2)}"
+}
+
+private fun formatFullDate(date: LocalDate): String {
+    return "${date.dayOfMonth}/${date.monthValue}/${date.year}"
+}
 
 // ── Main Graphs Content ───────────────────────────────────────────────────────
 
@@ -318,7 +333,7 @@ fun GraphsPanel(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = point.date.format(FULL_DATE_FMT),
+                                text = formatFullDate(point.date),
                                 color = Color(0xFFCCEECC),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -807,14 +822,16 @@ private fun HabitLineChart(
         val labelInterval = when {
             visTotalDays <= 7 -> 1
             visTotalDays <= 14 -> 2
-            visTotalDays <= 30 -> 5
-            visTotalDays <= 90 -> 10
-            visTotalDays <= 180 -> 20
-            visTotalDays <= 365 -> 30
-            else -> (visTotalDays / 12).coerceAtLeast(30)
+            visTotalDays <= 30 -> 3
+            visTotalDays <= 60 -> 7
+            visTotalDays <= 90 -> 14
+            visTotalDays <= 180 -> 30
+            visTotalDays <= 365 -> 60
+            visTotalDays <= 730 -> 90
+            else -> (visTotalDays / 8).coerceAtLeast(90)
         }
 
-        val dateFmt = if (visTotalDays <= 30) SHORT_DATE_FMT else MEDIUM_DATE_FMT
+        val useYearFormat = visTotalDays > 365
 
         // X-axis gridlines + date labels. Draw extra intervals on each side —
         // enough to cover the current live drag distance — and translate by the
@@ -831,7 +848,7 @@ private fun HabitLineChart(
                 val x = chartLeft + (i.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
                 if (x + dragOffsetPx >= chartLeft - dayWidthPx && x + dragOffsetPx <= chartRight + dayWidthPx) {
                     drawContext.canvas.nativeCanvas.drawText(
-                        date.format(dateFmt),
+                        if (useYearFormat) formatYearDate(date) else formatShortDate(date),
                         x,
                         chartBottom + 16.dp.toPx(),
                         xLabelPaint
