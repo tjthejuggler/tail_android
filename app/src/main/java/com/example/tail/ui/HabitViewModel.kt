@@ -238,6 +238,10 @@ class HabitViewModel(
     @Volatile
     private var dbLoaded: Boolean = false
 
+    // Tracks the date on which roll forward was last performed.
+    // This ensures we only roll forward once per day, not on every DB load.
+    private var rollForwardLastDate: LocalDate? = null
+
     // Per-screen habit list cache — avoids expensive rebuildHabitList() on every screen switch.
     // Keyed by (screen index, selected date) so switching between screens on the same date is instant.
     private val screenHabitCache = mutableMapOf<Pair<Int, LocalDate>, List<Habit>>()
@@ -387,6 +391,10 @@ class HabitViewModel(
             // Gate opens ONLY here, after a genuinely successful load. Background
             // sync writers check this before persisting cachedPhoneDb.
             dbLoaded = true
+            
+            // Perform roll forward after DB is loaded (fixes race condition)
+            performRollForwardIfNeeded()
+            
             rebuildHabitList()
         } catch (e: Exception) {
             // Load failed (transient SAF/blank file during a Syncthing write, etc.).
@@ -425,6 +433,103 @@ class HabitViewModel(
         } catch (e: Exception) {
             Log.w(TAG, "runAutoRestoreIfNeeded: failed: " + e.message)
         }
+    }
+
+    /**
+     * Performs roll forward for habits that have the roll forward feature enabled.
+     * This is called after the DB is loaded to ensure we have the latest data.
+     * Only runs once per day (tracked by rollForwardLastDate).
+     *
+     * Roll forward copies:
+     * 1. The increment amount from yesterday to today
+     * 2. The text entry (if any) from yesterday to today
+     */
+    private suspend fun performRollForwardIfNeeded() {
+        val today = LocalDate.now()
+        
+        // Skip if we already performed roll forward today
+        if (rollForwardLastDate == today) {
+            Log.d(TAG, "Roll forward already performed for $today, skipping")
+            return
+        }
+        
+        // Skip if no roll forward habits are configured
+        if (_settings.value.rollForwardHabits.isEmpty()) {
+            Log.d(TAG, "No roll forward habits configured")
+            return
+        }
+        
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            Log.d(TAG, "No file URI configured, skipping roll forward")
+            return
+        }
+        
+        val yesterday = today.minusDays(1)
+        val yesterdayStr = com.example.tail.data.dateString(yesterday)
+        val todayStr = com.example.tail.data.dateString(today)
+        
+        var dbChanged = false
+        val updatedDb = cachedPhoneDb.toMutableMap()
+        
+        for (habitName in _settings.value.rollForwardHabits) {
+            // Roll forward increment amount
+            val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
+            val yesterdayValue = habitEntries[yesterdayStr]
+            
+            // Only set today's value if yesterday had a value and today doesn't already have one
+            if (yesterdayValue != null && !habitEntries.containsKey(todayStr)) {
+                habitEntries[todayStr] = yesterdayValue
+                updatedDb[habitName] = habitEntries
+                dbChanged = true
+                Log.d(TAG, "Roll forward: copied $habitName increment from $yesterdayStr to $todayStr: $yesterdayValue")
+            }
+            
+            // Roll forward text entry (if this habit has text input enabled)
+            if (habitName in _settings.value.textInputHabits) {
+                val textUriString = _settings.value.textInputFileUris[habitName]
+                if (!textUriString.isNullOrEmpty()) {
+                    try {
+                        // Find yesterday's text entry (noon timestamp)
+                        val yesterdayTimestamp = java.time.LocalDateTime.of(yesterday, java.time.LocalTime.NOON)
+                            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                        
+                        // Load yesterday's text
+                        val textLog = textInputRepo.loadTextLog(Uri.parse(textUriString), context)
+                        val yesterdayText = textLog[yesterdayTimestamp]
+                        
+                        if (yesterdayText != null) {
+                            // Check if today already has a text entry
+                            val todayTimestamp = java.time.LocalDateTime.of(today, java.time.LocalTime.NOON)
+                                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                            
+                            if (!textLog.containsKey(todayTimestamp)) {
+                                // Roll forward the text
+                                textInputRepo.updateTextEntry(Uri.parse(textUriString), context, todayTimestamp, yesterdayText)
+                                Log.d(TAG, "Roll forward: copied $habitName text from $yesterdayStr to $todayStr: $yesterdayText")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Roll forward: failed to roll forward text for $habitName: ${e.message}")
+                    }
+                }
+            }
+        }
+        
+        if (dbChanged) {
+            cachedPhoneDb = updatedDb
+            try {
+                val uri = Uri.parse(uriString)
+                habitsRepo.persistDatabase(uri, context, updatedDb)
+                Log.d(TAG, "Roll forward: persisted changes to disk")
+            } catch (e: Exception) {
+                Log.e(TAG, "Roll forward: failed to save: ${e.message}")
+                _errorMessage.value = "Failed to save roll forward: ${e.message}"
+            }
+        }
+        
+        // Mark that we've performed roll forward for today
+        rollForwardLastDate = today
     }
 
     fun loadFromFile(uri: Uri) {
@@ -3161,44 +3266,6 @@ class HabitViewModel(
         if (lastDate == null || lastDate != today) {
             if (_selectedDate.value.isBefore(today)) {
                 _selectedDate.value = today
-            }
-            
-            // Roll forward logic: for roll forward habits, set today's value to yesterday's value
-            // Only roll forward when the day has changed (lastDate != today)
-            if (lastDate != null && lastDate != today) {
-                viewModelScope.launch {
-                    val uriString = _settings.value.fileUri
-                    if (uriString.isNotEmpty()) {
-                        val yesterday = lastDate
-                        val yesterdayStr = com.example.tail.data.dateString(yesterday)
-                        val todayStr = com.example.tail.data.dateString(today)
-                        
-                        var dbChanged = false
-                        val updatedDb = cachedPhoneDb.toMutableMap()
-                        
-                        for (habitName in _settings.value.rollForwardHabits) {
-                            val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
-                            val yesterdayValue = habitEntries[yesterdayStr]
-                            
-                            // Only set today's value if yesterday had a value and today doesn't already have one
-                            if (yesterdayValue != null && !habitEntries.containsKey(todayStr)) {
-                                habitEntries[todayStr] = yesterdayValue
-                                updatedDb[habitName] = habitEntries
-                                dbChanged = true
-                            }
-                        }
-                        
-                        if (dbChanged) {
-                            cachedPhoneDb = updatedDb
-                            try {
-                                val uri = Uri.parse(uriString)
-                                habitsRepo.persistDatabase(uri, context, updatedDb)
-                            } catch (e: Exception) {
-                                _errorMessage.value = "Failed to save roll forward: ${e.message}"
-                            }
-                        }
-                    }
-                }
             }
         }
     }
