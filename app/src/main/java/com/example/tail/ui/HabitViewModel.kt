@@ -117,6 +117,15 @@ class HabitViewModel(
     private val _habits = MutableStateFlow<List<Habit>>(emptyList())
     val habits: StateFlow<List<Habit>> = _habits.asStateFlow()
 
+    /**
+     * Today's total habit points (sum of effective per-habit counts for the selected
+     * date). Updated in [rebuildHabitList] and retained across loads so the tiered
+     * loading spinner can reflect the current day's colour even while a fresh load
+     * is in progress (when [habits] is momentarily stale/empty).
+     */
+    private val _todayPoints = MutableStateFlow(0)
+    val todayPoints: StateFlow<Int> = _todayPoints.asStateFlow()
+
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
 
@@ -321,6 +330,16 @@ class HabitViewModel(
 
             settingsRepo.settingsFlow.collect { s ->
                 _settings.value = s
+
+                // Load today's points from the tasker file so the spinner shows the
+                // correct tier immediately, before the full DB is loaded.
+                // Run synchronously (withContext) to ensure it completes before
+                // catchUpAndLoad sets isLoading=true.
+                val taskerPoints = withContext(Dispatchers.IO) {
+                    loadTodayPointsFromTaskerFile()
+                }
+                _todayPoints.value = taskerPoints
+
                 if (!isSavingOrder && !isSavingScreenIndex) {
                     // Sync screens from persisted settings
                     if (s.habitScreens.isNotEmpty()) {
@@ -350,6 +369,28 @@ class HabitViewModel(
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Reads the tasker stats file (total_habits.txt) and parses the `today=` value.
+     * This provides a fast, up-to-date points value for the loading spinner before
+     * the full DB is loaded. Returns 0 if the file is missing or unparsable.
+     */
+    private suspend fun loadTodayPointsFromTaskerFile(): Int {
+        val uriStr = _settings.value.taskerFileUri
+        if (uriStr.isEmpty()) return 0
+        return try {
+            val uri = Uri.parse(uriStr)
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val content = stream.bufferedReader().readText()
+                // Parse "today=N" from the file (format: today=N\navg7=X.XX\navg30=X.XX\n)
+                val todayLine = content.lines().firstOrNull { it.startsWith("today=") }
+                todayLine?.substringAfter("=")?.trim()?.toIntOrNull() ?: 0
+            } ?: 0
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read tasker file for today points: ${e.message}")
+            0
         }
     }
 
@@ -388,6 +429,7 @@ class HabitViewModel(
             runAutoRestoreIfNeeded(uri)
             val db = habitsRepo.ensureDaysExist(uri, context)
             cachedPhoneDb = db
+
             // Gate opens ONLY here, after a genuinely successful load. Background
             // sync writers check this before persisting cachedPhoneDb.
             dbLoaded = true
@@ -546,6 +588,7 @@ class HabitViewModel(
         // We must NOT fall back to HABIT_ORDER in this case.
         if (effectiveOrder.isEmpty() && _habitScreens.value.isNotEmpty()) {
             _habits.value = emptyList()
+            _todayPoints.value = 0
             screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = emptyList()
             return
         }
@@ -559,6 +602,7 @@ class HabitViewModel(
             )
         }
         _habits.value = newList
+        _todayPoints.value = newList.sumOf { it.todayCount }
         screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = newList
     }
 

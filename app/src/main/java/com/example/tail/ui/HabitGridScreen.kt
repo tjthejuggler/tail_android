@@ -142,6 +142,7 @@ fun HabitGridScreen(
 ) {
     val habits by viewModel.habits.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val todayPoints by viewModel.todayPoints.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val selectedDate by viewModel.selectedDate.collectAsState()
@@ -482,8 +483,14 @@ fun HabitGridScreen(
             }
 
             if (isLoading) {
+                // Tiered spinner — colour & sophistication follow today's points.
+                // Read the retained todayPoints StateFlow (not the stale habits list)
+                // so the tier is correct even mid-load.
                 Box(modifier = Modifier.fillMaxSize()) {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    HabitLoadingSpinner(
+                        points = todayPoints,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
                 }
             } else if (habits.isEmpty() && settings.fileUri.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize()) {

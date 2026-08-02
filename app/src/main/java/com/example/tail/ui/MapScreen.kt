@@ -1,6 +1,7 @@
 package com.example.tail.ui
 
 import android.app.Activity
+import android.net.Uri
 import android.widget.Toast
 import android.content.pm.ActivityInfo
 import androidx.core.view.WindowCompat
@@ -206,6 +207,7 @@ fun MapScreen(
     // enough to lock the frame). We do it in a LaunchedEffect via withContext.
     var coordsByDate by remember { mutableStateOf<Map<LocalDate, Pair<Double, Double>>>(emptyMap()) }
     var dataLoaded by remember { mutableStateOf(false) }
+    var todayPoints by remember { mutableStateOf(0) }
     // Sorted (date, country) timeline → enables O(N) "countries up to date X"
     // scans without touching SharedPrefs on every slider tick. Re-loaded only
     // when the user adds/edits a location (locationDataVersion bumps).
@@ -216,7 +218,24 @@ fun MapScreen(
     // Secondary locations per date — logged each time the app is opened.
     var secondaryByDate by remember { mutableStateOf<Map<LocalDate, List<SecondaryLocation>>>(emptyMap()) }
     val locationVersion = viewModel.locationDataVersion
-    LaunchedEffect(locationVersion, settings.mapMainHabit, settings.mapHideZeroDays) {
+    LaunchedEffect(locationVersion, settings.mapMainHabit, settings.mapHideZeroDays, settings.taskerFileUri) {
+        // Read today's points from the tasker file (same source as the habits screen)
+        val points = withContext(Dispatchers.IO) {
+            val uriStr = settings.taskerFileUri
+            if (uriStr.isEmpty()) return@withContext 0
+            try {
+                val uri = Uri.parse(uriStr)
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val content = stream.bufferedReader().readText()
+                    val todayLine = content.lines().firstOrNull { it.startsWith("today=") }
+                    todayLine?.substringAfter("=")?.trim()?.toIntOrNull() ?: 0
+                } ?: 0
+            } catch (e: Exception) {
+                0
+            }
+        }
+        todayPoints = points
+
         val (coords, countries, colors, secondaries) = withContext(Dispatchers.Default) {
             // Single SharedPrefs read + single JSON parse → O(N) instead of
             // O(N²) date-by-date lookups.
@@ -730,6 +749,18 @@ fun MapScreen(
                             spinPhase = clockSpinPhase,
                             accent = accent
                         )
+                    }
+
+                    // ── Loading overlay (shows during initial data load) ──────
+                    if (!dataLoaded) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF0A0A0A)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            HabitLoadingSpinner(points = todayPoints)
+                        }
                     }
                 }
                 // ── Side info panel (right) ────────────────────────────────
