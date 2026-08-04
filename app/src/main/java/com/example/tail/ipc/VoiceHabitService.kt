@@ -456,6 +456,13 @@ class VoiceHabitService : Service() {
                             habitsRepo.incrementHabit(uri, applicationContext, linkedName, 1)
                             HabitIncrementBus.emit(linkedName)
                             Log.i(TAG, "Incremented linked '$linkedName' (conditional on '$habitName')")
+
+                            // Record timestamp for the linked habit too
+                            try {
+                                HabitTimestampRepository(applicationContext).addTimestamp(linkedName)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to record timestamp for linked '$linkedName': ${e.message}")
+                            }
                         }
                     }
 

@@ -608,14 +608,14 @@ fun HabitGridScreen(
                                                 viewModel.incrementHabitWithRollForward(
                                                     habitName = habit.name,
                                                     amount = 1,
-                                                    recordTimestamp = !timeless,
+                                                    recordTimestamp = isToday,
                                                     customEndDate = confirmedEndDate
                                                 )
                                                 // Show increment toast with edit-time option
                                                 incrementToastVersion++
                                                 incrementToastHabit = habit.name
-                                                incrementToastIsTimeless = timeless
-                                                incrementToastOriginalTime = if (!timeless) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                                                incrementToastIsTimeless = !isToday
+                                                incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
                                                 val currentVersion = incrementToastVersion
                                                 toastScope.launch {
                                                     delay(3500)
@@ -626,13 +626,14 @@ fun HabitGridScreen(
                                             }
                                         )
                                     } else {
-                                        // Normal increment without roll forward
-                                        viewModel.incrementHabit(habit.name, 1, recordTimestamp = !timeless)
+                                        // Normal increment without roll forward — always
+                                        // record a timestamp when incrementing for today.
+                                        viewModel.incrementHabit(habit.name, 1, recordTimestamp = isToday)
                                         // Show increment toast with edit-time option
                                         incrementToastVersion++
                                         incrementToastHabit = habit.name
-                                        incrementToastIsTimeless = timeless
-                                        incrementToastOriginalTime = if (!timeless) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                                        incrementToastIsTimeless = !isToday
+                                        incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
                                         val currentVersion = incrementToastVersion
                                         toastScope.launch {
                                             delay(3500)

@@ -5,6 +5,8 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
@@ -38,6 +40,18 @@ class HabitTimestampRepository(private val context: Context) {
 
     companion object {
         private val TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss")
+
+        /**
+         * Process-wide mutex serialising ALL read-modify-write operations on the
+         * timestamp file.  Because every call-site (ViewModel, voice services,
+         * widget provider, IPC receiver) creates its own repository instance,
+         * the mutex MUST live in the companion object so that concurrent
+         * instances still serialise correctly.  Without this, two overlapping
+         * addTimestamp() calls can each load the same snapshot, add their own
+         * entry, and save — the second save silently overwrites the first,
+         * losing a timestamp.
+         */
+        private val fileMutex = Mutex()
 
         /** Returns a time string for "right now" (HH:mm:ss). */
         fun nowTime(): String = LocalTime.now().format(TIME_FMT)
@@ -77,13 +91,15 @@ class HabitTimestampRepository(private val context: Context) {
         date: LocalDate = LocalDate.now(),
         time: String = nowTime()
     ) {
-        val data = loadMutable()
-        val dateStr = dateString(date)
-        val habitMap = data.getOrPut(habitName) { mutableMapOf() }
-        val dayList = habitMap.getOrPut(dateStr) { mutableListOf() }
-        dayList.add(time)
-        dayList.sort()
-        saveAll(data)
+        fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data.getOrPut(habitName) { mutableMapOf() }
+            val dayList = habitMap.getOrPut(dateStr) { mutableListOf() }
+            dayList.add(time)
+            dayList.sort()
+            saveAll(data)
+        }
     }
 
     /**
@@ -97,13 +113,15 @@ class HabitTimestampRepository(private val context: Context) {
         time: String = nowTime()
     ) {
         if (count <= 0) return
-        val data = loadMutable()
-        val dateStr = dateString(date)
-        val habitMap = data.getOrPut(habitName) { mutableMapOf() }
-        val dayList = habitMap.getOrPut(dateStr) { mutableListOf() }
-        repeat(count) { dayList.add(time) }
-        dayList.sort()
-        saveAll(data)
+        fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data.getOrPut(habitName) { mutableMapOf() }
+            val dayList = habitMap.getOrPut(dateStr) { mutableListOf() }
+            repeat(count) { dayList.add(time) }
+            dayList.sort()
+            saveAll(data)
+        }
     }
 
     /**
@@ -128,19 +146,21 @@ class HabitTimestampRepository(private val context: Context) {
         date: LocalDate,
         timestamps: List<String>
     ) {
-        val data = loadMutable()
-        val dateStr = dateString(date)
-        val habitMap = data.getOrPut(habitName) { mutableMapOf() }
-        if (timestamps.isEmpty()) {
-            habitMap.remove(dateStr)
-        } else {
-            habitMap[dateStr] = timestamps.sorted().toMutableList()
+        fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data.getOrPut(habitName) { mutableMapOf() }
+            if (timestamps.isEmpty()) {
+                habitMap.remove(dateStr)
+            } else {
+                habitMap[dateStr] = timestamps.sorted().toMutableList()
+            }
+            // Clean up empty habit entries
+            if (habitMap.isEmpty()) {
+                data.remove(habitName)
+            }
+            saveAll(data)
         }
-        // Clean up empty habit entries
-        if (habitMap.isEmpty()) {
-            data.remove(habitName)
-        }
-        saveAll(data)
     }
 
     /** Delete a single timestamp at [index] for [habitName] on [date]. */
@@ -149,21 +169,23 @@ class HabitTimestampRepository(private val context: Context) {
         date: LocalDate,
         index: Int
     ): List<String> {
-        val data = loadMutable()
-        val dateStr = dateString(date)
-        val habitMap = data[habitName] ?: return emptyList()
-        val dayList = habitMap[dateStr] ?: return emptyList()
-        if (index in dayList.indices) {
-            dayList.removeAt(index)
+        return fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data[habitName] ?: return@withLock emptyList()
+            val dayList = habitMap[dateStr] ?: return@withLock emptyList()
+            if (index in dayList.indices) {
+                dayList.removeAt(index)
+            }
+            if (dayList.isEmpty()) {
+                habitMap.remove(dateStr)
+            }
+            if (habitMap.isEmpty()) {
+                data.remove(habitName)
+            }
+            saveAll(data)
+            dayList.sorted()
         }
-        if (dayList.isEmpty()) {
-            habitMap.remove(dateStr)
-        }
-        if (habitMap.isEmpty()) {
-            data.remove(habitName)
-        }
-        saveAll(data)
-        return dayList.sorted()
     }
 
     /** Update a single timestamp at [index] for [habitName] on [date]. */
@@ -173,16 +195,18 @@ class HabitTimestampRepository(private val context: Context) {
         index: Int,
         newTime: String
     ): List<String> {
-        val data = loadMutable()
-        val dateStr = dateString(date)
-        val habitMap = data[habitName] ?: return emptyList()
-        val dayList = habitMap[dateStr] ?: return emptyList()
-        if (index in dayList.indices) {
-            dayList[index] = newTime
+        return fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data[habitName] ?: return@withLock emptyList()
+            val dayList = habitMap[dateStr] ?: return@withLock emptyList()
+            if (index in dayList.indices) {
+                dayList[index] = newTime
+            }
+            dayList.sort()
+            saveAll(data)
+            dayList.toList()
         }
-        dayList.sort()
-        saveAll(data)
-        return dayList.toList()
     }
 
     /**
@@ -194,16 +218,18 @@ class HabitTimestampRepository(private val context: Context) {
         date: LocalDate,
         newTime: String
     ): List<String> {
-        val data = loadMutable()
-        val dateStr = dateString(date)
-        val habitMap = data[habitName] ?: return emptyList()
-        val dayList = habitMap[dateStr] ?: return emptyList()
-        if (dayList.isEmpty()) return emptyList()
-        // The last timestamp is the one most recently added (last in sorted order)
-        dayList[dayList.lastIndex] = newTime
-        dayList.sort()
-        saveAll(data)
-        return dayList.toList()
+        return fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data[habitName] ?: return@withLock emptyList()
+            val dayList = habitMap[dateStr] ?: return@withLock emptyList()
+            if (dayList.isEmpty()) return@withLock emptyList()
+            // The last timestamp is the one most recently added (last in sorted order)
+            dayList[dayList.lastIndex] = newTime
+            dayList.sort()
+            saveAll(data)
+            dayList.toList()
+        }
     }
 
     /**
@@ -215,20 +241,22 @@ class HabitTimestampRepository(private val context: Context) {
         habitName: String,
         date: LocalDate
     ): List<String> {
-        val data = loadMutable()
-        val dateStr = dateString(date)
-        val habitMap = data[habitName] ?: return emptyList()
-        val dayList = habitMap[dateStr] ?: return emptyList()
-        if (dayList.isEmpty()) return emptyList()
-        dayList.removeAt(dayList.lastIndex)
-        if (dayList.isEmpty()) {
-            habitMap.remove(dateStr)
+        return fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data[habitName] ?: return@withLock emptyList()
+            val dayList = habitMap[dateStr] ?: return@withLock emptyList()
+            if (dayList.isEmpty()) return@withLock emptyList()
+            dayList.removeAt(dayList.lastIndex)
+            if (dayList.isEmpty()) {
+                habitMap.remove(dateStr)
+            }
+            if (habitMap.isEmpty()) {
+                data.remove(habitName)
+            }
+            saveAll(data)
+            dayList.toList()
         }
-        if (habitMap.isEmpty()) {
-            data.remove(habitName)
-        }
-        saveAll(data)
-        return dayList.toList()
     }
 
     private suspend fun loadMutable(): MutableMap<String, MutableMap<String, MutableList<String>>> =

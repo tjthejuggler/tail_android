@@ -3,6 +3,7 @@ package com.example.tail.widget
 import android.appwidget.AppWidgetManager
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -12,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
+import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
@@ -121,6 +123,14 @@ class WidgetInputActivity : ComponentActivity() {
                         1
                     )
                     HabitIncrementBus.emit(habitName)
+
+                    // 2b. Record a timestamp for this increment (always, since this
+                    //     is a today-increment from the widget).
+                    try {
+                        HabitTimestampRepository(applicationContext).addTimestamp(habitName)
+                    } catch (e: Exception) {
+                        Log.w("WidgetInputActivity", "Failed to record timestamp for '$habitName': ${e.message}")
+                    }
                 }
 
                 // 3. Record widget-local recent tap (text-input habits aren't "max-one"
