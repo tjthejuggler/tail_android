@@ -1548,6 +1548,101 @@ class HabitViewModel(
     fun getConditionalLinks(habitName: String): Set<String> =
         _settings.value.conditionalLinkedHabits[habitName] ?: emptySet()
 
+    /**
+     * Returns the list of conditional habits that have [habitName] in their linked set.
+     * These are the "source" habits whose increments feed into [habitName] — i.e. every
+     * habit that "has [habitName] set as a conditional" for it.
+     */
+    fun getConditionalSources(habitName: String): List<String> =
+        _settings.value.conditionalLinkedHabits.entries
+            .filter { habitName in it.value }
+            .map { it.key }
+            .sorted()
+
+    /**
+     * Computes the total number of increments that a conditional backfill would apply
+     * to [habitName] across its entire history, by summing the per-day counts of every
+     * source habit (conditional habits that link to [habitName]).
+     *
+     * Respects the "1 max" cap per day when [habitName] is a max-one habit, matching the
+     * live conditional-increment behaviour.
+     */
+    fun previewConditionalBackfillTotal(habitName: String): Int {
+        val sources = getConditionalSources(habitName)
+        if (sources.isEmpty()) return 0
+        val isMaxOne = habitName in _settings.value.maxOneHabits
+        val dates = mutableSetOf<String>()
+        for (src in sources) {
+            dates.addAll(cachedPhoneDb[src]?.keys ?: emptySet())
+        }
+        var total = 0
+        for (d in dates) {
+            var sum = 0
+            for (src in sources) {
+                sum += cachedPhoneDb[src]?.get(d) ?: 0
+            }
+            total += if (isMaxOne) sum.coerceAtMost(1) else sum
+        }
+        return total
+    }
+
+    /**
+     * Performs a complete conditional backfill for [habitName].
+     *
+     * Overwrites [habitName]'s entire history so that, for every day, its stored count
+     * equals the sum of the counts of every source habit (conditional habits that link
+     * to it) on that day. This destroys any manually-entered data for [habitName] and
+     * persists the recomputed values to the habits file.
+     */
+    fun performConditionalBackfill(habitName: String) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            _errorMessage.value = "No file selected. Please pick a file in Settings."
+            return
+        }
+        val sources = getConditionalSources(habitName)
+        if (sources.isEmpty()) {
+            _errorMessage.value = "No habits feed into \"$habitName\"."
+            return
+        }
+        val isMaxOne = habitName in _settings.value.maxOneHabits
+
+        // Compute per-day sums from all source habits.
+        val dates = mutableSetOf<String>()
+        for (src in sources) {
+            dates.addAll(cachedPhoneDb[src]?.keys ?: emptySet())
+        }
+        val newEntries = sortedMapOf<String, Int>()
+        var totalApplied = 0
+        for (d in dates.sorted()) {
+            var sum = 0
+            for (src in sources) {
+                sum += cachedPhoneDb[src]?.get(d) ?: 0
+            }
+            val stored = if (isMaxOne) sum.coerceAtMost(1) else sum
+            if (stored > 0) {
+                newEntries[d] = stored
+                totalApplied += stored
+            }
+        }
+
+        val updatedDb = cachedPhoneDb.toMutableMap()
+        updatedDb[habitName] = newEntries
+        cachedPhoneDb = updatedDb
+
+        viewModelScope.launch {
+            rebuildHabitList()
+            try {
+                val uri = Uri.parse(uriString)
+                habitsRepo.persistDatabase(uri, context, updatedDb)
+                _errorMessage.value =
+                    "Backfilled \"$habitName\": $totalApplied increments across ${newEntries.size} day(s)."
+            } catch (e: Exception) {
+                _errorMessage.value = "Backfill save failed: ${e.message}"
+            }
+        }
+    }
+
     // ── Subtyped habit methods ──────────────────────────────────────────────
 
     /** Toggles the "subtyped" type on/off for [habitName]. */

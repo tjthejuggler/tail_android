@@ -216,6 +216,8 @@ fun HabitGridScreen(
     var iconPickerHabitName by remember { mutableStateOf<String?>(null) }
     // Habit name for which the conditional links picker is open (null = none)
     var conditionalLinksPickerHabit by remember { mutableStateOf<String?>(null) }
+    // Habit name for which the conditional backfill confirm dialog is open (null = none)
+    var conditionalBackfillHabit by remember { mutableStateOf<String?>(null) }
 
     // Roll forward confirmation dialog state
     data class RollForwardDialogState(
@@ -739,6 +741,7 @@ fun HabitGridScreen(
                         onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
                         onToggleConditional = { name -> viewModel.toggleConditional(name) },
                         onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name },
+                        onBackfillConditional = { name -> conditionalBackfillHabit = name },
                         onToggleSubtyped = { name -> viewModel.toggleSubtyped(name) },
                         onSetSubtypes = { name, types -> viewModel.setHabitSubtypes(name, types) },
                         onPickSubtypeDataFile = { name ->
@@ -1231,6 +1234,22 @@ fun HabitGridScreen(
         )
     }
 
+    // Conditional backfill confirmation dialog
+    conditionalBackfillHabit?.let { habitName ->
+        val backfillSources = remember(habitName) { viewModel.getConditionalSources(habitName) }
+        val backfillTotal = remember(habitName) { viewModel.previewConditionalBackfillTotal(habitName) }
+        ConditionalBackfillConfirmDialog(
+            habitName = habitName,
+            sources = backfillSources,
+            totalIncrements = backfillTotal,
+            onConfirm = {
+                viewModel.performConditionalBackfill(habitName)
+                conditionalBackfillHabit = null
+            },
+            onDismiss = { conditionalBackfillHabit = null }
+        )
+    }
+
     // Quick timestamp editor dialog — opened from increment toast
     quickEditHabitName?.let { habitName ->
         QuickTimestampEditorDialog(
@@ -1546,6 +1565,7 @@ private fun EditModeControlBar(
     onSetDivider: (String, Int) -> Unit,
     onToggleConditional: (String) -> Unit,
     onSetConditionalLinks: (String) -> Unit,
+    onBackfillConditional: (String) -> Unit = {},
     onToggleSubtyped: (String) -> Unit,
     onSetSubtypes: (String, List<String>) -> Unit,
     onPickSubtypeDataFile: (String) -> Unit,
@@ -2741,6 +2761,13 @@ private fun EditModeControlBar(
                         }
                     }
 
+                    // ── Conditional Backfill (only for habits that other habits link to) ──
+                    ConditionalBackfillSection(
+                        habitName = selectedHabitName,
+                        conditionalLinkedHabits = conditionalLinkedHabits,
+                        onBackfill = onBackfillConditional
+                    )
+
                     Spacer(modifier = Modifier.height(6.dp))
 
                     // ── Subtyped toggle ────────────────────────────────────
@@ -3351,6 +3378,129 @@ private fun EditModeControlBar(
  * A popup that lists all habits (except the conditional habit itself) as checkboxes.
  * The user can select any number of them as the habits to auto-increment.
  */
+/**
+ * Edit-panel section shown only for habits that other conditional habits link to.
+ * Offers a one-tap "backfill" that recomputes this habit's entire history from every
+ * source habit that has it set as a conditional. Extracted into its own composable to
+ * keep [EditModeControlBar] under the JVM method-size limit.
+ */
+@Composable
+private fun ConditionalBackfillSection(
+    habitName: String,
+    conditionalLinkedHabits: Map<String, Set<String>>,
+    onBackfill: (String) -> Unit
+) {
+    val conditionalSources = remember(conditionalLinkedHabits, habitName) {
+        conditionalLinkedHabits.entries
+            .filter { habitName in it.value }
+            .map { it.key }
+            .sorted()
+    }
+    if (conditionalSources.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF1A0A14), RoundedCornerShape(6.dp))
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Conditional Backfill",
+                    color = Color(0xFFFF88CC),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Fed by ${conditionalSources.size} habit(s): ${conditionalSources.joinToString(", ")}",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 10.sp
+                )
+                Text(
+                    text = "Recompute entire history from these sources",
+                    color = Color(0xFF888888),
+                    fontSize = 10.sp
+                )
+            }
+            Button(
+                onClick = { onBackfill(habitName) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A0030)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("Backfill", fontSize = 11.sp, color = Color(0xFFFF88CC))
+            }
+        }
+    }
+}
+
+/**
+ * Confirmation popup for a complete conditional backfill. Tells the user the total
+ * number of increments that will be applied across the entire history and lists the
+ * source habits that feed the target habit, then overwrites the target on confirm.
+ */
+@Composable
+private fun ConditionalBackfillConfirmDialog(
+    habitName: String,
+    sources: List<String>,
+    totalIncrements: Int,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1A0A14), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Conditional Backfill",
+                color = Color(0xFFFF88CC),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "This will completely overwrite ALL data for \"$habitName\" based " +
+                    "on the habits that have it set as a conditional:",
+                color = Color(0xFFCCCCCC),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = sources.joinToString(", "),
+                color = Color(0xFFFF88CC),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Total increments across entire history: $totalIncrements",
+                color = Color(0xFFFFCC44),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onConfirm,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A0030))
+                ) {
+                    Text("Overwrite & Backfill", color = Color(0xFFFF88CC))
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ConditionalLinksPickerDialog(
     habitName: String,
