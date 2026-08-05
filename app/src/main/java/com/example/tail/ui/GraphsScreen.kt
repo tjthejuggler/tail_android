@@ -61,6 +61,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -1235,6 +1237,9 @@ private fun StatsSummary(
     valueModeMap: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
+    // Hoisted popup state — rendered outside the Row so it never affects stat layout
+    var infoPopupText by remember { mutableStateOf<String?>(null) }
+
     Column(
         modifier = modifier
             .background(Color(0xFF0D1E0D), RoundedCornerShape(8.dp))
@@ -1281,13 +1286,19 @@ private fun StatsSummary(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                StatChip("Total", total.toString(), Color(0xFF88CCFF))
-                StatChip("Avg", "%.1f".format(avg), Color(0xFF81C784))
-                StatChip("Max", max.toString(), Color(0xFFFFD54F))
-                StatChip("Active", "$daysActive/$totalDays", Color(0xFFBA68C8))
-                StatChip("${consistency.roundToInt()}%", "cons.", Color(0xFFFF8A65))
+                StatChip("Total", total.toString(), Color(0xFF88CCFF),
+                    onInfoClick = { infoPopupText = "Sum of all daily values in the selected time period. Days with no activity count as 0." })
+                StatChip("Avg", "%.1f".format(avg), Color(0xFF81C784),
+                    onInfoClick = { infoPopupText = "Calendar-day average: total ÷ number of days in the period. Days with no activity are included as 0, matching the (current) values in the info panel below." })
+                StatChip("Max", max.toString(), Color(0xFFFFD54F),
+                    onInfoClick = { infoPopupText = "The highest single-day value recorded within the selected time period." })
+                StatChip("Active", "$daysActive/$totalDays", Color(0xFFBA68C8),
+                    onInfoClick = { infoPopupText = "Days with non-zero values out of total days in the period. Shows how many days you actually did this habit." })
+                StatChip("${consistency.roundToInt()}%", "cons.", Color(0xFFFF8A65),
+                    onInfoClick = { infoPopupText = "Percentage of days in the period where this habit had a non-zero value. 100% means you did it every single day." })
                 if (currentStreak > 0) {
-                    StatChip("🔥$currentStreak", "streak", Color(0xFFE57373))
+                    StatChip("🔥$currentStreak", "streak", Color(0xFFE57373),
+                        onInfoClick = { infoPopupText = "Current consecutive days with non-zero values, counting backwards from the most recent day shown." })
                 }
             }
 
@@ -1300,13 +1311,46 @@ private fun StatsSummary(
             }
         }
     }
+
+    // Single info popup — rendered here (outside the Row) so it never changes the stat layout
+    infoPopupText?.let { text ->
+        Popup(
+            onDismissRequest = { infoPopupText = null },
+            properties = PopupProperties(focusable = true)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(220.dp)
+                    .background(Color(0xFF1A2E1A), RoundedCornerShape(8.dp))
+                    .border(1.dp, Color(0xFF446644), RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+                    .clickable { infoPopupText = null }
+            ) {
+                Text(
+                    text = text,
+                    color = Color(0xFFCCEECC),
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+            }
+        }
+    }
 }
 
 @Composable
-private fun StatChip(value: String, label: String, color: Color) {
+private fun StatChip(value: String, label: String, color: Color, onInfoClick: (() -> Unit)? = null) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.padding(horizontal = 2.dp)
+        modifier = Modifier
+            .padding(horizontal = 2.dp)
+            .then(
+                if (onInfoClick != null)
+                    Modifier.clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { onInfoClick() }
+                else Modifier
+            )
     ) {
         Text(text = value, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         Text(text = label, color = Color(0xFF556655), fontSize = 8.sp)
