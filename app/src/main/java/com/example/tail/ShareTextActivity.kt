@@ -268,7 +268,7 @@ class ShareTextActivity : ComponentActivity() {
                 // 1. Append to the text log file
                 val logUriStr = settings.textInputFileUris[habitName]
                 if (!logUriStr.isNullOrEmpty()) {
-                    textInputRepo.appendTextEntry(Uri.parse(logUriStr), applicationContext, text)
+                    textInputRepo.appendTextEntry(Uri.parse(logUriStr), applicationContext, text, habitName = habitName)
                 }
 
                 // 2. Increment the habit count in the phone DB

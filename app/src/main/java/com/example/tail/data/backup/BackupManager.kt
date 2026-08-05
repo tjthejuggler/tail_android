@@ -208,15 +208,27 @@ class BackupManager(
     }
 
     private suspend fun readPerHabitFiles(settings: AppSettings): PerHabitFilesSection {
-        // text-input logs
+        // text-input logs — try external SAF first, fall back to internal backup
         val textInput = mutableMapOf<String, Map<String, String>>()
         for ((habit, uriStr) in settings.textInputFileUris) {
             if (uriStr.isBlank()) continue
+            var loaded = false
             try {
                 val map = textInputRepo.loadTextLog(Uri.parse(uriStr), context)
-                if (map.isNotEmpty()) textInput[habit] = map
+                if (map.isNotEmpty()) {
+                    textInput[habit] = map
+                    loaded = true
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "text-input read failed for '$habit': ${e.message}")
+            }
+            if (!loaded) {
+                // Fall back to internal backup if external file is missing/empty
+                val internal = textInputRepo.loadInternalBackup(context, habit)
+                if (internal != null && internal.isNotEmpty()) {
+                    textInput[habit] = internal
+                    Log.i(TAG, "text-input: used internal backup for '$habit' (${internal.size} entries)")
+                }
             }
         }
 
@@ -542,10 +554,20 @@ class BackupManager(
     }
 
     private suspend fun applyPerHabitFiles(s: SettingsSection, p: PerHabitFilesSection) {
-        // text-input logs
+        // text-input logs — write to external SAF AND save internal backup
         for ((habit, log) in p.textInput) {
             val uriStr = s.textInputFileUris[habit] ?: continue
             writeJsonToSaf(uriStr, log)
+            // Also populate internal backup so the data survives future external-file loss
+            try {
+                val dir = java.io.File(context.filesDir, "text_input_backups")
+                if (!dir.exists()) dir.mkdirs()
+                val backupFile = java.io.File(dir, habit.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(100) + ".json")
+                val sortedLog = log.toSortedMap()
+                backupFile.writeText(com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(sortedLog))
+            } catch (e: Exception) {
+                Log.w(TAG, "text-input internal backup save failed for '$habit': ${e.message}")
+            }
         }
         // dated-entry source files (raw text)
         for ((habit, content) in p.datedEntry) {

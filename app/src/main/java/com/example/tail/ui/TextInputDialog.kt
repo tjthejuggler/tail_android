@@ -1,6 +1,7 @@
 package com.example.tail.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,14 +17,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.TimePickerDefaults
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -40,20 +47,30 @@ import androidx.compose.ui.window.Dialog
  * - Shows existing text entries for the current day with edit/delete capability.
  * - Always shows a free-text [OutlinedTextField] for the user to type a new entry.
  * - When [showOptions] is true AND [options] is non-empty, also shows a scrollable
- *   list of all unique past entries. Tapping one populates the text field.
- * - OK saves the entry (calls [onConfirm]); Cancel dismisses without saving.
+ *   list of all unique past entries with **multi-select checkboxes**. The user can
+ *   select as many as desired; each selected option is saved as a separate entry.
+ * - A time picker lets the user associate a specific time-of-day with the entries
+ *   instead of defaulting to noon for past dates.
+ * - OK saves all entries (selected options + free text if non-empty) with the
+ *   chosen time; Cancel dismisses without saving.
  *
  * @param todayEntries Pairs of (timestamp, text) for entries already logged today.
+ * @param initialHour Starting hour for the time picker.
+ * @param initialMinute Starting minute for the time picker.
+ * @param onConfirm Called with (entries, hour, minute) when the user confirms.
  * @param onEdit Called when the user edits an existing entry: (oldTimestamp, newText).
  * @param onDelete Called when the user deletes an existing entry: (timestamp).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TextInputDialog(
     habitName: String,
     showOptions: Boolean,
     options: List<String>,
     todayEntries: List<Pair<String, String>> = emptyList(),
-    onConfirm: (String) -> Unit,
+    initialHour: Int = java.time.LocalTime.now().hour,
+    initialMinute: Int = java.time.LocalTime.now().minute,
+    onConfirm: (List<String>, Int, Int) -> Unit,
     onDismiss: () -> Unit,
     onEdit: (String, String) -> Unit = { _, _ -> },
     onDelete: (String) -> Unit = {}
@@ -61,6 +78,17 @@ fun TextInputDialog(
     var inputText by remember { mutableStateOf("") }
     var editingTimestamp by remember { mutableStateOf<String?>(null) }
     var editingText by remember { mutableStateOf("") }
+
+    // Multi-select state for past options
+    val selectedOptions = remember { mutableStateMapOf<String, Boolean>() }
+
+    // Time picker state
+    val timePickerState = rememberTimePickerState(
+        initialHour = initialHour,
+        initialMinute = initialMinute,
+        is24Hour = true
+    )
+    var showTimePicker by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -198,6 +226,59 @@ fun TextInputDialog(
                     }
                 }
             } else {
+                // ── Time picker ────────────────────────────────────────────────
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Time",
+                        color = Color(0xFF888888),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                    val timeLabel = String.format("%02d:%02d", timePickerState.hour, timePickerState.minute)
+                    TextButton(
+                        onClick = { showTimePicker = !showTimePicker },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                        )
+                    ) {
+                        Text(
+                            text = if (showTimePicker) "Done" else timeLabel,
+                            color = Color(0xFFFFAA00),
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+
+                if (showTimePicker) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF111111), RoundedCornerShape(6.dp))
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        TimePicker(
+                            state = timePickerState,
+                            colors = TimePickerDefaults.colors(
+                                clockDialColor = Color(0xFF222222),
+                                selectorColor = Color(0xFFFFAA00),
+                                timeSelectorSelectedContainerColor = Color(0xFF5A3A00),
+                                timeSelectorSelectedContentColor = Color(0xFFFFAA00),
+                                timeSelectorUnselectedContainerColor = Color(0xFF1A1A1A),
+                                timeSelectorUnselectedContentColor = Color(0xFFCCCCCC)
+                            )
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                } else {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
                 // ── Entry input field ───────────────────────────────────────
                 OutlinedTextField(
                     value = inputText,
@@ -214,7 +295,7 @@ fun TextInputDialog(
                     )
                 )
 
-                // ── Past options list (only when showOptions = true and list non-empty) ──
+                // ── Past options list with multi-select ──────────────────────
                 if (showOptions && options.isNotEmpty()) {
                     // Filter options by current input text (case-insensitive contains)
                     val filteredOptions = if (inputText.isBlank()) {
@@ -225,8 +306,13 @@ fun TextInputDialog(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
+                    val selectedCount = selectedOptions.values.count { it }
                     Text(
-                        text = "Past entries",
+                        text = if (selectedCount > 0) {
+                            "Past entries ($selectedCount selected)"
+                        } else {
+                            "Past entries (tap to select multiple)"
+                        },
                         color = Color(0xFF888888),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -250,15 +336,34 @@ fun TextInputDialog(
                         } else {
                             LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
                                 items(filteredOptions) { option ->
-                                    Text(
-                                        text = option,
-                                        color = Color(0xFFCCCCCC),
-                                        fontSize = 13.sp,
+                                    val isChecked = selectedOptions[option] == true
+                                    Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable { inputText = option }
-                                            .padding(horizontal = 12.dp, vertical = 7.dp)
-                                    )
+                                            .clickable {
+                                                selectedOptions[option] = !isChecked
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = isChecked,
+                                            onCheckedChange = { checked ->
+                                                selectedOptions[option] = checked
+                                            },
+                                            colors = CheckboxDefaults.colors(
+                                                checkedColor = Color(0xFFFFAA00),
+                                                uncheckedColor = Color(0xFF666666),
+                                                checkmarkColor = Color(0xFF1E1E1E)
+                                            )
+                                        )
+                                        Text(
+                                            text = option,
+                                            color = if (isChecked) Color(0xFFFFD700) else Color(0xFFCCCCCC),
+                                            fontSize = 13.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
                                     HorizontalDivider(
                                         color = Color(0xFF2A2A2A),
                                         thickness = 0.5.dp
@@ -281,12 +386,26 @@ fun TextInputDialog(
                         Text("Cancel", color = Color(0xFF888888))
                     }
                     Spacer(modifier = Modifier.padding(horizontal = 4.dp))
+                    // OK is enabled when there's free text OR at least one selected option
+                    val trimmedInput = inputText.trim()
+                    val hasSelections = selectedOptions.values.any { it }
+                    val hasFreeText = trimmedInput.isNotEmpty()
                     Button(
                         onClick = {
-                            val trimmed = inputText.trim()
-                            if (trimmed.isNotEmpty()) onConfirm(trimmed)
+                            val entries = mutableListOf<String>()
+                            // Add selected options first
+                            selectedOptions.filterValues { it }.keys.forEach { opt ->
+                                entries.add(opt)
+                            }
+                            // Add free text if non-empty (avoid exact duplicates of selected options)
+                            if (hasFreeText && trimmedInput !in entries) {
+                                entries.add(trimmedInput)
+                            }
+                            if (entries.isNotEmpty()) {
+                                onConfirm(entries, timePickerState.hour, timePickerState.minute)
+                            }
                         },
-                        enabled = inputText.trim().isNotEmpty(),
+                        enabled = hasFreeText || hasSelections,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFF5A3A00),
                             disabledContainerColor = Color(0xFF2A2A2A)

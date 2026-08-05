@@ -90,8 +90,8 @@ class WidgetInputActivity : ComponentActivity() {
                         habitName = habitName,
                         showOptions = showOptions,
                         options = optionsState!!,
-                        onConfirm = { entry ->
-                            saveAndFinish(habitName, widgetId, entry)
+                        onConfirm = { entries, hour, minute ->
+                            saveAndFinish(habitName, widgetId, entries, hour, minute)
                         },
                         onDismiss = { finish() }
                     )
@@ -100,27 +100,30 @@ class WidgetInputActivity : ComponentActivity() {
         }
     }
 
-    private fun saveAndFinish(habitName: String, widgetId: Int, text: String) {
+    private fun saveAndFinish(habitName: String, widgetId: Int, entries: List<String>, hour: Int, minute: Int) {
         lifecycleScope.launch {
             try {
                 val settings = settingsRepo.settingsFlow.first()
+                val entryTime = java.time.LocalTime.of(hour, minute)
 
-                // 1. Append text to the habit's log file (only if non-blank and a URI is set).
+                // 1. Append text entries to the habit's log file (only if a URI is set).
                 val logUriStr = settings.textInputFileUris[habitName]
-                if (text.isNotBlank() && !logUriStr.isNullOrEmpty()) {
-                    textInputRepo.appendTextEntry(
-                        Uri.parse(logUriStr), applicationContext, text
+                if (entries.isNotEmpty() && !logUriStr.isNullOrEmpty()) {
+                    textInputRepo.appendMultipleTextEntries(
+                        Uri.parse(logUriStr), applicationContext, entries, null, entryTime,
+                        habitName = habitName
                     )
                 }
 
-                // 2. Increment the habit's count in the phone DB (mirrors ShareTextActivity).
+                // 2. Increment the habit's count in the phone DB by the number of entries.
                 val phoneUriStr = settings.fileUri
                 if (phoneUriStr.isNotEmpty()) {
+                    val incrementAmount = entries.size.coerceAtLeast(1)
                     habitsRepo.incrementHabit(
                         Uri.parse(phoneUriStr),
                         applicationContext,
                         habitName,
-                        1
+                        incrementAmount
                     )
                     HabitIncrementBus.emit(habitName)
 

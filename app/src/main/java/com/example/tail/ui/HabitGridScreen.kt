@@ -1064,24 +1064,31 @@ fun HabitGridScreen(
 
     // Text-input dialog
     textInputDialogState?.let { state ->
+        // Default time: current time for today, noon for past dates
+        val initHour = if (isToday) java.time.LocalTime.now().hour else 12
+        val initMinute = if (isToday) java.time.LocalTime.now().minute else 0
+
         TextInputDialog(
             habitName = state.habit.name,
             showOptions = state.showOptions,
             options = state.options,
             todayEntries = state.todayEntries,
-            onConfirm = { text ->
-                // Only pass selectedDate if it's not today - for today, use current time
+            initialHour = initHour,
+            initialMinute = initMinute,
+            onConfirm = { entries, hour, minute ->
+                val entryTime = java.time.LocalTime.of(hour, minute)
+                // Only pass selectedDate if it's not today - for today, use current date
                 val dateForEntry = if (selectedDate == today) null else selectedDate
-                
+
                 // Check if this is a roll forward habit and we're viewing a past date
                 if (state.habit.name in settings.rollForwardHabits && dateForEntry != null) {
                     // Find the next manual date
                     val nextManualDate = settings.rollForwardManualDates[state.habit.name]?.mapNotNull { dateStr ->
                         com.example.tail.data.parseDate(dateStr)
                     }?.sorted()?.firstOrNull { it > dateForEntry }
-                    
+
                     val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
-                    
+
                     // Show roll forward confirmation dialog
                     rollForwardDialogState = RollForwardDialogState(
                         habitName = state.habit.name,
@@ -1089,9 +1096,9 @@ fun HabitGridScreen(
                         startDate = dateForEntry,
                         initialEndDate = endDate,
                         onConfirm = { confirmedEndDate ->
-                            viewModel.setTextEntryForDateWithRollForward(state.habit.name, dateForEntry, text, confirmedEndDate) {
+                            viewModel.setTextEntriesForDateWithRollForward(state.habit.name, dateForEntry, entries, confirmedEndDate, entryTime) {
                                 // Reload entries after add completes, then dismiss dialog
-                                viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
+                                viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { _ ->
                                     // Don't reopen the dialog - just dismiss it
                                     textInputDialogState = null
                                 }
@@ -1099,7 +1106,7 @@ fun HabitGridScreen(
                         }
                     )
                 } else {
-                    viewModel.saveTextEntry(state.habit.name, text, dateForEntry)
+                    viewModel.saveTextEntries(state.habit.name, entries, dateForEntry, entryTime)
                     textInputDialogState = null
                 }
             },

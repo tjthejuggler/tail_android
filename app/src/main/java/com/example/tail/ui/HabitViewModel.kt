@@ -547,7 +547,7 @@ class HabitViewModel(
                             
                             if (!textLog.containsKey(todayTimestamp)) {
                                 // Roll forward the text
-                                textInputRepo.updateTextEntry(Uri.parse(textUriString), context, todayTimestamp, yesterdayText)
+                                textInputRepo.updateTextEntry(Uri.parse(textUriString), context, todayTimestamp, yesterdayText, habitName = habitName)
                                 Log.d(TAG, "Roll forward: copied $habitName text from $yesterdayStr to $todayStr: $yesterdayText")
                             }
                         }
@@ -1052,7 +1052,7 @@ class HabitViewModel(
         viewModelScope.launch {
             try {
                 // Update the text entry at the old timestamp
-                textInputRepo.updateTextEntry(Uri.parse(uriString), context, oldTimestamp, newText)
+                textInputRepo.updateTextEntry(Uri.parse(uriString), context, oldTimestamp, newText, habitName = habitName)
                 
                 // Parse the date from the oldTimestamp
                 val dateStr = oldTimestamp.substring(0, 10)
@@ -1066,7 +1066,8 @@ class HabitViewModel(
                             context,
                             oldTimestamp,
                             entryDate.plusDays(1),
-                            customEndDate
+                            customEndDate,
+                            habitName = habitName
                         )
                     }
                 }
@@ -1088,44 +1089,72 @@ class HabitViewModel(
         date: LocalDate,
         text: String,
         customEndDate: LocalDate,
+        time: java.time.LocalTime? = null,
         onComplete: () -> Unit = {}
     ) {
+        setTextEntriesForDateWithRollForward(
+            habitName, date, listOf(text), customEndDate, time, onComplete
+        )
+    }
+
+    /**
+     * Multi-entry version of [setTextEntryForDateWithRollForward].
+     * Saves all [texts] with unique timestamps (offset by 1 second), rolls forward
+     * the first entry's text, and increments the habit count by [texts].size.
+     */
+    fun setTextEntriesForDateWithRollForward(
+        habitName: String,
+        date: LocalDate,
+        texts: List<String>,
+        customEndDate: LocalDate,
+        time: java.time.LocalTime? = null,
+        onComplete: () -> Unit = {}
+    ) {
+        if (texts.isEmpty()) {
+            onComplete()
+            return
+        }
         val uriString = _settings.value.textInputFileUris[habitName]
         if (uriString.isNullOrEmpty()) {
             onComplete()
             return
         }
-        val timestamp = java.time.LocalDateTime.of(date, java.time.LocalTime.NOON)
+        val effectiveTime = time ?: java.time.LocalTime.NOON
+        val baseTimestamp = java.time.LocalDateTime.of(date, effectiveTime)
             .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
         viewModelScope.launch {
             try {
-                // updateTextEntry adds the key if it is missing
-                textInputRepo.updateTextEntry(Uri.parse(uriString), context, timestamp, text)
-                
+                // Save all entries atomically
+                textInputRepo.appendMultipleTextEntries(
+                    Uri.parse(uriString), context, texts, date, effectiveTime, habitName = habitName
+                )
+
                 // If this is a roll forward habit, also roll forward the text AND increment the habit counts
                 if (habitName in _settings.value.rollForwardHabits) {
-                    // Roll forward the text to all dates from date+1 to customEndDate
+                    // Roll forward the first entry's text to all dates from date+1 to customEndDate
                     if (date < customEndDate) {
                         textInputRepo.rollForwardTextEntry(
                             Uri.parse(uriString),
                             context,
-                            timestamp,
+                            baseTimestamp,
                             date.plusDays(1),
-                            customEndDate
+                            customEndDate,
+                            habitName = habitName
                         )
                     }
-                    
+
                     // Also increment the habit counts for the roll forward dates
                     val fileUriString = _settings.value.fileUri
                     if (fileUriString.isNotEmpty()) {
                         val dateStr = com.example.tail.data.dateString(date)
                         val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
                         val currentCount = currentEntries[dateStr] ?: 0
-                        val newCount = currentCount + 1
-                        
+                        val incrementAmount = texts.size
+                        val newCount = currentCount + incrementAmount
+
                         // Update the count for the current date
-                        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, 1, date)
-                        
+                        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, incrementAmount, date)
+
                         // Track this date as manually set for roll forward habits
                         val currentManualDates = _settings.value.rollForwardManualDates[habitName]?.toMutableSet() ?: mutableSetOf()
                         currentManualDates.add(dateStr)
@@ -1133,23 +1162,23 @@ class HabitViewModel(
                         updatedManualDates[habitName] = currentManualDates
                         settingsRepo.saveRollForwardManualDates(updatedManualDates)
                         _settings.value = _settings.value.copy(rollForwardManualDates = updatedManualDates)
-                        
+
                         // Roll forward the count to all dates from date+1 to customEndDate
                         val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
                         var currentDate = date.plusDays(1)
                         val endDate = customEndDate
-                        
+
                         while (currentDate <= endDate) {
                             val currentDateStr = com.example.tail.data.dateString(currentDate)
                             habitEntries[currentDateStr] = newCount
                             currentDate = currentDate.plusDays(1)
                         }
-                        
+
                         // Update the database with the filled entries
                         updatedDb = updatedDb.toMutableMap()
                         updatedDb[habitName] = habitEntries
                         cachedPhoneDb = updatedDb
-                        
+
                         // Persist the database
                         try {
                             val uri = Uri.parse(fileUriString)
@@ -1160,7 +1189,7 @@ class HabitViewModel(
                         }
                     }
                 }
-                
+
                 onComplete()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to set text entry: ${e.message}"
@@ -2671,10 +2700,16 @@ class HabitViewModel(
      *
      * @param habitName The name of the habit
      * @param text The text entry to save
-     * @param date The date to use for the timestamp. If null, uses current date/time.
-     *             When provided, uses noon (12:00:00) as the time.
+     * @param date The date to use for the timestamp. If null, uses current date.
+     * @param time The time-of-day for the timestamp. If null, uses current time (when [date]
+     *             is also null) or noon (when [date] is provided but [time] is null).
      */
-    fun saveTextEntry(habitName: String, text: String, date: LocalDate? = null) {
+    fun saveTextEntry(
+        habitName: String,
+        text: String,
+        date: LocalDate? = null,
+        time: java.time.LocalTime? = null
+    ) {
         val uriString = _settings.value.textInputFileUris[habitName]
         if (uriString.isNullOrEmpty()) {
             _errorMessage.value = "No text log file set for '$habitName'. Select one in edit mode."
@@ -2683,21 +2718,22 @@ class HabitViewModel(
         viewModelScope.launch {
             try {
                 // Save the text entry for the current date
-                textInputRepo.appendTextEntry(Uri.parse(uriString), context, text, date)
-                
+                textInputRepo.appendTextEntry(Uri.parse(uriString), context, text, date, time, habitName = habitName)
+
                 // If this is a roll forward habit, also roll forward the text
                 if (habitName in _settings.value.rollForwardHabits) {
                     val entryDate = date ?: java.time.LocalDate.now()
-                    val timestamp = java.time.LocalDateTime.of(entryDate, java.time.LocalTime.NOON)
+                    val effectiveTime = time ?: java.time.LocalTime.NOON
+                    val timestamp = java.time.LocalDateTime.of(entryDate, effectiveTime)
                         .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-                    
+
                     // Find the next manual date (same logic as incrementHabit)
                     val nextManualDate = _settings.value.rollForwardManualDates[habitName]?.mapNotNull { dateStr ->
                         com.example.tail.data.parseDate(dateStr)
                     }?.sorted()?.firstOrNull { it > entryDate }
-                    
+
                     val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
-                    
+
                     // Roll forward the text to all dates from entryDate+1 to endDate
                     if (entryDate < endDate) {
                         textInputRepo.rollForwardTextEntry(
@@ -2705,15 +2741,83 @@ class HabitViewModel(
                             context,
                             timestamp,
                             entryDate.plusDays(1),
-                            endDate
+                            endDate,
+                            habitName = habitName
                         )
                     }
                 }
-                
+
                 // Also increment the habit count so it registers as done for today
                 incrementHabit(habitName, 1)
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save text entry: ${e.message}"
+            }
+        }
+    }
+
+    /**
+     * Saves multiple text entries for [habitName] to its associated log file in a single
+     * atomic write. Each entry gets a unique timestamp (offset by 1 second). Then
+     * increments the habit count by the number of entries saved.
+     *
+     * @param habitName The name of the habit
+     * @param texts The list of text entries to save
+     * @param date The date to use for timestamps. If null, uses current date.
+     * @param time The base time-of-day. If null, uses current time (when [date] is also null)
+     *             or noon (when [date] is provided but [time] is null).
+     */
+    fun saveTextEntries(
+        habitName: String,
+        texts: List<String>,
+        date: LocalDate? = null,
+        time: java.time.LocalTime? = null
+    ) {
+        if (texts.isEmpty()) return
+        // Single entry — delegate to the simpler path
+        if (texts.size == 1) {
+            saveTextEntry(habitName, texts.first(), date, time)
+            return
+        }
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            _errorMessage.value = "No text log file set for '$habitName'. Select one in edit mode."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                textInputRepo.appendMultipleTextEntries(
+                    Uri.parse(uriString), context, texts, date, time, habitName = habitName
+                )
+
+                // If this is a roll forward habit, also roll forward the text
+                if (habitName in _settings.value.rollForwardHabits) {
+                    val entryDate = date ?: java.time.LocalDate.now()
+                    val effectiveTime = time ?: java.time.LocalTime.NOON
+                    val timestamp = java.time.LocalDateTime.of(entryDate, effectiveTime)
+                        .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+
+                    val nextManualDate = _settings.value.rollForwardManualDates[habitName]?.mapNotNull { dateStr ->
+                        com.example.tail.data.parseDate(dateStr)
+                    }?.sorted()?.firstOrNull { it > entryDate }
+
+                    val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+
+                    if (entryDate < endDate) {
+                        textInputRepo.rollForwardTextEntry(
+                            Uri.parse(uriString),
+                            context,
+                            timestamp,
+                            entryDate.plusDays(1),
+                            endDate,
+                            habitName = habitName
+                        )
+                    }
+                }
+
+                // Increment the habit count by the number of entries
+                incrementHabit(habitName, texts.size)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to save text entries: ${e.message}"
             }
         }
     }
@@ -3089,7 +3193,7 @@ class HabitViewModel(
         viewModelScope.launch {
             try {
                 // Update the text entry at the old timestamp
-                textInputRepo.updateTextEntry(Uri.parse(uriString), context, oldTimestamp, newText)
+                textInputRepo.updateTextEntry(Uri.parse(uriString), context, oldTimestamp, newText, habitName = habitName)
                 
                 // If this is a roll forward habit, also roll forward the text
                 if (habitName in _settings.value.rollForwardHabits) {
@@ -3112,7 +3216,8 @@ class HabitViewModel(
                                 context,
                                 oldTimestamp,
                                 entryDate.plusDays(1),
-                                endDate
+                                endDate,
+                            habitName = habitName
                             )
                         }
                     }
@@ -3144,7 +3249,7 @@ class HabitViewModel(
         viewModelScope.launch {
             try {
                 // updateTextEntry adds the key if it is missing
-                textInputRepo.updateTextEntry(Uri.parse(uriString), context, timestamp, text)
+                textInputRepo.updateTextEntry(Uri.parse(uriString), context, timestamp, text, habitName = habitName)
                 
                 // If this is a roll forward habit, also roll forward the text
                 if (habitName in _settings.value.rollForwardHabits) {
@@ -3162,7 +3267,8 @@ class HabitViewModel(
                             context,
                             timestamp,
                             date.plusDays(1),
-                            endDate
+                            endDate,
+                            habitName = habitName
                         )
                     }
                 }
@@ -3188,7 +3294,7 @@ class HabitViewModel(
         }
         viewModelScope.launch {
             try {
-                textInputRepo.deleteTextEntry(Uri.parse(uriString), context, timestamp)
+                textInputRepo.deleteTextEntry(Uri.parse(uriString), context, timestamp, habitName = habitName)
                 onComplete()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to delete text entry: ${e.message}"
@@ -3436,6 +3542,20 @@ class HabitViewModel(
             syncGarminCurrentMonth()
             
             syncAllDatedEntries(forceReparse = false)
+
+            // Bootstrap internal backups of text-input files from external SAF sources.
+            // This ensures data survives even if the external file is deleted/corrupted.
+            val textUris = _settings.value.textInputFileUris
+            if (textUris.isNotEmpty()) {
+                try {
+                    val backed = textInputRepo.bootstrapInternalBackups(context, textUris)
+                    if (backed > 0) {
+                        Log.i(TAG, "onAppForegrounded: bootstrapped $backed text-input internal backups")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "onAppForegrounded: text-input backup bootstrap failed: ${e.message}")
+                }
+            }
         }
         // Log current position as a secondary location for today.
         // Runs in the background — silently no-ops if permission is missing
