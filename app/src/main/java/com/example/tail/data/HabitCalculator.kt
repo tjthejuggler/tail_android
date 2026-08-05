@@ -143,49 +143,81 @@ fun getMostRecentValue(entries: Map<String, Int>): Int {
 }
 
 /**
- * Calculates the average of the last N days from today.
- * Matches desktop get_average_of_last_n_days(inner_dict, n_days).
- * Only counts entries within the last n_days calendar days from today.
+ * Calculates the calendar-day average of the last N days from today.
+ *
+ * Divides by the full [nDays] window (e.g. 7 for a week), treating days with
+ * no entry as 0. This matches the graph StatsSummary, which fills zero for
+ * every calendar day in the selected period, and the Tasker relay
+ * (buildTaskerStatsContent) which also divides by the day count.
+ *
+ * Previously this divided by the number of entries that existed (excluding
+ * zero/rest days), which produced a different value than the Stats Bar.
  */
 fun getAverageOfLastNDays(entries: Map<String, Int>, nDays: Int, today: LocalDate = LocalDate.now()): Double {
     if (entries.isEmpty()) return 0.0
     val cutoff = today.minusDays(nDays.toLong())
     val cutoffStr = dateString(cutoff)
     val todayStr = dateString(today)
-    val relevant = entries.filter { (k, _) -> k > cutoffStr && k <= todayStr }
-    if (relevant.isEmpty()) return 0.0
-    return relevant.values.average()
+    val sum = entries.filter { (k, _) -> k > cutoffStr && k <= todayStr }
+        .values.sumOf { it.toDouble() }
+    // Calendar-day average: divide by the full nDays window so that days with
+    // no entry count as 0 — consistent with the graph Stats Bar.
+    return sum / nDays
 }
 
 /**
- * Calculates the all-time high rolling N-day average and the date it peaked.
- * Matches desktop get_all_time_high_rolling(inner_dict, time_period).
+ * Calculates the all-time high rolling N-day **calendar** average and the date
+ * it peaked.
  *
- * Uses a sliding window of [windowSize] consecutive days (by sorted date order).
+ * Uses a sliding window of [windowSize] consecutive **calendar** days (not
+ * consecutive entries). Missing days within each window are treated as 0, and
+ * the sum is divided by [windowSize]. This makes the "all-time high"
+ * comparable to the "current" rolling average produced by
+ * [getAverageOfLastNDays], which also divides by the calendar-day count.
+ *
  * Returns the peak average and the date of the last day in that window.
  */
 fun getAllTimeHighRolling(entries: Map<String, Int>, windowSize: Int): RollingHigh {
     if (entries.isEmpty()) return RollingHigh(0.0, "")
     val sorted = entries.entries.sortedBy { it.key }
-    if (sorted.size < windowSize) {
-        // Not enough data for a full window — return average of all available
-        val avg = sorted.map { it.value }.average()
-        return RollingHigh(
-            value = Math.round(avg * 100.0) / 100.0,
-            date = sorted.last().key
-        )
+    val firstDate = parseDate(sorted.first().key) ?: return RollingHigh(0.0, "")
+    val lastDate = parseDate(sorted.last().key) ?: return RollingHigh(0.0, "")
+
+    // Build a dense array of daily values (calendar-day expanded, missing = 0)
+    val totalDays = (lastDate.toEpochDay() - firstDate.toEpochDay()).toInt() + 1
+    val dailyValues = IntArray(totalDays) { i ->
+        entries[dateString(firstDate.plusDays(i.toLong()))] ?: 0
     }
 
-    var bestAvg = Double.MIN_VALUE
-    var bestDate = ""
-    for (i in windowSize - 1 until sorted.size) {
-        val windowVals = sorted.subList(i - windowSize + 1, i + 1).map { it.value.toDouble() }
-        val avg = windowVals.average()
-        if (avg > bestAvg) {
-            bestAvg = avg
-            bestDate = sorted[i].key
+    // Prefix sums for O(1) window sums
+    val prefix = LongArray(totalDays + 1)
+    for (i in 0 until totalDays) {
+        prefix[i + 1] = prefix[i] + dailyValues[i]
+    }
+
+    var bestAvg = Double.NEGATIVE_INFINITY
+    var bestEndIdx = 0
+
+    if (totalDays <= windowSize) {
+        // Fewer calendar days than window size — average all available days
+        // over the full windowSize denominator (missing days count as 0).
+        val sum = prefix[totalDays]
+        bestAvg = sum.toDouble() / windowSize
+        bestEndIdx = totalDays - 1
+    } else {
+        // Slide a window of [windowSize] consecutive calendar days
+        for (startIdx in 0..(totalDays - windowSize)) {
+            val endIdx = startIdx + windowSize - 1
+            val windowSum = prefix[endIdx + 1] - prefix[startIdx]
+            val avg = windowSum.toDouble() / windowSize
+            if (avg > bestAvg) {
+                bestAvg = avg
+                bestEndIdx = endIdx
+            }
         }
     }
+
+    val bestDate = dateString(firstDate.plusDays(bestEndIdx.toLong()))
     val rounded = Math.round(bestAvg * 100.0) / 100.0
     return RollingHigh(value = rounded, date = bestDate)
 }
