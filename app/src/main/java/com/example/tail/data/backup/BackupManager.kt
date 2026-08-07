@@ -36,6 +36,38 @@ sealed class BackupResult {
 }
 
 /**
+ * Read-only preview of what a single-habit restore would do. Shown to the user
+ * for confirmation BEFORE any data is overwritten. Only the requested habit is
+ * affected — the rest of the backup file is ignored.
+ */
+data class HabitRestorePreview(
+    /** Name of the habit being restored. */
+    val habitName: String,
+    /** ISO-8601 timestamp of when the backup file was originally written. */
+    val backupExportedAt: String,
+    /** Total increment count for this habit in the CURRENT database. */
+    val currentTotal: Int,
+    /** Total increment count for this habit in the BACKUP. */
+    val backupTotal: Int,
+    /** backupTotal - currentTotal. Positive = increments gained, negative = lost. */
+    val incrementDelta: Int,
+    /** Number of dated entries (days) for this habit in the backup. */
+    val backupDayCount: Int,
+    /** Latest date ("YYYY-MM-DD") present in the backup for this habit, or null. */
+    val backupLastDate: String?,
+    /** Latest date present in the current data for this habit, or null. */
+    val currentLastDate: String?,
+    /** Whether the backup contains subtype data for this habit. */
+    val hasSubtypeData: Boolean,
+    /** Whether the backup contains timed data for this habit. */
+    val hasTimedData: Boolean,
+    /** Whether the backup contains text-input log entries for this habit. */
+    val hasTextInputData: Boolean,
+    /** Whether the backup contains a dated-entry source file for this habit. */
+    val hasDatedEntryData: Boolean
+)
+
+/**
  * Builds a complete [BackupBundle] in memory and writes it to / reads it from
  * a user-chosen SAF Uri.
  *
@@ -371,6 +403,191 @@ class BackupManager(
             BackupResult.Failure("Import failed: ${e.message}", e)
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  SINGLE-HABIT RESTORE (from a backup file)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Parses a backup file's raw text into a validated [BackupBundle].
+     * Returns null (and logs) if the text is blank, not valid JSON, missing
+     * the magic marker, or from a newer schema version.
+     */
+    private fun parseBackup(text: String): BackupBundle? {
+        if (text.isBlank()) {
+            Log.w(TAG, "parseBackup: text is blank")
+            return null
+        }
+        val bundle = try {
+            gson.fromJson(text, BackupBundle::class.java)
+        } catch (e: Exception) {
+            Log.w(TAG, "parseBackup: JSON parse failed: ${e.message}")
+            return null
+        }
+        if (bundle == null || bundle.magic != BackupBundle.MAGIC) {
+            Log.w(TAG, "parseBackup: missing/invalid magic marker")
+            return null
+        }
+        if (bundle.schemaVersion > BackupBundle.SCHEMA_VERSION) {
+            Log.w(TAG, "parseBackup: schema ${bundle.schemaVersion} > current ${BackupBundle.SCHEMA_VERSION}")
+            return null
+        }
+        return bundle
+    }
+
+    /** Reads and parses a backup file from [srcUri]. Returns null on any failure. */
+    suspend fun readBackupBundle(srcUri: Uri): BackupBundle? = withContext(Dispatchers.IO) {
+        val text = try {
+            context.contentResolver.openInputStream(srcUri)?.use { stream ->
+                stream.bufferedReader().readText()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "readBackupBundle: read failed: ${e.message}")
+            null
+        } ?: return@withContext null
+        parseBackup(text)
+    }
+
+    /**
+     * Builds a non-destructive [HabitRestorePreview] describing what restoring
+     * [habitName] from [srcUri] would do, WITHOUT modifying any data. Reads the
+     * current on-device state for the habit and compares it to the backup.
+     */
+    suspend fun previewSingleHabitRestore(srcUri: Uri, habitName: String): HabitRestorePreview? =
+        withContext(Dispatchers.IO) {
+            val bundle = readBackupBundle(srcUri) ?: return@withContext null
+            val settings = settingsRepo.settingsFlow.first()
+
+            // Backup data for this habit
+            val backupCounts = bundle.habitsDb[habitName] ?: emptyMap()
+            val backupTimestamps = bundle.habitTimestamps[habitName] ?: emptyMap()
+            val backupTotal = backupCounts.values.sum()
+
+            // Current data for this habit
+            val currentDb = readHabitsDb(settings.fileUri)
+            val currentCounts = currentDb[habitName] ?: emptyMap()
+            val currentTotal = currentCounts.values.sum()
+            val currentTimestamps = readHabitTimestamps()[habitName] ?: emptyMap()
+
+            val backupDates = (backupCounts.keys + backupTimestamps.keys)
+                .filter { it.isNotBlank() }
+            val currentDates = (currentCounts.keys + currentTimestamps.keys)
+                .filter { it.isNotBlank() }
+
+            HabitRestorePreview(
+                habitName = habitName,
+                backupExportedAt = bundle.exportedAt,
+                currentTotal = currentTotal,
+                backupTotal = backupTotal,
+                incrementDelta = backupTotal - currentTotal,
+                backupDayCount = backupDates.size,
+                backupLastDate = backupDates.maxOrNull(),
+                currentLastDate = currentDates.maxOrNull(),
+                hasSubtypeData = bundle.perHabitFiles.subtypeData.containsKey(habitName),
+                hasTimedData = bundle.perHabitFiles.timedData.containsKey(habitName),
+                hasTextInputData = bundle.perHabitFiles.textInput.containsKey(habitName),
+                hasDatedEntryData = bundle.perHabitFiles.datedEntry.containsKey(habitName)
+            )
+        }
+
+    /**
+     * Restores ONLY [habitName] from the backup at [srcUri], overwriting the
+     * current on-device data for that single habit. Every other habit and the
+     * rest of the backup are left untouched.
+     *
+     * Data sources restored (each only if present in the backup AND a target
+     * file is configured on this device):
+     *  1. habits database entry (date → count)
+     *  2. habit timestamps (date → [times])
+     *  3. subtype data file
+     *  4. timed data file
+     *  5. text-input log file (+ internal backup)
+     *  6. dated-entry source file
+     *
+     * The habits-DB write goes through [HabitsRepository.restoreDatabaseRaw]
+     * (which snapshots the pre-write state first) so an accidental restore is
+     * itself recoverable.
+     */
+    suspend fun restoreSingleHabit(srcUri: Uri, habitName: String): BackupResult =
+        withContext(Dispatchers.IO) {
+            try {
+                val bundle = readBackupBundle(srcUri)
+                    ?: return@withContext BackupResult.Failure("Could not read backup file")
+                val settings = settingsRepo.settingsFlow.first()
+
+                // 1. Habits DB — replace just this habit's entry inside the full DB.
+                val backupCounts = bundle.habitsDb[habitName]
+                if (backupCounts != null && settings.fileUri.isNotBlank()) {
+                    val merged = readHabitsDb(settings.fileUri).toMutableMap()
+                    merged[habitName] = backupCounts
+                    habitsRepo.restoreDatabaseRaw(Uri.parse(settings.fileUri), context, merged)
+                }
+
+                // 2. Habit timestamps — replace just this habit's timestamps.
+                val backupTimestamps = bundle.habitTimestamps[habitName]
+                if (backupTimestamps != null) {
+                    val merged = readHabitTimestamps().toMutableMap()
+                    merged[habitName] = backupTimestamps
+                    applyHabitTimestamps(merged)
+                }
+
+                // 3-6. Per-habit external files (best-effort; only when a URI is set).
+                bundle.perHabitFiles.subtypeData[habitName]?.let { data ->
+                    settings.subtypeDataFileUris[habitName]?.let { uriStr ->
+                        runCatching {
+                            subtypeDataRepo.saveSubtypeData(Uri.parse(uriStr), context, data)
+                        }.onFailure {
+                            Log.w(TAG, "subtype-data restore failed for '$habitName': ${it.message}")
+                        }
+                    }
+                }
+                bundle.perHabitFiles.timedData[habitName]?.let { data ->
+                    settings.timedDataFileUris[habitName]?.let { uriStr ->
+                        runCatching {
+                            val typed = data.mapValues { (_, obj) ->
+                                val subtype = obj["subtype"]?.toString()?.takeIf { it != "null" }
+                                val count = (obj["count"] as? Number)?.toInt() ?: 0
+                                TimedEntry(subtype = subtype, count = count)
+                            }
+                            timedDataRepo.saveTimedData(Uri.parse(uriStr), context, typed)
+                        }.onFailure {
+                            Log.w(TAG, "timed-data restore failed for '$habitName': ${it.message}")
+                        }
+                    }
+                }
+                bundle.perHabitFiles.textInput[habitName]?.let { log ->
+                    settings.textInputFileUris[habitName]?.let { uriStr ->
+                        writeJsonToSaf(uriStr, log)
+                        // Also refresh the internal backup so the data survives
+                        // future external-file loss.
+                        runCatching {
+                            val dir = java.io.File(context.filesDir, "text_input_backups")
+                            if (!dir.exists()) dir.mkdirs()
+                            val backupFile = java.io.File(
+                                dir,
+                                habitName.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(100) + ".json"
+                            )
+                            backupFile.writeText(gson.toJson(log.toSortedMap()))
+                        }.onFailure {
+                            Log.w(TAG, "text-input internal backup restore failed for '$habitName': ${it.message}")
+                        }
+                    }
+                }
+                bundle.perHabitFiles.datedEntry[habitName]?.let { content ->
+                    settings.datedEntryFileUris[habitName]?.let { uriStr ->
+                        writeTextToSaf(uriStr, content)
+                    }
+                }
+
+                BackupResult.Success(
+                    "Restored '$habitName' from backup" +
+                            " (${bundle.exportedAt.ifBlank { "unknown date" }})."
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Single-habit restore failed", e)
+                BackupResult.Failure("Restore failed: ${e.message}", e)
+            }
+        }
 
     private suspend fun applyBundle(b: BackupBundle) {
         applySettings(b.settings)

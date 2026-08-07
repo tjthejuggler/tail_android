@@ -7,6 +7,9 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.tail.data.backup.BackupManager
+import com.example.tail.data.backup.BackupResult
+import com.example.tail.data.backup.HabitRestorePreview
 import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconGeneratorService
 import com.example.tail.data.AiIconRepository
@@ -95,6 +98,7 @@ class HabitViewModel(
     private val subtypeDataRepo: SubtypeDataRepository,
     private val timedDataRepo: TimedDataRepository,
     private val context: Context,
+    private val backupManager: BackupManager? = null,
     private val locationRepo: LocationRepository = LocationRepository(context)
 ) : ViewModel() {
     
@@ -1214,6 +1218,19 @@ class HabitViewModel(
     private val _snapshotStatus = MutableStateFlow<String?>(null)
     val snapshotStatus: StateFlow<String?> = _snapshotStatus.asStateFlow()
 
+    // ── Single-habit restore from a backup file ───────────────────────────
+    /** Non-null while a restore-from-backup confirmation dialog is showing. */
+    private val _habitRestorePreview = MutableStateFlow<HabitRestorePreview?>(null)
+    val habitRestorePreview: StateFlow<HabitRestorePreview?> = _habitRestorePreview.asStateFlow()
+
+    /** The backup URI pending confirmation (kept so [applyHabitRestore] can use it). */
+    private val _pendingRestoreUri = MutableStateFlow<Uri?>(null)
+    val pendingRestoreUri: StateFlow<Uri?> = _pendingRestoreUri.asStateFlow()
+
+    /** Status / error message for the most recent single-habit restore. */
+    private val _habitRestoreStatus = MutableStateFlow<String?>(null)
+    val habitRestoreStatus: StateFlow<String?> = _habitRestoreStatus.asStateFlow()
+
     /** Loads the list of internal DB snapshots for the restore UI. */
     fun loadSnapshots() {
         viewModelScope.launch {
@@ -1276,6 +1293,78 @@ class HabitViewModel(
 
     /** Clears the transient snapshot status message. */
     fun clearSnapshotStatus() { _snapshotStatus.value = null }
+
+    // ── Single-habit restore from a backup file ───────────────────────────
+
+    /**
+     * Reads [backupUri], extracts the data for [habitName], and publishes a
+     * non-destructive [HabitRestorePreview] via [habitRestorePreview] so the UI
+     * can show a confirmation dialog. Does NOT modify any data.
+     */
+    fun previewHabitRestore(backupUri: Uri, habitName: String) {
+        val mgr = backupManager
+        if (mgr == null) {
+            _habitRestoreStatus.value = "Backup manager unavailable."
+            return
+        }
+        _habitRestoreStatus.value = "Reading backup…"
+        viewModelScope.launch {
+            val preview = mgr.previewSingleHabitRestore(backupUri, habitName)
+            if (preview == null) {
+                _habitRestoreStatus.value =
+                    "Could not read that file as a Tail backup."
+            } else {
+                _pendingRestoreUri.value = backupUri
+                _habitRestorePreview.value = preview
+                _habitRestoreStatus.value = null
+            }
+        }
+    }
+
+    /** Dismisses the pending restore confirmation (no data is changed). */
+    fun cancelHabitRestore() {
+        _habitRestorePreview.value = null
+        _pendingRestoreUri.value = null
+    }
+
+    /** Clears the transient single-habit restore status message. */
+    fun clearHabitRestoreStatus() { _habitRestoreStatus.value = null }
+
+    /**
+     * Applies the pending single-habit restore (the URI stashed in
+     * [_pendingRestoreUri] for the habit in the current preview), then reloads
+     * the in-memory habit list so the UI reflects the restored data.
+     */
+    fun applyHabitRestore() {
+        val mgr = backupManager
+        val uri = _pendingRestoreUri.value
+        val preview = _habitRestorePreview.value
+        if (mgr == null || uri == null || preview == null) {
+            _habitRestoreStatus.value = "Nothing to restore."
+            return
+        }
+        val habitName = preview.habitName
+        _habitRestorePreview.value = null
+        _pendingRestoreUri.value = null
+        _habitRestoreStatus.value = "Restoring '$habitName'…"
+        viewModelScope.launch {
+            val res = mgr.restoreSingleHabit(uri, habitName)
+            when (res) {
+                is BackupResult.Success -> {
+                    // Refresh the in-memory cache + UI from the freshly-written DB.
+                    val uriString = _settings.value.fileUri
+                    if (uriString.isNotEmpty()) {
+                        val fresh = habitsRepo.loadDatabase(Uri.parse(uriString), context)
+                        cachedPhoneDb = fresh
+                    }
+                    rebuildHabitList()
+                    _habitRestoreStatus.value = res.message
+                }
+                is BackupResult.Failure ->
+                    _habitRestoreStatus.value = res.message
+            }
+        }
+    }
 
     /**
      * Sets the count for [habitName] on the currently selected date to an absolute [newCount].
@@ -5180,10 +5269,14 @@ class HabitViewModelFactory(
     private val datedEntryRepo: DatedEntryRepository,
     private val subtypeDataRepo: SubtypeDataRepository,
     private val timedDataRepo: TimedDataRepository,
-    private val context: Context
+    private val context: Context,
+    private val backupManager: BackupManager? = null
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return HabitViewModel(habitsRepo, settingsRepo, textInputRepo, datedEntryRepo, subtypeDataRepo, timedDataRepo, context) as T
+        return HabitViewModel(
+            habitsRepo, settingsRepo, textInputRepo, datedEntryRepo,
+            subtypeDataRepo, timedDataRepo, context, backupManager
+        ) as T
     }
 }

@@ -121,7 +121,8 @@ private fun TailApp(
             datedEntryRepo = datedEntryRepo,
             subtypeDataRepo = subtypeDataRepo,
             timedDataRepo = timedDataRepo,
-            context = context
+            context = context,
+            backupManager = backupManager
         )
     )
     val adviceViewModel: AdviceViewModel = viewModel(

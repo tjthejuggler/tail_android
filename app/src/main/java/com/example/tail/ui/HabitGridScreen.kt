@@ -9,6 +9,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
+import com.example.tail.data.backup.HabitRestorePreview
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
@@ -321,6 +322,23 @@ fun HabitGridScreen(
         }
         datedEntryPickerHabit = null
     }
+
+    // ── Restore a single habit from a backup file ─────────────────────────
+    // The picker remembers which habit we're restoring for; once a file is
+    // chosen we ask the ViewModel for a non-destructive preview, which drives
+    // the confirmation dialog below.
+    var restoreBackupHabitName by remember { mutableStateOf<String?>(null) }
+    val restoreBackupPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        val habitName = restoreBackupHabitName
+        if (uri != null && habitName != null) {
+            viewModel.previewHabitRestore(uri, habitName)
+        }
+        restoreBackupHabitName = null
+    }
+    val habitRestorePreview by viewModel.habitRestorePreview.collectAsState()
+    val habitRestoreStatus by viewModel.habitRestoreStatus.collectAsState()
 
     // Show errors as snackbar
     LaunchedEffect(errorMessage) {
@@ -888,6 +906,13 @@ fun HabitGridScreen(
                         habitNotes = settings.habitNotes,
                         onSetHabitNote = { name, note -> viewModel.setHabitNote(name, note) },
                         onToggleRollForward = { name -> viewModel.toggleRollForward(name) },
+                        onRestoreFromBackup = {
+                            val name = editHabitName
+                            if (name != null) {
+                                restoreBackupHabitName = name
+                                restoreBackupPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            }
+                        },
                         onRenameHabit = { oldName, newName -> viewModel.renameHabit(oldName, newName) }
                     )
                 }
@@ -1341,6 +1366,22 @@ fun HabitGridScreen(
             onDismiss = { rollForwardDialogState = null }
         )
     }
+
+    // Restore-from-backup confirmation dialog (single habit only)
+    habitRestorePreview?.let { preview ->
+        HabitRestoreConfirmDialog(
+            preview = preview,
+            onConfirm = { viewModel.applyHabitRestore() },
+            onDismiss = { viewModel.cancelHabitRestore() }
+        )
+    }
+
+    // Restore-from-backup status / error toast
+    LaunchedEffect(habitRestoreStatus) {
+        val status = habitRestoreStatus ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(status)
+        viewModel.clearHabitRestoreStatus()
+    }
 }
 
 // ── Screen tab row ────────────────────────────────────────────────────────────
@@ -1673,7 +1714,9 @@ private fun EditModeControlBar(
     /** Called when the user edits the note for a habit. */
     onSetHabitNote: (String, String) -> Unit = { _, _ -> },
     /** Called when the user toggles roll forward for a habit. */
-    onToggleRollForward: (String) -> Unit = {}
+    onToggleRollForward: (String) -> Unit = {},
+    /** Called when the user taps "Restore from Backup" for the selected habit. */
+    onRestoreFromBackup: () -> Unit = {}
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -3277,77 +3320,14 @@ private fun EditModeControlBar(
                     }
 
                     // ── Chess.com link toggle ────────────────────────────────
+                    // Extracted to its own composable to keep EditModeControlBar
+                    // under the JVM method-size limit.
                     if (chessComEnabled) {
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        val currentChessLink = chessComHabitLinks[selectedHabitName]
-                        val isChessLinked = currentChessLink != null
-                        var chessDropdownExpanded by remember { mutableStateOf(false) }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(text = "♟ Chess.com", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                                Text(
-                                    text = if (isChessLinked) {
-                                        val typeName = ChessComType.fromKey(currentChessLink)?.label ?: currentChessLink
-                                        "Linked to: $typeName"
-                                    } else "Not linked to chess.com",
-                                    color = if (isChessLinked) Color(0xFF66BB6A) else Color(0xFF888888),
-                                    fontSize = 10.sp
-                                )
-                            }
-                            Switch(
-                                checked = isChessLinked,
-                                onCheckedChange = { checked ->
-                                    if (checked) {
-                                        chessDropdownExpanded = true
-                                    } else {
-                                        onSetChessComLink(selectedHabitName, null)
-                                    }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Color(0xFF66BB6A),
-                                    checkedTrackColor = Color(0xFF1B5E20),
-                                    uncheckedThumbColor = Color(0xFF888888),
-                                    uncheckedTrackColor = Color(0xFF333333)
-                                )
-                            )
-                        }
-
-                        // Chess.com type picker dropdown
-                        if (isChessLinked || chessDropdownExpanded) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Box {
-                                Button(
-                                    onClick = { chessDropdownExpanded = true },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20)),
-                                    modifier = Modifier.height(32.dp)
-                                ) {
-                                    val label = if (currentChessLink != null) {
-                                        ChessComType.fromKey(currentChessLink)?.label ?: "Select type"
-                                    } else "Select type"
-                                    Text(label, fontSize = 11.sp, color = Color(0xFF66BB6A))
-                                }
-                                DropdownMenu(
-                                    expanded = chessDropdownExpanded,
-                                    onDismissRequest = { chessDropdownExpanded = false }
-                                ) {
-                                    ChessComType.entries.forEach { type ->
-                                        DropdownMenuItem(
-                                            text = { Text(type.label) },
-                                            onClick = {
-                                                onSetChessComLink(selectedHabitName, type.name)
-                                                chessDropdownExpanded = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        ChessComLinkToggle(
+                            habitName = selectedHabitName,
+                            links = chessComHabitLinks,
+                            onSetLink = { type -> onSetChessComLink(selectedHabitName, type) }
+                        )
                     }
 
                     // ── Garmin link toggle ────────────────────────────────────
@@ -3423,6 +3403,12 @@ private fun EditModeControlBar(
                             }
                         }
                     }
+
+                    // ── Restore this habit from a backup file ────────────────
+                    // Only this habit is affected; the rest of the backup is
+                    // ignored. Extracted to its own composable to keep
+                    // EditModeControlBar under the JVM method-size limit.
+                    RestoreFromBackupButton(onClick = onRestoreFromBackup)
                 }
             }
         }
@@ -4634,6 +4620,244 @@ private fun MaxOneRestoreConfirmDialog(
                     Text(
                         "Restore",
                         color = if (restorableDays > 0) Color(0xFFFFCC44) else Color(0xFF665544)
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Chess.com link toggle (extracted to keep EditModeControlBar small) ────────
+
+/**
+ * Row + dropdown for linking the selected habit to a Chess.com game type.
+ * Extracted from EditModeControlBar to stay under the JVM method-size limit.
+ */
+@Composable
+private fun ChessComLinkToggle(
+    habitName: String,
+    links: Map<String, String>,
+    onSetLink: (String?) -> Unit
+) {
+    val currentLink = links[habitName]
+    val isLinked = currentLink != null
+    var dropdownExpanded by remember { mutableStateOf(false) }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "♟ Chess.com", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isLinked) {
+                    val typeName = ChessComType.fromKey(currentLink)?.label ?: currentLink
+                    "Linked to: $typeName"
+                } else "Not linked to Chess.com",
+                color = if (isLinked) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isLinked,
+            onCheckedChange = { checked ->
+                if (checked) {
+                    dropdownExpanded = true
+                } else {
+                    onSetLink(null)
+                }
+            },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF44BBFF),
+                checkedTrackColor = Color(0xFF003355),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    // Chess.com type picker dropdown
+    if (isLinked || dropdownExpanded) {
+        Spacer(modifier = Modifier.height(4.dp))
+        Box {
+            Button(
+                onClick = { dropdownExpanded = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003355)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                val label = if (currentLink != null) {
+                    ChessComType.fromKey(currentLink)?.label ?: "Select type"
+                } else "Select type"
+                Text(label, fontSize = 11.sp, color = Color(0xFF44BBFF))
+            }
+            DropdownMenu(
+                expanded = dropdownExpanded,
+                onDismissRequest = { dropdownExpanded = false }
+            ) {
+                ChessComType.entries.forEach { type ->
+                    DropdownMenuItem(
+                        text = { Text(type.label) },
+                        onClick = {
+                            onSetLink(type.name)
+                            dropdownExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Restore-from-backup button (extracted to keep EditModeControlBar small) ───
+
+/**
+ * Full-width "Restore from Backup" button shown at the bottom of the habit-type
+ * switches in the edit panel. Opens a file picker to choose a backup file, then
+ * a confirmation dialog. Only the selected habit is restored.
+ */
+@Composable
+private fun RestoreFromBackupButton(onClick: () -> Unit) {
+    Spacer(modifier = Modifier.height(10.dp))
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF1A1A3A),
+            contentColor = Color(0xFF88AAFF)
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(
+            Icons.Default.Folder,
+            contentDescription = "Restore from backup",
+            tint = Color(0xFF88AAFF),
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("↩ Restore from Backup", fontSize = 12.sp)
+    }
+}
+
+// ── Restore-from-backup confirmation (single habit) ───────────────────────────
+
+/**
+ * Confirmation dialog shown before restoring a single habit from a backup file.
+ * Summarises the increment delta and last date so the user knows exactly what
+ * will change. Only the selected habit is affected.
+ */
+@Composable
+private fun HabitRestoreConfirmDialog(
+    preview: HabitRestorePreview,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val delta = preview.incrementDelta
+    val deltaColor = when {
+        delta > 0 -> Color(0xFF66BB6A)
+        delta < 0 -> Color(0xFFEF5350)
+        else -> Color(0xFFCCCCCC)
+    }
+    val deltaText = when {
+        delta > 0 -> "+$delta increments will be gained"
+        delta < 0 -> "$delta increments will be lost"
+        else -> "No net change in total increments"
+    }
+    val backupDateLabel = preview.backupExportedAt
+        .substringBefore('.')
+        .replace("T", " ")
+        .ifBlank { "unknown date" }
+    val canRestore = preview.backupTotal > 0 || preview.hasSubtypeData ||
+            preview.hasTimedData || preview.hasTextInputData || preview.hasDatedEntryData
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Restore \"${preview.habitName}\" from backup?",
+                color = Color(0xFF88AAFF),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Backup created: $backupDateLabel",
+                color = Color(0xFF888888),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "Current total: ${preview.currentTotal} increments",
+                color = Color(0xFFCCCCCC),
+                fontSize = 13.sp
+            )
+            Text(
+                text = "Backup total: ${preview.backupTotal} increments over ${preview.backupDayCount} day(s)",
+                color = Color(0xFFCCCCCC),
+                fontSize = 13.sp
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = deltaText,
+                color = deltaColor,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            preview.backupLastDate?.let { date ->
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Data up to: $date",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 12.sp
+                )
+            }
+            // List any extra per-habit data that will also be restored.
+            val extras = buildList {
+                if (preview.hasSubtypeData) add("subtype data")
+                if (preview.hasTimedData) add("timed sessions")
+                if (preview.hasTextInputData) add("text-input log")
+                if (preview.hasDatedEntryData) add("dated-entry file")
+            }
+            if (extras.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Also restores: ${extras.joinToString(", ")}",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 12.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "This overwrites the current data for \"${preview.habitName}\" only. " +
+                        "Other habits are not touched. This cannot be undone.",
+                color = Color(0xFFEF9A9A),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onConfirm,
+                    enabled = canRestore,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1A1A3A),
+                        disabledContainerColor = Color(0xFF2A2A2A)
+                    )
+                ) {
+                    Text(
+                        "Restore",
+                        color = if (canRestore) Color(0xFF88AAFF) else Color(0xFF555566)
                     )
                 }
             }
