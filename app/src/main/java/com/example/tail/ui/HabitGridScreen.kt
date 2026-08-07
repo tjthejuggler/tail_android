@@ -218,6 +218,10 @@ fun HabitGridScreen(
     var conditionalLinksPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the conditional backfill confirm dialog is open (null = none)
     var conditionalBackfillHabit by remember { mutableStateOf<String?>(null) }
+    // Habit name for which the "1 max" recalc dialog is open (null = none)
+    var maxOneRecalcHabit by remember { mutableStateOf<String?>(null) }
+    // Habit name for which the "1 max" restore dialog is open (null = none)
+    var maxOneRestoreHabit by remember { mutableStateOf<String?>(null) }
 
     // Roll forward confirmation dialog state
     data class RollForwardDialogState(
@@ -720,7 +724,15 @@ fun HabitGridScreen(
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
                         onAddScreen = { showAddScreenDialog = true },
                         onDeleteScreen = { viewModel.deleteScreen(activeScreenIndex) },
-                        onToggleMaxOne = { name -> viewModel.toggleMaxOne(name) },
+                        onToggleMaxOne = { name ->
+                            if (name in settings.maxOneHabits) {
+                                // Disabling — ask whether to restore past entries from timestamps
+                                maxOneRestoreHabit = name
+                            } else {
+                                // Enabling — ask whether to cap all past entries to 1
+                                maxOneRecalcHabit = name
+                            }
+                        },
                         onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) },
                         onSetCustomInputAmounts = { name, amounts -> viewModel.setCustomInputAmounts(name, amounts) },
                         onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
@@ -1254,6 +1266,44 @@ fun HabitGridScreen(
                 conditionalBackfillHabit = null
             },
             onDismiss = { conditionalBackfillHabit = null }
+        )
+    }
+
+    // "1 max" recalc confirmation dialog — asks whether to cap all past entries to 1
+    maxOneRecalcHabit?.let { habitName ->
+        val affectedDays = remember(habitName) { viewModel.previewMaxOneAffectedDays(habitName) }
+        MaxOneRecalcConfirmDialog(
+            habitName = habitName,
+            affectedDays = affectedDays,
+            onUpdatePast = {
+                viewModel.toggleMaxOne(habitName)
+                viewModel.applyMaxOneToHistory(habitName)
+                maxOneRecalcHabit = null
+            },
+            onFutureOnly = {
+                viewModel.toggleMaxOne(habitName)
+                maxOneRecalcHabit = null
+            },
+            onDismiss = { maxOneRecalcHabit = null }
+        )
+    }
+
+    // "1 max" restore confirmation dialog — asks whether to restore past entries from timestamps
+    maxOneRestoreHabit?.let { habitName ->
+        val restorableDays = remember(habitName) { viewModel.previewMaxOneRestorableDays(habitName) }
+        MaxOneRestoreConfirmDialog(
+            habitName = habitName,
+            restorableDays = restorableDays,
+            onRestore = {
+                viewModel.toggleMaxOne(habitName)
+                viewModel.restoreMaxOneFromTimestamps(habitName)
+                maxOneRestoreHabit = null
+            },
+            onLeaveAsIs = {
+                viewModel.toggleMaxOne(habitName)
+                maxOneRestoreHabit = null
+            },
+            onDismiss = { maxOneRestoreHabit = null }
         )
     }
 
@@ -4451,6 +4501,140 @@ private fun DeleteHabitConfirmDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A0000))
                 ) {
                     Text("Delete", color = Color(0xFFFF8888))
+                }
+            }
+        }
+    }
+}
+
+// ── "1 max" recalc confirmation dialog ─────────────────────────────────────────
+
+@Composable
+private fun MaxOneRecalcConfirmDialog(
+    habitName: String,
+    affectedDays: Int,
+    onUpdatePast: () -> Unit,
+    onFutureOnly: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Enable 1 max?",
+                color = Color(0xFF88FF88),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            val msg = if (affectedDays > 0) {
+                "\"$habitName\" has $affectedDays past day(s) with a count above 1.\n\n" +
+                    "Cap all past entries to 1? This will permanently reduce those point totals."
+            } else {
+                "\"$habitName\" has no past entries above 1, so no totals need updating."
+            }
+            Text(
+                text = msg,
+                color = Color(0xFFCCCCCC),
+                fontSize = 13.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                TextButton(onClick = onFutureOnly) {
+                    Text("Future only", color = Color(0xFFAAAAAA))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onUpdatePast,
+                    enabled = affectedDays > 0,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1A4A1A),
+                        disabledContainerColor = Color(0xFF1A2A1A)
+                    )
+                ) {
+                    Text(
+                        "Update past",
+                        color = if (affectedDays > 0) Color(0xFF88FF88) else Color(0xFF556655)
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── "1 max" restore confirmation dialog ────────────────────────────────────────
+
+@Composable
+private fun MaxOneRestoreConfirmDialog(
+    habitName: String,
+    restorableDays: Int,
+    onRestore: () -> Unit,
+    onLeaveAsIs: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Disable 1 max?",
+                color = Color(0xFFFFAA00),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            val msg = if (restorableDays > 0) {
+                "While \"1 max\" was on, $restorableDays past day(s) were capped to 1.\n\n" +
+                    "Their timestamps still record the true count. " +
+                    "Restore those entries so they count fully toward totals again?"
+            } else {
+                "\"$habitName\" has no past entries that can be restored from timestamps " +
+                    "(none were capped, or no timestamps were recorded)."
+            }
+            Text(
+                text = msg,
+                color = Color(0xFFCCCCCC),
+                fontSize = 13.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                TextButton(onClick = onLeaveAsIs) {
+                    Text("Leave as-is", color = Color(0xFFAAAAAA))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onRestore,
+                    enabled = restorableDays > 0,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF3A2A00),
+                        disabledContainerColor = Color(0xFF2A2A1A)
+                    )
+                ) {
+                    Text(
+                        "Restore",
+                        color = if (restorableDays > 0) Color(0xFFFFCC44) else Color(0xFF665544)
+                    )
                 }
             }
         }

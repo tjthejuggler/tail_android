@@ -1474,6 +1474,121 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Returns the number of historical days for [habitName] whose stored count exceeds 1
+     * — i.e. the days that would be capped if "1 max" were applied retroactively.
+     * Used to preview the impact before committing.
+     */
+    fun previewMaxOneAffectedDays(habitName: String): Int {
+        val entries = cachedPhoneDb[habitName] ?: return 0
+        return entries.values.count { it > 1 }
+    }
+
+    /**
+     * Caps every historical entry for [habitName] to a maximum of 1.
+     * Called after enabling "1 max" when the user chooses to update past totals.
+     * Days already at 0 or 1 are left untouched; only counts > 1 are reduced.
+     */
+    fun applyMaxOneToHistory(habitName: String) {
+        val uri = _settings.value.fileUri
+        if (uri.isEmpty()) return
+        viewModelScope.launch {
+            val loadResult = habitsRepo.loadDatabaseResult(
+                android.net.Uri.parse(uri),
+                context
+            )
+            if (loadResult !is com.example.tail.data.HabitsLoadResult.Success) return@launch
+
+            val db = loadResult.db.toMutableMap()
+            val habitEntries = db[habitName]?.toMutableMap() ?: return@launch
+
+            var changed = false
+            for ((dateStr, rawCount) in habitEntries) {
+                if (rawCount > 1) {
+                    habitEntries[dateStr] = 1
+                    changed = true
+                }
+            }
+            if (!changed) return@launch
+
+            db[habitName] = habitEntries.toSortedMap()
+
+            habitsRepo.saveDatabase(
+                android.net.Uri.parse(uri),
+                context,
+                db
+            )
+
+            cachedPhoneDb = db
+            rebuildHabitList()
+            writeTaskerFile(_settings.value.taskerFileUri)
+        }
+    }
+
+    /**
+     * Returns the number of past days for [habitName] whose stored count is lower
+     * than the number of recorded timestamps for that day — i.e. days that were
+     * capped by "1 max" but whose true increment count is preserved in the
+     * timestamp log. Used to preview the restoration impact before committing.
+     */
+    fun previewMaxOneRestorableDays(habitName: String): Int {
+        val entries = cachedPhoneDb[habitName] ?: return 0
+        val tsCounts = timestampRepo.getTimestampCountsForHabitSync(habitName)
+        var count = 0
+        for ((dateStr, rawCount) in entries) {
+            val tsCount = tsCounts[dateStr] ?: 0
+            if (tsCount > rawCount) count++
+        }
+        return count
+    }
+
+    /**
+     * Restores the true increment count for every past day of [habitName] using
+     * the recorded timestamps. Called after disabling "1 max" when the user
+     * chooses to make past entries count fully toward totals again.
+     *
+     * Only days where the timestamp count exceeds the current (capped) stored
+     * count are updated; all other days are left untouched.
+     */
+    fun restoreMaxOneFromTimestamps(habitName: String) {
+        val uri = _settings.value.fileUri
+        if (uri.isEmpty()) return
+        viewModelScope.launch {
+            val loadResult = habitsRepo.loadDatabaseResult(
+                android.net.Uri.parse(uri),
+                context
+            )
+            if (loadResult !is com.example.tail.data.HabitsLoadResult.Success) return@launch
+
+            val db = loadResult.db.toMutableMap()
+            val habitEntries = db[habitName]?.toMutableMap() ?: return@launch
+
+            val tsCounts = timestampRepo.getTimestampCountsForHabitSync(habitName)
+
+            var changed = false
+            for ((dateStr, rawCount) in habitEntries) {
+                val tsCount = tsCounts[dateStr] ?: 0
+                if (tsCount > rawCount) {
+                    habitEntries[dateStr] = tsCount
+                    changed = true
+                }
+            }
+            if (!changed) return@launch
+
+            db[habitName] = habitEntries.toSortedMap()
+
+            habitsRepo.saveDatabase(
+                android.net.Uri.parse(uri),
+                context,
+                db
+            )
+
+            cachedPhoneDb = db
+            rebuildHabitList()
+            writeTaskerFile(_settings.value.taskerFileUri)
+        }
+    }
+
     fun toggleCustomInput(habitName: String) {
         viewModelScope.launch {
             val current = _settings.value.customInputHabits.toMutableSet()

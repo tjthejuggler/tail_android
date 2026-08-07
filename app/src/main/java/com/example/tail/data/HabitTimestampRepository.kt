@@ -138,6 +138,27 @@ class HabitTimestampRepository(private val context: Context) {
     }
 
     /**
+     * Synchronously returns a map of `dateStr -> timestamp count` for [habitName].
+     *
+     * This bypasses the coroutine-based [loadAll] so it can be called from a
+     * Compose `remember` block for instant previews (e.g. showing how many past
+     * days would be restored when disabling "1 max"). The file is local internal
+     * storage so the synchronous read is fast.
+     */
+    fun getTimestampCountsForHabitSync(habitName: String): Map<String, Int> {
+        return try {
+            if (!file.exists()) return emptyMap()
+            val text = file.readText()
+            if (text.isBlank()) return emptyMap()
+            val parsed: Map<String, Map<String, List<String>>>? = gson.fromJson(text, mapType)
+            val habitTs = parsed?.get(habitName) ?: return emptyMap()
+            habitTs.mapValues { it.value.size }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+    /**
      * Replace all timestamps for [habitName] on [date] with [timestamps].
      * Used by the timestamp editor dialog.
      */
