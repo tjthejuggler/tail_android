@@ -1104,7 +1104,8 @@ class HabitViewModel(
     /**
      * Multi-entry version of [setTextEntryForDateWithRollForward].
      * Saves all [texts] with unique timestamps (offset by 1 second), rolls forward
-     * the first entry's text, and increments the habit count by [texts].size.
+     * the first entry's text, and increments the habit count by 1 (selecting
+     * multiple options counts as a single action).
      */
     fun setTextEntriesForDateWithRollForward(
         habitName: String,
@@ -1153,7 +1154,8 @@ class HabitViewModel(
                         val dateStr = com.example.tail.data.dateString(date)
                         val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
                         val currentCount = currentEntries[dateStr] ?: 0
-                        val incrementAmount = texts.size
+                        // Selecting multiple options is a single action — always +1.
+                        val incrementAmount = 1
                         val newCount = currentCount + incrementAmount
 
                         // Update the count for the current date
@@ -2962,7 +2964,8 @@ class HabitViewModel(
     /**
      * Saves multiple text entries for [habitName] to its associated log file in a single
      * atomic write. Each entry gets a unique timestamp (offset by 1 second). Then
-     * increments the habit count by the number of entries saved.
+     * increments the habit count by 1 — selecting multiple options is a single action
+     * and should not inflate the habit count.
      *
      * @param habitName The name of the habit
      * @param texts The list of text entries to save
@@ -3018,8 +3021,9 @@ class HabitViewModel(
                     }
                 }
 
-                // Increment the habit count by the number of entries
-                incrementHabit(habitName, texts.size)
+                // Increment the habit count by 1 — selecting multiple options
+                // is a single action and must not count as multiple increments.
+                incrementHabit(habitName, 1)
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save text entries: ${e.message}"
             }

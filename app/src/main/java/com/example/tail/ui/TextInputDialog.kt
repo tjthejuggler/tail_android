@@ -49,6 +49,9 @@ import androidx.compose.ui.window.Dialog
  * - When [showOptions] is true AND [options] is non-empty, also shows a scrollable
  *   list of all unique past entries with **multi-select checkboxes**. The user can
  *   select as many as desired; each selected option is saved as a separate entry.
+ *   A "+" button next to the text field lets the user add a freshly-typed value as
+ *   a new checked option **without closing the dialog**, so they can keep selecting
+ *   more options before confirming.
  * - A time picker lets the user associate a specific time-of-day with the entries
  *   instead of defaulting to noon for past dates.
  * - OK saves all entries (selected options + free text if non-empty) with the
@@ -280,28 +283,61 @@ fun TextInputDialog(
                 }
 
                 // ── Entry input field ───────────────────────────────────────
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    label = { Text("Entry", color = Color(0xFF888888)) },
-                    singleLine = true,
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color(0xFFFFAA00),
-                        unfocusedBorderColor = Color(0xFF555555),
-                        cursorColor = Color(0xFFFFAA00)
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        label = { Text("Entry", color = Color(0xFF888888)) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFFFFAA00),
+                            unfocusedBorderColor = Color(0xFF555555),
+                            cursorColor = Color(0xFFFFAA00)
+                        )
                     )
-                )
+                    // Add button — only when options are shown. Lets the user add
+                    // typed text as a new checked option WITHOUT closing the dialog,
+                    // so they can continue selecting more options.
+                    if (showOptions && options.isNotEmpty()) {
+                        Spacer(modifier = Modifier.padding(horizontal = 4.dp))
+                        Button(
+                            onClick = {
+                                val trimmed = inputText.trim()
+                                if (trimmed.isNotEmpty()) {
+                                    selectedOptions[trimmed] = true
+                                    inputText = ""
+                                }
+                            },
+                            enabled = inputText.trim().isNotEmpty(),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                start = 14.dp, end = 14.dp, top = 8.dp, bottom = 8.dp
+                            ),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF5A3A00),
+                                disabledContainerColor = Color(0xFF2A2A2A)
+                            )
+                        ) {
+                            Text("+", color = Color(0xFFFFAA00), fontSize = 18.sp)
+                        }
+                    }
+                }
 
                 // ── Past options list with multi-select ──────────────────────
                 if (showOptions && options.isNotEmpty()) {
+                    // Merge any newly-typed options (added via the + button) with the
+                    // existing past options so they appear checked in the list.
+                    val allOptions = selectedOptions.keys.filter { it !in options } + options
                     // Filter options by current input text (case-insensitive contains)
                     val filteredOptions = if (inputText.isBlank()) {
-                        options
+                        allOptions
                     } else {
-                        options.filter { it.contains(inputText, ignoreCase = true) }
+                        allOptions.filter { it.contains(inputText, ignoreCase = true) }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
