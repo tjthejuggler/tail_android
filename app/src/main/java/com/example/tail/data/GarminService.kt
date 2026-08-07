@@ -248,6 +248,9 @@ class GarminService {
             distanceMeters = json.optInt("distance_meters").takeIf { it > 0 },
             calories = json.optInt("calories").takeIf { it > 0 },
             activeMinutes = json.optInt("active_minutes").takeIf { it > 0 },
+            runMinutes = json.optInt("run_minutes").takeIf { it > 0 },
+            bikeMinutes = json.optInt("bike_minutes").takeIf { it > 0 },
+            swimMinutes = json.optInt("swim_minutes").takeIf { it > 0 },
             floorsClimbed = json.optInt("floors_climbed").takeIf { it > 0 },
             stressScore = json.optInt("stress_score").takeIf { it > 0 }
         )
@@ -272,6 +275,9 @@ data class GarminMetricsDto(
     val distanceMeters: Int?,
     val calories: Int?,
     val activeMinutes: Int?,
+    val runMinutes: Int?,
+    val bikeMinutes: Int?,
+    val swimMinutes: Int?,
     val floorsClimbed: Int?,
     val stressScore: Int?
 )

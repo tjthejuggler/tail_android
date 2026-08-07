@@ -358,6 +358,110 @@ def fetch_fitness_age(client: Garmin, date_str: str) -> Optional[int]:
 
 
 # --------------------------------------------------------------------------- #
+# Activity-type minutes (run / bike / swim)
+# --------------------------------------------------------------------------- #
+# Garmin's activitylist endpoint returns every recorded activity with an
+# activityType.typeKey (e.g. "running", "road_biking", "lap_swimming") and a
+# duration in seconds. We fetch the whole date range in ONE paginated call and
+# bucket the durations by sport, which is far cheaper than a per-day / per-type
+# alternative and keeps us well within Garmin's rate limits.
+
+
+def _categorise_activity(type_key: str) -> Optional[str]:
+    """Map a Garmin activityType.typeKey to one of our minute buckets.
+
+    Returns "run_minutes", "bike_minutes", "swim_minutes", or None.
+    Substring matching covers the many Garmin sub-types (trail_running,
+    mountain_biking, open_water_swimming, virtual_run, etc.) without needing
+    an exhaustive hard-coded list.
+    """
+    tk = (type_key or "").lower()
+    if "swim" in tk:
+        return "swim_minutes"
+    if "cycl" in tk or "bik" in tk or tk in ("virtual_ride", "bmx", "e_bike"):
+        return "bike_minutes"
+    if "run" in tk:
+        return "run_minutes"
+    return None
+
+
+def _activity_local_date(act: dict) -> Optional[str]:
+    """Extract the YYYY-MM-DD calendar date an activity belongs to.
+
+    The live Connect API returns startTimeLocal as a string
+    "YYYY-MM-DD HH:MM:SS" already in the device's wall-clock timezone, so we
+    can take the date prefix directly. The GDPR-export shape uses a Unix epoch
+    (ms) for the same field; reading that epoch as UTC reproduces the device
+    local date (the same trick garmin_import.py relies on).
+    """
+    sl = act.get("startTimeLocal")
+    if isinstance(sl, str) and len(sl) >= 10:
+        return sl[:10]
+    if isinstance(sl, (int, float)) and sl:
+        ts = sl / 1000 if sl > 2e9 else sl
+        return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).date().isoformat()
+    sg = act.get("startTimeGMT") or act.get("beginTimestamp")
+    if isinstance(sg, str) and len(sg) >= 10:
+        return sg[:10]
+    if isinstance(sg, (int, float)) and sg:
+        ts = sg / 1000 if sg > 2e9 else sg
+        return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).date().isoformat()
+    return None
+
+
+def fetch_activity_minutes(
+    client: Garmin, start_date: str, end_date: str
+) -> Dict[str, Dict[str, int]]:
+    """Fetch run/bike/swim durations for a date range, summed per day.
+
+    Returns {"run_minutes": {date: mins}, "bike_minutes": {...}, "swim_minutes": {...}}.
+    Only days with at least one minute of a given sport are included, so a rest
+    day simply has no entry (the linked habit is left untouched rather than
+    being forced to a value).
+    """
+    seconds: Dict[str, Dict[str, float]] = {
+        "run_minutes": {},
+        "bike_minutes": {},
+        "swim_minutes": {},
+    }
+    try:
+        activities = _safe(client.get_activities_by_date, start_date, end_date)
+    except Exception as e:  # _safe already swallows, but be defensive
+        logger.warning(f"Activity fetch failed for {start_date}..{end_date}: {e}")
+        activities = None
+
+    if isinstance(activities, list):
+        for act in activities:
+            if not isinstance(act, dict):
+                continue
+            duration = act.get("duration")
+            if not duration or duration <= 0:
+                continue
+            date_str = _activity_local_date(act)
+            if not date_str:
+                continue
+            atype = act.get("activityType") or {}
+            cat = _categorise_activity(atype.get("typeKey", ""))
+            if cat is None:
+                continue
+            seconds[cat][date_str] = seconds[cat].get(date_str, 0) + float(duration)
+
+    # Convert accumulated seconds -> whole minutes (floor), drop zero-minute days.
+    result: Dict[str, Dict[str, int]] = {}
+    for cat, days in seconds.items():
+        mins = {d: int(v // 60) for d, v in days.items() if v >= 60}
+        if mins:
+            result[cat] = mins
+    logger.info(
+        f"Activity minutes {start_date}..{end_date}: "
+        f"run={len(result.get('run_minutes', {}))}d, "
+        f"bike={len(result.get('bike_minutes', {}))}d, "
+        f"swim={len(result.get('swim_minutes', {}))}d"
+    )
+    return result
+
+
+# --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
 def fetch_garmin_data(days: int = DEFAULT_DAYS, force: bool = False) -> Dict[str, Any]:
@@ -408,6 +512,16 @@ def fetch_garmin_data(days: int = DEFAULT_DAYS, force: bool = False) -> Dict[str
             if v is not None or k not in existing:
                 existing[k] = v
         cache["data"][date_str] = existing
+
+    # --- Activity-type minutes (run / bike / swim) ---
+    # Fetched once for the whole range (rate-limit friendly) and merged per day.
+    # dates[-1] is the oldest day, dates[0] is today.
+    activity_mins = fetch_activity_minutes(client, dates[-1], dates[0])
+    for cat in ("run_minutes", "bike_minutes", "swim_minutes"):
+        for date_str, mins in activity_mins.get(cat, {}).items():
+            day = cache["data"].get(date_str)
+            if day is not None:
+                day[cat] = mins
 
     cache["metadata"]["last_updated"] = datetime.datetime.now().isoformat()
 

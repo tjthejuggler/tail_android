@@ -32,6 +32,9 @@ enum class GarminType(val label: String, val description: String) {
     DISTANCE_METERS("Distance", "Total distance traveled in meters"),
     CALORIES("Calories", "Total calories burned"),
     ACTIVE_MINUTES("Active Minutes", "Total active minutes"),
+    RUN_MINUTES("Run Minutes", "Running minutes from recorded activities"),
+    BIKE_MINUTES("Bike Minutes", "Cycling minutes from recorded activities"),
+    SWIM_MINUTES("Swim Minutes", "Swimming minutes from recorded activities"),
     FLOORS_CLIMBED("Floors Climbed", "Total floors climbed"),
     MIN_HR("Min HR", "Minimum heart rate in BPM"),
     MAX_HR("Max HR", "Maximum heart rate in BPM"),
@@ -313,6 +316,21 @@ class GarminRepository(private val context: Context) {
 
         metrics.activeMinutes?.let {
             val dayMap = result.getOrPut(GarminType.ACTIVE_MINUTES) { mutableMapOf() }
+            dayMap[date] = it
+        }
+
+        metrics.runMinutes?.let {
+            val dayMap = result.getOrPut(GarminType.RUN_MINUTES) { mutableMapOf() }
+            dayMap[date] = it
+        }
+
+        metrics.bikeMinutes?.let {
+            val dayMap = result.getOrPut(GarminType.BIKE_MINUTES) { mutableMapOf() }
+            dayMap[date] = it
+        }
+
+        metrics.swimMinutes?.let {
+            val dayMap = result.getOrPut(GarminType.SWIM_MINUTES) { mutableMapOf() }
             dayMap[date] = it
         }
 

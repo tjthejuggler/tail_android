@@ -23,6 +23,8 @@ Supported Metrics:
     - DISTANCE_METERS: Total distance traveled
     - CALORIES: Total kilocalories burned
     - ACTIVE_MINUTES: Moderate + vigorous intensity minutes
+    - RUN_MINUTES, BIKE_MINUTES, SWIM_MINUTES: Per-sport activity minutes
+      (from _summarizedActivities.json durations, categorised by activityType.typeKey)
     - FLOORS_CLIMBED: Elevation climbed in meters (from floorsAscendedInMeters)
     - MIN_HR, MAX_HR: Daily heart rate extremes
     - STRESS_LEVEL: From StressDetailSummary files
@@ -58,6 +60,24 @@ except ImportError:
 TARGET_TZ = ZoneInfo("Europe/Dublin")  # Using Dublin as default, can be changed
 
 
+def categorise_activity_type(type_key: str) -> Optional[str]:
+    """Map a Garmin activityType.typeKey to a minute-bucket key, or None.
+
+    Returns "RUN_MINUTES", "BIKE_MINUTES", "SWIM_MINUTES" (matching GarminType
+    enum names) or None. Substring matching covers the many Garmin sub-types
+    (trail_running, mountain_biking, open_water_swimming, virtual_run, etc.).
+    Kept in sync with garmin_proxy/fetch_data.py:_categorise_activity.
+    """
+    tk = (type_key or "").lower()
+    if "swim" in tk:
+        return "SWIM_MINUTES"
+    if "cycl" in tk or "bik" in tk or tk in ("virtual_ride", "bmx", "e_bike"):
+        return "BIKE_MINUTES"
+    if "run" in tk:
+        return "RUN_MINUTES"
+    return None
+
+
 class GarminDataExtractor:
     """Extracts and normalizes Garmin health data from GDPR export ZIP."""
     
@@ -66,6 +86,13 @@ class GarminDataExtractor:
         self.data: Dict[str, Dict[str, Any]] = defaultdict(dict)
         self.hrv_values: Dict[str, int] = {}  # Store for weekly baseline calculation
         self.processed_activity_ids = set()  # Track processed activities to avoid duplicates
+        # Accumulate raw seconds per sport for run/bike/swim minute buckets.
+        # Finalised to whole minutes in finalize_activity_minutes().
+        self.activity_seconds: Dict[str, Dict[str, float]] = {
+            "RUN_MINUTES": {},
+            "BIKE_MINUTES": {},
+            "SWIM_MINUTES": {},
+        }
     
     def extract_local_date(self, timestamp_raw: Any) -> Optional[str]:
         """Convert Garmin timestamp (ISO or Epoch) to local YYYY-MM-DD format."""
@@ -392,6 +419,17 @@ class GarminDataExtractor:
                            entry.get("vo2_max"))
                 if vo2_value and vo2_value > 0:
                     self.data["VO2_MAX"][date] = int(vo2_value)
+
+                # Categorise activity into run/bike/swim and accumulate duration
+                # (seconds). Converted to whole minutes in finalize_activity_minutes().
+                duration_s = entry.get("duration") or entry.get("durationInSeconds")
+                if duration_s and duration_s > 0:
+                    atype = entry.get("activityType") or {}
+                    cat = categorise_activity_type(atype.get("typeKey", ""))
+                    if cat:
+                        self.activity_seconds[cat][date] = (
+                            self.activity_seconds[cat].get(date, 0) + float(duration_s)
+                        )
         except Exception as e:
             print(f"Warning: Failed to process activity data from {file_name}: {e}")
     
@@ -525,6 +563,21 @@ class GarminDataExtractor:
         
         # Compute HRV weekly baseline
         self.compute_hrv_weekly_baseline()
+
+        # Convert accumulated activity seconds into whole-minute daily buckets
+        self.finalize_activity_minutes()
+
+    def finalize_activity_minutes(self):
+        """Convert accumulated activity seconds into whole-minute daily buckets.
+
+        Only days with at least one minute of a sport are emitted, so a rest day
+        has no entry (the linked habit is left untouched rather than zeroed).
+        """
+        for cat, days in self.activity_seconds.items():
+            for date_str, secs in days.items():
+                mins = int(secs // 60)
+                if mins > 0:
+                    self.data[cat][date_str] = mins
     
     def get_output(self) -> Dict[str, Dict[str, int]]:
         """Return the extracted data in the app's cache format."""

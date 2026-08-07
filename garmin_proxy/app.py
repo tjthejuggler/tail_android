@@ -89,6 +89,9 @@ def get_health_metrics(date: str = None, api_key: str = Security(api_key_header)
         "distance_meters": 5000,
         "calories": 2500,
         "active_minutes": 45,
+        "run_minutes": 30,
+        "bike_minutes": 0,
+        "swim_minutes": 0,
         "floors_climbed": 10
     }
     """
