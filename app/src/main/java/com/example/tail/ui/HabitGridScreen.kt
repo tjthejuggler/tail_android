@@ -962,8 +962,8 @@ fun HabitGridScreen(
     }
     } // end Box
 
-    // Load timestamp count when selected edit habit changes
-    LaunchedEffect(selectedEditIndex, editMode, habits) {
+    // Load timestamp count when selected edit habit changes (or the viewed day changes)
+    LaunchedEffect(selectedEditIndex, editMode, habits, selectedDate) {
         if (editMode && selectedEditIndex >= 0 && selectedEditIndex < habits.size) {
             val name = habits[selectedEditIndex].name
             if (name.isNotEmpty()) {
@@ -1006,10 +1006,12 @@ fun HabitGridScreen(
                     viewModel.timestampRepo.addTimestamp(habitName, selectedDate, time)
                     timestampEditorList = viewModel.timestampRepo.getTimestampsForDay(habitName, selectedDate)
                     selectedHabitTimestampCount = timestampEditorList.size
-                    // Increment the habit count to match
+                    // Auto-increase the habit count so it is never lower than the
+                    // number of timestamps. If the count already meets or exceeds
+                    // the timestamp total it is left untouched.
                     val currentHabit = habits.find { it.name == habitName }
-                    if (currentHabit != null) {
-                        viewModel.setHabitCount(habitName, currentHabit.rawTodayCount + 1)
+                    if (currentHabit != null && currentHabit.rawTodayCount < timestampEditorList.size) {
+                        viewModel.setHabitCount(habitName, timestampEditorList.size)
                     }
                 }
             },
@@ -2113,15 +2115,23 @@ private fun EditModeControlBar(
                         }
                     }
                 }
-                // Timestamps button — shown when the habit has timestamps for today
-                if (selectedHabitName != null && selectedHabitTimestampCount > 0) {
+                // Timestamps button — always available so timestamps can be
+                // added/edited for any habit on any day (past or current),
+                // even when none exist yet.
+                if (selectedHabitName != null) {
                     Button(
                         onClick = { onShowTimestamps(selectedHabitName) },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A3A)),
                         modifier = Modifier.height(28.dp),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                     ) {
-                        Text("🕐 Timestamps ($selectedHabitTimestampCount)", fontSize = 10.sp, color = Color(0xFFBBBBFF))
+                        Text(
+                            text = if (selectedHabitTimestampCount > 0)
+                                "🕐 Timestamps ($selectedHabitTimestampCount)"
+                            else "🕐 Add Timestamps",
+                            fontSize = 10.sp,
+                            color = Color(0xFFBBBBFF)
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.height(6.dp))
