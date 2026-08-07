@@ -37,7 +37,9 @@ prompted to enter the emailed/app code in the terminal.
 import os
 import sys
 import time
+import shutil
 import logging
+import subprocess
 from pathlib import Path
 
 from garminconnect import Garmin, GarminConnectTooManyRequestsError
@@ -59,6 +61,83 @@ TOKEN_STORE = os.getenv("GARMINTOKENS", os.path.expanduser("~/.garminconnect"))
 RATE_LIMIT_BACKOFF_SECONDS = int(os.getenv("GARMIN_AUTH_BACKOFF", "300"))  # 5 min
 MAX_RATE_LIMIT_RETRIES = 1
 
+# The legacy garmin_fetcher.py logs in on every metric fetch. If it (or its
+# systemd wrapper garmin-fetcher.service) is still running, it will keep the IP
+# rate-limited and this auth bridge will never succeed. Detect and block.
+ROGUE_PROCESS_PATTERNS = ["garmin_fetcher.py"]
+ROGUE_SERVICES = ["garmin-fetcher.service"]
+
+
+def _check_for_rogue_processes() -> list[str]:
+    """
+    Detect legacy fetcher processes/services that login on every run.
+
+    Returns a list of human-readable warnings. If the list is non-empty, the
+    caller should abort — logging in while a rogue process hammers Garmin will
+    only extend the IP rate-limit block.
+    """
+    warnings: list[str] = []
+
+    # Check for stray Python processes running the old script
+    try:
+        result = subprocess.run(
+            ["pgrep", "-af", "|".join(ROGUE_PROCESS_PATTERNS)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                if "pgrep" not in line and line.strip():
+                    warnings.append(f"Rogue process detected: {line.strip()}")
+    except Exception:
+        pass  # pgrep not available or other issue — non-fatal
+
+    # Check for the old systemd service
+    for svc in ROGUE_SERVICES:
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", svc],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip() == "active":
+                warnings.append(
+                    f"Rogue systemd service '{svc}' is still active. "
+                    f"Stop it with: systemctl --user stop {svc}"
+                )
+        except Exception:
+            pass
+
+    return warnings
+
+
+def _backup_token_store() -> Path | None:
+    """Copy the current token store to a timestamped backup. Returns the path."""
+    token_path = Path(TOKEN_STORE)
+    # The garth fork stores tokens as garmin_tokens.json inside the dir.
+    token_file = token_path / "garmin_tokens.json"
+    if not token_file.exists():
+        return None
+    backup = token_path / f"garmin_tokens.json.backup.{int(time.time())}"
+    try:
+        shutil.copy2(token_file, backup)
+        logger.debug(f"Token store backed up to {backup}")
+        return backup
+    except Exception as e:
+        logger.warning(f"Could not back up token store: {e}")
+        return None
+
+
+def _restore_token_store(backup: Path | None) -> None:
+    """Restore the token store from a backup (used when login fails)."""
+    if backup is None or not backup.exists():
+        return
+    token_path = Path(TOKEN_STORE)
+    token_file = token_path / "garmin_tokens.json"
+    try:
+        shutil.copy2(backup, token_file)
+        logger.info(f"Token store restored from backup (login did not succeed).")
+    except Exception as e:
+        logger.warning(f"Could not restore token store from backup: {e}")
+
 
 def _mfa_prompt() -> str:
     """Prompt the user for an MFA/2FA code when Garmin requires one."""
@@ -71,12 +150,25 @@ def _do_login(email: str, password: str) -> None:
 
     Passing prompt_mfa lets the fork handle 2FA inline and still auto-dump the
     tokens to TOKEN_STORE on success. Raises on failure.
+
+    Safety: the token store is backed up before login and restored if login
+    fails, so a 429/403 during re-auth never destroys the last-known-good
+    tokens.
     """
     Path(TOKEN_STORE).mkdir(parents=True, exist_ok=True)
 
+    # Back up existing tokens so a failed login doesn't leave us with nothing.
+    backup = _backup_token_store()
+
     client = Garmin(email=email, password=password, prompt_mfa=_mfa_prompt)
-    # tokenstore path -> load-if-present, else credential login + auto-dump.
-    client.login(TOKEN_STORE)
+    try:
+        # tokenstore path -> load-if-present, else credential login + auto-dump.
+        client.login(TOKEN_STORE)
+    except Exception:
+        # Login failed (429, 403, network, etc.). Restore the backup so the
+        # next attempt starts from the same state rather than empty/corrupted.
+        _restore_token_store(backup)
+        raise
 
     full_name = client.get_full_name()
     logger.info(f"Authenticated as: {full_name}")
@@ -91,6 +183,26 @@ def generate_garmin_session(email: str, password: str) -> bool:
     with actionable guidance.
     """
     logger.info("Ensuring a valid Garmin session (token-based, single login)...")
+
+    # Pre-flight: refuse to proceed if the legacy per-run-login fetcher is
+    # still active — it will keep the IP blocked and this auth will never work.
+    rogue_warnings = _check_for_rogue_processes()
+    if rogue_warnings:
+        logger.error("=" * 60)
+        logger.error("ABORTING: A legacy Garmin fetcher process/service is still")
+        logger.error("running. It logs in on every metric fetch, which is what")
+        logger.error("causes the 429 IP rate-limit that blocks this auth bridge.")
+        logger.error("=" * 60)
+        for w in rogue_warnings:
+            logger.error(f"  • {w}")
+        logger.error("")
+        logger.error("Fix: stop the rogue process/service first, then re-run this")
+        logger.error("script. Commands:")
+        logger.error("  systemctl --user stop garmin-fetcher.service")
+        logger.error("  systemctl --user disable garmin-fetcher.service")
+        logger.error("  pkill -f garmin_fetcher.py")
+        logger.error("=" * 60)
+        raise SystemExit(4)  # distinct code: rogue process detected
 
     attempt = 0
     while True:

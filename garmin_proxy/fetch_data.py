@@ -28,8 +28,9 @@ import time
 import logging
 import datetime
 import argparse
+import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from garminconnect import (
     Garmin,
@@ -63,6 +64,55 @@ INTER_REQUEST_DELAY = 1.0
 
 class TokenExpiredError(Exception):
     """Raised when the saved OAuth tokens are missing or no longer valid."""
+
+
+# --------------------------------------------------------------------------- #
+# Rogue-process detection
+# --------------------------------------------------------------------------- #
+# The legacy garmin_fetcher.py logs in on every metric fetch. If it is still
+# running (directly or via garmin-fetcher.service), it will keep the IP
+# rate-limited so that even token-based reads start failing with 429.
+ROGUE_PROCESS_PATTERNS = ["garmin_fetcher.py"]
+ROGUE_SERVICES = ["garmin-fetcher.service"]
+
+
+def _check_for_rogue_processes() -> List[str]:
+    """
+    Detect legacy fetcher processes/services that login on every run.
+
+    Returns a list of human-readable warning strings. Non-fatal: the caller
+    logs them as warnings but still attempts the fetch (token reads may still
+    work even if the IP is partially limited).
+    """
+    warnings: List[str] = []
+
+    try:
+        result = subprocess.run(
+            ["pgrep", "-af", "|".join(ROGUE_PROCESS_PATTERNS)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                if "pgrep" not in line and line.strip():
+                    warnings.append(f"Rogue process: {line.strip()}")
+    except Exception:
+        pass
+
+    for svc in ROGUE_SERVICES:
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", svc],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip() == "active":
+                warnings.append(
+                    f"Rogue service '{svc}' is active. "
+                    f"Stop it: systemctl --user stop {svc}"
+                )
+        except Exception:
+            pass
+
+    return warnings
 
 
 # --------------------------------------------------------------------------- #
@@ -323,6 +373,19 @@ def fetch_garmin_data(days: int = DEFAULT_DAYS, force: bool = False) -> Dict[str
     if not force and not can_fetch_now():
         logger.info("Skipping fetch due to rate limiting; returning existing cache.")
         return load_cache()
+
+    # Warn (non-fatal) if the legacy per-run-login fetcher is still active.
+    rogue_warnings = _check_for_rogue_processes()
+    if rogue_warnings:
+        logger.warning("=" * 60)
+        logger.warning("WARNING: A legacy Garmin fetcher is still running!")
+        logger.warning("It logs in on every metric fetch, which causes 429 IP")
+        logger.warning("rate-limits that can block even token-based reads.")
+        logger.warning("=" * 60)
+        for w in rogue_warnings:
+            logger.warning(f"  • {w}")
+        logger.warning("Stop it, then wait ~30-60 min for the IP block to clear.")
+        logger.warning("=" * 60)
 
     client = get_client()
 

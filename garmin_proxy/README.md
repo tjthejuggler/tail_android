@@ -2,7 +2,7 @@
 
 A secure Python proxy that bridges Garmin Connect data to the Tail Android habit tracker app. Authentication uses the `garminconnect` / `garth` library with **persisted OAuth tokens** so the system logs in exactly once and reuses the tokens for every subsequent fetch.
 
-**Last Updated:** 2026-06-22
+**Last Updated:** 2026-08-05
 
 ## Architecture
 
@@ -360,6 +360,39 @@ still active: wait ~30-60 minutes (or switch network / VPN) and run it again.
 Once tokens are saved, [`fetch_data.py`](fetch_data.py) performs **zero** logins,
 so it is never affected by this.
 
+### CRITICAL: Legacy `garmin_fetcher.py` / `garmin-fetcher.service` conflict
+
+If you previously used the old `garmin_fetcher.py` script (the one at the project
+root, not `garmin_proxy/fetch_data.py`), its systemd service
+(`garmin-fetcher.service`) may still be running. **This is the #1 cause of
+persistent 429 rate-limiting** — the old script logs in on every single metric
+fetch (dozens of logins per run), which is exactly what Garmin rate-limits.
+
+Both [`auth_bridge.py`](auth_bridge.py) and [`fetch_data.py`](fetch_data.py) now
+include automatic detection: if the legacy process or service is still active,
+`auth_bridge.py` will **refuse to proceed** (exit code 4) and `fetch_data.py`
+will print a prominent warning.
+
+**To check and clean up:**
+
+```bash
+# Check if the old service is running
+systemctl --user status garmin-fetcher.service
+
+# Stop, disable, and remove it permanently
+systemctl --user stop garmin-fetcher.service
+systemctl --user disable garmin-fetcher.service
+mv ~/.config/systemd/user/garmin-fetcher.service \
+   ~/.config/systemd/user/garmin-fetcher.service.DISABLED
+systemctl --user daemon-reload
+
+# Kill any stray garmin_fetcher.py processes
+pkill -f garmin_fetcher.py
+```
+
+After cleanup, **wait 30-60 minutes** for the IP rate-limit block to expire,
+then re-run `auth_bridge.py`.
+
 ### "Rate limit active. Next fetch allowed in X seconds."
 
 Wait for the rate limit to expire (minimum 15 minutes between fetches).
@@ -384,6 +417,12 @@ The data fetcher never logs in on its own. When the saved tokens expire, re-run 
 ```
 
 No display server, Playwright, or `xvfb` is required - authentication is a plain HTTP login.
+
+**Token safety:** [`auth_bridge.py`](auth_bridge.py) now backs up the existing
+token store to `~/.garminconnect/garmin_tokens.json.backup.*` before attempting
+any login. If the login fails (e.g. 429 rate-limit), the backup is automatically
+restored so you never lose your last-known-good tokens. You can safely re-run
+`auth_bridge.py` multiple times without risk of destroying the token store.
 
 ## File Structure
 
