@@ -562,6 +562,79 @@ class HabitsRepository {
     ): HabitsDatabase = incrementHabitForDate(uri, context, habitName, amount, LocalDate.now())
 
     /**
+     * **Protocol v2** — SETS (replaces) the stored value for a habit on [date]
+     * to [value], then saves. Unlike [incrementHabitForDate] which adds, this
+     * method overwrites whatever value was previously stored for that date.
+     *
+     * This makes the operation **idempotent**: setting the same date to the same
+     * value multiple times produces the same result. Used by the retroactive
+     * backfill broadcast ([HabitValueSetReceiver]) to replace old "1" values
+     * with actual minute totals.
+     *
+     * SAFETY: If the load fails for any reason, this method throws
+     * [HabitsLoadFailedException] WITHOUT writing — so a transient SAF error
+     * never wipes out the file.
+     */
+    suspend fun setHabitValueForDate(
+        uri: Uri,
+        context: Context,
+        habitName: String,
+        value: Int,
+        date: LocalDate
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "setHabitValueForDate: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+        val dateStr = dateString(date)
+
+        val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
+        habitEntries[dateStr] = value  // SET, not add
+
+        db[habitName] = habitEntries.toSortedMap()
+
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
+     * **Protocol v2** — SETS (replaces) the stored values for a habit across
+     * multiple dates in a **single** read-modify-write cycle.
+     *
+     * This is the batch version of [setHabitValueForDate], designed for the
+     * retroactive backfill where WAGS sends many dates at once. Using a single
+     * load+save avoids the lost-update race condition that would occur if two
+     * concurrent broadcasts (e.g. resonance + meditation) interleaved their
+     * per-date read-modify-write cycles.
+     *
+     * SAFETY: If the load fails, throws [HabitsLoadFailedException] WITHOUT writing.
+     */
+    suspend fun setHabitValuesForDates(
+        uri: Uri,
+        context: Context,
+        habitName: String,
+        dateValues: Map<LocalDate, Int>
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "setHabitValuesForDates: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+
+        val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
+        for ((date, value) in dateValues) {
+            habitEntries[dateString(date)] = value  // SET, not add
+        }
+        db[habitName] = habitEntries.toSortedMap()
+
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
      * Adds a new habit to the JSON database file.
      * Reads the file, adds the habit with today's date = 0 if not already present, then saves.
      *

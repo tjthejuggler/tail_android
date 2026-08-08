@@ -745,4 +745,68 @@ MANIFEST:     <uses-permission android:name="com.example.tail.permission.TAIL_IN
 
 ---
 
-*This guide covers the complete IPC surface of Tail as of 2026-03-14. The two endpoints (ContentProvider + BroadcastReceiver) are the only supported integration points. Direct file access to `habitsdb_phone.txt` is not recommended as it bypasses Tail's atomic read-modify-write logic and risks data corruption.*
+## Part 10 — Protocol v2: Minute-Based Reporting & Retroactive Backfill
+
+**Added:** 2026-08-08
+
+Protocol v2 extends the existing IPC surface with two backward-compatible additions. Both are optional — if the sender omits the new extras, Tail falls back to the original increment-by-1 behaviour.
+
+### v2 Change 1: `EXTRA_MINUTES` on `ACTION_INCREMENT_HABIT`
+
+When an external app wants to increment by more than 1 (e.g. reporting the number of minutes a session lasted), it adds an optional `EXTRA_MINUTES` Int extra to the existing `ACTION_INCREMENT_HABIT` broadcast:
+
+```kotlin
+val intent = Intent("com.example.tail.ACTION_INCREMENT_HABIT").apply {
+    setPackage("com.example.tail")
+    putExtra("EXTRA_HABIT_ID", habitName)
+    putExtra("EXTRA_MINUTES", minutes)   // NEW: Int, the amount to add
+}
+context.sendBroadcast(intent, "com.example.tail.permission.TAIL_INTEGRATION")
+```
+
+Tail reads `EXTRA_MINUTES` and uses it as the increment amount. If absent, the default of 1 is used. The "max 1" cap is **bypassed** when `EXTRA_MINUTES` is present, since minute-based habits are cumulative durations, not binary "did it" counts.
+
+| Extra | Type | Description |
+|-------|------|-------------|
+| `EXTRA_MINUTES` | `Int` | Number of minutes to add. Must be ≥ 1. |
+
+### v2 Change 2: `ACTION_SET_HABIT_VALUES` (Retroactive Backfill)
+
+A new broadcast action that **SETS** (replaces) the stored value for multiple dates at once. This is idempotent — running it multiple times with the same data produces the same result.
+
+```kotlin
+val intent = Intent("com.example.tail.ACTION_SET_HABIT_VALUES").apply {
+    setPackage("com.example.tail")
+    putExtra("EXTRA_HABIT_ID", habitName)
+    putExtra("EXTRA_VALUES_JSON", """{"2026-01-15":10,"2026-01-16":5}""")
+}
+context.sendBroadcast(intent, "com.example.tail.permission.TAIL_INTEGRATION")
+```
+
+| Field | Value |
+|-------|-------|
+| **Action** | `com.example.tail.ACTION_SET_HABIT_VALUES` |
+| `EXTRA_HABIT_ID` | Habit name (String) |
+| `EXTRA_VALUES_JSON` | JSON object: `{"yyyy-MM-dd": <Int>, ...}` |
+
+Tail replaces the stored value for each date key with the provided integer. The Tasker stats file is also updated if today's date is among those set.
+
+### v2 Quick Reference (additions)
+
+```
+INCREMENT WITH MINUTES:
+              Action:  com.example.tail.ACTION_INCREMENT_HABIT
+              Extras:  EXTRA_HABIT_ID = "Habit Name" (String)
+                       EXTRA_MINUTES  = 10            (Int, optional)
+              Note:    EXTRA_MINUTES bypasses the "max 1" cap
+
+SET VALUES FOR DATES:
+              Action:  com.example.tail.ACTION_SET_HABIT_VALUES
+              Extras:  EXTRA_HABIT_ID    = "Habit Name" (String)
+                       EXTRA_VALUES_JSON = '{"2026-01-15":10}' (JSON String)
+              Note:    Replaces (not adds) the value for each date
+```
+
+---
+
+*This guide covers the complete IPC surface of Tail as of 2026-08-08 (Protocol v2). The endpoints (ContentProvider + BroadcastReceiver + SetValuesReceiver) are the only supported integration points. Direct file access to `habitsdb_phone.txt` is not recommended as it bypasses Tail's atomic read-modify-write logic and risks data corruption.*

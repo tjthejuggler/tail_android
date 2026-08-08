@@ -142,6 +142,21 @@
         </receiver>
 
         <!--
+            BroadcastReceiver (Protocol v2): listens for ACTION_SET_HABIT_VALUES
+            from same-keystore apps. Used by WAGS for the retroactive backfill of
+            past session minutes. SETS (replaces) the stored value for each date
+            in the JSON payload, making the operation idempotent.
+        -->
+        <receiver
+            android:name=".ipc.HabitValueSetReceiver"
+            android:exported="true"
+            android:permission="com.example.tail.permission.TAIL_INTEGRATION">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_SET_HABIT_VALUES" />
+            </intent-filter>
+        </receiver>
+
+        <!--
             VoiceHabitReceiver: listens for ACTION_VOICE_HABIT from Samsung Routines
             (or any external automation). Exported without permission restriction
             because Samsung Routines is not signed with our keystore.

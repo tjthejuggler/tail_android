@@ -39,6 +39,16 @@ class HabitIncrementReceiver : BroadcastReceiver() {
         const val ACTION_INCREMENT_HABIT = "com.example.tail.ACTION_INCREMENT_HABIT"
         /** String extra: the habit name to increment (preferred). */
         const val EXTRA_HABIT_ID = "EXTRA_HABIT_ID"
+
+        /**
+         * Protocol v2 — Optional Int extra carrying the number of minutes to
+         * add instead of the default increment of 1.
+         *
+         * Sent by WAGS for resonance-breathing and meditation sessions so Tail
+         * records the actual session duration rather than a simple "did it" = 1.
+         * If absent (or if the sending app is old), the receiver falls back to 1.
+         */
+        const val EXTRA_MINUTES = "EXTRA_MINUTES"
     }
 
     // Use a SupervisorJob scope so one failed coroutine doesn't cancel the others.
@@ -93,9 +103,19 @@ class HabitIncrementReceiver : BroadcastReceiver() {
 
                 val uri = Uri.parse(fileUriString)
 
+                // Protocol v2: resolve the increment amount from EXTRA_MINUTES.
+                // If absent (old sender or count-based slot), default to 1.
+                val amount = if (intent.hasExtra(EXTRA_MINUTES)) {
+                    intent.getIntExtra(EXTRA_MINUTES, 1).coerceAtLeast(1)
+                } else {
+                    1
+                }
+
                 // Respect the "max 1" cap: if the habit is capped at 1 and today's
                 // count is already >= 1, skip the increment entirely.
-                if (habitName in settings.maxOneHabits) {
+                // Minute-based increments (EXTRA_MINUTES present) bypass this cap
+                // because they are cumulative durations, not binary "did it" counts.
+                if (amount == 1 && habitName in settings.maxOneHabits) {
                     val db = habitsRepo.loadDatabase(uri, appContext)
                     val todayStr = java.time.LocalDate.now().toString()
                     val currentCount = db[habitName]?.get(todayStr) ?: 0
@@ -105,9 +125,9 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                     }
                 }
 
-                habitsRepo.incrementHabit(uri, appContext, habitName, 1)
+                habitsRepo.incrementHabit(uri, appContext, habitName, amount)
                 HabitIncrementBus.emit(habitName)
-                Log.i(TAG, "Incremented habit '$habitName' via IPC broadcast")
+                Log.i(TAG, "Incremented habit '$habitName' by $amount via IPC broadcast")
 
                 // Record timestamp for IPC-triggered increment
                 try {
