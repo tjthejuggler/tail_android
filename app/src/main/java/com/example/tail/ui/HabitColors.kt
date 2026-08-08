@@ -21,15 +21,25 @@ val BorderPink   = Color(0xFFDD44AA)  // vivid magenta-pink
 val BorderYellow = Color(0xFFDDCC00)  // vivid yellow
 val BorderGlass  = Color(0xFFD0D0E0)  // same as Glass — final tier
 
-/** Background + optional color-tier border for a habit button. */
+/** Background + optional color-tier border(s) for a habit button.
+ *
+ *  Phase 1 (count 0–5):  solid [background], no border.
+ *  Phase 2 (count 6):    Glass [background], no border.
+ *  Phase 3 (count 7–12): Glass [background] + single [borderColor].
+ *  Phase 4 (count 13+):  Glass [background] + double border
+ *                        ([outerBorderColor] | thin black | [innerBorderColor]).
+ */
 data class HabitStyle(
     val background: Color,
-    val borderColor: Color? = null   // null = no color-tier border
+    val borderColor: Color? = null,         // single border (Phase 3)
+    val outerBorderColor: Color? = null,    // double-border outer ring (Phase 4)
+    val innerBorderColor: Color? = null     // double-border inner ring (Phase 4)
 )
 
-// Ordered list used for the second-pass border cycle (indices 0–6)
-private val borderColors = listOf(
-    BorderRed, BorderOrange, BorderGreen, BorderBlue, BorderPink, BorderYellow, BorderGlass
+// 6 vivid border colours used for both the single-border and double-border cycles.
+// (BorderGlass is intentionally excluded — an invisible white border is pointless.)
+private val vividBorderColors = listOf(
+    BorderRed, BorderOrange, BorderGreen, BorderBlue, BorderPink, BorderYellow
 )
 
 /**
@@ -42,12 +52,22 @@ fun getHabitColor(habitName: String, count: Int): Color {
 }
 
 /**
- * Returns the full [HabitStyle] (background + optional border) for a habit count.
+ * Returns the full [HabitStyle] (background + optional border(s)) for a habit count.
  *
- * Tiers 0–5: solid color background, no color-tier border.
- * Tier 6:    Glass (near-white) background, no border.
- * Tiers 7–12: Glass background + border cycling through Red→Orange→Green→Blue→Pink→Yellow.
- * Tier 13+:  Glass background + Glass border (stays here).
+ *  Phase 1 — count 0–5:   Solid colour background (Red→Yellow), no border.
+ *  Phase 2 — count 6:     Glass (near-white) background, no border.
+ *  Phase 3 — count 7–12:  Glass background + single border cycling through the
+ *                         6 vivid colours (Red→Orange→Green→Blue→Pink→Yellow).
+ *  Phase 4 — count 13–48: Glass background + **double border**. The outer ring
+ *                         cycles slowly (every 6 counts) and the inner ring cycles
+ *                         quickly (every count), giving 6 × 6 = 36 distinct
+ *                         combinations. Each outer cycle starts with a "double-X"
+ *                         (outer and inner are the same colour, separated by a thin
+ *                         black line) then the inner progresses through the remaining
+ *                         colours. Count 49+ caps at the last combination
+ *                         (Yellow outer + Yellow inner).
+ *
+ *  Total distinct tiers: 49 (0–48).
  */
 fun getHabitStyle(count: Int): HabitStyle {
     return when {
@@ -62,10 +82,22 @@ fun getHabitStyle(count: Int): HabitStyle {
             }
         )
         count == 6 -> HabitStyle(background = ColorGlass)
+        count <= 12 -> {
+            // Phase 3: Glass bg + single border cycling through 6 vivid colours
+            val borderIndex = count - 7
+            HabitStyle(background = ColorGlass, borderColor = vividBorderColors[borderIndex])
+        }
         else -> {
-            // Second pass: Glass bg + border cycling through the 7 border colors
-            val borderIndex = (count - 7).coerceIn(0, borderColors.lastIndex)
-            HabitStyle(background = ColorGlass, borderColor = borderColors[borderIndex])
+            // Phase 4: Glass bg + double border.
+            // 6 outer × 6 inner = 36 combinations (count 13–48), capped at 48.
+            val doubleIndex = (count - 13).coerceAtMost(35)
+            val outer = vividBorderColors[doubleIndex / 6]
+            val inner = vividBorderColors[doubleIndex % 6]
+            HabitStyle(
+                background = ColorGlass,
+                outerBorderColor = outer,
+                innerBorderColor = inner
+            )
         }
     }
 }
