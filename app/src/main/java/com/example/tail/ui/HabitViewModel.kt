@@ -431,15 +431,31 @@ class HabitViewModel(
         _errorMessage.value = null
         try {
             runAutoRestoreIfNeeded(uri)
+
+            // ── Roll forward MUST run BEFORE ensureDaysExist ──────────────
+            // ensureDaysExist fills every missing date (including today) with
+            // value 0. If it runs first, performRollForwardIfNeeded sees that
+            // today's entry already exists and silently skips the roll forward.
+            // By loading the raw DB first and running roll forward before any
+            // placeholder 0s are created, yesterday's values are correctly
+            // copied to today.
+            val loadResult = habitsRepo.loadDatabaseResult(uri, context)
+            if (loadResult !is com.example.tail.data.HabitsLoadResult.Success) {
+                throw com.example.tail.data.HabitsLoadFailedException(loadResult)
+            }
+            cachedPhoneDb = loadResult.db
+
+            // Perform roll forward BEFORE ensureDaysExist creates today=0
+            performRollForwardIfNeeded()
+
+            // Now fill in any remaining missing days. Today already has the
+            // rolled-forward value, so ensureDaysExist won't overwrite it.
             val db = habitsRepo.ensureDaysExist(uri, context)
             cachedPhoneDb = db
 
             // Gate opens ONLY here, after a genuinely successful load. Background
             // sync writers check this before persisting cachedPhoneDb.
             dbLoaded = true
-            
-            // Perform roll forward after DB is loaded (fixes race condition)
-            performRollForwardIfNeeded()
             
             rebuildHabitList()
         } catch (e: Exception) {
@@ -523,8 +539,12 @@ class HabitViewModel(
             val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
             val yesterdayValue = habitEntries[yesterdayStr]
             
-            // Only set today's value if yesterday had a value and today doesn't already have one
-            if (yesterdayValue != null && !habitEntries.containsKey(todayStr)) {
+            // Set today's value if yesterday had a non-zero value and today is
+            // either missing entirely or still at the 0 placeholder created by
+            // ensureDaysExist (which may have been run by a widget or background
+            // service before the main app opened).
+            if (yesterdayValue != null && yesterdayValue != 0 &&
+                (habitEntries[todayStr] == null || habitEntries[todayStr] == 0)) {
                 habitEntries[todayStr] = yesterdayValue
                 updatedDb[habitName] = habitEntries
                 dbChanged = true
