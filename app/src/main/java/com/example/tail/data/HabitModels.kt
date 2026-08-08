@@ -492,7 +492,21 @@ data class AppSettings(
      * Maps habit name → set of date strings (YYYY-MM-DD) that were explicitly set by the user.
      * This distinguishes manually set dates from dates that were automatically filled by roll forward.
      */
-    val rollForwardManualDates: Map<String, Set<String>> = emptyMap()
+    val rollForwardManualDates: Map<String, Set<String>> = emptyMap(),
+
+    // ── Meal Habit Engine settings ───────────────────────────────────────
+    /** Whether the Meal habit engine (vision pipeline) is globally enabled. */
+    val mealEnabled: Boolean = false,
+    /** Base URL for the multimodal LLM API (e.g. "https://api.openai.com/v1"). */
+    val mealBaseUrl: String = "",
+    /** API key (Bearer token) for the LLM endpoint. */
+    val mealApiKey: String = "",
+    /** Model name to use for vision inference (e.g. "gpt-4o"). */
+    val mealModel: String = "",
+    /** User-defined custom system prompt / dietary rules merged into every vision call. */
+    val mealSystemPrompt: String = "",
+    /** Habits that have the "Meal" type enabled. */
+    val mealHabits: Set<String> = emptySet()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

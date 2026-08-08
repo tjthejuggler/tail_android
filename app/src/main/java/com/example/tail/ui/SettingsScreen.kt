@@ -387,6 +387,14 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // ── Meal Habit Engine ─────────────────────────────────────────────
+            item {
+                MealSettingsSection(viewModel = viewModel, settings = settings)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // ── Advice Banner ─────────────────────────────────────────────────
             item {
                 val adviceCount = adviceState.items.size

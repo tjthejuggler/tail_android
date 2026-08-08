@@ -120,6 +120,14 @@ private val KEY_ROLL_FORWARD_MANUAL_DATES = stringPreferencesKey("roll_forward_m
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
 
+// ── Meal Habit Engine keys ────────────────────────────────────────────────
+private val KEY_MEAL_ENABLED = booleanPreferencesKey("meal_enabled")
+private val KEY_MEAL_BASE_URL = stringPreferencesKey("meal_base_url")
+private val KEY_MEAL_API_KEY = stringPreferencesKey("meal_api_key")
+private val KEY_MEAL_MODEL = stringPreferencesKey("meal_model")
+private val KEY_MEAL_SYSTEM_PROMPT = stringPreferencesKey("meal_system_prompt")
+private val KEY_MEAL_HABITS = stringSetPreferencesKey("meal_habits")
+
 /**
  * One-time rename mapping for legacy "Launch … Widget" habit names.
  * Applied to all DataStore keys that store habit names (sets, lists, map keys, screen lists).
@@ -577,7 +585,13 @@ class SettingsRepository(private val context: Context) {
             graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw),
             habitNotes = decodeHabitNotesMap(habitNotesRaw),
             rollForwardHabits = prefs[KEY_ROLL_FORWARD_HABITS] ?: emptySet(),
-            rollForwardManualDates = decodeRollForwardManualDates(prefs[KEY_ROLL_FORWARD_MANUAL_DATES] ?: "")
+            rollForwardManualDates = decodeRollForwardManualDates(prefs[KEY_ROLL_FORWARD_MANUAL_DATES] ?: ""),
+            mealEnabled = prefs[KEY_MEAL_ENABLED] ?: false,
+            mealBaseUrl = prefs[KEY_MEAL_BASE_URL] ?: "",
+            mealApiKey = prefs[KEY_MEAL_API_KEY] ?: "",
+            mealModel = prefs[KEY_MEAL_MODEL] ?: "",
+            mealSystemPrompt = prefs[KEY_MEAL_SYSTEM_PROMPT] ?: "",
+            mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet()
         )
     }
 
@@ -998,5 +1012,29 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[KEY_ROLL_FORWARD_MANUAL_DATES] = encodeRollForwardManualDates(dates)
         }
+    }
+
+    // ── Meal Habit Engine ────────────────────────────────────────────────
+
+    /** Saves all meal engine settings at once (called from Settings screen). */
+    suspend fun saveMealSettings(
+        enabled: Boolean,
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        systemPrompt: String
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_MEAL_ENABLED] = enabled
+            prefs[KEY_MEAL_BASE_URL] = baseUrl
+            prefs[KEY_MEAL_API_KEY] = apiKey
+            prefs[KEY_MEAL_MODEL] = model
+            prefs[KEY_MEAL_SYSTEM_PROMPT] = systemPrompt
+        }
+    }
+
+    /** Saves the set of habits that have the "Meal" type enabled. */
+    suspend fun saveMealHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_MEAL_HABITS] = habits }
     }
 }

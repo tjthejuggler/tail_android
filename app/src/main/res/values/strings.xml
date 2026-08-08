@@ -12,4 +12,6 @@
     <string name="shortcut_text_note_long">Save pre-recognized text as a note</string>
     <string name="shortcut_smart_voice_short">Smart Voice</string>
     <string name="shortcut_smart_voice_long">Smart voice: habits or note based on words</string>
+    <string name="shortcut_quick_capture_short">Snap Meal</string>
+    <string name="shortcut_quick_capture_long">Capture a meal photo for AI analysis</string>
 </resources>

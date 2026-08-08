@@ -100,4 +100,22 @@
         <categories android:name="android.shortcut.conversation" />
     </shortcut>
 
+    <!--
+        Static shortcut for "Snap Meal" — appears in the launcher long-press
+        menu and Samsung Routines. Launches QuickCaptureActivity which opens
+        the camera, captures on tap, and enqueues the photo for LLM vision
+        analysis (food classification + nutrition extraction).
+    -->
+    <shortcut
+        android:shortcutId="quick_capture"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_quick_capture_short"
+        android:shortcutLongLabel="@string/shortcut_quick_capture_long"
+        android:icon="@android:drawable/ic_menu_camera">
+        <intent
+            android:action="com.example.tail.ACTION_QUICK_CAPTURE"
+            android:targetPackage="com.example.tail"
+            android:targetClass="com.example.tail.QuickCaptureActivity" />
+    </shortcut>
+
 </shortcuts>

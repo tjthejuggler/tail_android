@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -236,6 +237,11 @@ fun HabitGridScreen(
 
     // Text-input dialog state: non-null when the dialog should be shown
     var textInputDialogState by remember { mutableStateOf<TextInputDialogState?>(null) }
+
+    // Meal detail dialog state: non-null habit name when the meal panel is open
+    var mealDialogHabit by remember { mutableStateOf<String?>(null) }
+    // True when the dialog was opened by tapping the habit (increment already happened)
+    var mealDialogFromTap by remember { mutableStateOf(false) }
 
     // Timestamp editor dialog state
     var timestampEditorHabitName by remember { mutableStateOf<String?>(null) }
@@ -579,6 +585,11 @@ fun HabitGridScreen(
                             when {
                                 graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
                                 editMode -> viewModel.selectEditHabit(index)
+                                habit.name in settings.mealHabits -> {
+                                    viewModel.incrementHabit(habit.name)
+                                    mealDialogFromTap = true
+                                    mealDialogHabit = habit.name
+                                }
                                 habit.name in settings.subtypedHabits -> {
                                     viewModel.loadSubtypeBreakdown(habit.name) { breakdown ->
                                         subtypeDialogBreakdown = breakdown
@@ -777,6 +788,12 @@ fun HabitGridScreen(
                         onPickSubtypeDataFile = { name ->
                             subtypeDataPickerHabit = name
                             subtypeDataFilePicker.launch(arrayOf("application/json", "*/*"))
+                        },
+                        mealHabits = settings.mealHabits,
+                        onToggleMeal = { name -> viewModel.toggleMealHabit(name) },
+                        onOpenMealDetails = { name ->
+                            mealDialogFromTap = false
+                            mealDialogHabit = name
                         },
                         hiddenScreenIds = settings.hiddenScreens,
                         onToggleScreenHidden = { viewModel.toggleScreenHidden(activeScreenIndex) },
@@ -1099,6 +1116,16 @@ fun HabitGridScreen(
                 onDismiss = { subtypeDialogHabit = null }
             )
         }
+    }
+
+    // Meal detail dialog
+    mealDialogHabit?.let { habitName ->
+        MealDetailDialog(
+            habitName = habitName,
+            viewModel = viewModel,
+            onDismiss = { mealDialogHabit = null },
+            incrementAlreadyDone = mealDialogFromTap
+        )
     }
 
     // Text-input dialog
@@ -1615,6 +1642,60 @@ private fun PlaceholderCell(
  * and all grid cells become move targets.
  */
 @Composable
+private fun MealToggleSection(
+    habitName: String,
+    isMeal: Boolean,
+    onToggleMeal: (String) -> Unit,
+    onOpenMealDetails: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "🍽️ Meal Habit", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isMeal) "Tap increments + vision logging" else "Normal counter",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isMeal,
+            onCheckedChange = { onToggleMeal(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFFF9800),
+                checkedTrackColor = Color(0xFF3E2723),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    if (isMeal) {
+        Spacer(modifier = Modifier.height(4.dp))
+        Button(
+            onClick = { onOpenMealDetails(habitName) },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3E2723)),
+            modifier = Modifier.fillMaxWidth().height(36.dp)
+        ) {
+            Icon(
+                Icons.Default.PhotoCamera,
+                contentDescription = null,
+                tint = Color(0xFFFF9800),
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                "Meal Details & History",
+                fontSize = 12.sp,
+                color = Color(0xFFFF9800)
+            )
+        }
+    }
+}
+
+@Composable
 private fun EditModeControlBar(
     selectedIndex: Int,
     selectedHabitName: String?,
@@ -1669,6 +1750,9 @@ private fun EditModeControlBar(
     onToggleSubtyped: (String) -> Unit,
     onSetSubtypes: (String, List<String>) -> Unit,
     onPickSubtypeDataFile: (String) -> Unit,
+    mealHabits: Set<String> = emptySet(),
+    onToggleMeal: (String) -> Unit = {},
+    onOpenMealDetails: (String) -> Unit = {},
     hiddenScreenIds: Set<String> = emptySet(),
     onToggleScreenHidden: () -> Unit = {},
     disabledHabits: Set<String> = emptySet(),
@@ -2972,6 +3056,14 @@ private fun EditModeControlBar(
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
+
+                    // ── Meal toggle ──────────────────────────────────────────
+                    MealToggleSection(
+                        habitName = selectedHabitName,
+                        isMeal = selectedHabitName in mealHabits,
+                        onToggleMeal = onToggleMeal,
+                        onOpenMealDetails = onOpenMealDetails
+                    )
 
                     // ── Disabled toggle ────────────────────────────────────
                     val isDisabled = selectedHabitName in disabledHabits

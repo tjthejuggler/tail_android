@@ -15,6 +15,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Required for meal vision capture (CameraX) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!--
         Custom signature permission for IPC.
         Only apps signed with the same keystore can use the ContentProvider or
@@ -339,6 +342,27 @@
             android:taskAffinity=""
             android:launchMode="singleTask"
             android:theme="@style/Theme.Tail.Transparent" />
+
+        <!--
+            QuickCaptureActivity: full-screen camera capture for the meal
+            vision pipeline. Launched from a launcher shortcut or Samsung
+            Routines. Shows CameraX preview, captures on tap, saves the
+            image to internal storage, enqueues it for LLM vision
+            processing, then finishes immediately.
+        -->
+        <activity
+            android:name=".QuickCaptureActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Tail">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_QUICK_CAPTURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
     </application>
 

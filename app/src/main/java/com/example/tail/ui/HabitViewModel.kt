@@ -109,6 +109,33 @@ class HabitViewModel(
     /** Repository for recording habit increment timestamps (internal storage). */
     val timestampRepo = HabitTimestampRepository(context)
 
+    // ── Meal Habit Engine ─────────────────────────────────────────────────
+    /** Repository for meal log entries and images (internal storage). */
+    val mealLogRepo = com.example.tail.data.meal.MealLogRepository(context)
+    /** Repository for the offline vision-processing queue (internal storage). */
+    val visionQueueRepo = com.example.tail.data.meal.VisionQueueRepository(context)
+
+    /** Meal logs for the currently-opened meal habit (newest-first). */
+    private val _mealLogsForHabit = MutableStateFlow<List<com.example.tail.data.meal.MealLog>>(emptyList())
+    val mealLogsForHabit: StateFlow<List<com.example.tail.data.meal.MealLog>> = _mealLogsForHabit.asStateFlow()
+
+    /** Today's total calories for the currently-opened meal habit. */
+    private val _mealTodayCalories = MutableStateFlow(0)
+    val mealTodayCalories: StateFlow<Int> = _mealTodayCalories.asStateFlow()
+
+    /** Count of pending items in the vision queue (for UI badge). */
+    private val _mealPendingCount = MutableStateFlow(0)
+    val mealPendingCount: StateFlow<Int> = _mealPendingCount.asStateFlow()
+
+    /** Vision endpoint test result (null = not tested, empty = testing, non-empty = result). */
+    data class MealTestState(
+        val isTesting: Boolean = false,
+        val isSuccess: Boolean = false,
+        val message: String = ""
+    )
+    private val _mealTestState = MutableStateFlow(MealTestState())
+    val mealTestState: StateFlow<MealTestState> = _mealTestState.asStateFlow()
+
     // ── Location ─────────────────────────────────────────────────────────────
     /**
      * Location label for the currently selected date.
@@ -5283,6 +5310,222 @@ class HabitViewModel(
 
         cachedPhoneDb = db
         rebuildHabitList()
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  Meal Habit Engine Methods
+    // ════════════════════════════════════════════════════════════════════════
+
+    /** Saves all meal engine settings at once (called from Settings screen). */
+    fun saveMealSettings(
+        enabled: Boolean,
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        systemPrompt: String
+    ) {
+        viewModelScope.launch {
+            val cleanUrl = baseUrl.trim().trimEnd('/')
+            val cleanKey = apiKey.trim()
+            settingsRepo.saveMealSettings(enabled, cleanUrl, cleanKey, model, systemPrompt)
+            _settings.value = _settings.value.copy(
+                mealEnabled = enabled,
+                mealBaseUrl = cleanUrl,
+                mealApiKey = cleanKey,
+                mealModel = model,
+                mealSystemPrompt = systemPrompt
+            )
+        }
+    }
+
+    /** Toggles the "Meal" type on/off for a specific habit. */
+    fun toggleMealHabit(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.mealHabits.toMutableSet()
+            if (habitName in current) {
+                current.remove(habitName)
+            } else {
+                current.add(habitName)
+            }
+            settingsRepo.saveMealHabits(current)
+            _settings.value = _settings.value.copy(mealHabits = current)
+        }
+    }
+
+    /** Loads meal logs for a habit and updates the StateFlows. */
+    fun loadMealLogs(habitName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val logs = mealLogRepo.loadLogs(habitName)
+            val today = LocalDate.now().toString()
+            val todayCal = logs.filter {
+                java.time.Instant.ofEpochMilli(it.timestamp)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate().toString() == today
+            }.sumOf { it.calories }
+            val pending = visionQueueRepo.pendingCount()
+
+            _mealLogsForHabit.value = logs
+            _mealTodayCalories.value = todayCal
+            _mealPendingCount.value = pending
+        }
+    }
+
+    /** Adds a manual meal log entry (no photo, no LLM call). */
+    fun addManualMealLog(
+        habitName: String,
+        title: String,
+        calories: Int,
+        skipIncrement: Boolean = false
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val log = com.example.tail.data.meal.MealLog(
+                id = UUID.randomUUID().toString(),
+                habitId = habitName,
+                timestamp = System.currentTimeMillis(),
+                title = title,
+                calories = calories,
+                isManual = true
+            )
+            mealLogRepo.addLog(log)
+
+            // Refresh the StateFlows
+            val logs = mealLogRepo.loadLogs(habitName)
+            _mealLogsForHabit.value = logs
+            val today = LocalDate.now().toString()
+            _mealTodayCalories.value = logs.filter {
+                java.time.Instant.ofEpochMilli(it.timestamp)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate().toString() == today
+            }.sumOf { it.calories }
+
+            // Also increment the habit count (unless caller already did via tap)
+            if (!skipIncrement) {
+                val uriString = _settings.value.fileUri
+                if (uriString.isNotEmpty()) {
+                    try {
+                        habitsRepo.incrementHabit(
+                            android.net.Uri.parse(uriString),
+                            context,
+                            habitName,
+                            1
+                        )
+                        rebuildHabitList()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to increment meal habit '$habitName'", e)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Deletes a meal log entry and refreshes the StateFlow. */
+    fun deleteMealLog(habitName: String, logId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            mealLogRepo.deleteLog(habitName, logId)
+            val logs = mealLogRepo.loadLogs(habitName)
+            _mealLogsForHabit.value = logs
+            val today = LocalDate.now().toString()
+            _mealTodayCalories.value = logs.filter {
+                java.time.Instant.ofEpochMilli(it.timestamp)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate().toString() == today
+            }.sumOf { it.calories }
+        }
+    }
+
+    /** Triggers the vision processing worker to drain the queue (called after capture). */
+    fun triggerVisionProcessing() {
+        com.example.tail.data.meal.VisionProcessingWorker.enqueue(context)
+        viewModelScope.launch(Dispatchers.IO) {
+            _mealPendingCount.value = visionQueueRepo.pendingCount()
+        }
+    }
+
+    /**
+     * Tests the configured vision endpoint by sending a bundled test image
+     * (banana.jpeg from assets) through the full pipeline. Updates
+     * [_mealTestState] with the result for UI display.
+     */
+    fun testVisionEndpoint() {
+        val s = _settings.value
+        if (s.mealBaseUrl.isBlank() || s.mealApiKey.isBlank() || s.mealModel.isBlank()) {
+            _mealTestState.value = MealTestState(
+                isSuccess = false,
+                message = "Please fill in Base URL, API Key, and Model Name first."
+            )
+            return
+        }
+
+        _mealTestState.value = MealTestState(
+            isTesting = true,
+            message = "Testing… (may retry on rate limits, up to ~15s)"
+        )
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Copy banana.jpeg from assets to a temp file
+                val tempFile = java.io.File(context.cacheDir, "test_banana.jpeg")
+                context.assets.open("banana.jpeg").use { input ->
+                    tempFile.outputStream().use { output -> input.copyTo(output) }
+                }
+
+                val config = com.example.tail.data.meal.VisionConfig(
+                    baseUrl = s.mealBaseUrl,
+                    apiKey = s.mealApiKey,
+                    model = s.mealModel,
+                    userSystemPrompt = s.mealSystemPrompt
+                )
+
+                val service = com.example.tail.data.meal.VisionProcessingService()
+                val result = service.processImage(tempFile, config)
+
+                tempFile.delete()
+
+                if (result == null) {
+                    _mealTestState.value = MealTestState(
+                        isSuccess = false,
+                        message = "❌ Request failed — check your URL, key, and model. " +
+                                  "See logcat (tag: VisionProcessing) for details."
+                    )
+                } else if (result.classification == com.example.tail.data.meal.VisionClassification.FOOD_MEAL &&
+                           result.foodData != null
+                ) {
+                    val fd = result.foodData
+                    _mealTestState.value = MealTestState(
+                        isSuccess = true,
+                        message = "✅ Success! Detected: ${fd.title}\n" +
+                                  "Calories: ${fd.estimatedCalories} kcal\n" +
+                                  "Protein: ${fd.macronutrients.proteinGrams}g, " +
+                                  "Carbs: ${fd.macronutrients.carbsGrams}g, " +
+                                  "Fat: ${fd.macronutrients.fatGrams}g\n" +
+                                  "Confidence: ${(result.confidenceScore * 100).toInt()}%"
+                    )
+                } else {
+                    // Distinguish API errors (rate limit, server error) from model classification issues
+                    val notes = result.processingNotes
+                    val isError = notes.contains("Rate limited", ignoreCase = true) ||
+                                  notes.contains("Server error", ignoreCase = true) ||
+                                  notes.contains("API error", ignoreCase = true)
+                    _mealTestState.value = MealTestState(
+                        isSuccess = !isError,
+                        message = if (isError) {
+                            "❌ ${notes.take(300)}"
+                        } else {
+                            "⚠️ Got a response but classification was " +
+                            "${result.classification}.\n" +
+                            "Notes: $notes\n" +
+                            "The endpoint works, but the model may not handle food images well."
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Vision test failed", e)
+                _mealTestState.value = MealTestState(
+                    isSuccess = false,
+                    message = "❌ Error: ${e.message?.take(200)}"
+                )
+            }
+        }
     }
 }
 
