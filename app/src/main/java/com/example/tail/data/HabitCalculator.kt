@@ -76,11 +76,27 @@ private fun expandEntriesToCalendarDays(entries: Map<String, Int>): Map<String, 
  *
  * Calendar gaps (missing dates) are treated as zeros, matching the desktop where
  * habitsdb.txt has an explicit entry for every calendar day.
+ *
+ * [targetDate] — when non-null, the entries are guaranteed to include this date
+ * (inserted with value 0 if missing) BEFORE calendar expansion.  This is critical
+ * for sparse Garmin habits (run / bike / swim) whose entries only exist on
+ * activity days.  Without it, navigating to a past date that falls beyond the
+ * last stored entry causes [expandEntriesToCalendarDays] to stop at that last
+ * entry instead of extending to the target date, producing wildly incorrect
+ * streak values (e.g. +0 instead of -215).
  */
-fun calculateStreakDisplay(entries: Map<String, Int>): Int {
+fun calculateStreakDisplay(entries: Map<String, Int>, targetDate: LocalDate? = null): Int {
     if (entries.isEmpty()) return 0
+    // Ensure the target date is present so calendar expansion extends to it.
+    // This mirrors the workaround already used in AppStatsScreen.
+    val entriesWithTarget = if (targetDate != null) {
+        val targetDateStr = dateString(targetDate)
+        if (targetDateStr !in entries) entries + (targetDateStr to 0) else entries
+    } else {
+        entries
+    }
     // Expand sparse map so calendar gaps count as zeros (matching desktop behavior)
-    val expanded = expandEntriesToCalendarDays(entries)
+    val expanded = expandEntriesToCalendarDays(entriesWithTarget)
     val sorted = expanded.keys.sorted().reversed()
 
     // days_since_not_zero: index of first non-zero entry from most recent
@@ -246,7 +262,7 @@ fun buildHabit(
     val rawCountForDate = getCountForDate(filteredEntries, targetDate)
     // todayCount shown on the button is the divided (points) value
     val countForDate = applyDivider(rawCountForDate, divider)
-    val streakDisplay = calculateStreakDisplay(filteredEntries)
+    val streakDisplay = calculateStreakDisplay(filteredEntries, targetDate)
     val longestStreak = calculateLongestStreak(filteredEntries)
 
     val (allTimeHighDayVal, allTimeHighDayDate) = calculateAllTimeHighDay(filteredEntries)

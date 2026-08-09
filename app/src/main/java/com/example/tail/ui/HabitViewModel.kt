@@ -402,6 +402,26 @@ class HabitViewModel(
                     if (s.chessComEnabled && s.chessComUsername.isNotEmpty()) {
                         startChessComPolling()
                     }
+
+                    // Auto-link Garmin habits that have cached data but no link.
+                    // This repairs the case where a habit (e.g. "Garmin Swim") was
+                    // created but never linked to its GarminType (e.g. SWIM_MINUTES).
+                    // Runs in a separate coroutine so it doesn't block the UI.
+                    viewModelScope.launch {
+                        try {
+                            val cachedData = withContext(Dispatchers.IO) {
+                                garminRepo.loadAllCachedData()
+                            }
+                            if (cachedData.isNotEmpty()) {
+                                Log.d(TAG, "Init auto-link: checking ${cachedData.size} Garmin types, " +
+                                    "current links=${_settings.value.garminHabitLinks.size}")
+                                val updatedSettings = autoLinkMissingGarminHabits(cachedData)
+                                applyGarminData(cachedData, updatedSettings)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Init auto-link failed: ${e.message}")
+                        }
+                    }
                 }
             }
         }
@@ -3910,7 +3930,33 @@ class HabitViewModel(
                     Log.w(TAG, "onAppForegrounded: failed to reload phone DB: ${e.message}")
                 }
             }
-            
+
+            // Re-apply ALL cached Garmin data to linked habits. This ensures that
+            // historic data from JSON import (e.g. swim activities from months ago)
+            // is always reflected in the habit entries, even after a DB reload or
+            // cache clear/fetch cycle. The init block loads _garminMonthlyData from
+            // cache, but onAppForegrounded replaces cachedPhoneDb from disk — so we
+            // must re-sync the two. applyGarminData is idempotent (writes the same
+            // computed value), so this is safe to call on every foreground.
+            //
+            // NOTE: This does NOT require garminEnabled — cached data from a JSON
+            // import must be applied even when the proxy is disabled.
+            val s = _settings.value
+            if (s.fileUri.isNotEmpty()) {
+                try {
+                    val cachedGarminData = withContext(Dispatchers.IO) {
+                        garminRepo.loadAllCachedData()
+                    }
+                    if (cachedGarminData.isNotEmpty()) {
+                        mergeIntoGarminMonthlyData(cachedGarminData)
+                        val fgSettings = autoLinkMissingGarminHabits(cachedGarminData)
+                        applyGarminData(cachedGarminData, fgSettings)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "onAppForegrounded: failed to re-apply cached Garmin data: ${e.message}")
+                }
+            }
+
             // Automatically sync Garmin data when app comes to foreground
             // This fetches any new data that the PC fetcher has accumulated
             syncGarminCurrentMonth()
@@ -4426,11 +4472,8 @@ class HabitViewModel(
 
         viewModelScope.launch {
             try {
-                // Clear cache so we get completely fresh data
-                _garminSyncStatus.value = "Clearing cache…"
-                garminRepo.clearCache()
-
-                // Reset all Garmin-linked habits to 0 for all dates
+                // Reset all Garmin-linked habits to 0 for all dates so that
+                // stale proxy values are cleared before re-applying.
                 _garminSyncStatus.value = "Resetting linked habit data…"
                 resetGarminHabitData(s)
 
@@ -4442,12 +4485,20 @@ class HabitViewModel(
                 ) { done, total ->
                     _garminSyncStatus.value = "Fetching archives: $done / $total months"
                 }
+
+                // Merge proxy data into the persistent cache WITHOUT clearing it.
+                // This preserves historic data from JSON import (e.g. swim activities
+                // from months ago) that the proxy may not have. Proxy values win
+                // for dates they cover; all other cached dates are preserved.
+                _garminSyncStatus.value = "Merging with cached data…"
+                withContext(Dispatchers.IO) { garminRepo.mergeAndCacheDailyData(allData) }
+
+                // Load the merged cache (proxy + historic import) and apply to habits.
                 _garminSyncStatus.value = "Applying backlog data to habits…"
-                // Merge (cache was already cleared above for a full refresh, so this
-                // is effectively a fresh population, but merging keeps it consistent
-                // with the poll path and avoids dropping any concurrently-loaded data).
-                mergeIntoGarminMonthlyData(allData)
-                applyGarminData(allData, s)
+                val mergedData = withContext(Dispatchers.IO) { garminRepo.loadAllCachedData() }
+                mergeIntoGarminMonthlyData(mergedData)
+                val updatedSettings = autoLinkMissingGarminHabits(mergedData)
+                applyGarminData(mergedData, updatedSettings)
                 _garminSyncStatus.value = "Backlog sync complete!"
             } catch (e: Exception) {
                 Log.e(TAG, "Garmin backlog fetch failed: ${e.message}")
@@ -4572,14 +4623,119 @@ class HabitViewModel(
             _garminSyncStatus.value = "Merging laptop data…"
             // Persist to cache so laptop data survives restarts.
             withContext(Dispatchers.IO) { garminRepo.mergeAndCacheDailyData(allData) }
-            // Merge (no clear) — laptop values win for dates they have, historic JSON stays.
-            mergeIntoGarminMonthlyData(allData)
-            applyGarminData(allData, s)
+            // Load the merged cache (proxy + historic import) and apply to habits.
+            // This ensures imported data (e.g. swim activities from months ago) is
+            // applied alongside the fresh proxy data.
+            val mergedData = withContext(Dispatchers.IO) { garminRepo.loadAllCachedData() }
+            mergeIntoGarminMonthlyData(mergedData)
+            val syncSettings = autoLinkMissingGarminHabits(mergedData)
+            applyGarminData(mergedData, syncSettings)
             _garminSyncStatus.value = "Sync complete! Laptop data merged."
         } catch (e: Exception) {
             Log.e(TAG, "Garmin backlog sync failed: ${e.message}")
             _garminSyncStatus.value = "Failed: ${e.message?.take(50)}"
         }
+    }
+
+    /**
+     * Returns search keywords for matching a habit name to a GarminType.
+     * Used by [autoLinkMissingGarminHabits] to auto-create missing links.
+     */
+    private fun garminTypeKeywords(type: GarminType): List<String> = when (type) {
+        GarminType.RUN_MINUTES -> listOf("run", "jog")
+        GarminType.BIKE_MINUTES -> listOf("bike", "cycl")
+        GarminType.SWIM_MINUTES -> listOf("swim")
+        GarminType.STEPS -> listOf("step")
+        GarminType.SLEEP_SCORE -> listOf("sleep")
+        GarminType.HRV_LAST_NIGHT, GarminType.HRV_WEEKLY_AVG -> listOf("hrv")
+        GarminType.RESTING_HR -> listOf("resting hr", "resting heart")
+        GarminType.VO2_MAX -> listOf("vo2")
+        GarminType.FITNESS_AGE -> listOf("fitness age")
+        GarminType.FITNESS_AGE_DISTANCE -> listOf("fitness age distance")
+        GarminType.ALTITUDE_ASCENT_METERS -> listOf("ascent", "altitude", "elevation", "climb")
+        GarminType.DISTANCE_METERS -> listOf("distance")
+        GarminType.CALORIES -> listOf("calorie")
+        GarminType.ACTIVE_MINUTES -> listOf("active")
+        GarminType.FLOORS_CLIMBED -> listOf("floor")
+        GarminType.MIN_HR -> listOf("min hr")
+        GarminType.MAX_HR -> listOf("max hr")
+        GarminType.STRESS_LEVEL -> listOf("stress")
+    }
+
+    /**
+     * Auto-links habits to Garmin types when data exists for a type but no habit
+     * is linked to it.  Matches by keyword (e.g. a habit named "Garmin Swim" will
+     * be auto-linked to SWIM_MINUTES).
+     *
+     * This repairs the common scenario where a Garmin habit was created but the
+     * link was never saved (or was lost), causing [applyGarminData] to silently
+     * skip that type.
+     *
+     * @return the updated [AppSettings] with any new links applied
+     */
+    private suspend fun autoLinkMissingGarminHabits(
+        allData: Map<GarminType, Map<String, Int>>
+    ): AppSettings {
+        val currentLinks = _settings.value.garminHabitLinks
+        val allHabitNames = getAllHabitNames()
+        val linkedTypes = currentLinks.values.toSet()
+        val linkedHabits = currentLinks.keys.toMutableSet()
+
+        val newLinks = mutableMapOf<String, String>()
+
+        for ((type, dayMap) in allData) {
+            if (dayMap.isEmpty()) continue
+            if (type.name in linkedTypes) continue  // Already linked to some habit
+
+            val keywords = garminTypeKeywords(type)
+            val match = allHabitNames.firstOrNull { habitName ->
+                habitName !in linkedHabits &&
+                habitName !in newLinks &&
+                keywords.any { kw -> habitName.lowercase().contains(kw) }
+            }
+
+            if (match != null) {
+                newLinks[match] = type.name
+                linkedHabits.add(match)
+                Log.i(TAG, "Auto-linked habit '$match' → ${type.name}")
+            }
+        }
+
+        if (newLinks.isEmpty()) return _settings.value
+
+        val updatedLinks = currentLinks + newLinks
+        settingsRepo.saveGarminHabitLinks(updatedLinks)
+        val updatedSettings = _settings.value.copy(garminHabitLinks = updatedLinks)
+        _settings.value = updatedSettings
+        Log.i(TAG, "Auto-linked ${newLinks.size} Garmin habit(s): $newLinks")
+
+        // Clear stale entries for newly linked habits so that only Garmin-derived
+        // data remains after applyGarminData runs.  Without this, old manual
+        // entries (e.g. a bogus value-1 on recent days) would survive and produce
+        // incorrect streak/antistreak values.
+        if (dbLoaded && updatedSettings.fileUri.isNotEmpty()) {
+            val mutableDb = cachedPhoneDb.toMutableMap()
+            var dbChanged = false
+            for (habitName in newLinks.keys) {
+                val existing = mutableDb[habitName]
+                if (existing != null && existing.isNotEmpty()) {
+                    Log.i(TAG, "Cleared ${existing.size} stale entries " +
+                        "for newly linked habit '$habitName'")
+                    mutableDb[habitName] = mutableMapOf()
+                    dbChanged = true
+                }
+            }
+            if (dbChanged) {
+                cachedPhoneDb = mutableDb
+                withContext(Dispatchers.IO) {
+                    habitsRepo.persistDatabase(
+                        Uri.parse(updatedSettings.fileUri), context, mutableDb
+                    )
+                }
+            }
+        }
+
+        return updatedSettings
     }
 
     /**
@@ -4595,6 +4751,17 @@ class HabitViewModel(
         if (!dbLoaded) {
             Log.w(TAG, "applyGarminData: DB not loaded yet, skipping persist (anti-wipe gate)")
             return
+        }
+
+        // Diagnostic: log what data is available and what habits are linked
+        Log.d(TAG, "applyGarminData: allData types=${allData.keys.map { it.name }}, " +
+            "linkedHabits=$linkedHabits")
+        for ((type, dayMap) in allData) {
+            if (dayMap.isNotEmpty()) {
+                val sortedDates = dayMap.keys.sorted()
+                Log.d(TAG, "applyGarminData: ${type.name} has ${dayMap.size} entries " +
+                    "(${sortedDates.first()}..${sortedDates.last()})")
+            }
         }
 
         val mutableDb = cachedPhoneDb.toMutableMap()
@@ -4639,10 +4806,21 @@ class HabitViewModel(
                     emptyMap()
                 }
             } else {
-                allData[garminType] ?: continue
+                val dataForType = allData[garminType]
+                if (dataForType == null) {
+                    Log.w(TAG, "applyGarminData: SKIP habit '$habitName' — " +
+                        "no ${garminType.name} data in allData " +
+                        "(available: ${allData.keys.map { it.name }})")
+                    continue
+                }
+                dataForType
             }
-            
-            if (dailyValues.isEmpty()) continue
+
+            if (dailyValues.isEmpty()) {
+                Log.w(TAG, "applyGarminData: SKIP habit '$habitName' — " +
+                    "${garminType.name} data map is empty")
+                continue
+            }
 
             Log.d(TAG, "Processing habit '$habitName' linked to $garminTypeStr, values=${dailyValues.size}")
 
@@ -4746,7 +4924,8 @@ class HabitViewModel(
                         if (allData.isNotEmpty()) {
                             _garminSyncStatus.value = "Applying data to habits…"
                             mergeIntoGarminMonthlyData(allData)
-                            applyGarminData(allData, s)
+                            val importSettings = autoLinkMissingGarminHabits(allData)
+                            applyGarminData(allData, importSettings)
                             _garminSyncStatus.value = "Import complete! Data applied to linked habits."
                             Log.d(TAG, "Import: Successfully applied data to ${allData.size} Garmin types")
                         } else {
