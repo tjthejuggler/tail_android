@@ -1,6 +1,10 @@
 package com.example.tail.ui
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
@@ -16,6 +20,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +43,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -47,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.GarminType
 import com.example.tail.data.Habit
+import com.example.tail.data.appLinkPackageName
 
 // Shared style that strips the extra font padding Compose adds above/below text glyphs
 private val tightTextStyle = TextStyle(
@@ -354,5 +361,143 @@ fun HabitButton(
                 .align(Alignment.BottomEnd)
                 .padding(end = 1.dp, bottom = 0.dp)
         )
+    }
+}
+
+/**
+ * Converts an Android [Drawable] to a [Bitmap].
+ * If the drawable is already a [BitmapDrawable], its bitmap is returned directly.
+ * Otherwise a new bitmap is created at the drawable's intrinsic size.
+ */
+private fun drawableToBitmap(drawable: Drawable): Bitmap {
+    if (drawable is BitmapDrawable) return drawable.bitmap
+    val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 1
+    val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 1
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+    return bitmap
+}
+
+/**
+ * A grid cell that acts as an app launcher link (not an incrementable habit).
+ *
+ * Visually distinct from [HabitButton]: dark blue-teal background, the app's
+ * own icon shown at a larger size (no tint), and a small "↗" indicator in the
+ * top-right corner to signal that tapping opens an external app.
+ *
+ * In edit mode, an orange selection border is shown and the app label appears
+ * at the bottom.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun AppLinkButton(
+    appLinkKey: String,
+    label: String,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    editMode: Boolean = false,
+    isSelected: Boolean = false,
+    isMovePendingSource: Boolean = false,
+    isMovePendingTarget: Boolean = false
+) {
+    val context = LocalContext.current
+    val packageName = appLinkPackageName(appLinkKey) ?: return
+
+    // Load the app icon bitmap once (cached by package name)
+    val iconBitmap: Bitmap? = remember(packageName) {
+        try {
+            val drawable = context.packageManager.getApplicationIcon(packageName)
+            drawableToBitmap(drawable)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // Click animation
+    var isPressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.92f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "appLinkScale"
+    )
+
+    val shape = RoundedCornerShape(6.dp)
+
+    // Mode-specific borders
+    val modeBorderMod = when {
+        isMovePendingSource -> Modifier.border(2.dp, Color(0xFF44FFFF), shape)
+        isSelected && editMode -> Modifier.border(2.dp, Color(0xFFFFAA00), shape)
+        isMovePendingTarget -> Modifier.border(1.dp, Color(0xFF44FFFF), shape)
+        editMode -> Modifier.border(1.dp, Color(0xFFFF8C00), shape)
+        else -> Modifier
+    }
+
+    // Distinctive background: barely-visible dark blue, close to black
+    val bgColor = if (isMovePendingSource) Color(0xFF0A0E12).copy(alpha = 0.5f)
+                  else if (isMovePendingTarget) Color(0xFF0A0E12).copy(alpha = 0.7f)
+                  else Color(0xFF0A0E12)
+
+    Box(
+        modifier = modifier
+            .aspectRatio(1f)
+            .graphicsLayer { this.scaleX = scale; this.scaleY = scale }
+            .clip(shape)
+            .background(bgColor)
+            .then(modeBorderMod)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+                interactionSource = remember { MutableInteractionSource() }.also { source ->
+                    LaunchedEffect(source) {
+                        source.interactions.collect { interaction ->
+                            when (interaction) {
+                                is PressInteraction.Press -> isPressed = true
+                                is PressInteraction.Release -> isPressed = false
+                                is PressInteraction.Cancel -> isPressed = false
+                            }
+                        }
+                    }
+                }
+            )
+    ) {
+        // Top-right: launch indicator "↗" (signals this opens an external app)
+        Text(
+            text = "↗",
+            color = Color(0xFF66CCFF),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.ExtraBold,
+            style = tightTextStyle,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 1.dp, top = 0.dp)
+        )
+
+        // Center: app icon (larger than habit icons, no tint — show the real icon)
+        if (iconBitmap != null) {
+            Image(
+                bitmap = iconBitmap.asImageBitmap(),
+                contentDescription = label,
+                modifier = Modifier
+                    .size(28.dp)
+                    .align(Alignment.Center)
+            )
+        }
+
+        // Bottom: app label (only in edit mode to avoid clutter)
+        if (editMode) {
+            Text(
+                text = label.take(10),
+                color = Color(0xFF88CCFF),
+                fontSize = 7.sp,
+                fontWeight = FontWeight.Bold,
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 1.dp)
+            )
+        }
     }
 }

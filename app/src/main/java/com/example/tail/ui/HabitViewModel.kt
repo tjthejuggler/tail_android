@@ -29,6 +29,10 @@ import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.HabitsDatabase
+import com.example.tail.data.APP_LINK_PREFIX
+import com.example.tail.data.appLinkKey
+import com.example.tail.data.appLinkPackageName
+import com.example.tail.data.isAppLink
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
@@ -2486,6 +2490,117 @@ class HabitViewModel(
     }
 
     /**
+     * Adds an app-link entry at grid position [atIndex] within the active screen.
+     * Unlike [addHabit], this does NOT write to the habits database — app links
+     * are pure launchers, not incrementable habits.
+     * The entry is stored in the screen's habitNames with the [APP_LINK_PREFIX]
+     * and its display label is saved to [AppSettings.appLinks].
+     */
+    fun addAppLink(packageName: String, label: String, atIndex: Int) {
+        val key = appLinkKey(packageName)
+        val screens = _habitScreens.value
+        if (screens.isNotEmpty()) {
+            val screenIdx = _activeScreenIndex.value.coerceIn(0, screens.size - 1)
+            val screen = screens[screenIdx]
+            val current = screen.habitNames.toMutableList()
+            val insertAt: Int
+            if (atIndex in current.indices && current[atIndex].isEmpty()) {
+                current[atIndex] = key
+                insertAt = atIndex
+            } else {
+                insertAt = atIndex.coerceIn(0, current.size)
+                current.add(insertAt, key)
+            }
+            val updatedScreen = screen.copy(habitNames = current)
+            val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
+            _habitScreens.value = updatedScreens
+            _selectedEditIndex.value = insertAt
+            viewModelScope.launch { rebuildHabitList() }
+            persistScreens(updatedScreens)
+        } else {
+            val current = _habitOrder.value.toMutableList()
+            val insertAt: Int
+            if (atIndex in current.indices && current[atIndex].isEmpty()) {
+                current[atIndex] = key
+                insertAt = atIndex
+            } else {
+                insertAt = atIndex.coerceIn(0, current.size)
+                current.add(insertAt, key)
+            }
+            _habitOrder.value = current
+            _selectedEditIndex.value = insertAt
+            isSavingOrder = true
+            viewModelScope.launch {
+                rebuildHabitList()
+                try {
+                    settingsRepo.saveHabitOrder(current)
+                    _settings.value = _settings.value.copy(habitOrder = current)
+                } finally {
+                    isSavingOrder = false
+                }
+            }
+        }
+        // Save the app link label to settings (not to the habits DB)
+        viewModelScope.launch {
+            val updated = _settings.value.appLinks.toMutableMap()
+            updated[key] = label
+            settingsRepo.saveAppLinks(updated)
+            _settings.value = _settings.value.copy(appLinks = updated)
+        }
+    }
+
+    /**
+     * Deletes an app-link entry at [index] from the active screen.
+     * Also removes it from [AppSettings.appLinks].
+     */
+    fun deleteAppLink(index: Int) {
+        val screens = _habitScreens.value
+        val keyToRemove: String?
+        if (screens.isNotEmpty()) {
+            val screenIdx = _activeScreenIndex.value.coerceIn(0, screens.size - 1)
+            val screen = screens[screenIdx]
+            val current = screen.habitNames.toMutableList()
+            if (index !in current.indices) return
+            keyToRemove = current[index]
+            if (keyToRemove.isEmpty() || !isAppLink(keyToRemove)) return
+            current.removeAt(index)
+            val updatedScreen = screen.copy(habitNames = current)
+            val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
+            _habitScreens.value = updatedScreens
+            _selectedEditIndex.value = -1
+            viewModelScope.launch { rebuildHabitList() }
+            persistScreens(updatedScreens)
+        } else {
+            val current = _habitOrder.value.toMutableList()
+            if (index !in current.indices) return
+            keyToRemove = current[index]
+            if (keyToRemove.isEmpty() || !isAppLink(keyToRemove)) return
+            current.removeAt(index)
+            _habitOrder.value = current
+            _selectedEditIndex.value = -1
+            isSavingOrder = true
+            viewModelScope.launch {
+                rebuildHabitList()
+                try {
+                    settingsRepo.saveHabitOrder(current)
+                    _settings.value = _settings.value.copy(habitOrder = current)
+                } finally {
+                    isSavingOrder = false
+                }
+            }
+        }
+        // Remove from appLinks settings
+        keyToRemove?.let { key ->
+            viewModelScope.launch {
+                val updated = _settings.value.appLinks.toMutableMap()
+                updated.remove(key)
+                settingsRepo.saveAppLinks(updated)
+                _settings.value = _settings.value.copy(appLinks = updated)
+            }
+        }
+    }
+
+    /**
      * Deletes the habit at [index] from the active screen (or flat order).
      * Does NOT remove data from JSON files — historical data is preserved.
      * Clears the selection after deletion.
@@ -2500,6 +2615,8 @@ class HabitViewModel(
             // Empty-string entries are already placeholders — just keep them as-is.
             // Only remove real habit names.
             if (current[index].isEmpty()) return
+            // Delegate to deleteAppLink for app-link entries
+            if (isAppLink(current[index])) { deleteAppLink(index); return }
             current.removeAt(index)
             val updatedScreen = screen.copy(habitNames = current)
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
@@ -2511,6 +2628,8 @@ class HabitViewModel(
             val current = _habitOrder.value.toMutableList()
             if (index !in current.indices) return
             if (current[index].isEmpty()) return
+            // Delegate to deleteAppLink for app-link entries
+            if (isAppLink(current[index])) { deleteAppLink(index); return }
             current.removeAt(index)
             _habitOrder.value = current
             _selectedEditIndex.value = -1

@@ -3,9 +3,15 @@ package com.example.tail.ui
 import kotlin.text.toIntOrNull
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -36,6 +42,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -48,6 +56,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
@@ -109,6 +118,8 @@ import com.example.tail.data.GarminType
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.RollingHigh
+import com.example.tail.data.appLinkPackageName
+import com.example.tail.data.isAppLink
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -212,6 +223,8 @@ fun HabitGridScreen(
     var renamingScreenIndex by remember { mutableStateOf(-1) }
     // Grid cell index where "Add Habit" was triggered (-1 = none)
     var addHabitAtIndex by remember { mutableStateOf(-1) }
+    // Grid cell index where "Add App Link" was triggered (-1 = none)
+    var addAppLinkAtIndex by remember { mutableStateOf(-1) }
     // Habit name pending delete confirmation (null = none)
     var deleteConfirmHabitName by remember { mutableStateOf<String?>(null) }
     // Habit name for which icon picker is open (null = none)
@@ -581,8 +594,22 @@ fun HabitGridScreen(
                         disabledHabits = settings.disabledHabits,
                         aiIconRepo = if (settings.aiIconsEnabled) viewModel.getAiIconRepo() else null,
                         garminHabitLinks = settings.garminHabitLinks,
+                        appLinks = settings.appLinks,
                         onHabitClick = { habit, index ->
                             when {
+                                isAppLink(habit.name) -> {
+                                    if (editMode) {
+                                        viewModel.selectEditHabit(index)
+                                    } else {
+                                        // Launch the linked app
+                                        appLinkPackageName(habit.name)?.let { pkg ->
+                                            val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+                                            if (launchIntent != null) {
+                                                context.startActivity(launchIntent)
+                                            }
+                                        }
+                                    }
+                                }
                                 graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
                                 editMode -> viewModel.selectEditHabit(index)
                                 habit.name in settings.mealHabits -> {
@@ -682,7 +709,7 @@ fun HabitGridScreen(
                             }
                         },
                         onHabitLongClick = { habit ->
-                            if (!editMode && !graphMode) {
+                            if (!editMode && !graphMode && !isAppLink(habit.name)) {
                                 // Long-press increments without recording a timestamp
                                 viewModel.incrementHabit(habit.name, 1, recordTimestamp = false)
                             }
@@ -750,6 +777,7 @@ fun HabitGridScreen(
                         rollForwardManualDates = settings.rollForwardManualDates,
                         onStartMove = { viewModel.startMoveMode() },
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
+                        onAddAppLink = { addAppLinkAtIndex = selectedEditIndex },
                         onMoveToScreen = { viewModel.moveHabitToScreen(it) },
                         onAddScreen = { showAddScreenDialog = true },
                         onDeleteScreen = { viewModel.deleteScreen(activeScreenIndex) },
@@ -1253,6 +1281,18 @@ fun HabitGridScreen(
         )
     }
 
+    // App picker dialog — triggered when user taps "+ App" in edit mode
+    if (addAppLinkAtIndex >= 0) {
+        AppPickerDialog(
+            context = context,
+            onConfirm = { packageName, label ->
+                viewModel.addAppLink(packageName, label, addAppLinkAtIndex)
+                addAppLinkAtIndex = -1
+            },
+            onDismiss = { addAppLinkAtIndex = -1 }
+        )
+    }
+
     // Rename screen dialog
     if (renamingScreenIndex >= 0) {
         val currentName = habitScreens.getOrNull(renamingScreenIndex)?.name ?: ""
@@ -1522,6 +1562,7 @@ private fun HabitGrid(
     disabledHabits: Set<String> = emptySet(),
     aiIconRepo: AiIconRepository? = null,
     garminHabitLinks: Map<String, String> = emptyMap(),
+    appLinks: Map<String, String> = emptyMap(),
     onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit,
     onPlaceholderClick: (Int) -> Unit
@@ -1547,22 +1588,37 @@ private fun HabitGrid(
                 val isEditSelected = editMode && index == selectedEditIndex
                 val isGraphSelected = graphMode && habit.name in graphSelectedHabits
                 val isMovePendingSource = editMode && index == movePendingSourceIndex
-                HabitButton(
-                    habit = habit,
-                    onClick = { onHabitClick(habit, index) },
-                    onLongClick = { onHabitLongClick(habit) },
-                    modifier = Modifier.padding(2.dp),
-                    editMode = editMode,
-                    isSelected = isEditSelected || isGraphSelected,
-                    isMovePendingSource = isMovePendingSource,
-                    isMovePendingTarget = isMovePending && !isMovePendingSource && editMode,
-                    customIconOverrides = customIconOverrides,
-                    graphMode = graphMode,
-                    isGraphSelected = isGraphSelected,
-                    isDisabled = habit.name in disabledHabits,
-                    aiIconRepo = aiIconRepo,
-                    garminHabitLinks = garminHabitLinks
-                )
+                if (isAppLink(habit.name)) {
+                    // App link cell — render with AppLinkButton
+                    AppLinkButton(
+                        appLinkKey = habit.name,
+                        label = appLinks[habit.name] ?: "",
+                        onClick = { onHabitClick(habit, index) },
+                        onLongClick = { onHabitLongClick(habit) },
+                        modifier = Modifier.padding(2.dp),
+                        editMode = editMode,
+                        isSelected = isEditSelected,
+                        isMovePendingSource = isMovePendingSource,
+                        isMovePendingTarget = isMovePending && !isMovePendingSource && editMode
+                    )
+                } else {
+                    HabitButton(
+                        habit = habit,
+                        onClick = { onHabitClick(habit, index) },
+                        onLongClick = { onHabitLongClick(habit) },
+                        modifier = Modifier.padding(2.dp),
+                        editMode = editMode,
+                        isSelected = isEditSelected || isGraphSelected,
+                        isMovePendingSource = isMovePendingSource,
+                        isMovePendingTarget = isMovePending && !isMovePendingSource && editMode,
+                        customIconOverrides = customIconOverrides,
+                        graphMode = graphMode,
+                        isGraphSelected = isGraphSelected,
+                        isDisabled = habit.name in disabledHabits,
+                        aiIconRepo = aiIconRepo,
+                        garminHabitLinks = garminHabitLinks
+                    )
+                }
             } else if (editMode) {
                 // In edit mode, placeholders are selectable cells
                 PlaceholderCell(
@@ -1625,6 +1681,92 @@ private fun PlaceholderCell(
             fontSize = if (isSelected || isMovePendingTarget) 18.sp else 12.sp,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+/**
+ * Edit-mode control section shown when an app link cell is selected.
+ * Extracted from [EditModeControlBar] to keep the parent composable under the
+ * JVM method-size limit.
+ */
+@Composable
+private fun AppLinkEditSection(
+    selectedHabitName: String,
+    onDeleteHabit: (String) -> Unit,
+    onStartMove: () -> Unit,
+    otherScreenIndices: List<Int>,
+    habitScreens: List<HabitScreen>,
+    onMoveToScreen: (Int) -> Unit
+) {
+    var moveToScreenExpanded = remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "🔗 ${appLinkPackageName(selectedHabitName) ?: selectedHabitName}",
+            color = Color(0xFF66CCFF),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
+        Button(
+            onClick = { onDeleteHabit(selectedHabitName) },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A1A00)),
+            modifier = Modifier.height(32.dp)
+        ) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = "Remove app link",
+                tint = Color(0xFFFF6644),
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Remove", fontSize = 11.sp, color = Color(0xFFFF6644))
+        }
+    }
+    Spacer(modifier = Modifier.height(6.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // MOVE button — tap to enter move-pending mode
+        Button(
+            onClick = onStartMove,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004A4A)),
+            modifier = Modifier.height(32.dp)
+        ) {
+            Text("↕ Move", fontSize = 11.sp, color = Color(0xFF44FFFF))
+        }
+        // Screen dropdown — move app link to another screen
+        if (otherScreenIndices.isNotEmpty()) {
+            Box {
+                Button(
+                    onClick = { moveToScreenExpanded.value = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("→ Screen ▾", fontSize = 11.sp, color = Color(0xFF88CCFF))
+                }
+                DropdownMenu(
+                    expanded = moveToScreenExpanded.value,
+                    onDismissRequest = { moveToScreenExpanded.value = false }
+                ) {
+                    otherScreenIndices.forEach { screenIdx ->
+                        DropdownMenuItem(
+                            text = { Text(habitScreens[screenIdx].name, fontSize = 13.sp) },
+                            onClick = {
+                                moveToScreenExpanded.value = false
+                                onMoveToScreen(screenIdx)
+                            }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1727,6 +1869,7 @@ private fun EditModeControlBar(
     selectedDate: java.time.LocalDate = java.time.LocalDate.now(),
     onStartMove: () -> Unit,
     onAddHabit: () -> Unit,
+    onAddAppLink: () -> Unit = {},
     onMoveToScreen: (Int) -> Unit,
     onAddScreen: () -> Unit,
     onDeleteScreen: () -> Unit,
@@ -1950,7 +2093,29 @@ private fun EditModeControlBar(
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Add Habit", fontSize = 11.sp, color = Color(0xFF88FF88))
                     }
+                    // Add App Link button
+                    Button(
+                        onClick = onAddAppLink,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("📱", fontSize = 11.sp)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("App", fontSize = 11.sp, color = Color(0xFF66CCFF))
+                    }
                 }
+            }
+
+            // ── App link selected ───────────────────────────────────────────
+            selectedHabitName != null && isAppLink(selectedHabitName) -> {
+                AppLinkEditSection(
+                    selectedHabitName = selectedHabitName,
+                    onDeleteHabit = onDeleteHabit,
+                    onStartMove = onStartMove,
+                    otherScreenIndices = otherScreenIndices,
+                    habitScreens = habitScreens,
+                    onMoveToScreen = onMoveToScreen
+                )
             }
 
             // ── Habit selected ────────────────────────────────────────────
@@ -5706,6 +5871,159 @@ private fun RollForwardConfirmDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004466))
                 ) {
                     Text("Roll Forward", color = Color(0xFF44BBFF))
+                }
+            }
+        }
+    }
+}
+
+// ── App Picker Dialog ──────────────────────────────────────────────────────────
+
+/**
+ * Converts an Android [Drawable] to a [Bitmap] for Compose rendering.
+ */
+private fun drawableToBitmapForDialog(drawable: Drawable): Bitmap {
+    if (drawable is BitmapDrawable) return drawable.bitmap
+    val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 1
+    val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 1
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+    return bitmap
+}
+
+/**
+ * Data class representing a single installed app for the picker.
+ */
+private data class AppPickerItem(
+    val packageName: String,
+    val label: String
+)
+
+/**
+ * A dialog that shows a searchable list of installed apps.
+ * The user can browse and select one to create an app-link cell.
+ */
+@Composable
+private fun AppPickerDialog(
+    context: Context,
+    onConfirm: (packageName: String, label: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+
+    // Load installed apps once
+    val allApps by remember {
+        mutableStateOf(
+            try {
+                val pm = context.packageManager
+                val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                packages
+                    .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
+                    .map { AppPickerItem(it.packageName, pm.getApplicationLabel(it).toString()) }
+                    .sortedBy { it.label.lowercase() }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        )
+    }
+
+    val filteredApps = remember(searchQuery, allApps) {
+        if (searchQuery.isBlank()) allApps
+        else allApps.filter {
+            it.label.contains(searchQuery, ignoreCase = true) ||
+            it.packageName.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Select App",
+                color = Color(0xFF66CCFF),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Search field
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Search", color = Color(0xFF888888)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFF66CCFF),
+                    unfocusedBorderColor = Color(0xFF555555)
+                )
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Scrollable app list
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp)
+            ) {
+                lazyItems(filteredApps) { app ->
+                    val pm = context.packageManager
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onConfirm(app.packageName, app.label) }
+                            .padding(vertical = 6.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // App icon
+                        val iconBitmap = remember(app.packageName) {
+                            try {
+                                drawableToBitmapForDialog(pm.getApplicationIcon(app.packageName))
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                        if (iconBitmap != null) {
+                            Image(
+                                bitmap = iconBitmap.asImageBitmap(),
+                                contentDescription = app.label,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        } else {
+                            Box(modifier = Modifier.size(32.dp))
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = app.label,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = app.packageName,
+                                color = Color(0xFF888888),
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
                 }
             }
         }

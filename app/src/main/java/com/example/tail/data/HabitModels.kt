@@ -112,6 +112,24 @@ fun calculatePointsFromRanges(value: Int, ranges: List<PointRange>): Int {
  */
 typealias HabitsDatabase = Map<String, Map<String, Int>>
 
+// ── App Link helpers ────────────────────────────────────────────────────────
+/**
+ * Prefix used to distinguish app-link entries from regular habits in the
+ * screen's [HabitScreen.habitNames] list. The full key is
+ * `"$APP_LINK_PREFIX<packageName>"` (e.g. `"app_link:com.example.app"`).
+ */
+const val APP_LINK_PREFIX = "app_link:"
+
+/** Returns true if [name] is an app-link entry (starts with [APP_LINK_PREFIX]). */
+fun isAppLink(name: String): Boolean = name.startsWith(APP_LINK_PREFIX)
+
+/** Builds the internal key for an app link from its [packageName]. */
+fun appLinkKey(packageName: String): String = "$APP_LINK_PREFIX$packageName"
+
+/** Extracts the package name from an app-link key, or null if [name] is not an app link. */
+fun appLinkPackageName(name: String): String? =
+    if (isAppLink(name)) name.removePrefix(APP_LINK_PREFIX) else null
+
 /**
  * A named screen (page) of habits. Each screen has a unique id, a display name,
  * and an ordered list of habit names that appear on it.
@@ -506,7 +524,18 @@ data class AppSettings(
     /** User-defined custom system prompt / dietary rules merged into every vision call. */
     val mealSystemPrompt: String = "",
     /** Habits that have the "Meal" type enabled. */
-    val mealHabits: Set<String> = emptySet()
+    val mealHabits: Set<String> = emptySet(),
+
+    // ── App Link settings ──────────────────────────────────────────────────
+    /**
+     * Maps app-link key → app display label.
+     * The key is the full prefixed name stored in [HabitScreen.habitNames]
+     * (e.g. `"app_link:com.example.app"`). The value is the human-readable
+     * app name shown in the UI (e.g. `"Settings"`).
+     * App links occupy grid cells but are NOT incrementable habits — tapping
+     * one launches the corresponding app via [android.content.Intent.ACTION_MAIN].
+     */
+    val appLinks: Map<String, String> = emptyMap()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

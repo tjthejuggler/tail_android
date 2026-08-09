@@ -127,6 +127,8 @@ private val KEY_MEAL_API_KEY = stringPreferencesKey("meal_api_key")
 private val KEY_MEAL_MODEL = stringPreferencesKey("meal_model")
 private val KEY_MEAL_SYSTEM_PROMPT = stringPreferencesKey("meal_system_prompt")
 private val KEY_MEAL_HABITS = stringSetPreferencesKey("meal_habits")
+// App link keys — stored as "app_link_key\x00label|||app_link_key\x00label" pairs
+private val KEY_APP_LINKS = stringPreferencesKey("app_links")
 
 /**
  * One-time rename mapping for legacy "Launch … Widget" habit names.
@@ -591,7 +593,8 @@ class SettingsRepository(private val context: Context) {
             mealApiKey = prefs[KEY_MEAL_API_KEY] ?: "",
             mealModel = prefs[KEY_MEAL_MODEL] ?: "",
             mealSystemPrompt = prefs[KEY_MEAL_SYSTEM_PROMPT] ?: "",
-            mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet()
+            mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet(),
+            appLinks = decodeFileUriMap(prefs[KEY_APP_LINKS] ?: "")
         )
     }
 
@@ -1036,5 +1039,10 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that have the "Meal" type enabled. */
     suspend fun saveMealHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_MEAL_HABITS] = habits }
+    }
+
+    /** Saves the map of app-link key → app display label. */
+    suspend fun saveAppLinks(links: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_APP_LINKS] = encodeFileUriMap(links) }
     }
 }
