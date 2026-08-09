@@ -19,6 +19,7 @@ This script extracts the following metrics from Garmin exports:
 - **Distance** - Total distance in meters
 - **Calories** - Total kilocalories burned
 - **Active Minutes** - Moderate + vigorous intensity minutes
+- **Run/Bike/Swim Minutes** - Per-sport activity minutes from `_summarizedActivities.json` durations, categorised by activity type
 - **Floors Climbed** - From elevation data
 - **Min/Max Heart Rate** - Daily heart rate extremes
 - **Stress Level** - From `StressDetailSummary` or `GarminStressDetailSummary` files
@@ -84,6 +85,9 @@ The script generates a JSON file with the following structure:
   "DISTANCE_METERS": {"2024-01-01": 8000, ...},
   "CALORIES": {"2024-01-01": 2200, ...},
   "ACTIVE_MINUTES": {"2024-01-01": 45, ...},
+  "RUN_MINUTES": {"2024-01-01": 30, ...},
+  "BIKE_MINUTES": {"2024-01-01": 60, ...},
+  "SWIM_MINUTES": {"2024-01-01": 20, ...},
   "FLOORS_CLIMBED": {"2024-01-01": 12, ...},
   "MIN_HR": {"2024-01-01": 52, ...},
   "MAX_HR": {"2024-01-01": 145, ...},

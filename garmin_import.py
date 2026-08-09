@@ -422,13 +422,33 @@ class GarminDataExtractor:
 
                 # Categorise activity into run/bike/swim and accumulate duration
                 # (seconds). Converted to whole minutes in finalize_activity_minutes().
-                duration_s = entry.get("duration") or entry.get("durationInSeconds")
-                if duration_s and duration_s > 0:
-                    atype = entry.get("activityType") or {}
-                    cat = categorise_activity_type(atype.get("typeKey", ""))
+                #
+                # Duration units differ between data sources:
+                #   - GDPR ZIP export: "duration" is in milliseconds
+                #   - Live Connect API: "durationInSeconds" is in seconds
+                # The GDPR export has no durationInSeconds field, so when only
+                # "duration" is present we convert ms → s.
+                duration_raw = entry.get("durationInSeconds")
+                if duration_raw:
+                    duration_s = float(duration_raw)
+                else:
+                    duration_ms = entry.get("duration")
+                    duration_s = float(duration_ms) / 1000 if duration_ms else 0.0
+                if duration_s > 0:
+                    # activityType shape differs between sources:
+                    #   - GDPR ZIP export: a plain string (e.g. "running")
+                    #   - Live Connect API: a dict with a "typeKey" field
+                    atype_raw = entry.get("activityType")
+                    if isinstance(atype_raw, dict):
+                        type_key = atype_raw.get("typeKey", "")
+                    elif isinstance(atype_raw, str):
+                        type_key = atype_raw
+                    else:
+                        type_key = ""
+                    cat = categorise_activity_type(type_key)
                     if cat:
                         self.activity_seconds[cat][date] = (
-                            self.activity_seconds[cat].get(date, 0) + float(duration_s)
+                            self.activity_seconds[cat].get(date, 0) + duration_s
                         )
         except Exception as e:
             print(f"Warning: Failed to process activity data from {file_name}: {e}")
