@@ -1,7 +1,7 @@
 # Tail Integration Guide
 ## How to Hook Another App into Tail's Habit Incrementing System
 
-**Last updated:** 2026-03-26
+**Last updated:** 2026-08-09
 **Applies to:** Tail app package `com.example.tail`, minSdk 26+
 
 ---
@@ -770,6 +770,24 @@ Tail reads `EXTRA_MINUTES` and uses it as the increment amount. If absent, the d
 |-------|------|-------------|
 | `EXTRA_MINUTES` | `Int` | Number of minutes to add. Must be ≥ 1. |
 
+#### WAGS slots that send `EXTRA_MINUTES`
+
+| Slot | What "minutes" represents |
+|------|---------------------------|
+| `RESONANCE_BREATHING` | Resonance breathing session duration (incl. RF assessments) |
+| `MEDITATION` | Meditation / NSDR session duration |
+| `FREE_HOLD` | Apnea free breath-hold — duration of the single hold |
+| `TABLE_TRAINING` | Apnea O₂/CO₂ table — sum of all hold durations across rounds |
+| `PROGRESSIVE_O2` | Apnea Progressive O₂ drill — sum of all hold durations |
+| `MIN_BREATH` | Apnea Min Breath drill — sum of all hold durations |
+
+For resonance breathing and meditation, minutes = session wall-clock duration.
+For apnea activities, minutes = **total breath-hold time** (cumulative time spent
+holding breath), not session duration. This is the training metric that matters.
+
+Slots that remain count-based (no `EXTRA_MINUTES`, increment by 1):
+`APNEA_NEW_RECORD`, `MORNING_READINESS`, `HRV_READINESS`, `RAPID_HR_CHANGE`, `MUSIC`.
+
 ### v2 Change 2: `ACTION_SET_HABIT_VALUES` (Retroactive Backfill)
 
 A new broadcast action that **SETS** (replaces) the stored value for multiple dates at once. This is idempotent — running it multiple times with the same data produces the same result.
@@ -790,6 +808,8 @@ context.sendBroadcast(intent, "com.example.tail.permission.TAIL_INTEGRATION")
 | `EXTRA_VALUES_JSON` | JSON object: `{"yyyy-MM-dd": <Int>, ...}` |
 
 Tail replaces the stored value for each date key with the provided integer. The Tasker stats file is also updated if today's date is among those set.
+
+WAGS sends one `ACTION_SET_HABIT_VALUES` broadcast per habit slot during backfill, covering all six minute-based slots: `RESONANCE_BREATHING`, `MEDITATION`, `FREE_HOLD`, `TABLE_TRAINING`, `PROGRESSIVE_O2`, and `MIN_BREATH`. Each slot maps to its own independent Tail habit (configured by the user in WAGS Settings → Tail App Integration), so minutes flow to the correct habit automatically. Slots with no habit selected are silently skipped.
 
 ### v2 Quick Reference (additions)
 

@@ -44,8 +44,10 @@ class HabitIncrementReceiver : BroadcastReceiver() {
          * Protocol v2 — Optional Int extra carrying the number of minutes to
          * add instead of the default increment of 1.
          *
-         * Sent by WAGS for resonance-breathing and meditation sessions so Tail
-         * records the actual session duration rather than a simple "did it" = 1.
+         * Sent by WAGS for resonance-breathing, meditation, and apnea sessions
+         * (free holds, table training, progressive O₂, min breath) so Tail
+         * records the actual session/hold duration rather than a simple
+         * "did it" = 1.
          * If absent (or if the sending app is old), the receiver falls back to 1.
          */
         const val EXTRA_MINUTES = "EXTRA_MINUTES"
@@ -105,7 +107,8 @@ class HabitIncrementReceiver : BroadcastReceiver() {
 
                 // Protocol v2: resolve the increment amount from EXTRA_MINUTES.
                 // If absent (old sender or count-based slot), default to 1.
-                val amount = if (intent.hasExtra(EXTRA_MINUTES)) {
+                val hasMinutesExtra = intent.hasExtra(EXTRA_MINUTES)
+                val amount = if (hasMinutesExtra) {
                     intent.getIntExtra(EXTRA_MINUTES, 1).coerceAtLeast(1)
                 } else {
                     1
@@ -115,7 +118,9 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                 // count is already >= 1, skip the increment entirely.
                 // Minute-based increments (EXTRA_MINUTES present) bypass this cap
                 // because they are cumulative durations, not binary "did it" counts.
-                if (amount == 1 && habitName in settings.maxOneHabits) {
+                // We check hasMinutesExtra (not amount == 1) so that a 1-minute
+                // hold is still recorded even if the habit is configured as max-1.
+                if (!hasMinutesExtra && habitName in settings.maxOneHabits) {
                     val db = habitsRepo.loadDatabase(uri, appContext)
                     val todayStr = java.time.LocalDate.now().toString()
                     val currentCount = db[habitName]?.get(todayStr) ?: 0
