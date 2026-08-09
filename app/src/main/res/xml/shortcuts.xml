@@ -2,6 +2,31 @@
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
+        Static shortcut for "Quick Capture" — a unified launcher that combines
+        voice and camera into a single shortcut. Appears FIRST in the launcher
+        long-press menu and Samsung Routines.
+
+        Launches MediaCaptureActivity which shows a chooser:
+          - Voice: starts SmartVoiceService (smart routing to habits/notes)
+          - Camera: opens CameraX preview, captures, processes the image
+            inline through the vision pipeline (same code path as the
+            Settings test button), shows the LLM result, then the user
+            dismisses to return to their previous screen.
+    -->
+    <shortcut
+        android:shortcutId="media_capture"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_media_capture_short"
+        android:shortcutLongLabel="@string/shortcut_media_capture_long"
+        android:icon="@android:drawable/ic_menu_camera">
+        <intent
+            android:action="com.example.tail.ACTION_MEDIA_CAPTURE"
+            android:targetPackage="com.example.tail"
+            android:targetClass="com.example.tail.MediaCaptureActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <!--
         Static shortcut for "Voice Trigger" — appears in Samsung Routines
         under "Then" → "Apps" → "Tail" → "Voice Trigger".
         Launches VoiceTriggerActivity which starts VoiceHabitService in
@@ -77,45 +102,6 @@
             android:targetPackage="com.example.tail"
             android:targetClass="com.example.tail.TextNoteActivity" />
         <categories android:name="android.shortcut.conversation" />
-    </shortcut>
-
-    <!--
-        Static shortcut for "Smart Voice" — appears in Samsung Routines
-        under "Then" → "Apps" → "Tail" → "Smart Voice".
-        Launches SmartVoiceActivity which starts SmartVoiceService in
-        voice-listening mode. The service smartly routes recognized text
-        to habit incrementing (if most words match trigger words) or
-        note saving (if not).
-    -->
-    <shortcut
-        android:shortcutId="smart_voice"
-        android:enabled="true"
-        android:shortcutShortLabel="@string/shortcut_smart_voice_short"
-        android:shortcutLongLabel="@string/shortcut_smart_voice_long"
-        android:icon="@android:drawable/ic_btn_speak_now">
-        <intent
-            android:action="com.example.tail.ACTION_SMART_VOICE"
-            android:targetPackage="com.example.tail"
-            android:targetClass="com.example.tail.SmartVoiceActivity" />
-        <categories android:name="android.shortcut.conversation" />
-    </shortcut>
-
-    <!--
-        Static shortcut for "Snap Meal" — appears in the launcher long-press
-        menu and Samsung Routines. Launches QuickCaptureActivity which opens
-        the camera, captures on tap, and enqueues the photo for LLM vision
-        analysis (food classification + nutrition extraction).
-    -->
-    <shortcut
-        android:shortcutId="quick_capture"
-        android:enabled="true"
-        android:shortcutShortLabel="@string/shortcut_quick_capture_short"
-        android:shortcutLongLabel="@string/shortcut_quick_capture_long"
-        android:icon="@android:drawable/ic_menu_camera">
-        <intent
-            android:action="com.example.tail.ACTION_QUICK_CAPTURE"
-            android:targetPackage="com.example.tail"
-            android:targetClass="com.example.tail.QuickCaptureActivity" />
     </shortcut>
 
 </shortcuts>

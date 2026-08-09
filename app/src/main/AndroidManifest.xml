@@ -345,21 +345,42 @@
 
         <!--
             QuickCaptureActivity: full-screen camera capture for the meal
-            vision pipeline. Launched from a launcher shortcut or Samsung
-            Routines. Shows CameraX preview, captures on tap, saves the
-            image to internal storage, enqueues it for LLM vision
-            processing, then finishes immediately.
+            vision pipeline. Launched in-app from the Meal Detail screen.
+            Shows CameraX preview, captures on tap, saves the image to
+            internal storage, enqueues it for LLM vision processing,
+            then finishes immediately.
         -->
         <activity
             android:name=".QuickCaptureActivity"
-            android:exported="true"
+            android:exported="false"
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:taskAffinity=""
             android:screenOrientation="portrait"
-            android:theme="@style/Theme.Tail">
+            android:theme="@style/Theme.Tail" />
+
+        <!--
+            MediaCaptureActivity: unified launcher that combines voice and
+            camera. Voice starts IMMEDIATELY (SmartVoiceService with vibration).
+            A transparent overlay with a camera button is shown briefly so the
+            user can switch to camera mode if desired. Works on the lock screen.
+            Camera mode captures a photo, processes it inline through the vision
+            pipeline (same code path as the Settings test button), shows the LLM
+            result, and the user dismisses to return to their previous screen.
+        -->
+        <activity
+            android:name=".MediaCaptureActivity"
+            android:exported="true"
+            android:label="@string/shortcut_media_capture_short"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.Tail.Transparent">
             <intent-filter>
-                <action android:name="com.example.tail.ACTION_QUICK_CAPTURE" />
+                <action android:name="com.example.tail.ACTION_MEDIA_CAPTURE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

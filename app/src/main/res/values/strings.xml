@@ -10,8 +10,6 @@
     <string name="shortcut_voice_note_long">Dictate a note by voice</string>
     <string name="shortcut_text_note_short">Text Note</string>
     <string name="shortcut_text_note_long">Save pre-recognized text as a note</string>
-    <string name="shortcut_smart_voice_short">Smart Voice</string>
-    <string name="shortcut_smart_voice_long">Smart voice: habits or note based on words</string>
-    <string name="shortcut_quick_capture_short">Snap Meal</string>
-    <string name="shortcut_quick_capture_long">Capture a meal photo for AI analysis</string>
+    <string name="shortcut_media_capture_short">Quick Capture</string>
+    <string name="shortcut_media_capture_long">Voice or camera: log a meal or trigger a habit</string>
 </resources>
