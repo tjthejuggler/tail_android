@@ -1373,8 +1373,11 @@ fun HabitGridScreen(
 
     // Delete habit confirmation dialog
     deleteConfirmHabitName?.let { habitName ->
+        val isLink = isAppLink(habitName)
+        val displayName = if (isLink) settings.appLinks[habitName] ?: habitName else habitName
         DeleteHabitConfirmDialog(
-            habitName = habitName,
+            habitName = displayName,
+            isAppLink = isLink,
             onConfirm = {
                 val idx = habits.indexOfFirst { it.name == habitName }
                 if (idx >= 0) viewModel.deleteHabit(idx)
@@ -5068,6 +5071,7 @@ private fun HabitNoteDialog(
 @Composable
 private fun DeleteHabitConfirmDialog(
     habitName: String,
+    isAppLink: Boolean = false,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -5078,14 +5082,17 @@ private fun DeleteHabitConfirmDialog(
                 .padding(20.dp)
         ) {
             Text(
-                text = "Delete Habit",
+                text = if (isAppLink) "Remove App Link" else "Delete Habit",
                 color = Color(0xFFFF8888),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Remove \"$habitName\" from the grid?\n\nThe habit data in your JSON files will NOT be deleted.",
+                text = if (isAppLink)
+                    "Remove \"$habitName\" from the grid?"
+                else
+                    "Remove \"$habitName\" from the grid?\n\nThe habit data in your JSON files will NOT be deleted.",
                 color = Color(0xFFCCCCCC),
                 fontSize = 13.sp
             )

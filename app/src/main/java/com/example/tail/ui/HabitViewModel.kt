@@ -2645,7 +2645,7 @@ class HabitViewModel(
             if (index !in current.indices) return
             keyToRemove = current[index]
             if (keyToRemove.isEmpty() || !isAppLink(keyToRemove)) return
-            current.removeAt(index)
+            current[index] = ""
             val updatedScreen = screen.copy(habitNames = current)
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
             _habitScreens.value = updatedScreens
@@ -2657,7 +2657,7 @@ class HabitViewModel(
             if (index !in current.indices) return
             keyToRemove = current[index]
             if (keyToRemove.isEmpty() || !isAppLink(keyToRemove)) return
-            current.removeAt(index)
+            current[index] = ""
             _habitOrder.value = current
             _selectedEditIndex.value = -1
             isSavingOrder = true
@@ -2767,12 +2767,12 @@ class HabitViewModel(
             val screen = screens[screenIdx]
             val current = screen.habitNames.toMutableList()
             if (index !in current.indices) return
-            // Empty-string entries are already placeholders — just keep them as-is.
-            // Only remove real habit names.
+            // Empty-string entries are already placeholders — nothing to do.
             if (current[index].isEmpty()) return
             // Delegate to deleteAppLink for app-link entries
             if (isAppLink(current[index])) { deleteAppLink(index); return }
-            current.removeAt(index)
+            // Replace with empty placeholder so grid positions of other habits stay fixed
+            current[index] = ""
             val updatedScreen = screen.copy(habitNames = current)
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
             _habitScreens.value = updatedScreens
@@ -2785,7 +2785,8 @@ class HabitViewModel(
             if (current[index].isEmpty()) return
             // Delegate to deleteAppLink for app-link entries
             if (isAppLink(current[index])) { deleteAppLink(index); return }
-            current.removeAt(index)
+            // Replace with empty placeholder so grid positions of other habits stay fixed
+            current[index] = ""
             _habitOrder.value = current
             _selectedEditIndex.value = -1
             isSavingOrder = true
