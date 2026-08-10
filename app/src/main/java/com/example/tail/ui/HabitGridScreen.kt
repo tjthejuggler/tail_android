@@ -715,23 +715,49 @@ fun HabitGridScreen(
                         },
                         onHabitLongClick = { habit ->
                             if (!editMode && !graphMode && !isAppLink(habit.name)) {
-                                // Check if this habit has app associations
-                                val associations = settings.habitAppAssociations[habit.name]
-                                if (!associations.isNullOrEmpty()) {
-                                    if (associations.size == 1) {
-                                        // Single app — launch directly, bypass list
-                                        val launchIntent = context.packageManager
-                                            .getLaunchIntentForPackage(associations[0])
-                                        if (launchIntent != null) {
-                                            context.startActivity(launchIntent)
+                                // Determine the configured long-press action (defaults to "app")
+                                val action = com.example.tail.data.effectiveLongPressAction(
+                                    settings.habitLongPressActions[habit.name]
+                                )
+                                when (action) {
+                                    com.example.tail.data.LONG_PRESS_CAMERA -> {
+                                        // Launch camera capture for this meal habit
+                                        val intent = android.content.Intent(
+                                            context,
+                                            com.example.tail.QuickCaptureActivity::class.java
+                                        ).apply {
+                                            putExtra(
+                                                com.example.tail.QuickCaptureActivity.EXTRA_HABIT_NAME,
+                                                habit.name
+                                            )
                                         }
-                                    } else {
-                                        // Multiple apps — show picker dialog
-                                        appLauncherHabit = habit.name
+                                        context.startActivity(intent)
                                     }
-                                } else {
-                                    // No app associations — open app picker to set first association
-                                    appAssociationPickerHabit = habit.name
+                                    com.example.tail.data.LONG_PRESS_DETAILS -> {
+                                        // Open the meal details dialog
+                                        mealDialogFromTap = false
+                                        mealDialogHabit = habit.name
+                                    }
+                                    else -> {
+                                        // LONG_PRESS_APP (default) — launch associated app(s)
+                                        val associations = settings.habitAppAssociations[habit.name]
+                                        if (!associations.isNullOrEmpty()) {
+                                            if (associations.size == 1) {
+                                                // Single app — launch directly, bypass list
+                                                val launchIntent = context.packageManager
+                                                    .getLaunchIntentForPackage(associations[0])
+                                                if (launchIntent != null) {
+                                                    context.startActivity(launchIntent)
+                                                }
+                                            } else {
+                                                // Multiple apps — show picker dialog
+                                                appLauncherHabit = habit.name
+                                            }
+                                        } else {
+                                            // No app associations — open app picker to set first association
+                                            appAssociationPickerHabit = habit.name
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -843,6 +869,10 @@ fun HabitGridScreen(
                         onOpenMealDetails = { name ->
                             mealDialogFromTap = false
                             mealDialogHabit = name
+                        },
+                        habitLongPressActions = settings.habitLongPressActions,
+                        onSetLongPressAction = { name, action ->
+                            viewModel.setHabitLongPressAction(name, action)
                         },
                         hiddenScreenIds = settings.hiddenScreens,
                         onToggleScreenHidden = { viewModel.toggleScreenHidden(activeScreenIndex) },
@@ -1179,7 +1209,8 @@ fun HabitGridScreen(
             habitName = habitName,
             viewModel = viewModel,
             onDismiss = { mealDialogHabit = null },
-            incrementAlreadyDone = mealDialogFromTap
+            incrementAlreadyDone = mealDialogFromTap,
+            selectedDate = selectedDate
         )
     }
 
@@ -2084,6 +2115,78 @@ private fun MealToggleSection(
     }
 }
 
+/**
+ * Settings section for configuring the long-press action of a habit.
+ *
+ * For meal habits the user can choose between App (default), Camera, and Details.
+ * For non-meal habits only App is available.
+ */
+@Composable
+private fun LongPressActionSection(
+    habitName: String,
+    isMeal: Boolean,
+    currentAction: String,
+    onSetAction: (String, String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    val options = if (isMeal) com.example.tail.data.MEAL_LONG_PRESS_ACTIONS
+                  else com.example.tail.data.STANDARD_LONG_PRESS_ACTIONS
+
+    val actionLabel = when (currentAction) {
+        com.example.tail.data.LONG_PRESS_CAMERA -> "Camera"
+        com.example.tail.data.LONG_PRESS_DETAILS -> "Meal Details"
+        else -> "App"
+    }
+
+    val actionDesc = when (currentAction) {
+        com.example.tail.data.LONG_PRESS_CAMERA -> "Opens camera capture"
+        com.example.tail.data.LONG_PRESS_DETAILS -> "Opens meal details for this day"
+        else -> "Launches associated app"
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = "Long-press action", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = actionDesc,
+                color = Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Box {
+            TextButton(onClick = { expanded = true }) {
+                Text(actionLabel, fontSize = 12.sp, color = Color(0xFFFF9800))
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                options.forEach { option ->
+                    val label = when (option) {
+                        com.example.tail.data.LONG_PRESS_CAMERA -> "Camera"
+                        com.example.tail.data.LONG_PRESS_DETAILS -> "Meal Details"
+                        else -> "App"
+                    }
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = {
+                            onSetAction(habitName, option)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun HabitToggleSection(
     habitName: String,
@@ -2241,6 +2344,10 @@ private fun EditModeControlBar(
     mealHabits: Set<String> = emptySet(),
     onToggleMeal: (String) -> Unit = {},
     onOpenMealDetails: (String) -> Unit = {},
+    /** Map of habit name → configured long-press action string. */
+    habitLongPressActions: Map<String, String> = emptyMap(),
+    /** Called when the user changes the long-press action (habitName, action). */
+    onSetLongPressAction: (String, String) -> Unit = { _, _ -> },
     hiddenScreenIds: Set<String> = emptySet(),
     onToggleScreenHidden: () -> Unit = {},
     disabledHabits: Set<String> = emptySet(),
@@ -3584,6 +3691,16 @@ private fun EditModeControlBar(
                         isMeal = selectedHabitName in mealHabits,
                         onToggleMeal = onToggleMeal,
                         onOpenMealDetails = onOpenMealDetails
+                    )
+
+                    // ── Long-press action selector ────────────────────────────
+                    LongPressActionSection(
+                        habitName = selectedHabitName,
+                        isMeal = selectedHabitName in mealHabits,
+                        currentAction = com.example.tail.data.effectiveLongPressAction(
+                            habitLongPressActions[selectedHabitName]
+                        ),
+                        onSetAction = onSetLongPressAction
                     )
 
                     // ── Disabled / No-points / Secondary-value toggles ──────

@@ -5873,6 +5873,24 @@ class HabitViewModel(
         }
     }
 
+    /**
+     * Sets the long-press action for a habit.
+     * Pass [com.example.tail.data.LONG_PRESS_APP] to reset to default behaviour
+     * (which removes the entry so the default kicks in).
+     */
+    fun setHabitLongPressAction(habitName: String, action: String) {
+        viewModelScope.launch {
+            val current = _settings.value.habitLongPressActions.toMutableMap()
+            if (action == com.example.tail.data.LONG_PRESS_APP) {
+                current.remove(habitName)
+            } else {
+                current[habitName] = action
+            }
+            settingsRepo.saveHabitLongPressActions(current)
+            _settings.value = _settings.value.copy(habitLongPressActions = current)
+        }
+    }
+
     /** Loads meal logs for a habit and updates the StateFlows. */
     fun loadMealLogs(habitName: String) {
         viewModelScope.launch(Dispatchers.IO) {

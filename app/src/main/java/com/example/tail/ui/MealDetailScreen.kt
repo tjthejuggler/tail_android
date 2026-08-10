@@ -55,6 +55,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.tail.QuickCaptureActivity
 import com.example.tail.data.meal.MealLog
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.Date
 import java.util.Locale
 
@@ -74,11 +75,18 @@ fun MealDetailDialog(
     habitName: String,
     viewModel: HabitViewModel,
     onDismiss: () -> Unit,
-    incrementAlreadyDone: Boolean = false
+    incrementAlreadyDone: Boolean = false,
+    /** Only meal logs from this date are shown in the history feed. */
+    selectedDate: LocalDate = LocalDate.now()
 ) {
     val context = LocalContext.current
-    val mealLogs by viewModel.mealLogsForHabit.collectAsState()
-    val todayCalories by viewModel.mealTodayCalories.collectAsState()
+    val allMealLogs by viewModel.mealLogsForHabit.collectAsState()
+
+    // Filter to only the selected day's meals
+    val mealLogs = remember(allMealLogs, selectedDate) {
+        allMealLogs.filter { isOnDate(it, selectedDate) }
+    }
+    val dayCalories = mealLogs.sumOf { it.calories }
 
     // Load meal logs when the dialog opens
     LaunchedEffect(habitName) {
@@ -140,11 +148,14 @@ fun MealDetailDialog(
                         .padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    MacroSummaryItem("Today", "$todayCalories", "kcal")
-                    MacroSummaryItem("Meals", "${mealLogs.count { isToday(it) }}", "today")
+                    MacroSummaryItem(
+                        if (selectedDate == LocalDate.now()) "Today" else selectedDate.toString(),
+                        "$dayCalories", "kcal"
+                    )
+                    MacroSummaryItem("Meals", "${mealLogs.size}", "day")
                     MacroSummaryItem(
                         "Avg cal",
-                        if (mealLogs.isNotEmpty()) (mealLogs.sumOf { it.calories } / mealLogs.size).toString() else "0",
+                        if (mealLogs.isNotEmpty()) (dayCalories / mealLogs.size).toString() else "0",
                         "/meal"
                     )
                 }
@@ -377,11 +388,10 @@ private fun MacroChip(text: String, color: Color) {
     )
 }
 
-/** Checks if a meal log's timestamp is today. */
-private fun isToday(log: MealLog): Boolean {
-    val today = java.time.LocalDate.now().toString()
+/** Checks if a meal log's timestamp falls on the given date. */
+private fun isOnDate(log: MealLog, date: LocalDate): Boolean {
     val logDate = java.time.Instant.ofEpochMilli(log.timestamp)
         .atZone(java.time.ZoneId.systemDefault())
-        .toLocalDate().toString()
-    return today == logDate
+        .toLocalDate()
+    return logDate == date
 }

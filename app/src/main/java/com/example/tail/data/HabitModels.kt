@@ -1,5 +1,33 @@
 package com.example.tail.data
 
+// ════════════════════════════════════════════════════════════════════════════
+//  Long-press action constants
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Long-press launches the associated app(s) or opens the app picker (default). */
+const val LONG_PRESS_APP = "app"
+/** Long-press opens the camera capture screen (meal habits only). */
+const val LONG_PRESS_CAMERA = "camera"
+/** Long-press opens the meal details dialog (meal habits only). */
+const val LONG_PRESS_DETAILS = "details"
+
+/**
+ * Returns the effective long-press action for a habit.
+ * Defaults to [LONG_PRESS_APP] when no explicit value is stored.
+ */
+fun effectiveLongPressAction(stored: String?): String =
+    stored?.takeIf { it.isNotBlank() } ?: LONG_PRESS_APP
+
+/**
+ * All valid long-press actions for a non-meal habit.
+ */
+val STANDARD_LONG_PRESS_ACTIONS = listOf(LONG_PRESS_APP)
+
+/**
+ * All valid long-press actions for a meal habit.
+ */
+val MEAL_LONG_PRESS_ACTIONS = listOf(LONG_PRESS_APP, LONG_PRESS_CAMERA, LONG_PRESS_DETAILS)
+
 /**
  * All-time high for a rolling window: the peak average value and the date it occurred.
  */
@@ -582,7 +610,15 @@ data class AppSettings(
      * Unlike [appLinks], these are not separate grid cells — they augment
      * existing habits.
      */
-    val habitAppAssociations: Map<String, List<String>> = emptyMap()
+    val habitAppAssociations: Map<String, List<String>> = emptyMap(),
+
+    // ── Long-press action settings ──────────────────────────────────────────
+    /**
+     * Maps habit name → long-press action string (one of [LONG_PRESS_APP],
+     * [LONG_PRESS_CAMERA], [LONG_PRESS_DETAILS]).
+     * Habits not present in this map default to [LONG_PRESS_APP].
+     */
+    val habitLongPressActions: Map<String, String> = emptyMap()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */
