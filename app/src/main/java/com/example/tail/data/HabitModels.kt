@@ -130,6 +130,28 @@ fun appLinkKey(packageName: String): String = "$APP_LINK_PREFIX$packageName"
 fun appLinkPackageName(name: String): String? =
     if (isAppLink(name)) name.removePrefix(APP_LINK_PREFIX) else null
 
+// ── Secondary Value helpers ──────────────────────────────────────────────────
+/**
+ * Prefix used to store secondary-value entries alongside regular habits in the
+ * shared habitsdb.txt JSON file.  For a habit named "Meditations", its
+ * secondary values are stored under the key `"secondary_value:Meditations"`.
+ *
+ * This convention lets secondary values sync automatically via Syncthing (same
+ * file), be written by external tools (Python scripts, Wags), and be filtered
+ * out of habit-list / stats iterations with a simple prefix check.
+ */
+const val SECONDARY_VALUE_PREFIX = "secondary_value:"
+
+/** Returns true if [name] is a secondary-value storage key. */
+fun isSecondaryValueKey(name: String): Boolean = name.startsWith(SECONDARY_VALUE_PREFIX)
+
+/** Builds the storage key for the secondary values of [habitName]. */
+fun secondaryValueKey(habitName: String): String = "$SECONDARY_VALUE_PREFIX$habitName"
+
+/** Extracts the habit name from a secondary-value key, or null if [name] is not one. */
+fun secondaryValueHabitName(name: String): String? =
+    if (isSecondaryValueKey(name)) name.removePrefix(SECONDARY_VALUE_PREFIX) else null
+
 /**
  * A named screen (page) of habits. Each screen has a unique id, a display name,
  * and an ordered list of habit names that appear on it.
@@ -313,6 +335,18 @@ data class AppSettings(
      */
     val noPointsHabits: Set<String> = emptySet(),
 
+    /**
+     * Habits that have the "Secondary Value" feature enabled.
+     * When a habit is in this set, it can store a second integer value per day
+     * (stored in habitsdb.txt under the key "secondary_value:<habitName>").
+     * The primary value remains the normal stored count; the secondary value
+     * is accessible via the graph screen's "Value2" button.
+     *
+     * Example use-case: Meditation habit where primary = minutes,
+     * secondary = session count.
+     */
+    val secondaryValueHabits: Set<String> = emptySet(),
+
     // ── AI Icon Generation settings ──────────────────────────────────────
     /** Whether AI icon generation is enabled (user must opt in via Settings). */
     val aiIconsEnabled: Boolean = false,
@@ -465,9 +499,11 @@ data class AppSettings(
     val customPointRanges: Map<String, List<PointRange>> = emptyMap(),
 
     /**
-     * Maps habit name → graph value mode (0 = points, 1 = value/raw).
-     * When a habit is in this map with value 1, the graph shows the raw value
-     * (true value or garmin value) instead of points. When absent or 0, points are shown.
+     * Maps habit name → graph value mode:
+     *   0 = points (default)
+     *   1 = Value1 (raw value / true value / garmin value)
+     *   2 = Value2 (secondary value, only for habits in [secondaryValueHabits])
+     * When absent or 0, points are shown.
      */
     val graphValueModeHabits: Map<String, Int> = emptyMap(),
 

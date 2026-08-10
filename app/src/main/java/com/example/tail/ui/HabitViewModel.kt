@@ -33,6 +33,8 @@ import com.example.tail.data.APP_LINK_PREFIX
 import com.example.tail.data.appLinkKey
 import com.example.tail.data.appLinkPackageName
 import com.example.tail.data.isAppLink
+import com.example.tail.data.isSecondaryValueKey
+import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
@@ -389,6 +391,52 @@ class HabitViewModel(
                 if (s.fileUri.isNotEmpty() && lastLoadedUri.isEmpty()) {
                     lastLoadedUri = s.fileUri
                     catchUpAndLoad(Uri.parse(s.fileUri))
+
+                    // ── One-time meditation data import ───────────────────────
+                    // Runs HERE (not in onAppForegrounded) because the fileUri is
+                    // guaranteed to be loaded and the DB has just been read from disk.
+                    try {
+                        val meditationFile = File(context.filesDir, "meditation_import.json")
+                        if (meditationFile.exists()) {
+                            Log.d(TAG, "Found meditation_import.json, importing…")
+                            val jsonText = meditationFile.readText()
+                            meditationFile.renameTo(File(context.filesDir, "meditation_imported.json"))
+
+                            val root = org.json.JSONObject(jsonText)
+                            val daily = root.optJSONObject("daily")
+                            if (daily != null) {
+                                val mutableDb = cachedPhoneDb.toMutableMap()
+                                val pk = "Meditations"
+                                val sk = secondaryValueKey(pk)
+                                if (pk !in mutableDb) mutableDb[pk] = emptyMap()
+                                if (sk !in mutableDb) mutableDb[sk] = emptyMap()
+                                val pEntries = mutableDb[pk]!!.toMutableMap()
+                                val sEntries = mutableDb[sk]!!.toMutableMap()
+                                var minAdded = 0
+                                var sesAdded = 0
+                                val dates = daily.keys()
+                                while (dates.hasNext()) {
+                                    val ds = dates.next()
+                                    val di = daily.optJSONObject(ds) ?: continue
+                                    val gm = di.optInt("minutes", 0)
+                                    val gs = di.optInt("sessions", 0)
+                                    if (gm > pEntries.getOrDefault(ds, 0)) { pEntries[ds] = gm; minAdded++ }
+                                    if (gs > sEntries.getOrDefault(ds, 0)) { sEntries[ds] = gs; sesAdded++ }
+                                }
+                                mutableDb[pk] = pEntries
+                                mutableDb[sk] = sEntries
+                                cachedPhoneDb = mutableDb
+                                rebuildHabitList()
+                                withContext(Dispatchers.IO) {
+                                    habitsRepo.persistDatabase(Uri.parse(s.fileUri), context, mutableDb)
+                                }
+                                Log.d(TAG, "Meditation import complete: $minAdded min entries, $sesAdded session entries. Persisted to ${s.fileUri}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Meditation import failed: ${e.message}")
+                    }
+
                     // After the DB is loaded, sync any dated-entry habits.
                     if (s.datedEntryHabits.isNotEmpty()) {
                         syncAllDatedEntries(forceReparse = false)
@@ -834,8 +882,9 @@ class HabitViewModel(
 
         val dividers = _settings.value.habitDividers
         val noPointsHabits = _settings.value.noPointsHabits
-        // Use all habit names present in the DB (covers all screens)
-        val habitNames = db.keys
+        // Use all habit names present in the DB (covers all screens),
+        // excluding secondary-value storage entries
+        val habitNames = db.keys.filter { !isSecondaryValueKey(it) }
 
         val result = mutableMapOf<String, Int>()
         // Build date strings for every day in the month
@@ -2401,6 +2450,19 @@ class HabitViewModel(
     }
 
     /**
+     * Toggles the "Secondary Value" feature for [habitName].
+     * When enabled, the habit stores a second integer value per day (accessible
+     * via the graph screen's "Value2" button). Secondary values are stored in
+     * habitsdb.txt under the key "secondary_value:<habitName>".
+     */
+    fun toggleSecondaryValueHabit(habitName: String) {
+        val current = _settings.value.secondaryValueHabits.toMutableSet()
+        if (habitName in current) current.remove(habitName) else current.add(habitName)
+        _settings.value = _settings.value.copy(secondaryValueHabits = current)
+        viewModelScope.launch { settingsRepo.saveSecondaryValueHabits(current) }
+    }
+
+    /**
      * Moves the currently selected habit to [targetScreenIndex].
      * Removes it from its current screen and appends it to the target screen.
      * Clears the selection after moving.
@@ -2746,6 +2808,7 @@ class HabitViewModel(
                     timelessHabits = settings.timelessHabits.replaceElement(oldName, newName),
                     disabledHabits = settings.disabledHabits.replaceElement(oldName, newName),
                     noPointsHabits = settings.noPointsHabits.replaceElement(oldName, newName),
+                    secondaryValueHabits = settings.secondaryValueHabits.replaceElement(oldName, newName),
                     voiceTriggerHabits = settings.voiceTriggerHabits.replaceElement(oldName, newName),
                     voiceTriggerWords = settings.voiceTriggerWords.replaceKey(oldName, newName),
                     voiceTriggerIncrements = settings.voiceTriggerIncrements.replaceKey(oldName, newName),
@@ -2784,6 +2847,7 @@ class HabitViewModel(
                 settingsRepo.saveTimelessHabits(newSettings.timelessHabits)
                 settingsRepo.saveDisabledHabits(newSettings.disabledHabits)
                 settingsRepo.saveNoPointsHabits(newSettings.noPointsHabits)
+                settingsRepo.saveSecondaryValueHabits(newSettings.secondaryValueHabits)
                 settingsRepo.saveVoiceTriggerHabits(newSettings.voiceTriggerHabits)
                 settingsRepo.saveVoiceTriggerWords(newSettings.voiceTriggerWords)
                 settingsRepo.saveVoiceTriggerIncrements(newSettings.voiceTriggerIncrements)
@@ -3301,16 +3365,18 @@ class HabitViewModel(
     }
 
     /**
-     * Toggles the graph value mode for [habitName] between points (0) and raw value (1).
-     * When toggled to raw value, the graph shows the true value or garmin value instead of points.
+     * Sets the graph value mode for [habitName].
+     * 0 = points, 1 = Value1 (raw value), 2 = Value2 (secondary value).
      * The setting is persisted per-habit.
      */
-    fun toggleGraphValueMode(habitName: String) {
+    fun setGraphValueMode(habitName: String, mode: Int) {
         viewModelScope.launch {
             val current = _settings.value.graphValueModeHabits.toMutableMap()
-            val currentMode = current[habitName] ?: 0
-            val newMode = if (currentMode == 0) 1 else 0
-            current[habitName] = newMode
+            if (mode == 0) {
+                current.remove(habitName)
+            } else {
+                current[habitName] = mode
+            }
             settingsRepo.saveGraphValueModeHabits(current)
             _settings.value = _settings.value.copy(graphValueModeHabits = current)
         }
@@ -3318,10 +3384,15 @@ class HabitViewModel(
 
     /**
      * Returns the graph value mode for [habitName].
-     * 0 = points (default), 1 = raw value (true value or garmin value).
+     * 0 = points (default), 1 = Value1 (raw value), 2 = Value2 (secondary value).
      */
     fun getGraphValueMode(habitName: String): Int {
         return _settings.value.graphValueModeHabits[habitName] ?: 0
+    }
+
+    /** Returns true if [habitName] has the secondary value feature enabled. */
+    fun hasSecondaryValue(habitName: String): Boolean {
+        return habitName in _settings.value.secondaryValueHabits
     }
 
     fun clearGraphSelection() {
@@ -3337,7 +3408,8 @@ class HabitViewModel(
         val rawValue: Int,
         val pointsValue: Int,
         val textEntry: String? = null,  // for text-input habits
-        val garminValue: Int? = null   // for Garmin-linked habits (actual metric value)
+        val garminValue: Int? = null,   // for Garmin-linked habits (actual metric value)
+        val secondaryValue: Int? = null // for habits with secondary values enabled
     )
 
     /**
@@ -3380,6 +3452,10 @@ class HabitViewModel(
     ): List<GraphDataPoint> {
         val entries = cachedPhoneDb[habitName] ?: return emptyList()
         val divider = _settings.value.habitDividers[habitName] ?: 1
+
+        // Secondary values (stored under "secondary_value:<habitName>" in the DB)
+        val hasSecondary = habitName in _settings.value.secondaryValueHabits
+        val secondaryEntries = if (hasSecondary) cachedPhoneDb[secondaryValueKey(habitName)] else null
         val startStr = dateString(startDate)
         val endStr = dateString(endDate)
 
@@ -3446,13 +3522,15 @@ class HabitViewModel(
                 }
             } else null
             
+            val secVal = secondaryEntries?.get(ds)
             result.add(
                 GraphDataPoint(
                     date = cursor,
                     dateStr = ds,
                     rawValue = filteredRaw,
                     pointsValue = applyDivider(filteredRaw, divider),
-                    garminValue = garminVal
+                    garminValue = garminVal,
+                    secondaryValue = secVal
                 )
             )
             cursor = cursor.plusDays(1)
@@ -4945,6 +5023,77 @@ class HabitViewModel(
                 Log.e(TAG, "Garmin historic import failed: ${e.message}", e)
                 _garminSyncStatus.value = "Import failed: ${e.message?.take(50)}"
                 onComplete(ImportResult(false, e.message ?: "Unknown error", emptyMap()))
+            }
+        }
+    }
+
+    /**
+     * Imports meditation data from a JSON file (meditation_output.json format).
+     * Merges minutes → primary "Meditations" slot, sessions → secondary slot.
+     * Uses max() merge so existing higher values are never overwritten.
+     */
+    fun importMeditationData(jsonFile: File, onComplete: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                val uriString = _settings.value.fileUri
+                if (uriString.isEmpty()) {
+                    onComplete("No file URI set")
+                    return@launch
+                }
+
+                val text = jsonFile.readText()
+                val root = org.json.JSONObject(text)
+                val daily = root.optJSONObject("daily") ?: run {
+                    onComplete("No 'daily' key in JSON")
+                    return@launch
+                }
+
+                val mutableDb = cachedPhoneDb.toMutableMap()
+                val primaryKey = "Meditations"
+                val secondaryKey = secondaryValueKey(primaryKey)
+
+                // Ensure entries exist
+                if (primaryKey !in mutableDb) mutableDb[primaryKey] = emptyMap()
+                if (secondaryKey !in mutableDb) mutableDb[secondaryKey] = emptyMap()
+
+                val primaryEntries = mutableDb[primaryKey]!!.toMutableMap()
+                val secondaryEntries = mutableDb[secondaryKey]!!.toMutableMap()
+
+                var minutesAdded = 0
+                var sessionsAdded = 0
+
+                val dates = daily.keys()
+                while (dates.hasNext()) {
+                    val dateStr = dates.next()
+                    val dayInfo = daily.optJSONObject(dateStr) ?: continue
+                    val garminMinutes = dayInfo.optInt("minutes", 0)
+                    val garminSessions = dayInfo.optInt("sessions", 0)
+
+                    if (garminMinutes > primaryEntries.getOrDefault(dateStr, 0)) {
+                        primaryEntries[dateStr] = garminMinutes
+                        minutesAdded++
+                    }
+                    if (garminSessions > secondaryEntries.getOrDefault(dateStr, 0)) {
+                        secondaryEntries[dateStr] = garminSessions
+                        sessionsAdded++
+                    }
+                }
+
+                mutableDb[primaryKey] = primaryEntries
+                mutableDb[secondaryKey] = secondaryEntries
+                cachedPhoneDb = mutableDb
+                rebuildHabitList()
+
+                withContext(Dispatchers.IO) {
+                    habitsRepo.persistDatabase(Uri.parse(uriString), context, mutableDb)
+                }
+
+                val msg = "Imported: $minutesAdded minutes entries, $sessionsAdded session entries"
+                Log.d(TAG, "Meditation import: $msg")
+                onComplete(msg)
+            } catch (e: Exception) {
+                Log.e(TAG, "Meditation import failed: ${e.message}", e)
+                onComplete("Import failed: ${e.message?.take(80)}")
             }
         }
     }

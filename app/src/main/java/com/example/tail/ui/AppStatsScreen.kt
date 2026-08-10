@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.applyDivider
+import com.example.tail.data.isSecondaryValueKey
 import com.example.tail.data.expandEntriesToCalendarDaysPublic
 import com.example.tail.data.parseDate
 import java.time.DayOfWeek
@@ -1139,7 +1140,8 @@ private fun computeAppStats(
         var totalPoints = 0
         var habitsCount = 0
         for ((habitName, entries) in db) {
-            // Skip habits that don't affect points
+            // Skip secondary-value storage entries and habits that don't affect points
+            if (isSecondaryValueKey(habitName)) continue
             if (habitName in noPointsHabits) continue
             val raw = entries[dateStr] ?: 0
             val points = applyDivider(raw, dividers[habitName] ?: 1)
@@ -1151,8 +1153,8 @@ private fun computeAppStats(
     }
 
     // ── Overview ──────────────────────────────────────────────────────────
-    val totalHabits = db.size
-    val allHabitsList = db.keys.sorted().map { name ->
+    val totalHabits = db.keys.count { !isSecondaryValueKey(it) }
+    val allHabitsList = db.keys.filter { !isSecondaryValueKey(it) }.sorted().map { name ->
         val total = db[name]?.entries?.sumOf { (_, raw) ->
             applyDivider(raw, dividers[name] ?: 1).toLong()
         } ?: 0L
@@ -1160,7 +1162,7 @@ private fun computeAppStats(
     }
     
     // Filter out no-points habits from habit stats calculations
-    val pointHabits = db.keys.filter { it !in noPointsHabits }
+    val pointHabits = db.keys.filter { it !in noPointsHabits && !isSecondaryValueKey(it) }
 
     // Days with data = days where total points > 0 (excludes zero-point days)
     val daysWithPointsSet = dailyTotals.filter { it.value > 0 }.keys
@@ -1418,7 +1420,8 @@ private fun computeAppStats(
     val parsedDates = sortedDatesList.map { parseDate(it) }
 
     for ((habitName, entries) in db) {
-        // Skip disabled habits in historical streak/anti-streak graphs
+        // Skip secondary-value storage entries and disabled habits
+        if (isSecondaryValueKey(habitName)) continue
         if (habitName in disabledHabits) continue
         val divider = dividers[habitName] ?: 1
         val habitFirstDate = entries.keys.minOrNull()
@@ -1529,6 +1532,7 @@ private fun computeAppStats(
     val habitsDoneTodayList = mutableListOf<Pair<String, String>>()
     val habitsNotDoneTodayList = mutableListOf<Pair<String, String>>()
     for ((habitName, entries) in db) {
+        if (isSecondaryValueKey(habitName)) continue
         val raw = entries[todayStr] ?: 0
         val pts = applyDivider(raw, dividers[habitName] ?: 1)
         if (pts > 0) {

@@ -829,6 +829,8 @@ fun HabitGridScreen(
                         onToggleDisabled = { name -> viewModel.toggleDisabledHabit(name) },
                         noPointsHabits = settings.noPointsHabits,
                         onToggleNoPoints = { name -> viewModel.toggleNoPointsHabit(name) },
+                        secondaryValueHabits = settings.secondaryValueHabits,
+                        onToggleSecondaryValue = { name -> viewModel.toggleSecondaryValueHabit(name) },
                         chessComEnabled = settings.chessComEnabled,
                         chessComHabitLinks = settings.chessComHabitLinks,
                         onSetChessComLink = { name, type -> viewModel.setChessComHabitLink(name, type) },
@@ -1838,6 +1840,104 @@ private fun MealToggleSection(
 }
 
 @Composable
+private fun HabitToggleSection(
+    habitName: String,
+    isDisabled: Boolean,
+    onToggleDisabled: (String) -> Unit,
+    isNoPoints: Boolean,
+    onToggleNoPoints: (String) -> Unit,
+    isSecondaryValue: Boolean,
+    onToggleSecondaryValue: (String) -> Unit
+) {
+    // ── Disabled toggle ─────────────────────────────────────────────────
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Disabled", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isDisabled) "Red ✕ shown, excluded from stats"
+                       else "Habit is active",
+                color = if (isDisabled) Color(0xFFFF6666) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isDisabled,
+            onCheckedChange = { onToggleDisabled(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFFF4444),
+                checkedTrackColor = Color(0xFF4A0000),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    // ── Don't affect points toggle ──────────────────────────────────────
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Don't affect points", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isNoPoints) "Excluded from totals"
+                       else "Counts toward point totals",
+                color = if (isNoPoints) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isNoPoints,
+            onCheckedChange = { onToggleNoPoints(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66BB6A),
+                checkedTrackColor = Color(0xFF2E7D32),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    // ── Secondary value toggle ──────────────────────────────────────────
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Secondary value", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isSecondaryValue) "Extra value track (e.g. session count)"
+                       else "Single value only",
+                color = if (isSecondaryValue) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isSecondaryValue,
+            onCheckedChange = { onToggleSecondaryValue(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66BB6A),
+                checkedTrackColor = Color(0xFF2E7D32),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+}
+
+@Composable
 private fun EditModeControlBar(
     selectedIndex: Int,
     selectedHabitName: String?,
@@ -1902,6 +2002,8 @@ private fun EditModeControlBar(
     onToggleDisabled: (String) -> Unit = {},
     noPointsHabits: Set<String> = emptySet(),
     onToggleNoPoints: (String) -> Unit = {},
+    secondaryValueHabits: Set<String> = emptySet(),
+    onToggleSecondaryValue: (String) -> Unit = {},
     chessComEnabled: Boolean = false,
     chessComHabitLinks: Map<String, String> = emptyMap(),
     onSetChessComLink: (String, String?) -> Unit = { _, _ -> },
@@ -3230,65 +3332,16 @@ private fun EditModeControlBar(
                         onOpenMealDetails = onOpenMealDetails
                     )
 
-                    // ── Disabled toggle ────────────────────────────────────
-                    val isDisabled = selectedHabitName in disabledHabits
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(text = "Disabled", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                            Text(
-                                text = if (isDisabled) "Red ✕ shown, excluded from stats"
-                                       else "Habit is active",
-                                color = if (isDisabled) Color(0xFFFF6666) else Color(0xFF888888),
-                                fontSize = 10.sp
-                            )
-                        }
-                        Switch(
-                            checked = isDisabled,
-                            onCheckedChange = { onToggleDisabled(selectedHabitName) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFFFF4444),
-                                checkedTrackColor = Color(0xFF4A0000),
-                                uncheckedThumbColor = Color(0xFF888888),
-                                uncheckedTrackColor = Color(0xFF333333)
-                            )
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // ── Don't affect points toggle ────────────────────────────
-                    val isNoPoints = selectedHabitName in noPointsHabits
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(text = "Don't affect points", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                            Text(
-                                text = if (isNoPoints) "Excluded from totals"
-                                       else "Counts toward point totals",
-                                color = if (isNoPoints) Color(0xFF66BB6A) else Color(0xFF888888),
-                                fontSize = 10.sp
-                            )
-                        }
-                        Switch(
-                            checked = isNoPoints,
-                            onCheckedChange = { onToggleNoPoints(selectedHabitName) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFF66BB6A),
-                                checkedTrackColor = Color(0xFF2E7D32),
-                                uncheckedThumbColor = Color(0xFF888888),
-                                uncheckedTrackColor = Color(0xFF333333)
-                            )
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
+                    // ── Disabled / No-points / Secondary-value toggles ──────
+                    HabitToggleSection(
+                        habitName = selectedHabitName,
+                        isDisabled = selectedHabitName in disabledHabits,
+                        onToggleDisabled = onToggleDisabled,
+                        isNoPoints = selectedHabitName in noPointsHabits,
+                        onToggleNoPoints = onToggleNoPoints,
+                        isSecondaryValue = selectedHabitName in secondaryValueHabits,
+                        onToggleSecondaryValue = onToggleSecondaryValue
+                    )
 
                     // ── Custom Point Ranges toggle ────────────────────────────
                     val isCustomPointRanges = selectedHabitName in customPointRangesHabits

@@ -102,8 +102,10 @@ private val KEY_MAP_STATS_SHOW_TEXT_HABITS = stringSetPreferencesKey("map_stats_
 private val KEY_MAP_MAIN_HABIT = stringPreferencesKey("map_main_habit")
 private val KEY_MAP_HIDE_ZERO_DAYS = booleanPreferencesKey("map_hide_zero_days")
 private val KEY_MAP_BEGIN_DATE = stringPreferencesKey("map_begin_date")
-// Stored as "habitName\x000|||habitName\x001" pairs (0 = points, 1 = value/raw)
+// Stored as "habitName\x000|||habitName\x001" pairs (0 = points, 1 = value/raw, 2 = value2)
 private val KEY_GRAPH_VALUE_MODE_HABITS = stringPreferencesKey("graph_value_mode_habits")
+// Secondary value habits (set of habit names that have a second value per day)
+private val KEY_SECONDARY_VALUE_HABITS = stringSetPreferencesKey("secondary_value_habits")
 
 // Custom point ranges settings
 private val KEY_CUSTOM_POINT_RANGES_HABITS = stringSetPreferencesKey("custom_point_ranges_habits")
@@ -551,6 +553,7 @@ class SettingsRepository(private val context: Context) {
             hiddenScreens = prefs[KEY_HIDDEN_SCREENS] ?: emptySet(),
             disabledHabits = prefs[KEY_DISABLED_HABITS] ?: emptySet(),
             noPointsHabits = prefs[KEY_NO_POINTS_HABITS] ?: emptySet(),
+            secondaryValueHabits = prefs[KEY_SECONDARY_VALUE_HABITS] ?: emptySet(),
             aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
             aiIconsApiKey = prefs[KEY_AI_ICONS_API_KEY] ?: "",
             aiIconsBaseUrl = prefs[KEY_AI_ICONS_BASE_URL] ?: "",
@@ -795,6 +798,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that don't affect point totals. */
     suspend fun saveNoPointsHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_NO_POINTS_HABITS] = habits }
+    }
+
+    /** Saves the set of habits that have secondary values enabled. */
+    suspend fun saveSecondaryValueHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_SECONDARY_VALUE_HABITS] = habits }
     }
 
     /** Saves all AI icon generation settings at once. */

@@ -706,7 +706,15 @@ class HabitsRepository {
         
         // Remove old name
         db.remove(oldName)
-        
+
+        // Also rename secondary-value entries if they exist
+        val oldSecKey = secondaryValueKey(oldName)
+        val newSecKey = secondaryValueKey(newName)
+        if (db.containsKey(oldSecKey)) {
+            db[newSecKey] = db[oldSecKey]!!
+            db.remove(oldSecKey)
+        }
+
         saveDatabase(uri, context, db)
         db
     }
