@@ -571,7 +571,18 @@ data class AppSettings(
      * App links occupy grid cells but are NOT incrementable habits — tapping
      * one launches the corresponding app via [android.content.Intent.ACTION_MAIN].
      */
-    val appLinks: Map<String, String> = emptyMap()
+    val appLinks: Map<String, String> = emptyMap(),
+
+    // ── Habit App Association settings ──────────────────────────────────────
+    /**
+     * Maps habit name → ordered list of package names associated with that habit.
+     * When a habit has one or more associated apps, long-pressing it in the grid
+     * launches the app directly (if only one) or shows a picker (if multiple).
+     * A blue "↗" indicator is shown on the habit button to signal the association.
+     * Unlike [appLinks], these are not separate grid cells — they augment
+     * existing habits.
+     */
+    val habitAppAssociations: Map<String, List<String>> = emptyMap()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

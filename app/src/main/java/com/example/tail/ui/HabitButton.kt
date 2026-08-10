@@ -93,7 +93,9 @@ fun HabitButton(
     /** Optional AI icon repository for loading file-based AI icons. */
     aiIconRepo: AiIconRepository? = null,
     /** Map of habit name → GarminType.name for Garmin-linked habits. Used to format values (e.g. metres → km). */
-    garminHabitLinks: Map<String, String> = emptyMap()
+    garminHabitLinks: Map<String, String> = emptyMap(),
+    /** True when this habit has one or more associated apps (long-press launches them). */
+    hasAppAssociation: Boolean = false
 ) {
     val habitStyle = getHabitStyle(habit.todayCount)
     // Animate color transitions smoothly to prevent flickering
@@ -299,6 +301,18 @@ fun HabitButton(
                 text = "⠿",
                 color = Color(0xFFFF8C00),
                 fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 1.dp, top = 0.dp)
+            )
+        } else if (hasAppAssociation) {
+            // Blue arrow indicates long-press launches an associated app
+            Text(
+                text = "↗",
+                color = Color(0xFF66CCFF),
+                fontSize = 10.sp,
                 fontWeight = FontWeight.ExtraBold,
                 style = tightTextStyle,
                 modifier = Modifier

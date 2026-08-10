@@ -2682,6 +2682,79 @@ class HabitViewModel(
         }
     }
 
+    // ── Habit App Association methods ──────────────────────────────────────
+    /**
+     * Associates an app ([packageName]) with [habitName].
+     * The app is appended to the end of the ordered list (or inserted at [insertAt]
+     * if specified). If the app is already associated, this is a no-op.
+     */
+    fun addHabitAppAssociation(habitName: String, packageName: String, insertAt: Int = -1) {
+        viewModelScope.launch {
+            val associations = _settings.value.habitAppAssociations.toMutableMap()
+            val current = associations[habitName]?.toMutableList() ?: mutableListOf()
+            if (packageName !in current) {
+                if (insertAt in current.indices) {
+                    current.add(insertAt, packageName)
+                } else {
+                    current.add(packageName)
+                }
+                associations[habitName] = current
+                settingsRepo.saveHabitAppAssociations(associations)
+                _settings.value = _settings.value.copy(habitAppAssociations = associations)
+            }
+        }
+    }
+
+    /**
+     * Removes an app association from [habitName].
+     * If this was the last association, the habit name key is removed entirely.
+     */
+    fun removeHabitAppAssociation(habitName: String, packageName: String) {
+        viewModelScope.launch {
+            val associations = _settings.value.habitAppAssociations.toMutableMap()
+            val current = associations[habitName]?.toMutableList() ?: return@launch
+            current.remove(packageName)
+            if (current.isEmpty()) {
+                associations.remove(habitName)
+            } else {
+                associations[habitName] = current
+            }
+            settingsRepo.saveHabitAppAssociations(associations)
+            _settings.value = _settings.value.copy(habitAppAssociations = associations)
+        }
+    }
+
+    /**
+     * Moves an associated app within [habitName]'s ordered list from [fromIndex]
+     * to [toIndex]. Used for reordering via up/down arrows.
+     */
+    fun moveHabitAppAssociation(habitName: String, fromIndex: Int, toIndex: Int) {
+        viewModelScope.launch {
+            val associations = _settings.value.habitAppAssociations.toMutableMap()
+            val current = associations[habitName]?.toMutableList() ?: return@launch
+            if (fromIndex !in current.indices || toIndex !in current.indices) return@launch
+            val item = current.removeAt(fromIndex)
+            current.add(toIndex, item)
+            associations[habitName] = current
+            settingsRepo.saveHabitAppAssociations(associations)
+            _settings.value = _settings.value.copy(habitAppAssociations = associations)
+        }
+    }
+
+    /**
+     * Deletes all app associations for [habitName].
+     * Called when a habit is deleted to clean up orphaned settings.
+     */
+    fun clearHabitAppAssociations(habitName: String) {
+        viewModelScope.launch {
+            val associations = _settings.value.habitAppAssociations.toMutableMap()
+            if (associations.remove(habitName) != null) {
+                settingsRepo.saveHabitAppAssociations(associations)
+                _settings.value = _settings.value.copy(habitAppAssociations = associations)
+            }
+        }
+    }
+
     /**
      * Deletes the habit at [index] from the active screen (or flat order).
      * Does NOT remove data from JSON files — historical data is preserved.

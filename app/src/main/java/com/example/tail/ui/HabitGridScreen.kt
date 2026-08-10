@@ -225,6 +225,10 @@ fun HabitGridScreen(
     var addHabitAtIndex by remember { mutableStateOf(-1) }
     // Grid cell index where "Add App Link" was triggered (-1 = none)
     var addAppLinkAtIndex by remember { mutableStateOf(-1) }
+    // Habit name for which the app-association picker is open (null = none)
+    var appAssociationPickerHabit by remember { mutableStateOf<String?>(null) }
+    // Habit name for which the multi-app launcher dialog is open (null = none)
+    var appLauncherHabit by remember { mutableStateOf<String?>(null) }
     // Habit name pending delete confirmation (null = none)
     var deleteConfirmHabitName by remember { mutableStateOf<String?>(null) }
     // Habit name for which icon picker is open (null = none)
@@ -595,6 +599,7 @@ fun HabitGridScreen(
                         aiIconRepo = if (settings.aiIconsEnabled) viewModel.getAiIconRepo() else null,
                         garminHabitLinks = settings.garminHabitLinks,
                         appLinks = settings.appLinks,
+                        habitAppAssociations = settings.habitAppAssociations,
                         onHabitClick = { habit, index ->
                             when {
                                 isAppLink(habit.name) -> {
@@ -710,8 +715,24 @@ fun HabitGridScreen(
                         },
                         onHabitLongClick = { habit ->
                             if (!editMode && !graphMode && !isAppLink(habit.name)) {
-                                // Long-press increments without recording a timestamp
-                                viewModel.incrementHabit(habit.name, 1, recordTimestamp = false)
+                                // Check if this habit has app associations
+                                val associations = settings.habitAppAssociations[habit.name]
+                                if (!associations.isNullOrEmpty()) {
+                                    if (associations.size == 1) {
+                                        // Single app — launch directly, bypass list
+                                        val launchIntent = context.packageManager
+                                            .getLaunchIntentForPackage(associations[0])
+                                        if (launchIntent != null) {
+                                            context.startActivity(launchIntent)
+                                        }
+                                    } else {
+                                        // Multiple apps — show picker dialog
+                                        appLauncherHabit = habit.name
+                                    }
+                                } else {
+                                    // No app associations — open app picker to set first association
+                                    appAssociationPickerHabit = habit.name
+                                }
                             }
                         },
                         onPlaceholderClick = { index ->
@@ -960,7 +981,11 @@ fun HabitGridScreen(
                                 restoreBackupPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
                             }
                         },
-                        onRenameHabit = { oldName, newName -> viewModel.renameHabit(oldName, newName) }
+                        onRenameHabit = { oldName, newName -> viewModel.renameHabit(oldName, newName) },
+                        habitAppAssociations = settings.habitAppAssociations,
+                        onAddAppAssociation = { name -> appAssociationPickerHabit = name },
+                        onRemoveAppAssociation = { name, pkg -> viewModel.removeHabitAppAssociation(name, pkg) },
+                        onMoveAppAssociation = { name, from, to -> viewModel.moveHabitAppAssociation(name, from, to) }
                     )
                 }
             }
@@ -1295,6 +1320,44 @@ fun HabitGridScreen(
         )
     }
 
+    // App association picker — triggered when user taps "Add App" in the
+    // app association section of edit mode for a selected habit
+    if (appAssociationPickerHabit != null) {
+        val habitName = appAssociationPickerHabit!!
+        AppPickerDialog(
+            context = context,
+            onConfirm = { packageName, _ ->
+                viewModel.addHabitAppAssociation(habitName, packageName)
+                appAssociationPickerHabit = null
+            },
+            onDismiss = { appAssociationPickerHabit = null }
+        )
+    }
+
+    // Multi-app launcher — triggered when long-pressing a habit with
+    // multiple associated apps (single-app habits launch directly)
+    if (appLauncherHabit != null) {
+        val habitName = appLauncherHabit!!
+        val packages = settings.habitAppAssociations[habitName] ?: emptyList()
+        if (packages.isNotEmpty()) {
+            AssociatedAppLauncherDialog(
+                habitName = habitName,
+                packageNames = packages,
+                onLaunch = { pkg ->
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+                    if (launchIntent != null) {
+                        context.startActivity(launchIntent)
+                    }
+                    appLauncherHabit = null
+                },
+                onDismiss = { appLauncherHabit = null }
+            )
+        } else {
+            // Associations were cleared while dialog was pending
+            appLauncherHabit = null
+        }
+    }
+
     // Rename screen dialog
     if (renamingScreenIndex >= 0) {
         val currentName = habitScreens.getOrNull(renamingScreenIndex)?.name ?: ""
@@ -1565,6 +1628,7 @@ private fun HabitGrid(
     aiIconRepo: AiIconRepository? = null,
     garminHabitLinks: Map<String, String> = emptyMap(),
     appLinks: Map<String, String> = emptyMap(),
+    habitAppAssociations: Map<String, List<String>> = emptyMap(),
     onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit,
     onPlaceholderClick: (Int) -> Unit
@@ -1618,7 +1682,8 @@ private fun HabitGrid(
                         isGraphSelected = isGraphSelected,
                         isDisabled = habit.name in disabledHabits,
                         aiIconRepo = aiIconRepo,
-                        garminHabitLinks = garminHabitLinks
+                        garminHabitLinks = garminHabitLinks,
+                        hasAppAssociation = habit.name in habitAppAssociations
                     )
                 }
             } else if (editMode) {
@@ -1766,6 +1831,183 @@ private fun AppLinkEditSection(
                             }
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A single row showing an associated app in the edit-mode app association list.
+ * Shows the app icon, label, and up/down/remove controls for reordering.
+ */
+@Composable
+private fun AssociatedAppRow(
+    habitName: String,
+    packageName: String,
+    index: Int,
+    totalCount: Int,
+    onRemove: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit
+) {
+    val context = LocalContext.current
+    val pm = context.packageManager
+
+    // Load app label and icon
+    val appLabel = remember(packageName) {
+        try { pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString() }
+        catch (e: Exception) { packageName }
+    }
+    val iconBitmap = remember(packageName) {
+        try { drawableToBitmapForDialog(pm.getApplicationIcon(packageName)) }
+        catch (e: Exception) { null }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // App icon
+        if (iconBitmap != null) {
+            Image(
+                bitmap = iconBitmap.asImageBitmap(),
+                contentDescription = appLabel,
+                modifier = Modifier.size(20.dp)
+            )
+        } else {
+            Box(modifier = Modifier.size(20.dp))
+        }
+        Spacer(modifier = Modifier.width(6.dp))
+        // App label (truncated)
+        Text(
+            text = appLabel.take(20),
+            color = Color(0xFF88CCFF),
+            fontSize = 10.sp,
+            modifier = Modifier.weight(1f)
+        )
+        // Up button
+        Button(
+            onClick = onMoveUp,
+            enabled = index > 0,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF1A2A3A),
+                disabledContainerColor = Color(0xFF1A1A1A)
+            ),
+            modifier = Modifier.size(24.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+        ) {
+            Text("▲", fontSize = 8.sp, color = if (index > 0) Color(0xFF66CCFF) else Color(0xFF555555))
+        }
+        Spacer(modifier = Modifier.width(2.dp))
+        // Down button
+        Button(
+            onClick = onMoveDown,
+            enabled = index < totalCount - 1,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF1A2A3A),
+                disabledContainerColor = Color(0xFF1A1A1A)
+            ),
+            modifier = Modifier.size(24.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+        ) {
+            Text("▼", fontSize = 8.sp, color = if (index < totalCount - 1) Color(0xFF66CCFF) else Color(0xFF555555))
+        }
+        Spacer(modifier = Modifier.width(2.dp))
+        // Remove button
+        Button(
+            onClick = onRemove,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A1A00)),
+            modifier = Modifier.size(24.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+        ) {
+            Text("✕", fontSize = 9.sp, color = Color(0xFFFF6644))
+        }
+    }
+}
+
+/**
+ * Dialog shown when long-pressing a habit that has multiple associated apps.
+ * Lists the apps in their defined order; tapping one launches it.
+ */
+@Composable
+private fun AssociatedAppLauncherDialog(
+    habitName: String,
+    packageNames: List<String>,
+    onLaunch: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val pm = context.packageManager
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text(
+                text = habitName,
+                color = Color(0xFFFFAA00),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Select an app to open",
+                color = Color(0xFF888888),
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp)
+            ) {
+                lazyItems(packageNames) { pkg ->
+                    val label = remember(pkg) {
+                        try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }
+                        catch (e: Exception) { pkg }
+                    }
+                    val iconBitmap = remember(pkg) {
+                        try { drawableToBitmapForDialog(pm.getApplicationIcon(pkg)) }
+                        catch (e: Exception) { null }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onLaunch(pkg) }
+                            .padding(vertical = 6.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (iconBitmap != null) {
+                            Image(
+                                bitmap = iconBitmap.asImageBitmap(),
+                                contentDescription = label,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        } else {
+                            Box(modifier = Modifier.size(32.dp))
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(text = label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text(text = pkg, color = Color(0xFF888888), fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
                 }
             }
         }
@@ -2047,7 +2289,16 @@ private fun EditModeControlBar(
     /** Called when the user toggles roll forward for a habit. */
     onToggleRollForward: (String) -> Unit = {},
     /** Called when the user taps "Restore from Backup" for the selected habit. */
-    onRestoreFromBackup: () -> Unit = {}
+    onRestoreFromBackup: () -> Unit = {},
+    // ── Habit App Association parameters ───────────────────────────────────
+    /** Map of habit name → ordered list of associated app package names. */
+    habitAppAssociations: Map<String, List<String>> = emptyMap(),
+    /** Called when the user taps "Add App" to associate an app with the habit. */
+    onAddAppAssociation: (String) -> Unit = {},
+    /** Called when the user removes an app association (habitName, packageName). */
+    onRemoveAppAssociation: (String, String) -> Unit = { _, _ -> },
+    /** Called when the user reorders an app association (habitName, fromIndex, toIndex). */
+    onMoveAppAssociation: (String, Int, Int) -> Unit = { _, _, _ -> }
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -3648,6 +3899,52 @@ private fun EditModeControlBar(
                             links = chessComHabitLinks,
                             onSetLink = { type -> onSetChessComLink(selectedHabitName, type) }
                         )
+                    }
+
+                    // ── App Association section ───────────────────────────────
+                    // Long-pressing this habit in the grid opens associated apps.
+                    // Single app → launches directly; multiple → shows a picker.
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val currentAppAssociations = habitAppAssociations[selectedHabitName] ?: emptyList()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "📱 App Association", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                            Text(
+                                text = if (currentAppAssociations.isEmpty()) "Long-press increments habit"
+                                       else if (currentAppAssociations.size == 1) "Long-press opens app"
+                                       else "Long-press shows ${currentAppAssociations.size} apps",
+                                color = if (currentAppAssociations.isNotEmpty()) Color(0xFF66CCFF) else Color(0xFF888888),
+                                fontSize = 10.sp
+                            )
+                        }
+                        Button(
+                            onClick = { onAddAppAssociation(selectedHabitName) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("📱", fontSize = 11.sp)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Add App", fontSize = 11.sp, color = Color(0xFF66CCFF))
+                        }
+                    }
+                    // Show the list of associated apps with reorder/remove controls
+                    if (currentAppAssociations.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        currentAppAssociations.forEachIndexed { idx, pkg ->
+                            AssociatedAppRow(
+                                habitName = selectedHabitName,
+                                packageName = pkg,
+                                index = idx,
+                                totalCount = currentAppAssociations.size,
+                                onRemove = { onRemoveAppAssociation(selectedHabitName, pkg) },
+                                onMoveUp = { onMoveAppAssociation(selectedHabitName, idx, idx - 1) },
+                                onMoveDown = { onMoveAppAssociation(selectedHabitName, idx, idx + 1) }
+                            )
+                        }
                     }
 
                     // ── Garmin link toggle ────────────────────────────────────

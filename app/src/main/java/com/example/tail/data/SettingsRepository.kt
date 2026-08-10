@@ -131,6 +131,8 @@ private val KEY_MEAL_SYSTEM_PROMPT = stringPreferencesKey("meal_system_prompt")
 private val KEY_MEAL_HABITS = stringSetPreferencesKey("meal_habits")
 // App link keys — stored as "app_link_key\x00label|||app_link_key\x00label" pairs
 private val KEY_APP_LINKS = stringPreferencesKey("app_links")
+// Habit app association keys — stored as "habitName\x00pkg1,pkg2,pkg3|||habitName\x00pkg1" pairs
+private val KEY_HABIT_APP_ASSOCIATIONS = stringPreferencesKey("habit_app_associations")
 
 /**
  * One-time rename mapping for legacy "Launch … Widget" habit names.
@@ -597,7 +599,8 @@ class SettingsRepository(private val context: Context) {
             mealModel = prefs[KEY_MEAL_MODEL] ?: "",
             mealSystemPrompt = prefs[KEY_MEAL_SYSTEM_PROMPT] ?: "",
             mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet(),
-            appLinks = decodeFileUriMap(prefs[KEY_APP_LINKS] ?: "")
+            appLinks = decodeFileUriMap(prefs[KEY_APP_LINKS] ?: ""),
+            habitAppAssociations = decodeSubtypesMap(prefs[KEY_HABIT_APP_ASSOCIATIONS] ?: "")
         )
     }
 
@@ -1052,5 +1055,10 @@ class SettingsRepository(private val context: Context) {
     /** Saves the map of app-link key → app display label. */
     suspend fun saveAppLinks(links: Map<String, String>) {
         context.dataStore.edit { prefs -> prefs[KEY_APP_LINKS] = encodeFileUriMap(links) }
+    }
+
+    /** Saves the map of habit name → ordered list of associated app package names. */
+    suspend fun saveHabitAppAssociations(associations: Map<String, List<String>>) {
+        context.dataStore.edit { prefs -> prefs[KEY_HABIT_APP_ASSOCIATIONS] = encodeSubtypesMap(associations) }
     }
 }
