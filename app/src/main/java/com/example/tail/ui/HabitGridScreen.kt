@@ -897,6 +897,10 @@ fun HabitGridScreen(
                             fallbackHabits = settings.secondaryValueFallbackHabits,
                             onToggleSecondaryValueFallback = { name -> viewModel.toggleSecondaryValueFallbackHabit(name) }
                         ),
+                        valueDisplayLabels = settings.valueDisplayLabels,
+                        onSetValueDisplayLabel = { name, key, label ->
+                            viewModel.setValueDisplayLabel(name, key, label)
+                        },
                         chessComEnabled = settings.chessComEnabled,
                         chessComHabitLinks = settings.chessComHabitLinks,
                         onSetChessComLink = { name, type -> viewModel.setChessComHabitLink(name, type) },
@@ -1209,6 +1213,7 @@ fun HabitGridScreen(
                 subtypes = subtypes,
                 currentTotal = habit.rawTodayCount,
                 currentBreakdown = subtypeDialogBreakdown,
+                displayLabels = settings.valueDisplayLabels[habit.name] ?: emptyMap(),
                 onConfirm = { increments ->
                     viewModel.saveSubtypeIncrement(habit.name, increments)
                     subtypeDialogHabit = null
@@ -2334,6 +2339,101 @@ private fun HabitToggleSection(
     }
 }
 
+/**
+ * A single row for editing a display-only value/subtype label.
+ * Shows the default label as a hint and lets the user type a custom override.
+ * When the field is cleared, the override is removed and the default is used again.
+ */
+@Composable
+private fun ValueLabelRow(
+    habitName: String,
+    valueKey: String,
+    defaultLabel: String,
+    currentLabel: String,
+    onSetLabel: (String, String, String) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = defaultLabel,
+            color = Color(0xFFAAAAAA),
+            fontSize = 11.sp,
+            modifier = Modifier.width(70.dp)
+        )
+        OutlinedTextField(
+            value = currentLabel,
+            onValueChange = { newLabel ->
+                onSetLabel(habitName, valueKey, newLabel)
+            },
+            placeholder = { Text(defaultLabel, fontSize = 11.sp, color = Color(0xFF666666)) },
+            singleLine = true,
+            modifier = Modifier.weight(1f).height(44.dp),
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+        )
+    }
+}
+
+/**
+ * Section for editing display-only labels for a habit's value columns.
+ * Shows when the habit has secondary values or subtypes.
+ * Extracted into its own composable to keep [EditModeControlBar] under the
+ * JVM method size limit.
+ */
+@Composable
+private fun ValueLabelsSection(
+    habitName: String,
+    hasSecondaryValue: Boolean,
+    subtypes: List<String>,
+    labels: Map<String, String>,
+    onSetLabel: (String, String, String) -> Unit
+) {
+    if (!hasSecondaryValue && subtypes.isEmpty()) return
+
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        text = "🏷️ Display Labels (UI only — backend unchanged)",
+        color = Color(0xFF88CCFF),
+        fontSize = 11.sp
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+
+    if (hasSecondaryValue) {
+        ValueLabelRow(
+            habitName = habitName,
+            valueKey = com.example.tail.data.GRAPH_METRIC_VALUE1,
+            defaultLabel = com.example.tail.data.defaultLabelForValueKey(
+                com.example.tail.data.GRAPH_METRIC_VALUE1
+            ),
+            currentLabel = labels[com.example.tail.data.GRAPH_METRIC_VALUE1] ?: "",
+            onSetLabel = onSetLabel
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        ValueLabelRow(
+            habitName = habitName,
+            valueKey = com.example.tail.data.GRAPH_METRIC_VALUE2,
+            defaultLabel = com.example.tail.data.defaultLabelForValueKey(
+                com.example.tail.data.GRAPH_METRIC_VALUE2
+            ),
+            currentLabel = labels[com.example.tail.data.GRAPH_METRIC_VALUE2] ?: "",
+            onSetLabel = onSetLabel
+        )
+    }
+
+    subtypes.forEach { subtype ->
+        Spacer(modifier = Modifier.height(4.dp))
+        ValueLabelRow(
+            habitName = habitName,
+            valueKey = subtype,
+            defaultLabel = subtype,
+            currentLabel = labels[subtype] ?: "",
+            onSetLabel = onSetLabel
+        )
+    }
+}
+
 @Composable
 private fun EditModeControlBar(
     selectedIndex: Int,
@@ -2404,6 +2504,10 @@ private fun EditModeControlBar(
     noPointsHabits: Set<String> = emptySet(),
     onToggleNoPoints: (String) -> Unit = {},
     secondaryValueSettings: SecondaryValueSettings = SecondaryValueSettings(),
+    /** Display-only label overrides: habitName → (valueKey → customLabel). */
+    valueDisplayLabels: Map<String, Map<String, String>> = emptyMap(),
+    /** Called when the user edits a display label (habitName, valueKey, label). */
+    onSetValueDisplayLabel: (String, String, String) -> Unit = { _, _, _ -> },
     chessComEnabled: Boolean = false,
     chessComHabitLinks: Map<String, String> = emptyMap(),
     onSetChessComLink: (String, String?) -> Unit = { _, _ -> },
@@ -3762,6 +3866,15 @@ private fun EditModeControlBar(
                         onToggleSecondaryValue = secondaryValueSettings.onToggleSecondaryValue,
                         isSecondaryValueFallback = selectedHabitName in secondaryValueSettings.fallbackHabits,
                         onToggleSecondaryValueFallback = secondaryValueSettings.onToggleSecondaryValueFallback
+                    )
+
+                    // ── Value Labels (display-only override) ───────────────────
+                    ValueLabelsSection(
+                        habitName = selectedHabitName,
+                        hasSecondaryValue = selectedHabitName in secondaryValueSettings.habits,
+                        subtypes = habitSubtypes[selectedHabitName] ?: emptyList(),
+                        labels = valueDisplayLabels[selectedHabitName] ?: emptyMap(),
+                        onSetLabel = onSetValueDisplayLabel
                     )
 
                     // ── Custom Point Ranges toggle ────────────────────────────

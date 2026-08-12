@@ -2563,6 +2563,43 @@ class HabitViewModel(
         return habitName in _settings.value.secondaryValueFallbackHabits
     }
 
+    // ── Display-only value/subtype label overrides ──────────────────────────
+
+    /**
+     * Returns the display label for [habitName]'s [valueKey], using the custom
+     * override if one exists, otherwise the default label.
+     *
+     * This is **display-only** — the underlying [valueKey] is never modified.
+     */
+    fun getValueDisplayLabel(habitName: String, valueKey: String): String {
+        return com.example.tail.data.displayLabelForValue(
+            habitName, valueKey, _settings.value.valueDisplayLabels
+        )
+    }
+
+    /**
+     * Sets a custom display label for [habitName]'s [valueKey].
+     *
+     * If [label] is blank the override is removed (falls back to default).
+     * The backend [valueKey] (e.g. `"value2"` or a subtype name) is never changed.
+     */
+    fun setValueDisplayLabel(habitName: String, valueKey: String, label: String) {
+        val current = _settings.value.valueDisplayLabels.toMutableMap()
+        val inner = current[habitName]?.toMutableMap() ?: mutableMapOf()
+        if (label.isBlank()) {
+            inner.remove(valueKey)
+        } else {
+            inner[valueKey] = label
+        }
+        if (inner.isEmpty()) {
+            current.remove(habitName)
+        } else {
+            current[habitName] = inner
+        }
+        _settings.value = _settings.value.copy(valueDisplayLabels = current)
+        viewModelScope.launch { settingsRepo.saveValueDisplayLabels(current) }
+    }
+
     /**
      * Computes the effective points for [habitName] on the given [dateStr],
      * applying the secondary-value fallback when enabled.
@@ -3010,7 +3047,8 @@ class HabitViewModel(
                     customPointRangesHabits = settings.customPointRangesHabits.replaceElement(oldName, newName),
                     customPointRanges = settings.customPointRanges.replaceKey(oldName, newName),
                     graphValueModeHabits = settings.graphValueModeHabits.replaceKey(oldName, newName),
-                    habitNotes = settings.habitNotes.replaceKey(oldName, newName)
+                    habitNotes = settings.habitNotes.replaceKey(oldName, newName),
+                    valueDisplayLabels = settings.valueDisplayLabels.replaceKey(oldName, newName)
                 )
                 
                 // Save all updated settings
@@ -3051,6 +3089,7 @@ class HabitViewModel(
                 settingsRepo.saveCustomPointRanges(newSettings.customPointRanges)
                 settingsRepo.saveGraphValueModeHabits(newSettings.graphValueModeHabits)
                 settingsRepo.saveHabitNotes(newSettings.habitNotes)
+                settingsRepo.saveValueDisplayLabels(newSettings.valueDisplayLabels)
                 
                 _settings.value = newSettings
                 _habitOrder.value = newHabitOrder
@@ -3601,18 +3640,19 @@ class HabitViewModel(
      * get Value2. Meal habits additionally get Calories, Protein, Carbs, Fat.
      */
     fun getAvailableMetrics(habitName: String): List<GraphMetricOption> {
+        val labels = _settings.value.valueDisplayLabels
         val metrics = mutableListOf(
-            GraphMetricOption(GRAPH_METRIC_POINTS, "Points"),
-            GraphMetricOption(GRAPH_METRIC_VALUE1, "Value 1")
+            GraphMetricOption(GRAPH_METRIC_POINTS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_POINTS, labels)),
+            GraphMetricOption(GRAPH_METRIC_VALUE1, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE1, labels))
         )
         if (hasSecondaryValue(habitName)) {
-            metrics.add(GraphMetricOption(GRAPH_METRIC_VALUE2, "Value 2"))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_VALUE2, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE2, labels)))
         }
         if (isMealHabit(habitName)) {
-            metrics.add(GraphMetricOption(GRAPH_METRIC_CALORIES, "Calories"))
-            metrics.add(GraphMetricOption(GRAPH_METRIC_PROTEIN, "Protein"))
-            metrics.add(GraphMetricOption(GRAPH_METRIC_CARBS, "Carbs"))
-            metrics.add(GraphMetricOption(GRAPH_METRIC_FAT, "Fat"))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_CALORIES, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_CALORIES, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_PROTEIN, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_PROTEIN, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_CARBS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_CARBS, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_FAT, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_FAT, labels)))
         }
         return metrics
     }

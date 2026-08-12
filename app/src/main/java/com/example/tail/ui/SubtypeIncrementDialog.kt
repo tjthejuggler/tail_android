@@ -27,11 +27,17 @@ fun SubtypeIncrementDialog(
     subtypes: List<String>,
     currentTotal: Int,
     currentBreakdown: Map<String, Int>,
+    /** Display-only label overrides: subtype key → custom label (empty = use subtype name). */
+    displayLabels: Map<String, String> = emptyMap(),
     onConfirm: (Map<String, Int>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    // State: one text field per subtype
+    // State: one text field per subtype (keyed by the backend subtype name)
     val inputs = remember { subtypes.associateWith { mutableStateOf("") } }
+
+    /** Resolves the display name for a subtype key (custom label or the key itself). */
+    fun displayName(subtype: String): String =
+        displayLabels[subtype]?.takeIf { it.isNotBlank() } ?: subtype
 
     val totalIncrement = inputs.values.sumOf { it.value.toIntOrNull() ?: 0 }
 
@@ -51,7 +57,7 @@ fun SubtypeIncrementDialog(
                     Spacer(modifier = Modifier.height(4.dp))
                     val breakdownText = currentBreakdown.entries
                         .filter { it.value > 0 }
-                        .joinToString(", ") { "${it.key}: ${it.value}" }
+                        .joinToString(", ") { "${displayName(it.key)}: ${it.value}" }
                     if (breakdownText.isNotEmpty()) {
                         Text(
                             text = "($breakdownText)",
@@ -67,7 +73,7 @@ fun SubtypeIncrementDialog(
                 subtypes.forEach { subtype ->
                     val inputState = inputs[subtype]!!
                     SubtypeRow(
-                        subtypeName = subtype,
+                        subtypeName = displayName(subtype),
                         inputText = inputState.value,
                         onInputChange = { inputState.value = it.filter { c -> c.isDigit() } },
                         onQuickAdd = { amount ->

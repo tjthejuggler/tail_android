@@ -332,7 +332,9 @@ fun GraphsPanel(
                             color = color,
                             isTextInput = viewModel.isTextInputHabit(habitName),
                             metric = metricKey,
-                            metricLabel = metricLabel(metricKey)
+                            metricLabel = com.example.tail.data.displayLabelForValue(
+                                habitName, metricKey, settings.valueDisplayLabels
+                            )
                         )
                     }
                 }

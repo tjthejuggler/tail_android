@@ -180,6 +180,48 @@ fun secondaryValueKey(habitName: String): String = "$SECONDARY_VALUE_PREFIX$habi
 fun secondaryValueHabitName(name: String): String? =
     if (isSecondaryValueKey(name)) name.removePrefix(SECONDARY_VALUE_PREFIX) else null
 
+// ── Display-label helpers (UI-only overrides) ────────────────────────────────
+/**
+ * Returns the **default** human-readable label for a value/metric key when no
+ * custom display label has been set by the user.
+ *
+ * For secondary-value metrics ([GRAPH_METRIC_VALUE1], [GRAPH_METRIC_VALUE2]) and
+ * meal metrics, this returns a fixed English string.  For subtype names (which
+ * are arbitrary user-defined strings), the default label IS the subtype name
+ * itself, so the [else] branch handles that case.
+ */
+fun defaultLabelForValueKey(valueKey: String): String = when (valueKey) {
+    GRAPH_METRIC_POINTS -> "Points"
+    GRAPH_METRIC_VALUE1 -> "Value 1"
+    GRAPH_METRIC_VALUE2 -> "Value 2"
+    GRAPH_METRIC_CALORIES -> "Calories"
+    GRAPH_METRIC_PROTEIN -> "Protein"
+    GRAPH_METRIC_CARBS -> "Carbs"
+    GRAPH_METRIC_FAT -> "Fat"
+    else -> valueKey
+}
+
+/**
+ * Resolves the display label for a given [habitName] + [valueKey].
+ *
+ * [labels] is the `valueDisplayLabels` map from [AppSettings] — a nested map of
+ * `habitName → (valueKey → customLabel)`.  If a non-blank custom label exists it
+ * is returned; otherwise the [defaultLabelForValueKey] fallback is used.
+ *
+ * This is **display-only**: the underlying [valueKey] (e.g. `"value2"` or a
+ * subtype name) is never changed, so backend storage, external integrations
+ * (ContentProvider, Python scripts, Wags), and the subtype-data JSON files are
+ * completely unaffected.
+ */
+fun displayLabelForValue(
+    habitName: String,
+    valueKey: String,
+    labels: Map<String, Map<String, String>>
+): String {
+    val custom = labels[habitName]?.get(valueKey)
+    return if (!custom.isNullOrBlank()) custom else defaultLabelForValueKey(valueKey)
+}
+
 // ── Graph metric keys ────────────────────────────────────────────────────────
 // String keys used by [AppSettings.graphMetricSelection] and the graph UI.
 // Multiple metrics can be active per habit, each rendered as a separate line.
@@ -417,6 +459,20 @@ data class AppSettings(
      * used for points so the habit still counts toward streaks and totals.
      */
     val secondaryValueFallbackHabits: Set<String> = emptySet(),
+
+    /**
+     * **Display-only** custom labels for a habit's value/subtype columns.
+     *
+     * Outer key = habit name, inner key = the backend value identifier
+     * (e.g. `"value1"`, `"value2"` for secondary-value habits, or a subtype
+     * name for subtyped habits), inner value = the label the user wants to see
+     * in the UI.
+     *
+     * This is purely a presentation overlay — the backend keys, the subtype-data
+     * JSON files, the ContentProvider, and all external integrations continue to
+     * use the original identifiers.  See [displayLabelForValue].
+     */
+    val valueDisplayLabels: Map<String, Map<String, String>> = emptyMap(),
 
     // ── AI Icon Generation settings ──────────────────────────────────────
     /** Whether AI icon generation is enabled (user must opt in via Settings). */

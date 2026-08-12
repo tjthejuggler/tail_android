@@ -113,6 +113,10 @@ private val KEY_SECONDARY_VALUE_HABITS = stringSetPreferencesKey("secondary_valu
 // Secondary value fallback habits (use secondary value for points when primary is zero)
 private val KEY_SECONDARY_VALUE_FALLBACK_HABITS = stringSetPreferencesKey("secondary_value_fallback_habits")
 
+// Display-only custom labels for value/subtype columns.
+// Stored as "habitName\x00key1\x02label1\x01key2\x02label2|||habitName2\x00..." pairs.
+private val KEY_VALUE_DISPLAY_LABELS = stringPreferencesKey("value_display_labels")
+
 // Custom point ranges settings
 private val KEY_CUSTOM_POINT_RANGES_HABITS = stringSetPreferencesKey("custom_point_ranges_habits")
 // Stored as "habitName\x00min0,max0|min1,max1|...|min6,max6|||habitName\x00..." pairs
@@ -444,6 +448,40 @@ private fun decodeRollForwardManualDates(raw: String): Map<String, Set<String>> 
     }.toMap()
 }
 
+// Serialisation helpers for Map<String, Map<String, String>> (habit name → valueKey → display label).
+// Outer format: "habitName\x00inner|||habitName2\x00inner" (same PAIR_SEP / KV_SEP as other maps).
+// Inner format: "key1\x02label1\x01key2\x02label2" — uses control chars \x01 / \x02 which cannot
+// appear in user-typed text, so no escaping is needed.
+private const val INNER_PAIR_SEP = "\u0001"
+private const val INNER_KV_SEP = "\u0002"
+
+private fun encodeValueLabelsMap(map: Map<String, Map<String, String>>): String =
+    map.entries.joinToString(PAIR_SEP) { (habit, inner) ->
+        val innerStr = inner.entries.joinToString(INNER_PAIR_SEP) { (k, v) ->
+            "$k$INNER_KV_SEP$v"
+        }
+        "$habit$KV_SEP$innerStr"
+    }
+
+private fun decodeValueLabelsMap(raw: String): Map<String, Map<String, String>> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null
+        else {
+            val habit = pair.substring(0, idx)
+            val innerStr = pair.substring(idx + KV_SEP.length)
+            val inner = if (innerStr.isBlank()) emptyMap()
+            else innerStr.split(INNER_PAIR_SEP).mapNotNull { entry ->
+                val ki = entry.indexOf(INNER_KV_SEP)
+                if (ki < 0) null
+                else entry.substring(0, ki) to entry.substring(ki + INNER_KV_SEP.length)
+            }.toMap()
+            if (inner.isEmpty()) null else habit to inner
+        }
+    }.toMap()
+}
+
 /**
  * Persists app settings (file URIs, custom input habits, custom habit order, habit screens)
  * using DataStore.
@@ -513,6 +551,7 @@ class SettingsRepository(private val context: Context) {
             migrateKvKey(KEY_GRAPH_VALUE_MODE_HABITS)
             migrateKvKey(KEY_GRAPH_METRIC_SELECTION)
             migrateKvKey(KEY_HABIT_NOTES)
+            migrateKvKey(KEY_VALUE_DISPLAY_LABELS)
 
             // --- Linked-habits map: rename both keys and values ---
             val linkedRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
@@ -600,6 +639,7 @@ class SettingsRepository(private val context: Context) {
             noPointsHabits = prefs[KEY_NO_POINTS_HABITS] ?: emptySet(),
             secondaryValueHabits = prefs[KEY_SECONDARY_VALUE_HABITS] ?: emptySet(),
             secondaryValueFallbackHabits = prefs[KEY_SECONDARY_VALUE_FALLBACK_HABITS] ?: emptySet(),
+            valueDisplayLabels = decodeValueLabelsMap(prefs[KEY_VALUE_DISPLAY_LABELS] ?: ""),
             aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
             aiIconsApiKey = prefs[KEY_AI_ICONS_API_KEY] ?: "",
             aiIconsBaseUrl = prefs[KEY_AI_ICONS_BASE_URL] ?: "",
@@ -857,6 +897,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that use the secondary value as a fallback for points. */
     suspend fun saveSecondaryValueFallbackHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_SECONDARY_VALUE_FALLBACK_HABITS] = habits }
+    }
+
+    /** Saves the display-only value/subtype label overrides (habit name → valueKey → label). */
+    suspend fun saveValueDisplayLabels(labels: Map<String, Map<String, String>>) {
+        context.dataStore.edit { prefs -> prefs[KEY_VALUE_DISPLAY_LABELS] = encodeValueLabelsMap(labels) }
     }
 
     /** Saves all AI icon generation settings at once. */
