@@ -138,6 +138,9 @@ fun GraphsPanel(
     val zoomStartDate by viewModel.graphZoomStartDate.collectAsState()
     val zoomEndDate by viewModel.graphZoomEndDate.collectAsState()
     val habits by viewModel.habits.collectAsState()
+    // Collect settings so the graph recomputes when metric selection changes
+    val settings by viewModel.settings.collectAsState()
+    val metricSelection = settings.graphMetricSelection
 
     var selectedDataPoint by remember { mutableStateOf<SelectedPoint?>(null) }
     var textEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -244,73 +247,41 @@ fun GraphsPanel(
             }
         }
 
-        // ── Points/Value1/Value2 toggle — shown when exactly one habit is selected ────
+        // ── Multi-select metric toggle — shown when exactly one habit is selected ────
+        // Multiple metrics can be active simultaneously; each renders as a separate line.
+        // Meal habits show additional options (Calories, Protein, Carbs, Fat).
         if (graphSelectedHabits.size == 1) {
             val selectedHabit = graphSelectedHabits.first()
-            val valueMode = viewModel.getGraphValueMode(selectedHabit)
-            val showValue2 = viewModel.hasSecondaryValue(selectedHabit)
+            val availableMetrics = viewModel.getAvailableMetrics(selectedHabit)
+            val selectedMetrics = viewModel.getSelectedMetrics(selectedHabit)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 8.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Points",
-                    color = if (valueMode == 0) Color(0xFF000000) else Color(0xFF88AA88),
-                    fontSize = 11.sp,
-                    fontWeight = if (valueMode == 0) FontWeight.Bold else FontWeight.Normal,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .background(
-                            if (valueMode == 0) Color(0xFF66DD66) else Color(0xFF1A2E1A),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) {
-                            if (valueMode != 0) viewModel.setGraphValueMode(selectedHabit, 0)
-                        }
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                )
-                Text(
-                    text = "Value 1",
-                    color = if (valueMode == 1) Color(0xFF000000) else Color(0xFF88AA88),
-                    fontSize = 11.sp,
-                    fontWeight = if (valueMode == 1) FontWeight.Bold else FontWeight.Normal,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .background(
-                            if (valueMode == 1) Color(0xFF66DD66) else Color(0xFF1A2E1A),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) {
-                            if (valueMode != 1) viewModel.setGraphValueMode(selectedHabit, 1)
-                        }
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                )
-                if (showValue2) {
+                availableMetrics.forEachIndexed { index, option ->
+                    val isActive = option.key in selectedMetrics
+                    // Match the line color: use the metric's position in availableMetrics
+                    val metricColor = GRAPH_COLORS[index % GRAPH_COLORS.size]
                     Text(
-                        text = "Value 2",
-                        color = if (valueMode == 2) Color(0xFF000000) else Color(0xFF88AA88),
+                        text = option.label,
+                        color = if (isActive) Color(0xFF000000) else Color(0xFF88AA88),
                         fontSize = 11.sp,
-                        fontWeight = if (valueMode == 2) FontWeight.Bold else FontWeight.Normal,
+                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .background(
-                                if (valueMode == 2) Color(0xFF66DD66) else Color(0xFF1A2E1A),
+                                if (isActive) metricColor else Color(0xFF1A2E1A),
                                 RoundedCornerShape(8.dp)
                             )
                             .clickable(
                                 indication = null,
                                 interactionSource = remember { MutableInteractionSource() }
                             ) {
-                                if (valueMode != 2) viewModel.setGraphValueMode(selectedHabit, 2)
+                                viewModel.toggleGraphMetric(selectedHabit, option.key)
                             }
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     )
@@ -331,16 +302,39 @@ fun GraphsPanel(
             }
             val fullEndDate = zoomEndDate ?: today
 
-            // Collect data for all selected habits over the full period range
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, textFilter) {
-                graphSelectedHabits.toList().mapIndexed { idx, habitName ->
+            // Collect data for all selected habits × selected metrics.
+            // Each (habit, metric) pair becomes a separate line on the chart.
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, textFilter, metricSelection) {
+                val isSingleHabit = graphSelectedHabits.size == 1
+                var sequentialColorIdx = 0
+                graphSelectedHabits.toList().flatMap { habitName ->
                     val data = viewModel.getGraphData(habitName, fullStartDate, fullEndDate, textFilter)
-                    GraphSeries(
-                        habitName = habitName,
-                        data = data,
-                        color = GRAPH_COLORS[idx % GRAPH_COLORS.size],
-                        isTextInput = viewModel.isTextInputHabit(habitName)
-                    )
+                    val metrics = viewModel.getSelectedMetrics(habitName)
+                    val availableMetrics = viewModel.getAvailableMetrics(habitName)
+                    // Preserve a stable ordering: points, value1, value2, then meal metrics
+                    val orderedMetrics = availableMetrics
+                        .map { it.key }
+                        .filter { it in metrics }
+                    val metricsToShow = orderedMetrics.ifEmpty { metrics.toList() }
+                    metricsToShow.map { metricKey ->
+                        // For single-habit mode, use the metric's position in availableMetrics
+                        // so button colors match line colors deterministically.
+                        // For multi-habit mode, use a sequential counter.
+                        val color = if (isSingleHabit) {
+                            val idx = availableMetrics.indexOfFirst { it.key == metricKey }
+                            GRAPH_COLORS[(if (idx >= 0) idx else 0) % GRAPH_COLORS.size]
+                        } else {
+                            GRAPH_COLORS[sequentialColorIdx++ % GRAPH_COLORS.size]
+                        }
+                        GraphSeries(
+                            habitName = habitName,
+                            data = data,
+                            color = color,
+                            isTextInput = viewModel.isTextInputHabit(habitName),
+                            metric = metricKey,
+                            metricLabel = metricLabel(metricKey)
+                        )
+                    }
                 }
             }
 
@@ -363,7 +357,6 @@ fun GraphsPanel(
                         viewModel.setGraphZoomRange(newStart, newEnd)
                     },
                     onZoomReset = { viewModel.clearGraphZoom() },
-                    valueModeMap = graphSelectedHabits.associateWith { viewModel.getGraphValueMode(it) },
                     garminHabitLinks = garminHabitLinks,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -413,8 +406,14 @@ fun GraphsPanel(
                             } else {
                                 point.value.toString()
                             }
+                            val displayLabel = if (point.metricLabel.isNotEmpty() &&
+                                point.metricLabel != "Points" && point.metricLabel != "Value 1") {
+                                "${point.habitName} (${point.metricLabel})"
+                            } else {
+                                point.habitName
+                            }
                             Text(
-                                text = "${point.habitName}: $valueText",
+                                text = "$displayLabel: $valueText",
                                 color = point.color,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
@@ -497,6 +496,31 @@ fun GraphsPanel(
                                 }
                             }
                         }
+
+                        // ── Meal daily totals ───────────────────────────────
+                        val mealTotals = viewModel.getMealDayTotals(point.habitName, point.date)
+                        if (mealTotals != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Day totals (${mealTotals.mealCount} meal${if (mealTotals.mealCount != 1) "s" else ""}):",
+                                color = Color(0xFFFFCC44),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 4.dp, top = 2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text("🔥 ${mealTotals.calories} kcal", color = Color(0xFFEEDDAA), fontSize = 10.sp)
+                                Text("P ${mealTotals.proteinGrams.toInt()}g", color = Color(0xFFCCEECC), fontSize = 10.sp)
+                                Text("C ${mealTotals.carbsGrams.toInt()}g", color = Color(0xFFCCEECC), fontSize = 10.sp)
+                                Text("F ${mealTotals.fatGrams.toInt()}g", color = Color(0xFFCCEECC), fontSize = 10.sp)
+                            }
+                        }
                     }
                 }
 
@@ -504,15 +528,14 @@ fun GraphsPanel(
                 if (!isLandscape && selectedDataPoint == null) {
                     StatsSummary(
                         seriesData = allSeriesData,
-                        valueModeMap = graphSelectedHabits.associateWith { viewModel.getGraphValueMode(it) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
 
-                // ── Legend ────────────────────────────────────────────────
-                if (graphSelectedHabits.size > 1) {
+                // ── Legend — shown when more than one series is on the chart ─
+                if (allSeriesData.size > 1) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -531,7 +554,9 @@ fun GraphsPanel(
                                         .background(series.color, CircleShape)
                                 )
                                 Text(
-                                    text = series.habitName,
+                                    text = if (series.metricLabel != "Points" && series.metricLabel != "Value 1")
+                                        "${series.habitName} (${series.metricLabel})"
+                                    else series.habitName,
                                     color = series.color,
                                     fontSize = if (isLandscape) 9.sp else 10.sp,
                                     maxLines = 1,
@@ -657,23 +682,43 @@ fun GraphsPanel(
 // ── Data classes ──────────────────────────────────────────────────────────────
 
 /**
- * Returns the display value for a data point based on the graph value mode.
- * Mode 0 = points, Mode 1 = Value1 (raw/garmin), Mode 2 = Value2 (secondary).
+ * Returns the display value for a data point based on the graph metric key.
+ * Supports both legacy modes (points/value1/value2) and meal metrics
+ * (calories/protein/carbs/fat).
  */
-private fun displayValueForMode(
+private fun displayValueForMetric(
     dp: HabitViewModel.GraphDataPoint,
-    mode: Int
-): Int = when (mode) {
-    1 -> dp.garminValue ?: dp.rawValue
-    2 -> dp.secondaryValue ?: dp.rawValue
+    metric: String
+): Int = when (metric) {
+    com.example.tail.data.GRAPH_METRIC_VALUE1 -> dp.garminValue ?: dp.rawValue
+    com.example.tail.data.GRAPH_METRIC_VALUE2 -> dp.secondaryValue ?: dp.rawValue
+    com.example.tail.data.GRAPH_METRIC_CALORIES -> dp.mealCalories ?: 0
+    com.example.tail.data.GRAPH_METRIC_PROTEIN -> dp.mealProtein ?: 0
+    com.example.tail.data.GRAPH_METRIC_CARBS -> dp.mealCarbs ?: 0
+    com.example.tail.data.GRAPH_METRIC_FAT -> dp.mealFat ?: 0
     else -> dp.pointsValue
+}
+
+/** Returns the human-readable label for a metric key. */
+fun metricLabel(metric: String): String = when (metric) {
+    com.example.tail.data.GRAPH_METRIC_VALUE1 -> "Value 1"
+    com.example.tail.data.GRAPH_METRIC_VALUE2 -> "Value 2"
+    com.example.tail.data.GRAPH_METRIC_CALORIES -> "Calories"
+    com.example.tail.data.GRAPH_METRIC_PROTEIN -> "Protein"
+    com.example.tail.data.GRAPH_METRIC_CARBS -> "Carbs"
+    com.example.tail.data.GRAPH_METRIC_FAT -> "Fat"
+    else -> "Points"
 }
 
 data class GraphSeries(
     val habitName: String,
     val data: List<HabitViewModel.GraphDataPoint>,
     val color: Color,
-    val isTextInput: Boolean = false
+    val isTextInput: Boolean = false,
+    /** Metric key (see [com.example.tail.data.GRAPH_METRIC_POINTS] etc.). */
+    val metric: String = com.example.tail.data.GRAPH_METRIC_POINTS,
+    /** Human-readable metric label for legend / tooltip. */
+    val metricLabel: String = "Points"
 )
 
 data class SelectedPoint(
@@ -681,7 +726,20 @@ data class SelectedPoint(
     val date: LocalDate,
     val value: Int,
     val rawValue: Int,
-    val color: Color
+    val color: Color,
+    val metricLabel: String = ""
+)
+
+/**
+ * Per-series Y-axis scale info used when series have wildly different magnitudes.
+ * Each series is normalised independently so small-value lines remain visible.
+ */
+data class SeriesYScale(
+    val effectiveMin: Int,
+    val effectiveMax: Int,
+    val range: Int,
+    val ticks: List<Int>,
+    val onRight: Boolean   // true → draw tick labels on the right side of the chart
 )
 
 // ── Custom Canvas Line Chart ─────────────────────────────────────────────────
@@ -695,7 +753,6 @@ private fun HabitLineChart(
     selectedPoint: SelectedPoint?,
     onZoom: (LocalDate, LocalDate) -> Unit,
     onZoomReset: () -> Unit,
-    valueModeMap: Map<String, Int> = emptyMap(),  // habitName -> mode (0=points, 1=Value1, 2=Value2)
     garminHabitLinks: Map<String, String> = emptyMap(),  // habitName -> GarminType key
     modifier: Modifier = Modifier
 ) {
@@ -741,25 +798,64 @@ private fun HabitLineChart(
     val currentVisTotalDays by rememberUpdatedState(visTotalDays)
 
     // Find global min and max for Y axis (over the visible range)
-    // Use pointsValue / Value1 / Value2 based on the habit's value mode
     val globalMax = seriesData.maxOfOrNull { series ->
-        val mode = valueModeMap[series.habitName] ?: 0
         series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
-            .maxOfOrNull { dp -> displayValueForMode(dp, mode) } ?: 0
+            .maxOfOrNull { dp -> displayValueForMetric(dp, series.metric) } ?: 0
     } ?: 1
     val globalMin = seriesData.minOfOrNull { series ->
-        val mode = valueModeMap[series.habitName] ?: 0
         series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
-            .minOfOrNull { dp -> displayValueForMode(dp, mode) } ?: 0
+            .minOfOrNull { dp -> displayValueForMetric(dp, series.metric) } ?: 0
     } ?: 0
-    
-    // For charts with negative values, we need to adjust the range
+
     val yMin = globalMin
     val yMax = if (globalMax == 0) 1 else globalMax
     val yTicks = calculateYTicks(yMin, yMax)
     val effectiveYMin = yTicks.firstOrNull() ?: yMin
     val effectiveYMax = yTicks.lastOrNull() ?: yMax
     val yRange = effectiveYMax - effectiveYMin
+
+    // ── Multi-scale detection ────────────────────────────────────────────
+    // When series have wildly different magnitudes (e.g. points ~5 vs calories
+    // ~2000) the shared axis squishes small-value lines flat.  Detect this and
+    // give each series its own independent scale, with coloured Y-axis labels.
+    val seriesMaxValues = seriesData.map { series ->
+        series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
+            .maxOfOrNull { displayValueForMetric(it, series.metric) } ?: 0
+    }
+    val nonZeroMaxes = seriesMaxValues.filter { it > 0 }
+    val useMultiScale = seriesData.size > 1 && nonZeroMaxes.size >= 2 &&
+        (nonZeroMaxes.maxOrNull()!!.toFloat() / nonZeroMaxes.minOrNull()!!.toFloat()) > 5f
+
+    val seriesYScales: Map<GraphSeries, SeriesYScale> = if (useMultiScale) {
+        seriesData.mapIndexed { idx, series ->
+            val sMax = seriesMaxValues[idx]
+            val sMin = series.data.filter { it.date >= visStartDate && it.date <= visEndDate }
+                .minOfOrNull { displayValueForMetric(it, series.metric) } ?: 0
+            val ticks = calculateYTicks(sMin, sMax)
+            val eMin = ticks.firstOrNull() ?: sMin
+            val eMax = ticks.lastOrNull() ?: if (sMax == 0) 1 else sMax
+            series to SeriesYScale(
+                effectiveMin = eMin,
+                effectiveMax = eMax,
+                range = (eMax - eMin).coerceAtLeast(1),
+                ticks = ticks,
+                onRight = idx % 2 == 1   // alternate left / right
+            )
+        }.toMap()
+    } else {
+        emptyMap()
+    }
+    val hasRightAxis = useMultiScale && seriesYScales.values.any { it.onRight }
+
+    /** Map a display value to a Y pixel for the given series (multi-scale aware). */
+    fun scaleYForSeries(displayValue: Int, series: GraphSeries, cBottom: Float, cHeight: Float): Float {
+        val sc = seriesYScales[series]
+        return if (sc != null) {
+            cBottom - ((displayValue - sc.effectiveMin).toFloat() / sc.range) * cHeight
+        } else {
+            cBottom - ((displayValue - effectiveYMin.toFloat()) / yRange.coerceAtLeast(1)) * cHeight
+        }
+    }
 
     Canvas(
         modifier = modifier
@@ -840,7 +936,7 @@ private fun HabitLineChart(
             .pointerInput(seriesData, visStartDate, visEndDate) {
                 detectTapGestures { offset ->
                     val chartLeft = 40.dp.toPx()
-                    val chartRight = size.width - 12.dp.toPx()
+                    val chartRight = if (hasRightAxis) size.width - 40.dp.toPx() else size.width - 12.dp.toPx()
                     val chartTop = 12.dp.toPx()
                     val chartBottom = size.height - 28.dp.toPx()
                     val chartWidth = chartRight - chartLeft
@@ -855,13 +951,12 @@ private fun HabitLineChart(
                     var closestDist = Float.MAX_VALUE
 
                     for (series in seriesData) {
-                        val mode = valueModeMap[series.habitName] ?: 0
                         for (dp in series.data) {
                             if (dp.date < visStartDate || dp.date > visEndDate) continue
                             val dayIdx = ChronoUnit.DAYS.between(visStartDate, dp.date).toInt()
                             val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
-                            val displayValue = displayValueForMode(dp, mode)
-                            val y = chartBottom - ((displayValue - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
+                            val displayValue = displayValueForMetric(dp, series.metric)
+                            val y = scaleYForSeries(displayValue, series, chartBottom, chartHeight)
 
                             val dist = kotlin.math.sqrt(
                                 (tapX - x) * (tapX - x) + (tapY - y) * (tapY - y)
@@ -873,7 +968,8 @@ private fun HabitLineChart(
                                     date = dp.date,
                                     value = displayValue,
                                     rawValue = dp.garminValue ?: dp.rawValue,
-                                    color = series.color
+                                    color = series.color,
+                                    metricLabel = series.metricLabel
                                 )
                             }
                         }
@@ -883,7 +979,7 @@ private fun HabitLineChart(
             }
     ) {
         val chartLeft = 40.dp.toPx()
-        val chartRight = size.width - 12.dp.toPx()
+        val chartRight = if (hasRightAxis) size.width - 40.dp.toPx() else size.width - 12.dp.toPx()
         val chartTop = 12.dp.toPx()
         val chartBottom = size.height - 28.dp.toPx()
         val chartWidth = chartRight - chartLeft
@@ -908,27 +1004,75 @@ private fun HabitLineChart(
             garminType == com.example.tail.data.GarminType.FITNESS_AGE_DISTANCE
         }
 
-        for (tick in yTicks) {
-            val y = chartBottom - ((tick - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
-            drawLine(
-                color = Color(0xFF1A2E1A),
-                start = Offset(chartLeft, y),
-                end = Offset(chartRight, y),
-                strokeWidth = 0.5.dp.toPx(),
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
-            )
-            val tickLabel = if (needsDecimalFormatting) {
-                // Convert from hundredths of a year to years with 2 decimal places
-                String.format("%.2f", tick / 100.0)
-            } else {
-                tick.toString()
+        if (useMultiScale) {
+            // ── Per-series coloured Y-axis labels ──────────────────────────
+            seriesData.forEach { series ->
+                val sc = seriesYScales[series] ?: return@forEach
+                val seriesColor = series.color
+                val colorInt = android.graphics.Color.argb(
+                    255,
+                    (seriesColor.red * 255).toInt().coerceIn(0, 255),
+                    (seriesColor.green * 255).toInt().coerceIn(0, 255),
+                    (seriesColor.blue * 255).toInt().coerceIn(0, 255)
+                )
+                val axisPaint = android.graphics.Paint().apply {
+                    this.color = colorInt
+                    textSize = 9.dp.toPx()
+                    isAntiAlias = true
+                    textAlign = if (sc.onRight) android.graphics.Paint.Align.LEFT
+                                else android.graphics.Paint.Align.RIGHT
+                    isFakeBoldText = true
+                }
+                // Limit to 4 ticks per series to avoid clutter
+                val displayTicks = if (sc.ticks.size > 4) {
+                    val step = (sc.ticks.size + 3) / 4
+                    sc.ticks.filterIndexed { idx, _ -> idx % step == 0 }
+                } else {
+                    sc.ticks
+                }
+                for (tick in displayTicks) {
+                    val y = chartBottom - ((tick - sc.effectiveMin).toFloat() / sc.range) * chartHeight
+                    drawLine(
+                        color = seriesColor.copy(alpha = 0.06f),
+                        start = Offset(chartLeft, y),
+                        end = Offset(chartRight, y),
+                        strokeWidth = 0.5.dp.toPx()
+                    )
+                    val tickLabel = if (needsDecimalFormatting) {
+                        String.format("%.2f", tick / 100.0)
+                    } else {
+                        tick.toString()
+                    }
+                    val labelX = if (sc.onRight) chartRight + 4.dp.toPx()
+                                 else chartLeft - 4.dp.toPx()
+                    drawContext.canvas.nativeCanvas.drawText(
+                        tickLabel, labelX, y + 3.dp.toPx(), axisPaint
+                    )
+                }
             }
-            drawContext.canvas.nativeCanvas.drawText(
-                tickLabel,
-                chartLeft - 4.dp.toPx(),
-                y + 4.dp.toPx(),
-                textPaint
-            )
+        } else {
+            for (tick in yTicks) {
+                val y = chartBottom - ((tick - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
+                drawLine(
+                    color = Color(0xFF1A2E1A),
+                    start = Offset(chartLeft, y),
+                    end = Offset(chartRight, y),
+                    strokeWidth = 0.5.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
+                )
+                val tickLabel = if (needsDecimalFormatting) {
+                    // Convert from hundredths of a year to years with 2 decimal places
+                    String.format("%.2f", tick / 100.0)
+                } else {
+                    tick.toString()
+                }
+                drawContext.canvas.nativeCanvas.drawText(
+                    tickLabel,
+                    chartLeft - 4.dp.toPx(),
+                    y + 4.dp.toPx(),
+                    textPaint
+                )
+            }
         }
 
         // ── X axis labels ─────────────────────────────────────────────────
@@ -986,7 +1130,7 @@ private fun HabitLineChart(
         }
 
         // ── Zero line (if visible within the range) ─────────────────────────
-        if (effectiveYMin <= 0 && effectiveYMax >= 0) {
+        if (!useMultiScale && effectiveYMin <= 0 && effectiveYMax >= 0) {
             val zeroY = chartBottom - ((0 - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
             drawLine(
                 color = Color(0xFF334433),
@@ -1014,18 +1158,24 @@ private fun HabitLineChart(
             val visibleData = series.data.filter { it.date >= panStartDate && it.date <= panEndDate }
             if (visibleData.isEmpty()) continue
 
-            val mode = valueModeMap[series.habitName] ?: 0
             val points = visibleData.map { dp ->
                 val dayIdx = ChronoUnit.DAYS.between(visStartDate, dp.date).toInt()
                 val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
-                val displayValue = displayValueForMode(dp, mode)
-                val y = chartBottom - ((displayValue - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
+                val displayValue = displayValueForMetric(dp, series.metric)
+                val y = scaleYForSeries(displayValue, series, chartBottom, chartHeight)
                 Offset(x, y)
             }
 
             // Filled area (fill to zero line if visible, otherwise to bottom)
             if (points.size >= 2) {
-                val zeroY = if (effectiveYMin <= 0 && effectiveYMax >= 0) {
+                val sc = seriesYScales[series]
+                val zeroY = if (sc != null) {
+                    if (sc.effectiveMin <= 0 && sc.effectiveMax >= 0) {
+                        chartBottom - ((0 - sc.effectiveMin).toFloat() / sc.range) * chartHeight
+                    } else {
+                        chartBottom
+                    }
+                } else if (effectiveYMin <= 0 && effectiveYMax >= 0) {
                     chartBottom - ((0 - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
                 } else {
                     chartBottom
@@ -1057,11 +1207,13 @@ private fun HabitLineChart(
                 points.forEachIndexed { idx, point ->
                     val dp = visibleData[idx]
                     val isSelected = selectedPoint?.habitName == series.habitName &&
-                            selectedPoint?.date == dp.date
+                            selectedPoint?.date == dp.date &&
+                            selectedPoint?.metricLabel == series.metricLabel
                     val dotRadius = if (isSelected) 5.dp.toPx() else 2.5.dp.toPx()
-                    val displayValue = displayValueForMode(dp, mode)
+                    val displayValue = displayValueForMetric(dp, series.metric)
                     // Show dots for all values when negative values are present
-                    if (displayValue != 0 || isSelected || effectiveYMin < 0) {
+                    val sc = seriesYScales[series]
+                    if (displayValue != 0 || isSelected || (sc?.effectiveMin ?: effectiveYMin) < 0) {
                         drawCircle(
                             color = if (isSelected) Color.White else series.color,
                             radius = dotRadius,
@@ -1086,14 +1238,14 @@ private fun HabitLineChart(
                     color = series.color.copy(alpha = 0.4f),
                     startDate = visStartDate,
                     totalDays = visTotalDays,
-                    effectiveYMin = effectiveYMin,
-                    effectiveYMax = effectiveYMax,
+                    effectiveYMin = seriesYScales[series]?.effectiveMin ?: effectiveYMin,
+                    effectiveYMax = seriesYScales[series]?.effectiveMax ?: effectiveYMax,
                     chartLeft = chartLeft,
                     chartBottom = chartBottom,
                     chartWidth = chartWidth,
                     chartHeight = chartHeight,
                     strokeWidth = 1.5.dp.toPx(),
-                    mode = mode
+                    metric = series.metric
                 )
             }
         }
@@ -1105,7 +1257,12 @@ private fun HabitLineChart(
             if (sp.date < visStartDate || sp.date > visEndDate) return@let
             val dayIdx = ChronoUnit.DAYS.between(visStartDate, sp.date).toInt()
             val x = chartLeft + (dayIdx.toFloat() / (visTotalDays - 1).coerceAtLeast(1)) * chartWidth
-            val y = chartBottom - ((sp.value - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
+            val matchedSeries = seriesData.find { it.habitName == sp.habitName && it.metricLabel == sp.metricLabel }
+            val y = if (matchedSeries != null) {
+                scaleYForSeries(sp.value, matchedSeries, chartBottom, chartHeight)
+            } else {
+                chartBottom - ((sp.value - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
+            }
 
             drawLine(
                 color = Color(0x44FFFFFF),
@@ -1174,7 +1331,7 @@ private fun DrawScope.drawMovingAverage(
     chartWidth: Float,
     chartHeight: Float,
     strokeWidth: Float,
-    mode: Int = 0
+    metric: String = com.example.tail.data.GRAPH_METRIC_POINTS
 ) {
     if (data.size < windowSize) return
 
@@ -1182,7 +1339,7 @@ private fun DrawScope.drawMovingAverage(
     val maPoints = mutableListOf<Offset>()
     for (i in windowSize - 1 until data.size) {
         val windowAvg = data.subList(i - windowSize + 1, i + 1)
-            .map { displayValueForMode(it, mode).toFloat() }
+            .map { displayValueForMetric(it, metric).toFloat() }
             .average()
             .toFloat()
         val dp = data[i]
@@ -1247,7 +1404,6 @@ private fun calculateYTicks(minValue: Int, maxValue: Int): List<Int> {
 @Composable
 private fun StatsSummary(
     seriesData: List<GraphSeries>,
-    valueModeMap: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     // Hoisted popup state — rendered outside the Row so it never affects stat layout
@@ -1260,8 +1416,7 @@ private fun StatsSummary(
     ) {
         for (series in seriesData) {
             if (series.data.isEmpty()) continue
-            val mode = valueModeMap[series.habitName] ?: 0
-            val values = series.data.map { dp -> displayValueForMode(dp, mode) }
+            val values = series.data.map { dp -> displayValueForMetric(dp, series.metric) }
             val nonZeroValues = values.filter { it > 0 }
             val total = values.sum()
             val avg = if (values.isNotEmpty()) values.average() else 0.0
@@ -1283,11 +1438,13 @@ private fun StatsSummary(
             ) {
                 if (seriesData.size > 1) {
                     Text(
-                        text = series.habitName,
+                        text = if (series.metricLabel != "Points" && series.metricLabel != "Value 1")
+                            "${series.habitName} (${series.metricLabel})"
+                        else series.habitName,
                         color = series.color,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.width(80.dp),
+                        modifier = Modifier.width(100.dp),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

@@ -180,6 +180,34 @@ fun secondaryValueKey(habitName: String): String = "$SECONDARY_VALUE_PREFIX$habi
 fun secondaryValueHabitName(name: String): String? =
     if (isSecondaryValueKey(name)) name.removePrefix(SECONDARY_VALUE_PREFIX) else null
 
+// ── Graph metric keys ────────────────────────────────────────────────────────
+// String keys used by [AppSettings.graphMetricSelection] and the graph UI.
+// Multiple metrics can be active per habit, each rendered as a separate line.
+
+/** Points (count-based, applies to all habits). */
+const val GRAPH_METRIC_POINTS = "points"
+/** Value1 — raw value / Garmin value (applies to all habits). */
+const val GRAPH_METRIC_VALUE1 = "value1"
+/** Value2 — secondary value (only for habits in [AppSettings.secondaryValueHabits]). */
+const val GRAPH_METRIC_VALUE2 = "value2"
+/** Calories — sum of meal calories for the day (meal habits only). */
+const val GRAPH_METRIC_CALORIES = "calories"
+/** Protein in grams (meal habits only). */
+const val GRAPH_METRIC_PROTEIN = "protein"
+/** Carbs in grams (meal habits only). */
+const val GRAPH_METRIC_CARBS = "carbs"
+/** Fat in grams (meal habits only). */
+const val GRAPH_METRIC_FAT = "fat"
+
+/**
+ * A selectable graph metric option shown as a toggle button.
+ * [key] is persisted in [AppSettings.graphMetricSelection].
+ */
+data class GraphMetricOption(
+    val key: String,
+    val label: String
+)
+
 /**
  * A named screen (page) of habits. Each screen has a unique id, a display name,
  * and an ordered list of habit names that appear on it.
@@ -532,8 +560,23 @@ data class AppSettings(
      *   1 = Value1 (raw value / true value / garmin value)
      *   2 = Value2 (secondary value, only for habits in [secondaryValueHabits])
      * When absent or 0, points are shown.
+     *
+     * **Deprecated** in favour of [graphMetricSelection] which supports selecting
+     * multiple metrics simultaneously. Kept for backward-compatibility migration.
      */
     val graphValueModeHabits: Map<String, Int> = emptyMap(),
+
+    /**
+     * Multi-select graph metrics per habit.
+     *
+     * Maps habit name → set of metric keys (see [GRAPH_METRIC_POINTS] etc.).
+     * Multiple metrics can be selected at once, each rendered as a separate line.
+     * When absent for a habit, the default is `{ [GRAPH_METRIC_POINTS] }`.
+     *
+     * Meal habits additionally support [GRAPH_METRIC_CALORIES], [GRAPH_METRIC_PROTEIN],
+     * [GRAPH_METRIC_CARBS], [GRAPH_METRIC_FAT].
+     */
+    val graphMetricSelection: Map<String, Set<String>> = emptyMap(),
 
     // ── Map Settings ────────────────────────────────────────────────────────
     /**

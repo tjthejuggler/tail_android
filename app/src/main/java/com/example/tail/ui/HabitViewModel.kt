@@ -35,6 +35,14 @@ import com.example.tail.data.appLinkPackageName
 import com.example.tail.data.isAppLink
 import com.example.tail.data.isSecondaryValueKey
 import com.example.tail.data.secondaryValueKey
+import com.example.tail.data.GRAPH_METRIC_POINTS
+import com.example.tail.data.GRAPH_METRIC_VALUE1
+import com.example.tail.data.GRAPH_METRIC_VALUE2
+import com.example.tail.data.GRAPH_METRIC_CALORIES
+import com.example.tail.data.GRAPH_METRIC_PROTEIN
+import com.example.tail.data.GRAPH_METRIC_CARBS
+import com.example.tail.data.GRAPH_METRIC_FAT
+import com.example.tail.data.GraphMetricOption
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
@@ -55,6 +63,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.time.LocalDate
+import kotlin.math.roundToInt
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
@@ -3473,6 +3482,87 @@ class HabitViewModel(
         _graphSelectedHabits.value = emptySet()
     }
 
+    // ── Multi-select graph metrics ────────────────────────────────────────
+
+    /** Returns true if [habitName] has the "Meal" type enabled. */
+    fun isMealHabit(habitName: String): Boolean {
+        return habitName in _settings.value.mealHabits
+    }
+
+    /**
+     * Returns the list of selectable graph metrics for [habitName], depending
+     * on its type. All habits get Points + Value1. Secondary-value habits also
+     * get Value2. Meal habits additionally get Calories, Protein, Carbs, Fat.
+     */
+    fun getAvailableMetrics(habitName: String): List<GraphMetricOption> {
+        val metrics = mutableListOf(
+            GraphMetricOption(GRAPH_METRIC_POINTS, "Points"),
+            GraphMetricOption(GRAPH_METRIC_VALUE1, "Value 1")
+        )
+        if (hasSecondaryValue(habitName)) {
+            metrics.add(GraphMetricOption(GRAPH_METRIC_VALUE2, "Value 2"))
+        }
+        if (isMealHabit(habitName)) {
+            metrics.add(GraphMetricOption(GRAPH_METRIC_CALORIES, "Calories"))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_PROTEIN, "Protein"))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_CARBS, "Carbs"))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_FAT, "Fat"))
+        }
+        return metrics
+    }
+
+    /**
+     * Returns the set of currently-selected graph metrics for [habitName].
+     *
+     * Migrates from the legacy single-select [AppSettings.graphValueModeHabits]
+     * on first access: old mode 0 → {points}, mode 1 → {value1}, mode 2 → {value2}.
+     * Defaults to {points} when nothing is stored.
+     */
+    fun getSelectedMetrics(habitName: String): Set<String> {
+        val stored = _settings.value.graphMetricSelection[habitName]
+        if (stored != null) return stored
+
+        // Legacy migration: convert old single-select mode to a set
+        val oldMode = _settings.value.graphValueModeHabits[habitName] ?: 0
+        return when (oldMode) {
+            1 -> setOf(GRAPH_METRIC_VALUE1)
+            2 -> setOf(GRAPH_METRIC_VALUE2)
+            else -> setOf(GRAPH_METRIC_POINTS)
+        }
+    }
+
+    /**
+     * Toggles a graph metric on/off for [habitName]. Multiple metrics can be
+     * active simultaneously. At least one metric remains selected (toggling off
+     * the last one re-selects Points).
+     */
+    fun toggleGraphMetric(habitName: String, metric: String) {
+        viewModelScope.launch {
+            val current = _settings.value.graphMetricSelection.toMutableMap()
+            val currentSet = current[habitName]?.toMutableSet()
+                ?: getSelectedMetrics(habitName).toMutableSet()
+            if (metric in currentSet) {
+                currentSet.remove(metric)
+                // Ensure at least one metric stays selected
+                if (currentSet.isEmpty()) currentSet.add(GRAPH_METRIC_POINTS)
+            } else {
+                currentSet.add(metric)
+            }
+            current[habitName] = currentSet
+            settingsRepo.saveGraphMetricSelection(current)
+            _settings.value = _settings.value.copy(graphMetricSelection = current)
+        }
+    }
+
+    /**
+     * Returns the macro/nutrition totals for [habitName] on [date], or null if
+     * the habit is not a meal habit. Used by the graph day-details popup.
+     */
+    fun getMealDayTotals(habitName: String, date: LocalDate): com.example.tail.data.meal.MealLogRepository.DayTotals? {
+        if (!isMealHabit(habitName)) return null
+        return mealLogRepo.dayTotals(habitName, dateString(date))
+    }
+
     /**
      * Data point for a single day on the graph.
      */
@@ -3483,7 +3573,12 @@ class HabitViewModel(
         val pointsValue: Int,
         val textEntry: String? = null,  // for text-input habits
         val garminValue: Int? = null,   // for Garmin-linked habits (actual metric value)
-        val secondaryValue: Int? = null // for habits with secondary values enabled
+        val secondaryValue: Int? = null, // for habits with secondary values enabled
+        // ── Meal habit data (populated only for meal-type habits) ──
+        val mealCalories: Int? = null,
+        val mealProtein: Int? = null,   // rounded grams
+        val mealCarbs: Int? = null,     // rounded grams
+        val mealFat: Int? = null        // rounded grams
     )
 
     /**
@@ -3524,7 +3619,8 @@ class HabitViewModel(
         endDate: LocalDate,
         textFilter: String = ""
     ): List<GraphDataPoint> {
-        val entries = cachedPhoneDb[habitName] ?: return emptyList()
+        val isMeal = isMealHabit(habitName)
+        val entries = cachedPhoneDb[habitName] ?: if (isMeal) emptyMap() else return emptyList()
         val divider = _settings.value.habitDividers[habitName] ?: 1
 
         // Secondary values (stored under "secondary_value:<habitName>" in the DB)
@@ -3539,6 +3635,13 @@ class HabitViewModel(
         
         // Check if this is a text-input habit
         val isTextInput = isTextInputHabit(habitName)
+
+        // Load per-day meal aggregates for meal-type habits
+        val mealAggregates = if (isMeal) {
+            mealLogRepo.dailyAggregates(habitName, startDate, endDate)
+        } else {
+            emptyMap()
+        }
         
         // Use cached text entries for filtering
         val textEntriesMap = if (isTextInput && textFilter.isNotEmpty()) {
@@ -3597,6 +3700,7 @@ class HabitViewModel(
             } else null
             
             val secVal = secondaryEntries?.get(ds)
+            val mealDay = mealAggregates[ds]
             result.add(
                 GraphDataPoint(
                     date = cursor,
@@ -3604,7 +3708,11 @@ class HabitViewModel(
                     rawValue = filteredRaw,
                     pointsValue = applyDivider(filteredRaw, divider),
                     garminValue = garminVal,
-                    secondaryValue = secVal
+                    secondaryValue = secVal,
+                    mealCalories = mealDay?.calories,
+                    mealProtein = mealDay?.proteinGrams?.roundToInt(),
+                    mealCarbs = mealDay?.carbsGrams?.roundToInt(),
+                    mealFat = mealDay?.fatGrams?.roundToInt()
                 )
             )
             cursor = cursor.plusDays(1)

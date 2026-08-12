@@ -104,6 +104,8 @@ private val KEY_MAP_HIDE_ZERO_DAYS = booleanPreferencesKey("map_hide_zero_days")
 private val KEY_MAP_BEGIN_DATE = stringPreferencesKey("map_begin_date")
 // Stored as "habitName\x000|||habitName\x001" pairs (0 = points, 1 = value/raw, 2 = value2)
 private val KEY_GRAPH_VALUE_MODE_HABITS = stringPreferencesKey("graph_value_mode_habits")
+// Multi-select graph metrics: "habitName\x00metric1,metric2|||habitName\x00metric1"
+private val KEY_GRAPH_METRIC_SELECTION = stringPreferencesKey("graph_metric_selection")
 // Secondary value habits (set of habit names that have a second value per day)
 private val KEY_SECONDARY_VALUE_HABITS = stringSetPreferencesKey("secondary_value_habits")
 
@@ -282,6 +284,28 @@ private fun decodeIntMap(raw: String): Map<String, Int> {
         else {
             val key = pair.substring(0, idx)
             val value = pair.substring(idx + 1).toIntOrNull() ?: return@mapNotNull null
+            key to value
+        }
+    }.toMap()
+}
+
+// Serialisation helpers for Map<String, Set<String>> (habit name → set of metric keys).
+// Format: "habitName\x00metric1,metric2|||habitName\x00metric1"
+private fun encodeStringSetMap(map: Map<String, Set<String>>): String =
+    map.entries.joinToString(PAIR_SEP) { (k, v) ->
+        "$k$KV_SEP${v.joinToString(",")}"
+    }
+
+private fun decodeStringSetMap(raw: String): Map<String, Set<String>> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split(PAIR_SEP).mapNotNull { pair ->
+        val idx = pair.indexOf(KV_SEP)
+        if (idx < 0) null
+        else {
+            val key = pair.substring(0, idx)
+            val valueStr = pair.substring(idx + KV_SEP.length)
+            val value = if (valueStr.isBlank()) emptySet()
+            else valueStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             key to value
         }
     }.toMap()
@@ -480,6 +504,7 @@ class SettingsRepository(private val context: Context) {
             migrateKvKey(KEY_TIMED_DATA_FILE_URIS)
             migrateKvKey(KEY_CUSTOM_POINT_RANGES)
             migrateKvKey(KEY_GRAPH_VALUE_MODE_HABITS)
+            migrateKvKey(KEY_GRAPH_METRIC_SELECTION)
             migrateKvKey(KEY_HABIT_NOTES)
 
             // --- Linked-habits map: rename both keys and values ---
@@ -528,6 +553,7 @@ class SettingsRepository(private val context: Context) {
         val garminHabitLinksRaw = prefs[KEY_GARMIN_HABIT_LINKS] ?: ""
         val customPointRangesRaw = prefs[KEY_CUSTOM_POINT_RANGES] ?: ""
         val graphValueModeHabitsRaw = prefs[KEY_GRAPH_VALUE_MODE_HABITS] ?: ""
+        val graphMetricSelectionRaw = prefs[KEY_GRAPH_METRIC_SELECTION] ?: ""
         val habitNotesRaw = prefs[KEY_HABIT_NOTES] ?: ""
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
@@ -592,6 +618,7 @@ class SettingsRepository(private val context: Context) {
             customPointRangesHabits = prefs[KEY_CUSTOM_POINT_RANGES_HABITS] ?: emptySet(),
             customPointRanges = decodePointRangesMap(customPointRangesRaw),
             graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw),
+            graphMetricSelection = decodeStringSetMap(graphMetricSelectionRaw),
             habitNotes = decodeHabitNotesMap(habitNotesRaw),
             rollForwardHabits = prefs[KEY_ROLL_FORWARD_HABITS] ?: emptySet(),
             rollForwardManualDates = decodeRollForwardManualDates(prefs[KEY_ROLL_FORWARD_MANUAL_DATES] ?: ""),
@@ -1003,6 +1030,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveGraphValueModeHabits(modes: Map<String, Int>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_GRAPH_VALUE_MODE_HABITS] = encodeIntMap(modes)
+        }
+    }
+
+    /** Saves the map of habit name → set of selected graph metric keys. */
+    suspend fun saveGraphMetricSelection(selection: Map<String, Set<String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GRAPH_METRIC_SELECTION] = encodeStringSetMap(selection)
         }
     }
 

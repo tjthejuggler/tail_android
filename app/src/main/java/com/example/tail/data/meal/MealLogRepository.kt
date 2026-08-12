@@ -167,6 +167,66 @@ class MealLogRepository(private val context: Context) {
             .sumOf { it.calories }
     }
 
+    /**
+     * Aggregated macro/nutrition totals for a single day.
+     */
+    data class DayTotals(
+        val calories: Int = 0,
+        val proteinGrams: Double = 0.0,
+        val carbsGrams: Double = 0.0,
+        val fatGrams: Double = 0.0,
+        val mealCount: Int = 0
+    )
+
+    /**
+     * Returns the full macro breakdown for a single date (YYYY-MM-DD).
+     * Used by the graph day-details popup to show daily totals.
+     */
+    fun dayTotals(habitId: String, dateStr: String): DayTotals {
+        val dayLogs = loadLogs(habitId).filter { formatEpochDate(it.timestamp) == dateStr }
+        return DayTotals(
+            calories = dayLogs.sumOf { it.calories },
+            proteinGrams = dayLogs.sumOf { it.macronutrients.proteinGrams },
+            carbsGrams = dayLogs.sumOf { it.macronutrients.carbsGrams },
+            fatGrams = dayLogs.sumOf { it.macronutrients.fatGrams },
+            mealCount = dayLogs.size
+        )
+    }
+
+    /**
+     * Returns per-day macro aggregates for every day in [startDate, endDate].
+     *
+     * The result maps "YYYY-MM-DD" → [DayTotals]. Days with no meals are omitted
+     * (callers treat missing days as zero). This is used by the graph to plot
+     * calories / protein / carbs / fat as separate time-series.
+     */
+    fun dailyAggregates(
+        habitId: String,
+        startDate: java.time.LocalDate,
+        endDate: java.time.LocalDate
+    ): Map<String, DayTotals> {
+        val logs = loadLogs(habitId)
+        if (logs.isEmpty()) return emptyMap()
+
+        val startStr = startDate.toString()
+        val endStr = endDate.toString()
+        return logs
+            .filter {
+                val ds = formatEpochDate(it.timestamp)
+                ds >= startStr && ds <= endStr
+            }
+            .groupBy { formatEpochDate(it.timestamp) }
+            .mapValues { (_, dayLogs) ->
+                DayTotals(
+                    calories = dayLogs.sumOf { it.calories },
+                    proteinGrams = dayLogs.sumOf { it.macronutrients.proteinGrams },
+                    carbsGrams = dayLogs.sumOf { it.macronutrients.carbsGrams },
+                    fatGrams = dayLogs.sumOf { it.macronutrients.fatGrams },
+                    mealCount = dayLogs.size
+                )
+            }
+    }
+
     /** Formats an epoch-millis timestamp as "YYYY-MM-DD". */
     private fun formatEpochDate(epochMs: Long): String {
         val instant = java.time.Instant.ofEpochMilli(epochMs)
