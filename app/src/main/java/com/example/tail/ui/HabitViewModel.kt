@@ -2986,8 +2986,18 @@ class HabitViewModel(
                     return@launch
                 }
                 
-                // Rename in database
-                habitsRepo.renameHabit(Uri.parse(uri), context, oldName, newName)
+                // Rename in database. Capture the freshly-written DB and refresh the
+                // in-memory cache from it. CRITICAL: cachedPhoneDb is the single source
+                // of truth for rebuildHabitList(), every history/graph view, and every
+                // subsequent increment/persist. If we DON'T refresh it here, the cache
+                // still holds the habit's data under oldName while settings now point to
+                // newName — so the renamed habit appears to lose all history, and the
+                // next increment writes the stale cache back to disk, permanently
+                // reverting the rename (the reported bug).
+                cachedPhoneDb = habitsRepo.renameHabit(Uri.parse(uri), context, oldName, newName)
+                // Drop any per-screen/per-date display caches that still reference the
+                // old name; they are rebuilt lazily from the now-correct cachedPhoneDb.
+                screenHabitCache.clear()
                 
                 // Update all settings that reference the habit name
                 val settings = _settings.value
