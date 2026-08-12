@@ -291,4 +291,19 @@ class HabitTimestampRepository(private val context: Context) {
                 mutableMapOf()
             }
         }
+
+    /**
+     * Renames a habit key in the timestamp file.
+     * Moves all timestamp data from [oldName] to [newName] so that
+     * historical timestamps survive a habit rename.
+     */
+    suspend fun renameHabit(oldName: String, newName: String) {
+        fileMutex.withLock {
+            val data = loadMutable()
+            if (data.containsKey(oldName)) {
+                data[newName] = data.remove(oldName)!!
+                saveAll(data)
+            }
+        }
+    }
 }

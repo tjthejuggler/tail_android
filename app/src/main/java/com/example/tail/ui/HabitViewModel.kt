@@ -3065,8 +3065,18 @@ class HabitViewModel(
                     customPointRangesHabits = settings.customPointRangesHabits.replaceElement(oldName, newName),
                     customPointRanges = settings.customPointRanges.replaceKey(oldName, newName),
                     graphValueModeHabits = settings.graphValueModeHabits.replaceKey(oldName, newName),
+                    graphMetricSelection = settings.graphMetricSelection.replaceKey(oldName, newName),
                     habitNotes = settings.habitNotes.replaceKey(oldName, newName),
-                    valueDisplayLabels = settings.valueDisplayLabels.replaceKey(oldName, newName)
+                    valueDisplayLabels = settings.valueDisplayLabels.replaceKey(oldName, newName),
+                    maxOneHabits = settings.maxOneHabits.replaceElement(oldName, newName),
+                    chessComMinutesPerIncrement = settings.chessComMinutesPerIncrement.replaceKey(oldName, newName),
+                    bridgeMovieHabits = settings.bridgeMovieHabits.replaceElement(oldName, newName),
+                    rollForwardHabits = settings.rollForwardHabits.replaceElement(oldName, newName),
+                    rollForwardManualDates = settings.rollForwardManualDates.replaceKey(oldName, newName),
+                    mealHabits = settings.mealHabits.replaceElement(oldName, newName),
+                    habitAppAssociations = settings.habitAppAssociations.replaceKey(oldName, newName),
+                    habitLongPressActions = settings.habitLongPressActions.replaceKey(oldName, newName),
+                    mapMainHabit = if (settings.mapMainHabit == oldName) newName else settings.mapMainHabit
                 )
                 
                 // Save all updated settings
@@ -3106,8 +3116,21 @@ class HabitViewModel(
                 settingsRepo.saveCustomPointRangesHabits(newSettings.customPointRangesHabits)
                 settingsRepo.saveCustomPointRanges(newSettings.customPointRanges)
                 settingsRepo.saveGraphValueModeHabits(newSettings.graphValueModeHabits)
+                settingsRepo.saveGraphMetricSelection(newSettings.graphMetricSelection)
                 settingsRepo.saveHabitNotes(newSettings.habitNotes)
                 settingsRepo.saveValueDisplayLabels(newSettings.valueDisplayLabels)
+                settingsRepo.saveMaxOneHabits(newSettings.maxOneHabits)
+                settingsRepo.saveChessComMinutesPerIncrement(newSettings.chessComMinutesPerIncrement)
+                settingsRepo.saveBridgeMovieHabits(newSettings.bridgeMovieHabits)
+                settingsRepo.saveRollForwardHabits(newSettings.rollForwardHabits)
+                settingsRepo.saveRollForwardManualDates(newSettings.rollForwardManualDates)
+                settingsRepo.saveMealHabits(newSettings.mealHabits)
+                settingsRepo.saveHabitAppAssociations(newSettings.habitAppAssociations)
+                settingsRepo.saveHabitLongPressActions(newSettings.habitLongPressActions)
+                settingsRepo.saveMapMainHabit(newSettings.mapMainHabit)
+                
+                // Rename in the internal timestamp file so historical timestamps survive
+                timestampRepo.renameHabit(oldName, newName)
                 
                 _settings.value = newSettings
                 _habitOrder.value = newHabitOrder
@@ -3125,6 +3148,62 @@ class HabitViewModel(
                 Log.i(TAG, "renameHabit: successfully renamed '$oldName' to '$newName'")
             } catch (e: Exception) {
                 Log.e(TAG, "renameHabit: failed to rename habit", e)
+            }
+        }
+    }
+
+    /**
+     * Preview data for the invert operation.
+     * Lets the UI warn the user about data loss before committing.
+     */
+    data class InvertPreview(
+        val totalEntries: Int,
+        val zeroCount: Int,
+        val oneCount: Int,
+        val highValueCount: Int,
+        val maxValue: Int
+    ) {
+        /** True when every value is 0 or 1 — invert is lossless. */
+        val isBinaryOnly: Boolean get() = highValueCount == 0
+    }
+
+    /**
+     * Returns statistics about a habit's stored values so the UI can show
+     * a data-loss warning before inverting. Returns null if the habit has
+     * no data at all.
+     */
+    fun getInvertPreview(habitName: String): InvertPreview? {
+        val entries = cachedPhoneDb[habitName] ?: return null
+        if (entries.isEmpty()) return null
+        val zeroCount = entries.values.count { it == 0 }
+        val oneCount = entries.values.count { it == 1 }
+        val highValueCount = entries.values.count { it > 1 }
+        val maxValue = entries.values.maxOrNull() ?: 0
+        return InvertPreview(entries.size, zeroCount, oneCount, highValueCount, maxValue)
+    }
+
+    /**
+     * Inverts all stored values for [habitName]: 0 → 1, any value ≥ 1 → 0.
+     * The caller should check [getInvertPreview] first and warn the user
+     * if values > 1 exist (they will be collapsed to 0).
+     */
+    fun invertHabit(habitName: String) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            _errorMessage.value = "No file selected. Please pick a file in Settings."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val uri = Uri.parse(uriString)
+                val updatedDb = habitsRepo.invertHabit(uri, context, habitName)
+                cachedPhoneDb = updatedDb
+                rebuildHabitList()
+                writeTaskerFile(_settings.value.taskerFileUri)
+                Log.i(TAG, "invertHabit: successfully inverted '$habitName'")
+            } catch (e: Exception) {
+                Log.e(TAG, "invertHabit: failed to invert habit", e)
+                _errorMessage.value = "Invert failed: ${e.message}"
             }
         }
     }

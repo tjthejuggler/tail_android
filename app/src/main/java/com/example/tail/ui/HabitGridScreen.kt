@@ -1090,7 +1090,9 @@ fun HabitGridScreen(
                         habitAppAssociations = settings.habitAppAssociations,
                         onAddAppAssociation = { name -> appAssociationPickerHabit = name },
                         onRemoveAppAssociation = { name, pkg -> viewModel.removeHabitAppAssociation(name, pkg) },
-                        onMoveAppAssociation = { name, from, to -> viewModel.moveHabitAppAssociation(name, from, to) }
+                        onMoveAppAssociation = { name, from, to -> viewModel.moveHabitAppAssociation(name, from, to) },
+                        onInvertHabit = { name -> viewModel.invertHabit(name) },
+                        onGetInvertPreview = { name -> viewModel.getInvertPreview(name) }
                     )
                 }
             }
@@ -2619,7 +2621,11 @@ private fun EditModeControlBar(
     /** Called when the user removes an app association (habitName, packageName). */
     onRemoveAppAssociation: (String, String) -> Unit = { _, _ -> },
     /** Called when the user reorders an app association (habitName, fromIndex, toIndex). */
-    onMoveAppAssociation: (String, Int, Int) -> Unit = { _, _, _ -> }
+    onMoveAppAssociation: (String, Int, Int) -> Unit = { _, _, _ -> },
+    /** Called when the user confirms the invert operation for a habit. */
+    onInvertHabit: (String) -> Unit = {},
+    /** Returns invert preview stats for a habit, or null if it has no data. */
+    onGetInvertPreview: (String) -> HabitViewModel.InvertPreview? = { null }
 ) {
     val hasSelection = selectedIndex >= 0
 
@@ -4308,6 +4314,195 @@ private fun EditModeControlBar(
                     // ignored. Extracted to its own composable to keep
                     // EditModeControlBar under the JVM method-size limit.
                     RestoreFromBackupButton(onClick = onRestoreFromBackup)
+
+                    // ── Advanced section (invert, etc.) ────────────────────────
+                    AdvancedSection(
+                        habitName = selectedHabitName,
+                        onInvertHabit = onInvertHabit,
+                        onGetInvertPreview = onGetInvertPreview
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Advanced section ────────────────────────────────────────────────────────
+
+/**
+ * Collapsible "Advanced" section in the habit edit panel.
+ * Currently hosts the Invert Data operation.
+ */
+@Composable
+private fun AdvancedSection(
+    habitName: String,
+    onInvertHabit: (String) -> Unit,
+    onGetInvertPreview: (String) -> HabitViewModel.InvertPreview?
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var showInvertDialog by remember { mutableStateOf(false) }
+
+    Spacer(modifier = Modifier.height(6.dp))
+    HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
+    Spacer(modifier = Modifier.height(4.dp))
+
+    // Expandable header
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { expanded = !expanded },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "ADVANCED",
+            color = Color(0xFF888888),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+        )
+        Text(
+            text = if (expanded) "▾" else "▸",
+            color = Color(0xFF888888),
+            fontSize = 12.sp
+        )
+    }
+
+    if (expanded) {
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // ── Invert Data ────────────────────────────────────────────
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "⇄ Invert Data", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(
+                    text = "Swap all 0s ↔ 1s",
+                    color = Color(0xFF888888),
+                    fontSize = 10.sp
+                )
+            }
+            Button(
+                onClick = { showInvertDialog = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A1A3A)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("Invert", fontSize = 11.sp, color = Color(0xFFCC88CC))
+            }
+        }
+    }
+
+    if (showInvertDialog) {
+        InvertConfirmDialog(
+            habitName = habitName,
+            preview = onGetInvertPreview(habitName),
+            onConfirm = {
+                onInvertHabit(habitName)
+                showInvertDialog = false
+            },
+            onDismiss = { showInvertDialog = false }
+        )
+    }
+}
+
+/**
+ * Confirmation dialog for the invert operation.
+ * Shows a data-loss warning when values > 1 are present.
+ */
+@Composable
+private fun InvertConfirmDialog(
+    habitName: String,
+    preview: HabitViewModel.InvertPreview?,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "⇄ Invert Data",
+                color = Color(0xFFCC88CC),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "This will flip every value for \"$habitName\":",
+                color = Color(0xFFCCCCCC),
+                fontSize = 13.sp
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (preview == null) {
+                Text(
+                    text = "This habit has no data to invert.",
+                    color = Color(0xFF888888),
+                    fontSize = 12.sp
+                )
+            } else {
+                // Summary of what will happen
+                Text(
+                    text = "• ${preview.zeroCount} zero(s) → 1\n" +
+                           "• ${preview.oneCount + preview.highValueCount} non-zero value(s) → 0\n" +
+                           "• ${preview.totalEntries} total date entries",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 12.sp
+                )
+
+                if (preview.highValueCount > 0) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text("⚠ ", color = Color(0xFFFFAA00), fontSize = 14.sp)
+                        Column {
+                            Text(
+                                text = "Data loss warning",
+                                color = Color(0xFFFFAA00),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "$preview.highValueCount entry(ies) have values " +
+                                       "greater than 1 (max: ${preview.maxValue}). " +
+                                       "This is NOT a reversible swap — all of these " +
+                                       "counts will be permanently destroyed and set to 0. " +
+                                       "The original values cannot be recovered.",
+                                color = Color(0xFFFF8866),
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onConfirm,
+                    enabled = preview != null && preview.totalEntries > 0,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A1A3A))
+                ) {
+                    Text(
+                        if (preview?.highValueCount ?: 0 > 0) "Invert Anyway" else "Invert",
+                        color = Color(0xFFCC88CC)
+                    )
                 }
             }
         }

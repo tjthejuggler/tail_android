@@ -635,6 +635,37 @@ class HabitsRepository {
     }
 
     /**
+     * **Inverts** all stored values for a habit: 0 → 1, any value ≥ 1 → 0.
+     *
+     * This is a binary flip intended for habits whose data is purely 0/1.
+     * Values greater than 1 (2, 3, …) will collapse to 0 — the caller MUST
+     * warn the user about this data loss before invoking.
+     *
+     * SAFETY: If the load fails, throws [HabitsLoadFailedException] WITHOUT writing.
+     */
+    suspend fun invertHabit(
+        uri: Uri,
+        context: Context,
+        habitName: String
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "invertHabit: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+
+        val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
+        for ((date, value) in habitEntries.toList()) {
+            habitEntries[date] = if (value == 0) 1 else 0
+        }
+        db[habitName] = habitEntries.toSortedMap()
+
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
      * Adds a new habit to the JSON database file.
      * Reads the file, adds the habit with today's date = 0 if not already present, then saves.
      *
