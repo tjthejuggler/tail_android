@@ -70,6 +70,7 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 private const val TAG = "HabitVM"
+private const val BRIDGE_PORT = 8001
 
 /** Total cells in the 8×10 habit grid — matches TOTAL_CELLS in HabitGridScreen. */
 private const val TOTAL_GRID_CELLS = 80
@@ -4808,6 +4809,18 @@ class HabitViewModel(
                 garminAppToken = cleanToken,
                 garminDateOfBirth = dateOfBirth
             )
+            // Auto-derive bridge URL/token from the updated Garmin settings so
+            // the bridge stays in sync without any manual configuration.
+            val derivedBridgeUrl = deriveBridgeUrl(cleanProxyUrl)
+            settingsRepo.saveBridgeSettings(
+                _settings.value.bridgeEnabled,
+                derivedBridgeUrl,
+                cleanToken
+            )
+            _settings.value = _settings.value.copy(
+                bridgeUrl = derivedBridgeUrl,
+                bridgeToken = cleanToken
+            )
             // Start or stop polling based on enabled state
             if (enabled && proxyUrl.isNotEmpty() && appToken.isNotEmpty() && lastLoadedUri.isNotEmpty()) {
                 startGarminPolling()
@@ -5398,16 +5411,50 @@ class HabitViewModel(
 
     // ── Tail Bridge Methods (Movies + future tethered features) ───────────────
 
-    /** Saves all bridge settings at once (called from Settings screen). */
-    fun saveBridgeSettings(enabled: Boolean, url: String, token: String) {
+    /**
+     * Derives the Tail Bridge URL from the Garmin proxy URL.
+     *
+     * Both services run on the same PC: Garmin proxy on port 8000, the bridge
+     * on port 8001. They share the same auth token (ANDROID_PROXY_KEY).
+     * This means the user only needs to configure the Garmin connection once —
+     * the bridge connection info is auto-derived, no manual setup required.
+     */
+    private fun deriveBridgeUrl(garminProxyUrl: String): String {
+        if (garminProxyUrl.isBlank()) return ""
+        return try {
+            val clean = garminProxyUrl.trim().trimEnd('/')
+            val uri = java.net.URI(clean)
+            val scheme = uri.scheme ?: "http"
+            val host = uri.host ?: return ""
+            "$scheme://$host:$BRIDGE_PORT"
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    /**
+     * Returns the auto-derived bridge (url, token) pair from Garmin settings,
+     * or null if Garmin isn't configured yet.
+     */
+    private fun getBridgeConnection(): Pair<String, String>? {
+        val s = _settings.value
+        val bridgeUrl = deriveBridgeUrl(s.garminProxyUrl)
+        val bridgeToken = s.garminAppToken
+        if (bridgeUrl.isEmpty() || bridgeToken.isEmpty()) return null
+        return bridgeUrl to bridgeToken
+    }
+
+    /** Saves bridge enabled state; URL and token are auto-derived from Garmin settings. */
+    fun saveBridgeSettings(enabled: Boolean) {
         viewModelScope.launch {
-            val cleanUrl = url.trim().trimEnd('/')
-            val cleanToken = token.trim()
-            settingsRepo.saveBridgeSettings(enabled, cleanUrl, cleanToken)
+            val s = _settings.value
+            val derivedUrl = deriveBridgeUrl(s.garminProxyUrl)
+            val derivedToken = s.garminAppToken
+            settingsRepo.saveBridgeSettings(enabled, derivedUrl, derivedToken)
             _settings.value = _settings.value.copy(
                 bridgeEnabled = enabled,
-                bridgeUrl = cleanUrl,
-                bridgeToken = cleanToken
+                bridgeUrl = derivedUrl,
+                bridgeToken = derivedToken
             )
         }
     }
@@ -5435,13 +5482,18 @@ class HabitViewModel(
         onResult: (BridgeMovie?) -> Unit
     ) {
         val s = _settings.value
-        if (!s.bridgeEnabled || s.bridgeUrl.isEmpty() || s.bridgeToken.isEmpty()) {
+        if (!s.bridgeEnabled) {
+            onResult(null)
+            return
+        }
+        val conn = getBridgeConnection()
+        if (conn == null) {
             onResult(null)
             return
         }
         viewModelScope.launch {
             val movie = try {
-                movieBridgeService.fetchLatestSuggestion(s.bridgeUrl, s.bridgeToken, excludeTitles)
+                movieBridgeService.fetchLatestSuggestion(conn.first, conn.second, excludeTitles)
             } catch (e: Exception) {
                 Log.w(TAG, "Movie suggestion fetch failed: ${e.message}")
                 null
@@ -5458,15 +5510,15 @@ class HabitViewModel(
 
     /** Tests the bridge connection. */
     fun testBridgeConnection() {
-        val s = _settings.value
-        if (s.bridgeUrl.isEmpty() || s.bridgeToken.isEmpty()) {
-            _bridgeStatus.value = "Set bridge URL and token first"
+        val conn = getBridgeConnection()
+        if (conn == null) {
+            _bridgeStatus.value = "Configure Garmin connection first (same server, port $BRIDGE_PORT)"
             return
         }
         viewModelScope.launch {
             _bridgeStatus.value = "Testing connection…"
             val ok = try {
-                movieBridgeService.testConnection(s.bridgeUrl, s.bridgeToken)
+                movieBridgeService.testConnection(conn.first, conn.second)
             } catch (e: Exception) {
                 false
             }

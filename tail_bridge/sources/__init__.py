@@ -12,12 +12,14 @@ from typing import List
 
 from .base import BridgeSource
 from .movies import MovieSource
+from .garmin import GarminSource
 
 
 def get_all_sources() -> List[BridgeSource]:
     """Return all registered bridge data sources."""
     sources: List[BridgeSource] = [
         MovieSource(),
+        GarminSource(),
         # ── Future sources go here ──────────────────────────────────────────
         # MusicSource(),
         # BookSource(),

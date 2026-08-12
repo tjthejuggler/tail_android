@@ -1081,19 +1081,17 @@ private fun BridgeSettingsSection(
     val bridgeStatus by viewModel.bridgeStatus.collectAsState()
 
     var enabled by remember(settings.bridgeEnabled) { mutableStateOf(settings.bridgeEnabled) }
-    var url by remember(settings.bridgeUrl) { mutableStateOf(settings.bridgeUrl) }
-    var token by remember(settings.bridgeToken) { mutableStateOf(settings.bridgeToken) }
 
-    fun save() {
-        viewModel.saveBridgeSettings(enabled, url, token)
-    }
+    // The bridge URL/token are auto-derived from the Garmin connection settings
+    // (same PC, same token, port 8001 instead of 8000). No manual entry needed.
+    val garminConfigured = settings.garminProxyUrl.isNotEmpty() &&
+                           settings.garminAppToken.isNotEmpty()
 
     Column {
         Text("🎬 Tail Bridge", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Text(
-            text = "Tether desktop data to your phone. The bridge server runs on your " +
-                   "PC and shares data (movies, future sources) with the app over your " +
-                   "local network.",
+            text = "Tether desktop data to your phone. The bridge runs on your PC " +
+                   "alongside the Garmin proxy and shares the same connection.",
             fontSize = 11.sp,
             color = Color(0xFF888888)
         )
@@ -1110,42 +1108,40 @@ private fun BridgeSettingsSection(
                 checked = enabled,
                 onCheckedChange = {
                     enabled = it
-                    save()
+                    viewModel.saveBridgeSettings(it)
                 }
             )
         }
 
         if (enabled) {
             Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it; save() },
-                label = { Text("Bridge URL") },
-                placeholder = { Text("http://192.168.1.100:8001") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it; save() },
-                label = { Text("Auth Token") },
-                placeholder = { Text("X-App-Auth token") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+
+            // Auto-connection status
+            if (garminConfigured) {
+                Text(
+                    text = "✓ Auto-connected via Garmin settings (port 8001)",
+                    fontSize = 11.sp,
+                    color = Color(0xFF81C784)
+                )
+            } else {
+                Text(
+                    text = "⚠ Configure the Garmin connection above first — " +
+                           "the bridge shares the same server and auth token.",
+                    fontSize = 11.sp,
+                    color = Color(0xFFE65100)
+                )
+            }
 
             // Test Connection button
-            if (url.isNotEmpty() || token.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = { viewModel.testBridgeConnection() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF1B5E20)
-                    )
-                ) {
-                    Text("Test Connection")
-                }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = { viewModel.testBridgeConnection() },
+                enabled = garminConfigured,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1B5E20)
+                )
+            ) {
+                Text("Test Connection")
             }
 
             // Status
