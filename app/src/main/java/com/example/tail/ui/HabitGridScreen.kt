@@ -687,9 +687,17 @@ fun HabitGridScreen(
                                                         if (movie.lastWatched.isNotBlank()) {
                                                             append(" — watched ${movie.lastWatched.take(10)}")
                                                         }
-                                                        movie.durationLabel?.let { append(" ($it)") }
                                                     }
-                                                    showDialog(movie.title, label)
+                                                    // Pre-fill the text with the movie title and the
+                                                    // file duration (from ffprobe) so the user can confirm
+                                                    // or edit it. The duration is editable — if wrong, the
+                                                    // user just changes the number before saving.
+                                                    val preFilledText = if (movie.totalWatchMin != null && movie.totalWatchMin > 0) {
+                                                        "${movie.title} (${movie.totalWatchMin} min)"
+                                                    } else {
+                                                        movie.title
+                                                    }
+                                                    showDialog(preFilledText, label)
                                                 } else {
                                                     // Bridge unreachable or no data — show normal dialog
                                                     showDialog()

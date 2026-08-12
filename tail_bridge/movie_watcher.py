@@ -52,6 +52,7 @@ import json
 import logging
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 from collections import OrderedDict
@@ -119,6 +120,50 @@ def _duration_min(start: int, end: int) -> Optional[int]:
     if not end or end <= 0 or end < start:
         return None
     return round((end - start) / 60)
+
+
+# ── File duration (ffprobe) ──────────────────────────────────────────────────
+
+# Cache file durations to avoid re-probing the same file across sessions.
+_file_duration_cache: Dict[str, Optional[int]] = {}
+
+
+def _get_file_duration_min(filepath: str) -> Optional[int]:
+    """
+    Get the duration of a video file in minutes using ffprobe.
+
+    The KDE Activity DB logs start == end for most video events (it records
+    when the file was opened, not how long it played). When that happens we
+    fall back to the actual file length as a best-effort approximation.
+
+    Returns None if the file doesn't exist or ffprobe fails.
+    """
+    if not filepath or not os.path.exists(filepath):
+        return None
+
+    if filepath in _file_duration_cache:
+        return _file_duration_cache[filepath]
+
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                filepath,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            seconds = float(result.stdout.strip())
+            minutes = round(seconds / 60)
+            _file_duration_cache[filepath] = minutes
+            return minutes
+    except Exception as e:
+        logger.debug(f"ffprobe failed for {filepath}: {e}")
+
+    _file_duration_cache[filepath] = None
+    return None
 
 
 # ── KDE Activity DB ──────────────────────────────────────────────────────────
@@ -258,7 +303,16 @@ def process_rows(rows: List[Tuple[int, int, str]]) -> List[Dict[str, Any]]:
             }
 
         entry = groups[key]
-        entry["sessions"].append(build_session(start, end))
+        session = build_session(start, end)
+        # KDE Activity DB typically logs start == end (no real stop
+        # detection). Fall back to the actual file length via ffprobe
+        # so the user gets a meaningful duration to confirm or edit.
+        if not session["duration_min"]:
+            file_dur = _get_file_duration_min(filepath)
+            if file_dur is not None:
+                session["duration_min"] = file_dur
+                session["duration_source"] = "file"
+        entry["sessions"].append(session)
         if start > entry["_max_start"]:
             entry["_max_start"] = start
 
