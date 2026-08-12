@@ -15,10 +15,12 @@ import com.example.tail.data.AiIconGeneratorService
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
 import com.example.tail.data.ChessComRepository
+import com.example.tail.data.BridgeMovie
 import com.example.tail.data.ChessComType
 import com.example.tail.data.GarminRepository
 import com.example.tail.data.GarminType
 import com.example.tail.data.ImportResult
+import com.example.tail.data.MovieBridgeService
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.DayStats
 import com.example.tail.data.HabitTimestampRepository
@@ -264,6 +266,21 @@ class HabitViewModel(
 
     /** Interval between Garmin polls (once a day). */
     private val GARMIN_POLL_INTERVAL_MS = 24 * 60 * 60 * 1000L
+
+    // ── Tail Bridge Integration (Movies + future tethered features) ──────────
+    private val movieBridgeService = MovieBridgeService()
+
+    /** Status message for bridge operations (shown in settings). */
+    private val _bridgeStatus = MutableStateFlow("")
+    val bridgeStatus: StateFlow<String> = _bridgeStatus.asStateFlow()
+
+    /**
+     * The latest movie suggestion fetched from the desktop bridge.
+     * Non-null while a movie confirm dialog is showing. Set back to null
+     * when the dialog is dismissed.
+     */
+    private val _movieSuggestion = MutableStateFlow<BridgeMovie?>(null)
+    val movieSuggestion: StateFlow<BridgeMovie?> = _movieSuggestion.asStateFlow()
 
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
@@ -4330,8 +4347,29 @@ class HabitViewModel(
             val phoneUriStr = _settings.value.fileUri
             if (phoneUriStr.isNotEmpty()) {
                 try {
+                    val uri = Uri.parse(phoneUriStr)
+
+                    // ── Roll forward MUST run BEFORE ensureDaysExist ──────────────
+                    // Same ordering as catchUpAndLoad: load the raw DB from disk,
+                    // run performRollForwardIfNeeded, THEN let ensureDaysExist fill
+                    // missing days. Without this, when the app returns from
+                    // background (without being killed), roll forward never runs
+                    // and today's value stays at the 0 placeholder created by
+                    // ensureDaysExist. Worse: that 0 is persisted, so the next
+                    // day's roll forward sees yesterday=0 and skips too — causing
+                    // a cascading failure that only a manual set can break.
+                    val loadResult = withContext(Dispatchers.IO) {
+                        habitsRepo.loadDatabaseResult(uri, context)
+                    }
+                    if (loadResult is com.example.tail.data.HabitsLoadResult.Success) {
+                        cachedPhoneDb = loadResult.db
+                        performRollForwardIfNeeded()
+                    }
+
+                    // Now fill in any remaining missing days. Today already has
+                    // the rolled-forward value, so ensureDaysExist won't overwrite it.
                     val db = withContext(Dispatchers.IO) {
-                        habitsRepo.ensureDaysExist(Uri.parse(phoneUriStr), context)
+                        habitsRepo.ensureDaysExist(uri, context)
                     }
                     cachedPhoneDb = db
                     rebuildHabitList()
@@ -5355,6 +5393,84 @@ class HabitViewModel(
                 _garminSyncStatus.value = "Import failed: ${e.message?.take(50)}"
                 onComplete(ImportResult(false, e.message ?: "Unknown error", emptyMap()))
             }
+        }
+    }
+
+    // ── Tail Bridge Methods (Movies + future tethered features) ───────────────
+
+    /** Saves all bridge settings at once (called from Settings screen). */
+    fun saveBridgeSettings(enabled: Boolean, url: String, token: String) {
+        viewModelScope.launch {
+            val cleanUrl = url.trim().trimEnd('/')
+            val cleanToken = token.trim()
+            settingsRepo.saveBridgeSettings(enabled, cleanUrl, cleanToken)
+            _settings.value = _settings.value.copy(
+                bridgeEnabled = enabled,
+                bridgeUrl = cleanUrl,
+                bridgeToken = cleanToken
+            )
+        }
+    }
+
+    /** Toggles whether [habitName] is linked to the movie bridge. */
+    fun toggleBridgeMovieHabit(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.bridgeMovieHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveBridgeMovieHabits(current)
+            _settings.value = _settings.value.copy(bridgeMovieHabits = current)
+        }
+    }
+
+    /**
+     * Fetches the latest movie suggestion from the desktop bridge.
+     * Called when a movie-linked text-input habit is tapped.
+     *
+     * @param excludeTitles Titles to skip (e.g. entries already logged today)
+     * @param onResult Called with the suggested movie (or null if bridge is
+     *                 unreachable / no data). Runs on the main thread.
+     */
+    fun fetchMovieSuggestion(
+        excludeTitles: List<String> = emptyList(),
+        onResult: (BridgeMovie?) -> Unit
+    ) {
+        val s = _settings.value
+        if (!s.bridgeEnabled || s.bridgeUrl.isEmpty() || s.bridgeToken.isEmpty()) {
+            onResult(null)
+            return
+        }
+        viewModelScope.launch {
+            val movie = try {
+                movieBridgeService.fetchLatestSuggestion(s.bridgeUrl, s.bridgeToken, excludeTitles)
+            } catch (e: Exception) {
+                Log.w(TAG, "Movie suggestion fetch failed: ${e.message}")
+                null
+            }
+            _movieSuggestion.value = movie
+            onResult(movie)
+        }
+    }
+
+    /** Clears the current movie suggestion (call when the dialog is dismissed). */
+    fun clearMovieSuggestion() {
+        _movieSuggestion.value = null
+    }
+
+    /** Tests the bridge connection. */
+    fun testBridgeConnection() {
+        val s = _settings.value
+        if (s.bridgeUrl.isEmpty() || s.bridgeToken.isEmpty()) {
+            _bridgeStatus.value = "Set bridge URL and token first"
+            return
+        }
+        viewModelScope.launch {
+            _bridgeStatus.value = "Testing connection…"
+            val ok = try {
+                movieBridgeService.testConnection(s.bridgeUrl, s.bridgeToken)
+            } catch (e: Exception) {
+                false
+            }
+            _bridgeStatus.value = if (ok) "✓ Bridge connected!" else "✗ Connection failed"
         }
     }
 

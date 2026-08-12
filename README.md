@@ -1,8 +1,10 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-08-10T11:44Z
+**Last updated:** 2026-08-12T14:41Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
+
+> **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---
 
@@ -486,6 +488,9 @@ The import script uses the Europe/Dublin timezone by default. If you're in a dif
 ```python
 TARGET_TZ = ZoneInfo("Your/Timezone")  # e.g., "America/New_York"
 ```
+
+- **Tail Bridge — PC↔Phone movie tracking** *(added 2026-08-12T14:40Z)* — a desktop daemon ([`movie_watcher.py`](tail_bridge/movie_watcher.py:1)) polls the KDE Activity Manager SQLite database every 60 s, detects when videos are played, cleans filenames into readable titles via [`movie_name_cleaner.py`](tail_bridge/movie_name_cleaner.py:1), and maintains a cache with full session tracking (start time, end time, duration per session — multiple sessions preserved if a film is started/stopped/restarted). A FastAPI bridge server ([`bridge_server.py`](tail_bridge/bridge_server.py:1)) on port 8001 exposes the data via a source-registration protocol (reusable for future tethered features). On the phone, when you tap a movie-linked text-input habit, the app fetches the latest watched movie from the desktop and pre-fills the [`TextInputDialog`](app/src/main/java/com/example/tail/ui/TextInputDialog.kt:67) with a "🎬 Suggested from desktop" label. Already-logged titles are excluded so you always get the next untracked movie. Settings → **🎬 Bridge** section to configure URL, token, and Test Connection. Edit panel → **🎬 Movie Bridge** toggle to link a habit. See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the full architecture guide.
+- **Unified desktop supervisor** *(added 2026-08-12T14:40Z)* — all PC-side services (Garmin proxy, Garmin fetch timers, Tail Bridge, movie watcher) are now managed by a single Python process supervisor ([`tail_supervisor.py`](tail_supervisor.py:1)) reading from a TOML config ([`tail_services.toml`](tail_services.toml:1)). Only ONE systemd user service (`tail-supervisor.service`) is in autostart. Adding a new service = add a `[[service]]` block to the TOML and restart. The installer ([`install_supervisor.sh`](install_supervisor.sh:1)) creates venvs, installs dependencies, stops old individual services, and starts the supervisor — one command for fresh installs. See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for details.
 
 ---
 

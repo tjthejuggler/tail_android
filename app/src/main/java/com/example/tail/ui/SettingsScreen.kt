@@ -371,6 +371,14 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // ── Tail Bridge (Movies + future tethered features) ─────────────
+            item {
+                BridgeSettingsSection(viewModel = viewModel, settings = settings)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // ── Voice Trigger ────────────────────────────────────────────────
             item {
                 VoiceTriggerSettingsSection(viewModel = viewModel, settings = settings)
@@ -1057,6 +1065,114 @@ private fun GarminSettingsSection(
                 )
             ) {
                 Text("Import Historic Data", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/**
+ * Tail Bridge settings section — PC↔Phone communication for movies and future features.
+ */
+@Composable
+private fun BridgeSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    val bridgeStatus by viewModel.bridgeStatus.collectAsState()
+
+    var enabled by remember(settings.bridgeEnabled) { mutableStateOf(settings.bridgeEnabled) }
+    var url by remember(settings.bridgeUrl) { mutableStateOf(settings.bridgeUrl) }
+    var token by remember(settings.bridgeToken) { mutableStateOf(settings.bridgeToken) }
+
+    fun save() {
+        viewModel.saveBridgeSettings(enabled, url, token)
+    }
+
+    Column {
+        Text("🎬 Tail Bridge", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Tether desktop data to your phone. The bridge server runs on your " +
+                   "PC and shares data (movies, future sources) with the app over your " +
+                   "local network.",
+            fontSize = 11.sp,
+            color = Color(0xFF888888)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Enable toggle
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Enable Bridge", fontSize = 14.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    save()
+                }
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it; save() },
+                label = { Text("Bridge URL") },
+                placeholder = { Text("http://192.168.1.100:8001") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            OutlinedTextField(
+                value = token,
+                onValueChange = { token = it; save() },
+                label = { Text("Auth Token") },
+                placeholder = { Text("X-App-Auth token") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Test Connection button
+            if (url.isNotEmpty() || token.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.testBridgeConnection() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1B5E20)
+                    )
+                ) {
+                    Text("Test Connection")
+                }
+            }
+
+            // Status
+            if (bridgeStatus.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = bridgeStatus,
+                    fontSize = 11.sp,
+                    color = Color(0xFFAAAAAA)
+                )
+            }
+
+            // Linked habits info
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "To link a habit: long-press a text-input habit → enable " +
+                       "“Movie Bridge”. When tapped, the app fetches the latest " +
+                       "watched movie from your desktop.",
+                fontSize = 10.sp,
+                color = Color(0xFF666666)
+            )
+            if (settings.bridgeMovieHabits.isNotEmpty()) {
+                Text(
+                    text = "Linked: ${settings.bridgeMovieHabits.joinToString(", ")}",
+                    fontSize = 10.sp,
+                    color = Color(0xFF81C784)
+                )
             }
         }
     }

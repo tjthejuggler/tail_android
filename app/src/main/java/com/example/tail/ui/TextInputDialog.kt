@@ -73,12 +73,14 @@ fun TextInputDialog(
     todayEntries: List<Pair<String, String>> = emptyList(),
     initialHour: Int = java.time.LocalTime.now().hour,
     initialMinute: Int = java.time.LocalTime.now().minute,
+    initialText: String = "",
+    suggestionLabel: String = "",
     onConfirm: (List<String>, Int, Int) -> Unit,
     onDismiss: () -> Unit,
     onEdit: (String, String) -> Unit = { _, _ -> },
     onDelete: (String) -> Unit = {}
 ) {
-    var inputText by remember { mutableStateOf("") }
+    var inputText by remember { mutableStateOf(initialText) }
     var editingTimestamp by remember { mutableStateOf<String?>(null) }
     var editingText by remember { mutableStateOf("") }
 
@@ -106,6 +108,17 @@ fun TextInputDialog(
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
+
+            // ── Suggestion label (from desktop bridge) ──────────────────────
+            if (suggestionLabel.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = suggestionLabel,
+                    color = Color(0xFF81C784),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 

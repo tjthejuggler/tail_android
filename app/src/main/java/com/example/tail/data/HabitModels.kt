@@ -608,6 +608,24 @@ data class AppSettings(
      */
     val garminDateOfBirth: String = "",
 
+    // ── Tail Bridge settings (PC↔Phone communication protocol) ──────────────
+    /**
+     * Whether the Tail Bridge integration is enabled.
+     * The bridge is a desktop server that tethers data (movies, future sources)
+     * to the phone. See tail_bridge/ in the project root.
+     */
+    val bridgeEnabled: Boolean = false,
+    /** Base URL of the Tail Bridge server (e.g., "http://192.168.1.100:8001"). */
+    val bridgeUrl: String = "",
+    /** Authentication token for the bridge (X-App-Auth header). */
+    val bridgeToken: String = "",
+    /**
+     * Text-input habits that are linked to the movie bridge.
+     * When such a habit is tapped, the app fetches the latest watched movie
+     * from the desktop and pre-fills the text entry for confirmation/editing.
+     */
+    val bridgeMovieHabits: Set<String> = emptySet(),
+
     // ── Custom Point Ranges settings ────────────────────────────────────────
     /**
      * Habits that have custom point ranges enabled.

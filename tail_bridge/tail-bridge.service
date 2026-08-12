@@ -1,0 +1,15 @@
+[Unit]
+Description=Tail Bridge Server (PC↔Phone communication)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/twain/AndroidStudioProjects/tail/tail_bridge
+Environment="PATH=/home/twain/AndroidStudioProjects/tail/tail_bridge/venv/bin:/usr/bin:/bin"
+EnvironmentFile=/home/twain/AndroidStudioProjects/tail/tail_bridge/.env
+ExecStart=/home/twain/AndroidStudioProjects/tail/tail_bridge/venv/bin/uvicorn bridge_server:app --host 0.0.0.0 --port 8001
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

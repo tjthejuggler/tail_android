@@ -78,6 +78,11 @@ private val KEY_GARMIN_APP_TOKEN = stringPreferencesKey("garmin_app_token")
 private val KEY_GARMIN_DATE_OF_BIRTH = stringPreferencesKey("garmin_date_of_birth")
 // Stored as "habitName\x00TYPE|||habitName\x00TYPE" pairs
 private val KEY_GARMIN_HABIT_LINKS = stringPreferencesKey("garmin_habit_links")
+// Tail Bridge settings (PC↔Phone communication protocol)
+private val KEY_BRIDGE_ENABLED = booleanPreferencesKey("bridge_enabled")
+private val KEY_BRIDGE_URL = stringPreferencesKey("bridge_url")
+private val KEY_BRIDGE_TOKEN = stringPreferencesKey("bridge_token")
+private val KEY_BRIDGE_MOVIE_HABITS = stringSetPreferencesKey("bridge_movie_habits")
 // Voice trigger feature keys
 private val KEY_VOICE_TRIGGER_ENABLED = booleanPreferencesKey("voice_trigger_enabled")
 private val KEY_VOICE_TRIGGER_HABITS = stringSetPreferencesKey("voice_trigger_habits")
@@ -671,6 +676,10 @@ class SettingsRepository(private val context: Context) {
             garminAppToken = prefs[KEY_GARMIN_APP_TOKEN] ?: "",
             garminDateOfBirth = prefs[KEY_GARMIN_DATE_OF_BIRTH] ?: "",
             garminHabitLinks = decodeFileUriMap(garminHabitLinksRaw),
+            bridgeEnabled = prefs[KEY_BRIDGE_ENABLED] ?: false,
+            bridgeUrl = prefs[KEY_BRIDGE_URL] ?: "",
+            bridgeToken = prefs[KEY_BRIDGE_TOKEN] ?: "",
+            bridgeMovieHabits = prefs[KEY_BRIDGE_MOVIE_HABITS] ?: emptySet(),
             customPointRangesHabits = prefs[KEY_CUSTOM_POINT_RANGES_HABITS] ?: emptySet(),
             customPointRanges = decodePointRangesMap(customPointRangesRaw),
             graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw),
@@ -1004,6 +1013,26 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_GARMIN_APP_TOKEN] = appToken
             prefs[KEY_GARMIN_DATE_OF_BIRTH] = dateOfBirth
         }
+    }
+
+    // ── Tail Bridge ─────────────────────────────────────────────────────
+
+    /** Saves all bridge settings at once. */
+    suspend fun saveBridgeSettings(
+        enabled: Boolean,
+        url: String,
+        token: String
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_BRIDGE_ENABLED] = enabled
+            prefs[KEY_BRIDGE_URL] = url
+            prefs[KEY_BRIDGE_TOKEN] = token
+        }
+    }
+
+    /** Saves the set of habits linked to the movie bridge. */
+    suspend fun saveBridgeMovieHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_BRIDGE_MOVIE_HABITS] = habits }
     }
 
     // ── Voice Trigger ────────────────────────────────────────────────────

@@ -1,0 +1,15 @@
+[Unit]
+Description=Tail Movie Watcher (KDE Activity Monitor)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/twain/AndroidStudioProjects/tail/tail_bridge
+Environment="PATH=/home/twain/AndroidStudioProjects/tail/tail_bridge/venv/bin:/usr/bin:/bin"
+EnvironmentFile=/home/twain/AndroidStudioProjects/tail/tail_bridge/.env
+ExecStart=/home/twain/AndroidStudioProjects/tail/tail_bridge/venv/bin/python movie_watcher.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

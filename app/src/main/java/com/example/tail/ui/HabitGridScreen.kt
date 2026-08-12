@@ -133,7 +133,11 @@ private data class TextInputDialogState(
     val habit: Habit,
     val showOptions: Boolean,
     val options: List<String>,
-    val todayEntries: List<Pair<String, String>> = emptyList()
+    val todayEntries: List<Pair<String, String>> = emptyList(),
+    /** Pre-filled text (e.g. from a movie bridge suggestion). Empty by default. */
+    val suggestedText: String = "",
+    /** Label shown above the text field when suggestedText is non-empty. */
+    val suggestionLabel: String = ""
 )
 
 // Grid is 8 columns × 10 rows = 80 cells
@@ -641,25 +645,59 @@ fun HabitGridScreen(
                                 }
                                 habit.name in settings.textInputHabits -> {
                                     val showOpts = habit.name in settings.textInputOptionsHabits
-                                    // Load today's entries for the dialog
-                                    viewModel.loadTextEntriesWithTimestamps(habit.name, selectedDate) { todayEntries ->
-                                        if (showOpts) {
-                                            viewModel.loadTextOptions(habit.name) { opts ->
+                                    val isMovieLinked = habit.name in settings.bridgeMovieHabits &&
+                                        settings.bridgeEnabled
+
+                                    // Helper: build and show the dialog state
+                                    fun showDialog(suggestedText: String = "", suggestionLabel: String = "") {
+                                        viewModel.loadTextEntriesWithTimestamps(habit.name, selectedDate) { todayEntries ->
+                                            if (showOpts) {
+                                                viewModel.loadTextOptions(habit.name) { opts ->
+                                                    textInputDialogState = TextInputDialogState(
+                                                        habit = habit,
+                                                        showOptions = true,
+                                                        options = opts,
+                                                        todayEntries = todayEntries,
+                                                        suggestedText = suggestedText,
+                                                        suggestionLabel = suggestionLabel
+                                                    )
+                                                }
+                                            } else {
                                                 textInputDialogState = TextInputDialogState(
                                                     habit = habit,
-                                                    showOptions = true,
-                                                    options = opts,
-                                                    todayEntries = todayEntries
+                                                    showOptions = false,
+                                                    options = emptyList(),
+                                                    todayEntries = todayEntries,
+                                                    suggestedText = suggestedText,
+                                                    suggestionLabel = suggestionLabel
                                                 )
                                             }
-                                        } else {
-                                            textInputDialogState = TextInputDialogState(
-                                                habit = habit,
-                                                showOptions = false,
-                                                options = emptyList(),
-                                                todayEntries = todayEntries
-                                            )
                                         }
+                                    }
+
+                                    if (isMovieLinked) {
+                                        // Fetch the latest movie from the desktop bridge.
+                                        // Exclude titles already logged today so we suggest the next one.
+                                        viewModel.loadTextEntriesWithTimestamps(habit.name, selectedDate) { todayEntries ->
+                                            val excludeTitles = todayEntries.map { it.second }
+                                            viewModel.fetchMovieSuggestion(excludeTitles) { movie ->
+                                                if (movie != null) {
+                                                    val label = buildString {
+                                                        append("🎬 Suggested from desktop")
+                                                        if (movie.lastWatched.isNotBlank()) {
+                                                            append(" — watched ${movie.lastWatched.take(10)}")
+                                                        }
+                                                        movie.durationLabel?.let { append(" ($it)") }
+                                                    }
+                                                    showDialog(movie.title, label)
+                                                } else {
+                                                    // Bridge unreachable or no data — show normal dialog
+                                                    showDialog()
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        showDialog()
                                     }
                                 }
                                 habit.useCustomInput -> dialogHabit = habit
@@ -908,6 +946,16 @@ fun HabitGridScreen(
                         garminHabitLinks = settings.garminHabitLinks,
                         onSetGarminLink = { name, type -> viewModel.setGarminHabitLink(name, type) },
                         garminDateOfBirth = settings.garminDateOfBirth,
+                        movieBridgeContent = {
+                            if (settings.bridgeEnabled && selectedHabitName != null &&
+                                selectedHabitName in settings.textInputHabits
+                            ) {
+                                MovieBridgeToggleSection(
+                                    isMovieLinked = selectedHabitName in settings.bridgeMovieHabits,
+                                    onToggle = { viewModel.toggleBridgeMovieHabit(selectedHabitName) }
+                                )
+                            }
+                        },
                         garminMonthlyData = garminMonthlyData,
                         selectedDate = selectedDate,
                         voiceTriggerEnabled = settings.voiceTriggerEnabled,
@@ -1247,6 +1295,8 @@ fun HabitGridScreen(
             todayEntries = state.todayEntries,
             initialHour = initHour,
             initialMinute = initMinute,
+            initialText = state.suggestedText,
+            suggestionLabel = state.suggestionLabel,
             onConfirm = { entries, hour, minute ->
                 val entryTime = java.time.LocalTime.of(hour, minute)
                 // Only pass selectedDate if it's not today - for today, use current date
@@ -2515,6 +2565,7 @@ private fun EditModeControlBar(
     garminHabitLinks: Map<String, String> = emptyMap(),
     onSetGarminLink: (String, String?) -> Unit = { _, _ -> },
     garminDateOfBirth: String = "",
+    movieBridgeContent: @Composable () -> Unit = {},
     voiceTriggerEnabled: Boolean = false,
     voiceTriggerHabits: Set<String> = emptySet(),
     voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
@@ -4231,78 +4282,18 @@ private fun EditModeControlBar(
                     }
 
                     // ── Garmin link toggle ────────────────────────────────────
+                    // Extracted to its own composable to keep EditModeControlBar
+                    // under the JVM method-size limit.
                     if (garminEnabled) {
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        val currentGarminLink = garminHabitLinks[selectedHabitName]
-                        val isGarminLinked = currentGarminLink != null
-                        var garminDropdownExpanded by remember { mutableStateOf(false) }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(text = "❤️ Garmin", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                                Text(
-                                    text = if (isGarminLinked) {
-                                        val typeName = GarminType.fromKey(currentGarminLink)?.label ?: currentGarminLink
-                                        "Linked to: $typeName"
-                                    } else "Not linked to Garmin",
-                                    color = if (isGarminLinked) Color(0xFF66BB6A) else Color(0xFF888888),
-                                    fontSize = 10.sp
-                                )
-                            }
-                            Switch(
-                                checked = isGarminLinked,
-                                onCheckedChange = { checked ->
-                                    if (checked) {
-                                        garminDropdownExpanded = true
-                                    } else {
-                                        onSetGarminLink(selectedHabitName, null)
-                                    }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Color(0xFF66BB6A),
-                                    checkedTrackColor = Color(0xFF1B5E20),
-                                    uncheckedThumbColor = Color(0xFF888888),
-                                    uncheckedTrackColor = Color(0xFF333333)
-                                )
-                            )
-                        }
-
-                        // Garmin type picker dropdown
-                        if (isGarminLinked || garminDropdownExpanded) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Box {
-                                Button(
-                                    onClick = { garminDropdownExpanded = true },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20)),
-                                    modifier = Modifier.height(32.dp)
-                                ) {
-                                    val label = if (currentGarminLink != null) {
-                                        GarminType.fromKey(currentGarminLink)?.label ?: "Select type"
-                                    } else "Select type"
-                                    Text(label, fontSize = 11.sp, color = Color(0xFF66BB6A))
-                                }
-                                DropdownMenu(
-                                    expanded = garminDropdownExpanded,
-                                    onDismissRequest = { garminDropdownExpanded = false }
-                                ) {
-                                    GarminType.entries.forEach { type ->
-                                        DropdownMenuItem(
-                                            text = { Text(type.label) },
-                                            onClick = {
-                                                onSetGarminLink(selectedHabitName, type.name)
-                                                garminDropdownExpanded = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        GarminLinkToggleSection(
+                            selectedHabitName = selectedHabitName,
+                            garminHabitLinks = garminHabitLinks,
+                            onSetGarminLink = onSetGarminLink
+                        )
                     }
+
+                    // ── Movie Bridge link toggle (rendered by caller) ───────
+                    movieBridgeContent()
 
                     // ── Restore this habit from a backup file ────────────────
                     // Only this habit is affected; the rest of the backup is
@@ -5641,6 +5632,128 @@ private fun RestoreFromBackupButton(onClick: () -> Unit) {
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text("↩ Restore from Backup", fontSize = 12.sp)
+    }
+}
+
+/**
+ * Garmin link toggle for the habit edit panel.
+ * Extracted to its own composable to keep [EditModeControlBar]
+ * under the JVM method-size limit.
+ */
+@Composable
+private fun GarminLinkToggleSection(
+    selectedHabitName: String,
+    garminHabitLinks: Map<String, String>,
+    onSetGarminLink: (String, String?) -> Unit
+) {
+    Spacer(modifier = Modifier.height(6.dp))
+
+    val currentGarminLink = garminHabitLinks[selectedHabitName]
+    val isGarminLinked = currentGarminLink != null
+    var garminDropdownExpanded by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "❤️ Garmin", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isGarminLinked) {
+                    val typeName = GarminType.fromKey(currentGarminLink)?.label ?: currentGarminLink
+                    "Linked to: $typeName"
+                } else "Not linked to Garmin",
+                color = if (isGarminLinked) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isGarminLinked,
+            onCheckedChange = { checked ->
+                if (checked) {
+                    garminDropdownExpanded = true
+                } else {
+                    onSetGarminLink(selectedHabitName, null)
+                }
+            },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66BB6A),
+                checkedTrackColor = Color(0xFF1B5E20),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    // Garmin type picker dropdown
+    if (isGarminLinked || garminDropdownExpanded) {
+        Spacer(modifier = Modifier.height(4.dp))
+        Box {
+            Button(
+                onClick = { garminDropdownExpanded = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                val label = if (currentGarminLink != null) {
+                    GarminType.fromKey(currentGarminLink)?.label ?: "Select type"
+                } else "Select type"
+                Text(label, fontSize = 11.sp, color = Color(0xFF66BB6A))
+            }
+            DropdownMenu(
+                expanded = garminDropdownExpanded,
+                onDismissRequest = { garminDropdownExpanded = false }
+            ) {
+                GarminType.entries.forEach { type ->
+                    DropdownMenuItem(
+                        text = { Text(type.label) },
+                        onClick = {
+                            onSetGarminLink(selectedHabitName, type.name)
+                            garminDropdownExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Movie Bridge link toggle for the habit edit panel.
+ * Extracted to its own composable to keep [EditModeControlBar]
+ * under the JVM method-size limit.
+ */
+@Composable
+private fun MovieBridgeToggleSection(
+    isMovieLinked: Boolean,
+    onToggle: () -> Unit
+) {
+    Spacer(modifier = Modifier.height(6.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "🎬 Movie Bridge", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isMovieLinked)
+                    "Auto-suggests latest desktop movie"
+                else "Not linked to movie bridge",
+                color = if (isMovieLinked) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isMovieLinked,
+            onCheckedChange = { onToggle() },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66BB6A),
+                checkedTrackColor = Color(0xFF1B5E20),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
     }
 }
 

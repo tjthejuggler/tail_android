@@ -1,0 +1,74 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Tail Services Registry
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# This file is the SINGLE source of truth for all PC-side services that the
+# Tail supervisor should manage.  The supervisor (tail_supervisor.py) reads
+# this file on startup and manages every [[service]] block listed below.
+#
+# ── How to add a new service ──────────────────────────────────────────────
+# Just copy one of the existing blocks, change the name/cmd, and restart the
+# supervisor (systemctl --user restart tail-supervisor.service).  No other
+# autostart or systemd changes needed.
+#
+# ── Fields ───────────────────────────────────────────────────────────────
+#   name        Display name (used in logs)
+#   type        "daemon"   = long-running, auto-restarted on crash
+#               "periodic" = runs on a schedule, then exits
+#   dir         Working directory (relative to project root)
+#   cmd         Shell command (will be split with shlex)
+#   env_file    Path to a .env file whose KEY=VALUE pairs are loaded (optional)
+#   venv        Path to a virtualenv whose bin/ is prepended to PATH (optional,
+#               defaults to {dir}/venv)
+#   restart_sec Seconds to wait before restarting a crashed daemon (default 10)
+#
+#   For periodic services, use ONE of:
+#   interval_min  Run every N minutes (e.g. 30 = every half hour)
+#   schedule      Run daily at HH:MM (e.g. "00:05" = five past midnight)
+#   delay_sec     Initial delay before first run (default 0)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Garmin Proxy ────────────────────────────────────────────────────────────
+
+[[service]]
+name = "garmin-proxy"
+type = "daemon"
+dir = "garmin_proxy"
+cmd = "uvicorn app:app --host 0.0.0.0 --port 8000"
+env_file = "garmin_proxy/.env"
+restart_sec = 10
+
+[[service]]
+name = "garmin-fetch"
+type = "periodic"
+dir = "garmin_proxy"
+cmd = "python3 fetch_data.py"
+env_file = "garmin_proxy/.env"
+interval_min = 30
+delay_sec = 300          # don't fetch until 5 min after boot
+
+[[service]]
+name = "garmin-fetch-midnight"
+type = "periodic"
+dir = "garmin_proxy"
+cmd = "python3 fetch_data.py --days 7 --force"
+env_file = "garmin_proxy/.env"
+schedule = "00:05"       # daily at 00:05
+
+# ── Tail Bridge (Movie tracking + future PC↔Phone features) ──────────────────
+
+[[service]]
+name = "tail-bridge"
+type = "daemon"
+dir = "tail_bridge"
+cmd = "uvicorn bridge_server:app --host 0.0.0.0 --port 8001"
+env_file = "tail_bridge/.env"
+restart_sec = 10
+
+[[service]]
+name = "movie-watcher"
+type = "daemon"
+dir = "tail_bridge"
+cmd = "python movie_watcher.py"
+env_file = "tail_bridge/.env"
+restart_sec = 30
