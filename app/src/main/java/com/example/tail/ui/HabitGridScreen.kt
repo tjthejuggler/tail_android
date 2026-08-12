@@ -1070,10 +1070,12 @@ fun HabitGridScreen(
                             }
                         },
                         onDeleteTextEntry = { name, timestamp ->
-                            viewModel.deleteTextEntry(name, timestamp)
-                            // Reload entries after delete
-                            viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
-                                editModeTextEntries = entries
+                            viewModel.deleteTextEntry(name, timestamp) {
+                                // Reload entries after delete completes so the
+                                // removed row vanishes instantly from the list.
+                                viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
+                                    editModeTextEntries = entries
+                                }
                             }
                         },
                         habitNotes = settings.habitNotes,

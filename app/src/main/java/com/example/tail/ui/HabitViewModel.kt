@@ -4192,19 +4192,46 @@ class HabitViewModel(
     }
 
     /**
-     * Deletes an existing text entry for [habitName].
-     * [timestamp] is the exact key to remove.
+     * Completely removes a text entry for [habitName] from history.
+     *
+     * This deletes BOTH:
+     *  1. The text value from the text-input log file (keyed by [timestamp]).
+     *  2. The corresponding increment timestamp from the timestamp repository,
+     *     so the entry vanishes entirely instead of lingering as an empty "(no text)" row.
+     *
+     * The habit's count is also decremented to stay in sync with the removed timestamp.
+     *
+     * [timestamp] is the full "YYYY-MM-DD HH:mm:ss" key.
      * [onComplete] is called when the deletion is finished.
      */
     fun deleteTextEntry(habitName: String, timestamp: String, onComplete: () -> Unit = {}) {
         val uriString = _settings.value.textInputFileUris[habitName]
-        if (uriString.isNullOrEmpty()) {
-            onComplete()
-            return
-        }
         viewModelScope.launch {
             try {
-                textInputRepo.deleteTextEntry(Uri.parse(uriString), context, timestamp, habitName = habitName)
+                // 1. Delete the text entry from the text log (if URI is available)
+                if (!uriString.isNullOrEmpty()) {
+                    textInputRepo.deleteTextEntry(Uri.parse(uriString), context, timestamp, habitName = habitName)
+                }
+
+                // 2. Also delete the corresponding increment timestamp so the entry is
+                //    completely removed from history (not just its text).
+                //    The timestamp format is "YYYY-MM-DD HH:mm:ss".
+                val timePart = timestamp.substringAfter(' ', "")
+                if (timePart.isNotEmpty()) {
+                    val datePart = timestamp.substringBefore(' ')
+                    val entryDate = com.example.tail.data.parseDate(datePart) ?: _selectedDate.value
+                    val dayTimestamps = timestampRepo.getTimestampsForDay(habitName, entryDate)
+                    val matchIndex = dayTimestamps.indexOf(timePart)
+                    if (matchIndex >= 0) {
+                        timestampRepo.deleteTimestamp(habitName, entryDate, matchIndex)
+                        // Decrement the habit count to match the removed timestamp
+                        val currentHabit = _habits.value.find { it.name == habitName }
+                        if (currentHabit != null && currentHabit.rawTodayCount > 0 && entryDate == _selectedDate.value) {
+                            setHabitCount(habitName, currentHabit.rawTodayCount - 1)
+                        }
+                    }
+                }
+
                 onComplete()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to delete text entry: ${e.message}"
