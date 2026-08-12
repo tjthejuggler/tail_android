@@ -403,6 +403,21 @@ data class AppSettings(
      */
     val secondaryValueHabits: Set<String> = emptySet(),
 
+    /**
+     * Habits that use the secondary value as a **fallback for points** when
+     * the primary value is zero.
+     *
+     * When a habit is in this set AND in [secondaryValueHabits], the points
+     * calculation falls back to the secondary value (Value2) on days where the
+     * primary value (Value1) is zero or missing.  The fallback points are set
+     * to the raw secondary value (no divider applied).
+     *
+     * Example use-case: Apnea habit where primary = minutes, secondary = sessions.
+     * On days with no minutes recorded but sessions > 0, the session count is
+     * used for points so the habit still counts toward streaks and totals.
+     */
+    val secondaryValueFallbackHabits: Set<String> = emptySet(),
+
     // ── AI Icon Generation settings ──────────────────────────────────────
     /** Whether AI icon generation is enabled (user must opt in via Settings). */
     val aiIconsEnabled: Boolean = false,

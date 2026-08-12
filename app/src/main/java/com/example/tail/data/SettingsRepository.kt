@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "tail_settings")
@@ -109,6 +110,9 @@ private val KEY_GRAPH_METRIC_SELECTION = stringPreferencesKey("graph_metric_sele
 // Secondary value habits (set of habit names that have a second value per day)
 private val KEY_SECONDARY_VALUE_HABITS = stringSetPreferencesKey("secondary_value_habits")
 
+// Secondary value fallback habits (use secondary value for points when primary is zero)
+private val KEY_SECONDARY_VALUE_FALLBACK_HABITS = stringSetPreferencesKey("secondary_value_fallback_habits")
+
 // Custom point ranges settings
 private val KEY_CUSTOM_POINT_RANGES_HABITS = stringSetPreferencesKey("custom_point_ranges_habits")
 // Stored as "habitName\x00min0,max0|min1,max1|...|min6,max6|||habitName\x00..." pairs
@@ -123,6 +127,9 @@ private val KEY_ROLL_FORWARD_MANUAL_DATES = stringPreferencesKey("roll_forward_m
 
 // Migration flag — set to true after the one-time "Launch…Widget" → short-name rename.
 private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_launch_rename_done")
+
+// Migration flag — set to true after the one-time apnea secondary-value data migration.
+private val KEY_MIGRATION_APNEA_SECONDARY_DONE = booleanPreferencesKey("migration_apnea_secondary_done")
 
 // ── Meal Habit Engine keys ────────────────────────────────────────────────
 private val KEY_MEAL_ENABLED = booleanPreferencesKey("meal_enabled")
@@ -526,6 +533,14 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun isApneaSecondaryMigrationDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_APNEA_SECONDARY_DONE] ?: false }.first()
+    }
+
+    suspend fun setApneaSecondaryMigrationDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_APNEA_SECONDARY_DONE] = true }
+    }
+
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         val orderStr = prefs[KEY_HABIT_ORDER] ?: ""
         val customOrder = if (orderStr.isNotEmpty()) {
@@ -584,6 +599,7 @@ class SettingsRepository(private val context: Context) {
             disabledHabits = prefs[KEY_DISABLED_HABITS] ?: emptySet(),
             noPointsHabits = prefs[KEY_NO_POINTS_HABITS] ?: emptySet(),
             secondaryValueHabits = prefs[KEY_SECONDARY_VALUE_HABITS] ?: emptySet(),
+            secondaryValueFallbackHabits = prefs[KEY_SECONDARY_VALUE_FALLBACK_HABITS] ?: emptySet(),
             aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
             aiIconsApiKey = prefs[KEY_AI_ICONS_API_KEY] ?: "",
             aiIconsBaseUrl = prefs[KEY_AI_ICONS_BASE_URL] ?: "",
@@ -836,6 +852,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that have secondary values enabled. */
     suspend fun saveSecondaryValueHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_SECONDARY_VALUE_HABITS] = habits }
+    }
+
+    /** Saves the set of habits that use the secondary value as a fallback for points. */
+    suspend fun saveSecondaryValueFallbackHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_SECONDARY_VALUE_FALLBACK_HABITS] = habits }
     }
 
     /** Saves all AI icon generation settings at once. */

@@ -143,6 +143,17 @@ private const val TOTAL_CELLS = 80
 private val DISPLAY_DATE_FMT = DateTimeFormatter.ofPattern("EEE MMM d")
 
 /**
+ * Bundles secondary-value-related settings to reduce [EditModeControlBar] parameter count
+ * (avoids JVM MethodTooLargeException).
+ */
+data class SecondaryValueSettings(
+    val habits: Set<String> = emptySet(),
+    val fallbackHabits: Set<String> = emptySet(),
+    val onToggleSecondaryValue: (String) -> Unit = {},
+    val onToggleSecondaryValueFallback: (String) -> Unit = {}
+)
+
+/**
  * Main screen: 8×10 habit grid with top bar actions and day navigation.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -880,8 +891,12 @@ fun HabitGridScreen(
                         onToggleDisabled = { name -> viewModel.toggleDisabledHabit(name) },
                         noPointsHabits = settings.noPointsHabits,
                         onToggleNoPoints = { name -> viewModel.toggleNoPointsHabit(name) },
-                        secondaryValueHabits = settings.secondaryValueHabits,
-                        onToggleSecondaryValue = { name -> viewModel.toggleSecondaryValueHabit(name) },
+                        secondaryValueSettings = SecondaryValueSettings(
+                            habits = settings.secondaryValueHabits,
+                            onToggleSecondaryValue = { name -> viewModel.toggleSecondaryValueHabit(name) },
+                            fallbackHabits = settings.secondaryValueFallbackHabits,
+                            onToggleSecondaryValueFallback = { name -> viewModel.toggleSecondaryValueFallbackHabit(name) }
+                        ),
                         chessComEnabled = settings.chessComEnabled,
                         chessComHabitLinks = settings.chessComHabitLinks,
                         onSetChessComLink = { name, type -> viewModel.setChessComHabitLink(name, type) },
@@ -2195,7 +2210,9 @@ private fun HabitToggleSection(
     isNoPoints: Boolean,
     onToggleNoPoints: (String) -> Unit,
     isSecondaryValue: Boolean,
-    onToggleSecondaryValue: (String) -> Unit
+    onToggleSecondaryValue: (String) -> Unit,
+    isSecondaryValueFallback: Boolean = false,
+    onToggleSecondaryValueFallback: (String) -> Unit = {}
 ) {
     // ── Disabled toggle ─────────────────────────────────────────────────
     Row(
@@ -2283,6 +2300,38 @@ private fun HabitToggleSection(
     }
 
     Spacer(modifier = Modifier.height(6.dp))
+
+    // ── Secondary value fallback toggle ─────────────────────────────────
+    // Only meaningful when secondary value is enabled
+    if (isSecondaryValue) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = "Fallback to secondary", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(
+                    text = if (isSecondaryValueFallback) "Uses secondary value for points when primary is 0"
+                           else "Primary value only for points",
+                    color = if (isSecondaryValueFallback) Color(0xFF66BB6A) else Color(0xFF888888),
+                    fontSize = 10.sp
+                )
+            }
+            Switch(
+                checked = isSecondaryValueFallback,
+                onCheckedChange = { onToggleSecondaryValueFallback(habitName) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF66BB6A),
+                    checkedTrackColor = Color(0xFF2E7D32),
+                    uncheckedThumbColor = Color(0xFF888888),
+                    uncheckedTrackColor = Color(0xFF333333)
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+    }
 }
 
 @Composable
@@ -2354,8 +2403,7 @@ private fun EditModeControlBar(
     onToggleDisabled: (String) -> Unit = {},
     noPointsHabits: Set<String> = emptySet(),
     onToggleNoPoints: (String) -> Unit = {},
-    secondaryValueHabits: Set<String> = emptySet(),
-    onToggleSecondaryValue: (String) -> Unit = {},
+    secondaryValueSettings: SecondaryValueSettings = SecondaryValueSettings(),
     chessComEnabled: Boolean = false,
     chessComHabitLinks: Map<String, String> = emptyMap(),
     onSetChessComLink: (String, String?) -> Unit = { _, _ -> },
@@ -3710,8 +3758,10 @@ private fun EditModeControlBar(
                         onToggleDisabled = onToggleDisabled,
                         isNoPoints = selectedHabitName in noPointsHabits,
                         onToggleNoPoints = onToggleNoPoints,
-                        isSecondaryValue = selectedHabitName in secondaryValueHabits,
-                        onToggleSecondaryValue = onToggleSecondaryValue
+                        isSecondaryValue = selectedHabitName in secondaryValueSettings.habits,
+                        onToggleSecondaryValue = secondaryValueSettings.onToggleSecondaryValue,
+                        isSecondaryValueFallback = selectedHabitName in secondaryValueSettings.fallbackHabits,
+                        onToggleSecondaryValueFallback = secondaryValueSettings.onToggleSecondaryValueFallback
                     )
 
                     // ── Custom Point Ranges toggle ────────────────────────────

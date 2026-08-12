@@ -534,6 +534,52 @@ class HabitViewModel(
         return screens.indexOfFirst { habitName in it.habitNames }
     }
 
+    /**
+     * One-time migration: moves pre-2026-03-12 session counts from the primary
+     * slot to the secondary_value slot for "Apnea apb" and "Apnea practiced".
+     *
+     * Before wags integration, these habits stored session counts (1-5) in the
+     * primary slot. After March 12, 2026, wags started writing minutes there.
+     * This migration moves old session-count data to secondary_value so the
+     * fallback mechanism can use it for points on days with 0 minutes.
+     */
+    private suspend fun performApneaSecondaryMigration(uri: Uri) {
+        val cutoff = "2026-03-12"
+        val habitsToMigrate = listOf("Apnea apb", "Apnea practiced")
+        var totalMoved = 0
+
+        val db = cachedPhoneDb.toMutableMap()
+        for (habitName in habitsToMigrate) {
+            val primary = db[habitName] ?: continue
+            val secKey = com.example.tail.data.secondaryValueKey(habitName)
+            val secondary = db[secKey]?.toMutableMap() ?: mutableMapOf()
+            val mutablePrimary = primary.toMutableMap()
+
+            for ((dateStr, value) in primary) {
+                if (dateStr >= cutoff) continue
+                if (value <= 0) continue
+
+                // Move to secondary (max merge)
+                secondary[dateStr] = maxOf(secondary[dateStr] ?: 0, value)
+                // Zero out primary
+                mutablePrimary[dateStr] = 0
+                totalMoved++
+            }
+
+            db[habitName] = mutablePrimary
+            db[secKey] = secondary
+        }
+
+        if (totalMoved > 0) {
+            Log.i(TAG, "Apnea secondary migration: moved $totalMoved dates from primary → secondary (pre-$cutoff)")
+            cachedPhoneDb = db
+            habitsRepo.persistDatabase(uri, context, db)
+        }
+
+        settingsRepo.setApneaSecondaryMigrationDone()
+        Log.i(TAG, "Apnea secondary migration complete.")
+    }
+
     private suspend fun catchUpAndLoad(uri: Uri) {
         _isLoading.value = true
         _errorMessage.value = null
@@ -552,6 +598,14 @@ class HabitViewModel(
                 throw com.example.tail.data.HabitsLoadFailedException(loadResult)
             }
             cachedPhoneDb = loadResult.db
+
+            // ── One-time apnea secondary-value migration ──────────────────────
+            // Pre-March-12-2026 apnea session counts were stored in the primary
+            // slot (minutes). Move them to secondary_value so the fallback
+            // mechanism can use them for points on days with 0 minutes.
+            if (!settingsRepo.isApneaSecondaryMigrationDone()) {
+                performApneaSecondaryMigration(uri)
+            }
 
             // Perform roll forward BEFORE ensureDaysExist creates today=0
             performRollForwardIfNeeded()
@@ -782,7 +836,8 @@ class HabitViewModel(
                 val content = com.example.tail.data.buildTaskerStatsContent(
                     db = db,
                     dividers = dividers,
-                    noPointsHabits = noPointsHabits
+                    noPointsHabits = noPointsHabits,
+                    secondaryValueFallbackHabits = _settings.value.secondaryValueFallbackHabits
                 )
 
                 val uri = Uri.parse(taskerUriString)
@@ -906,7 +961,7 @@ class HabitViewModel(
                 // Skip habits that don't affect points
                 if (name in noPointsHabits) continue
                 val raw = db[name]?.get(ds) ?: 0
-                total += applyDivider(raw, dividers[name] ?: 1)
+                total += effectivePointsForDate(name, raw, ds)
             }
             result[ds] = total
         }
@@ -2472,6 +2527,55 @@ class HabitViewModel(
     }
 
     /**
+     * Toggles the "Secondary Value Fallback for Points" feature for [habitName].
+     *
+     * When enabled (and the habit also has Secondary Value enabled), days where
+     * the primary value (Value1) is zero will fall back to the secondary value
+     * (Value2) for points calculation. The fallback points equal the raw
+     * secondary value (no divider applied).
+     *
+     * Requires the habit to also be in [secondaryValueHabits]. If the habit is
+     * not in [secondaryValueHabits], enabling this will also enable Secondary Value.
+     */
+    fun toggleSecondaryValueFallbackHabit(habitName: String) {
+        val current = _settings.value.secondaryValueFallbackHabits.toMutableSet()
+        if (habitName in current) {
+            current.remove(habitName)
+        } else {
+            current.add(habitName)
+            // Auto-enable Secondary Value if not already enabled
+            if (habitName !in _settings.value.secondaryValueHabits) {
+                val secValHabits = _settings.value.secondaryValueHabits.toMutableSet()
+                secValHabits.add(habitName)
+                _settings.value = _settings.value.copy(secondaryValueHabits = secValHabits)
+                viewModelScope.launch { settingsRepo.saveSecondaryValueHabits(secValHabits) }
+            }
+        }
+        _settings.value = _settings.value.copy(secondaryValueFallbackHabits = current)
+        viewModelScope.launch {
+            settingsRepo.saveSecondaryValueFallbackHabits(current)
+            rebuildHabitList()
+        }
+    }
+
+    /** Returns true if [habitName] has the secondary value fallback feature enabled. */
+    fun hasSecondaryValueFallback(habitName: String): Boolean {
+        return habitName in _settings.value.secondaryValueFallbackHabits
+    }
+
+    /**
+     * Computes the effective points for [habitName] on the given [dateStr],
+     * applying the secondary-value fallback when enabled.
+     */
+    private fun effectivePointsForDate(habitName: String, rawCount: Int, dateStr: String): Int {
+        val divider = _settings.value.habitDividers[habitName] ?: 1
+        val useFallback = habitName in _settings.value.secondaryValueFallbackHabits
+        if (!useFallback) return applyDivider(rawCount, divider)
+        val secVal = cachedPhoneDb[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+        return com.example.tail.data.effectivePointsWithFallback(rawCount, divider, secVal, true)
+    }
+
+    /**
      * Moves the currently selected habit to [targetScreenIndex].
      * Removes it from its current screen and appends it to the target screen.
      * Clears the selection after moving.
@@ -2892,6 +2996,7 @@ class HabitViewModel(
                     disabledHabits = settings.disabledHabits.replaceElement(oldName, newName),
                     noPointsHabits = settings.noPointsHabits.replaceElement(oldName, newName),
                     secondaryValueHabits = settings.secondaryValueHabits.replaceElement(oldName, newName),
+                    secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits.replaceElement(oldName, newName),
                     voiceTriggerHabits = settings.voiceTriggerHabits.replaceElement(oldName, newName),
                     voiceTriggerWords = settings.voiceTriggerWords.replaceKey(oldName, newName),
                     voiceTriggerIncrements = settings.voiceTriggerIncrements.replaceKey(oldName, newName),
@@ -2931,6 +3036,7 @@ class HabitViewModel(
                 settingsRepo.saveDisabledHabits(newSettings.disabledHabits)
                 settingsRepo.saveNoPointsHabits(newSettings.noPointsHabits)
                 settingsRepo.saveSecondaryValueHabits(newSettings.secondaryValueHabits)
+                settingsRepo.saveSecondaryValueFallbackHabits(newSettings.secondaryValueFallbackHabits)
                 settingsRepo.saveVoiceTriggerHabits(newSettings.voiceTriggerHabits)
                 settingsRepo.saveVoiceTriggerWords(newSettings.voiceTriggerWords)
                 settingsRepo.saveVoiceTriggerIncrements(newSettings.voiceTriggerIncrements)
@@ -3626,6 +3732,7 @@ class HabitViewModel(
         // Secondary values (stored under "secondary_value:<habitName>" in the DB)
         val hasSecondary = habitName in _settings.value.secondaryValueHabits
         val secondaryEntries = if (hasSecondary) cachedPhoneDb[secondaryValueKey(habitName)] else null
+        val useSecondaryFallback = habitName in _settings.value.secondaryValueFallbackHabits
         val startStr = dateString(startDate)
         val endStr = dateString(endDate)
 
@@ -3706,7 +3813,9 @@ class HabitViewModel(
                     date = cursor,
                     dateStr = ds,
                     rawValue = filteredRaw,
-                    pointsValue = applyDivider(filteredRaw, divider),
+                    pointsValue = com.example.tail.data.effectivePointsWithFallback(
+                        filteredRaw, divider, secVal ?: 0, useSecondaryFallback
+                    ),
                     garminValue = garminVal,
                     secondaryValue = secVal,
                     mealCalories = mealDay?.calories,
@@ -4088,9 +4197,9 @@ class HabitViewModel(
      * Returns 0 if the habit has no data for that date.
      */
     fun getHabitValueForDate(habitName: String, date: LocalDate): Int {
-        val raw = cachedPhoneDb[habitName]?.get(dateString(date)) ?: 0
-        val divider = _settings.value.habitDividers[habitName] ?: 1
-        return applyDivider(raw, divider)
+        val dateStr = dateString(date)
+        val raw = cachedPhoneDb[habitName]?.get(dateStr) ?: 0
+        return effectivePointsForDate(habitName, raw, dateStr)
     }
 
     // ── Dated Entry feature ───────────────────────────────────────────────────
@@ -5678,12 +5787,12 @@ class HabitViewModel(
     fun getDayHabitBreakdown(date: LocalDate): List<Pair<String, Int>> {
         val db = cachedPhoneDb
         val dateStr = dateString(date)
-        val dividers = _settings.value.habitDividers
         val tracked = trackedHabitNames().ifEmpty { db.keys }
         return tracked
             .mapNotNull { name ->
                 val raw = db[name]?.get(dateStr) ?: 0
-                if (raw > 0) Pair(name, applyDivider(raw, dividers[name] ?: 1)) else null
+                val pts = effectivePointsForDate(name, raw, dateStr)
+                if (pts > 0) Pair(name, pts) else null
             }
             .sortedByDescending { it.second }
     }
@@ -5706,13 +5815,13 @@ class HabitViewModel(
     fun getDayStatsLight(date: LocalDate): DayStats {
         val db = cachedPhoneDb
         val dateStr = dateString(date)
-        val dividers = _settings.value.habitDividers
         val tracked = trackedHabitNames().ifEmpty { db.keys }
 
         var totalPoints = 0
         for (name in tracked) {
             val raw = db[name]?.get(dateStr) ?: 0
-            if (raw > 0) totalPoints += applyDivider(raw, dividers[name] ?: 1)
+            val pts = effectivePointsForDate(name, raw, dateStr)
+            if (pts > 0) totalPoints += pts
         }
 
         var monthlySum = 0
@@ -5720,7 +5829,8 @@ class HabitViewModel(
             val ds = dateString(date.minusDays(i.toLong()))
             for (name in tracked) {
                 val raw = db[name]?.get(ds) ?: 0
-                if (raw > 0) monthlySum += applyDivider(raw, dividers[name] ?: 1)
+                val pts = effectivePointsForDate(name, raw, ds)
+                if (pts > 0) monthlySum += pts
             }
         }
         val monthlyAverage = monthlySum.toDouble() / 30.0
@@ -5748,11 +5858,13 @@ class HabitViewModel(
         val dateStr = dateString(date)
         val dividers = _settings.value.habitDividers
         val tracked = trackedHabitNames().ifEmpty { db.keys }
+        val fallbackHabits = _settings.value.secondaryValueFallbackHabits
 
         var totalPoints = 0
         for (name in tracked) {
             val raw = db[name]?.get(dateStr) ?: 0
-            if (raw > 0) totalPoints += applyDivider(raw, dividers[name] ?: 1)
+            val pts = effectivePointsForDate(name, raw, dateStr)
+            if (pts > 0) totalPoints += pts
         }
 
         var monthlySum = 0
@@ -5760,7 +5872,8 @@ class HabitViewModel(
             val ds = dateString(date.minusDays(i.toLong()))
             for (name in tracked) {
                 val raw = db[name]?.get(ds) ?: 0
-                if (raw > 0) monthlySum += applyDivider(raw, dividers[name] ?: 1)
+                val pts = effectivePointsForDate(name, raw, ds)
+                if (pts > 0) monthlySum += pts
             }
         }
         val monthlyAverage = monthlySum.toDouble() / 30.0
@@ -5771,7 +5884,12 @@ class HabitViewModel(
         var totalStreakDays = 0
         var totalAntiStreakDays = 0
         for (name in tracked) {
-            val entries = db[name] ?: continue
+            val rawEntries = db[name] ?: continue
+            // Apply secondary-value fallback so days with 0 primary but non-zero
+            // secondary count as "done" for streak purposes.
+            val useFallback = name in fallbackHabits
+            val secEntries = if (useFallback) db[secondaryValueKey(name)] ?: emptyMap() else emptyMap()
+            val entries = com.example.tail.data.effectiveEntriesWithFallback(rawEntries, secEntries, useFallback)
             // Cap entries at [date] — only include days up to and including [date]
             val capped = entries.filter { it.key <= dateStr }.toMutableMap()
             if (capped.isEmpty()) continue
@@ -5780,13 +5898,20 @@ class HabitViewModel(
             val expanded = expandEntriesToCalendarDaysPublic(capped)
             val reversed = expanded.entries.sortedBy { it.key }.reversed()
 
+            val divider = dividers[name] ?: 1
             var habStreak = 0
             for (entry in reversed) {
-                if (applyDivider(entry.value, dividers[name] ?: 1) > 0) habStreak++ else break
+                val rawPrimary = rawEntries[entry.key] ?: 0
+                val secVal = if (useFallback) secEntries[entry.key] ?: 0 else 0
+                val pts = com.example.tail.data.effectivePointsWithFallback(rawPrimary, divider, secVal, useFallback)
+                if (pts > 0) habStreak++ else break
             }
             var habAntiStreak = 0
             for (entry in reversed) {
-                if (applyDivider(entry.value, dividers[name] ?: 1) == 0) habAntiStreak++ else break
+                val rawPrimary = rawEntries[entry.key] ?: 0
+                val secVal = if (useFallback) secEntries[entry.key] ?: 0 else 0
+                val pts = com.example.tail.data.effectivePointsWithFallback(rawPrimary, divider, secVal, useFallback)
+                if (pts == 0) habAntiStreak++ else break
             }
 
             totalStreakDays += habStreak

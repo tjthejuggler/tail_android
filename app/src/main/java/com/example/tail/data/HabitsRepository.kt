@@ -731,12 +731,18 @@ class HabitsRepository {
         val order = if (settings.habitOrder.isNotEmpty()) settings.habitOrder else HABIT_ORDER
         return order.map { name ->
             val entries = db[name] ?: emptyMap()
+            val useFallback = name in settings.secondaryValueFallbackHabits
+            val secondaryEntries = if (useFallback) {
+                db[secondaryValueKey(name)] ?: emptyMap()
+            } else emptyMap()
             buildHabit(
                 name = name,
                 entries = entries,
                 useCustomInput = name in settings.customInputHabits,
                 divider = settings.habitDividers[name] ?: 1,
-                targetDate = targetDate
+                targetDate = targetDate,
+                secondaryEntries = secondaryEntries,
+                useSecondaryFallback = useFallback
             )
         }
     }

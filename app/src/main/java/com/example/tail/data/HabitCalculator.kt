@@ -239,6 +239,52 @@ fun getAllTimeHighRolling(entries: Map<String, Int>, windowSize: Int): RollingHi
 }
 
 /**
+ * Merges primary entries with secondary entries for habits that have the
+ * "secondary value fallback for points" feature enabled.
+ *
+ * For each date, if the primary value is zero (or missing) but the secondary
+ * value is non-zero, the secondary value is substituted. This makes the
+ * habit appear "done" on that day for streak / point / average calculations.
+ *
+ * When [secondaryEntries] is empty or [useFallback] is false, [primaryEntries]
+ * is returned unchanged.
+ */
+fun effectiveEntriesWithFallback(
+    primaryEntries: Map<String, Int>,
+    secondaryEntries: Map<String, Int>,
+    useFallback: Boolean
+): Map<String, Int> {
+    if (!useFallback || secondaryEntries.isEmpty()) return primaryEntries
+    val result = primaryEntries.toMutableMap()
+    for ((date, secVal) in secondaryEntries) {
+        if (secVal > 0 && (result[date] ?: 0) <= 0) {
+            result[date] = secVal
+        }
+    }
+    return result
+}
+
+/**
+ * Computes the effective "points" value for a habit on a single day, with
+ * optional fallback to the secondary value when the primary value is zero.
+ *
+ * When [useSecondaryFallback] is true and [rawCount] is zero, the
+ * [secondaryValue] is used directly as the points value (no divider applied).
+ * Otherwise, the standard [applyDivider] is used.
+ */
+fun effectivePointsWithFallback(
+    rawCount: Int,
+    divider: Int,
+    secondaryValue: Int = 0,
+    useSecondaryFallback: Boolean = false
+): Int {
+    if (useSecondaryFallback && rawCount <= 0 && secondaryValue > 0) {
+        return secondaryValue
+    }
+    return applyDivider(rawCount, divider)
+}
+
+/**
  * Builds a [Habit] display object from raw database entries for a specific [targetDate].
  * All stats (streak, antistreak, etc.) are computed as if [targetDate] is "today".
  * Matches the desktop app's full tooltip data.
@@ -247,36 +293,53 @@ fun getAllTimeHighRolling(entries: Map<String, Int>, windowSize: Int): RollingHi
  *
  * [divider] — when > 1, the raw stored count is divided (rounded, min 1 if non-zero)
  * to produce the displayed points value. The raw count is stored unchanged in the DB.
+ *
+ * [secondaryEntries] — the secondary-value date map (from
+ * `secondary_value:<habitName>`).  When [useSecondaryFallback] is true, days
+ * with a zero primary value but non-zero secondary value use the secondary
+ * value for points, streak, and average calculations.
  */
 fun buildHabit(
     name: String,
     entries: Map<String, Int>,
     useCustomInput: Boolean,
     divider: Int = 1,
-    targetDate: java.time.LocalDate = java.time.LocalDate.now()
+    targetDate: java.time.LocalDate = java.time.LocalDate.now(),
+    secondaryEntries: Map<String, Int> = emptyMap(),
+    useSecondaryFallback: Boolean = false
 ): Habit {
     // Only include entries up to and including targetDate for streak/stat calculations
     val targetDateStr = dateString(targetDate)
     val filteredEntries = entries.filter { (k, _) -> k <= targetDateStr }
 
-    val rawCountForDate = getCountForDate(filteredEntries, targetDate)
-    // todayCount shown on the button is the divided (points) value
-    val countForDate = applyDivider(rawCountForDate, divider)
-    val streakDisplay = calculateStreakDisplay(filteredEntries, targetDate)
-    val longestStreak = calculateLongestStreak(filteredEntries)
+    // When fallback is enabled, merge secondary values into the effective entries
+    // so that streak / average / ATH calculations see the substituted values.
+    val filteredSecondary = secondaryEntries.filter { (k, _) -> k <= targetDateStr }
+    val effectiveEntries = effectiveEntriesWithFallback(
+        filteredEntries, filteredSecondary, useSecondaryFallback
+    )
 
-    val (allTimeHighDayVal, allTimeHighDayDate) = calculateAllTimeHighDay(filteredEntries)
-    val currentDayValue = getMostRecentValue(filteredEntries)
+    val rawCountForDate = getCountForDate(filteredEntries, targetDate)
+    val secValForDate = getCountForDate(filteredSecondary, targetDate)
+    // todayCount shown on the button is the effective points value (with fallback)
+    val countForDate = effectivePointsWithFallback(
+        rawCountForDate, divider, secValForDate, useSecondaryFallback
+    )
+    val streakDisplay = calculateStreakDisplay(effectiveEntries, targetDate)
+    val longestStreak = calculateLongestStreak(effectiveEntries)
+
+    val (allTimeHighDayVal, allTimeHighDayDate) = calculateAllTimeHighDay(effectiveEntries)
+    val currentDayValue = getMostRecentValue(effectiveEntries)
 
     // Rolling averages for current period
-    val avgLast7 = getAverageOfLastNDays(filteredEntries, 7, targetDate)
-    val avgLast30 = getAverageOfLastNDays(filteredEntries, 30, targetDate)
-    val avgLast365 = getAverageOfLastNDays(filteredEntries, 365, targetDate)
+    val avgLast7 = getAverageOfLastNDays(effectiveEntries, 7, targetDate)
+    val avgLast30 = getAverageOfLastNDays(effectiveEntries, 30, targetDate)
+    val avgLast365 = getAverageOfLastNDays(effectiveEntries, 365, targetDate)
 
     // All-time high rolling windows
-    val allTimeHighWeek = getAllTimeHighRolling(filteredEntries, 7)
-    val allTimeHighMonth = getAllTimeHighRolling(filteredEntries, 30)
-    val allTimeHighYear = getAllTimeHighRolling(filteredEntries, 365)
+    val allTimeHighWeek = getAllTimeHighRolling(effectiveEntries, 7)
+    val allTimeHighMonth = getAllTimeHighRolling(effectiveEntries, 30)
+    val allTimeHighYear = getAllTimeHighRolling(effectiveEntries, 365)
 
     return Habit(
         name = name,
@@ -316,13 +379,21 @@ fun buildTaskerStatsContent(
     db: HabitsDatabase,
     dividers: Map<String, Int>,
     noPointsHabits: Set<String>,
-    today: LocalDate = LocalDate.now()
+    today: LocalDate = LocalDate.now(),
+    secondaryValueFallbackHabits: Set<String> = emptySet()
 ): String {
     fun dayTotal(date: LocalDate): Int {
         val ds = dateString(date)
         return db.entries.sumOf { (habitName, entries) ->
             if (habitName in noPointsHabits) return@sumOf 0
-            applyDivider(entries[ds] ?: 0, dividers[habitName] ?: 1)
+            if (isSecondaryValueKey(habitName)) return@sumOf 0
+            val useFallback = habitName in secondaryValueFallbackHabits
+            val secVal = if (useFallback) {
+                db[secondaryValueKey(habitName)]?.get(ds) ?: 0
+            } else 0
+            effectivePointsWithFallback(
+                entries[ds] ?: 0, dividers[habitName] ?: 1, secVal, useFallback
+            )
         }
     }
 

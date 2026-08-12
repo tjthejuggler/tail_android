@@ -48,6 +48,9 @@ import androidx.compose.ui.window.Dialog
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.applyDivider
 import com.example.tail.data.isSecondaryValueKey
+import com.example.tail.data.effectiveEntriesWithFallback
+import com.example.tail.data.effectivePointsWithFallback
+import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.expandEntriesToCalendarDaysPublic
 import com.example.tail.data.parseDate
 import java.time.DayOfWeek
@@ -87,10 +90,13 @@ fun AppStatsScreen(
 
     val disabledHabits = settings.disabledHabits
     val noPointsHabits = settings.noPointsHabits
+    val secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits
 
     // Compute all stats from the cached database
     val db = viewModel.getCachedDatabase()
-    val stats = remember(db, dividers, disabledHabits, noPointsHabits) { computeAppStats(db, dividers, disabledHabits, noPointsHabits) }
+    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits) {
+        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits)
+    }
 
     // State for the habit-list popup
     var popupTitle by remember { mutableStateOf("") }
@@ -1114,9 +1120,20 @@ private fun computeAppStats(
     db: HabitsDatabase,
     dividers: Map<String, Int>,
     disabledHabits: Set<String> = emptySet(),
-    noPointsHabits: Set<String> = emptySet()
+    noPointsHabits: Set<String> = emptySet(),
+    secondaryValueFallbackHabits: Set<String> = emptySet()
 ): AppStats {
     if (db.isEmpty()) return AppStats()
+
+    // Local helper: effective points considering secondary-value fallback.
+    // When a habit has fallback enabled and its primary (minutes) value is 0,
+    // the secondary (sessions) value is used directly as points (no divider).
+    fun effPts(habitName: String, raw: Int, dateStr: String): Int {
+        val div = dividers[habitName] ?: 1
+        if (habitName !in secondaryValueFallbackHabits) return applyDivider(raw, div)
+        val secVal = db[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+        return effectivePointsWithFallback(raw, div, secVal, true)
+    }
 
     val today = LocalDate.now()
     val todayStr = com.example.tail.data.dateString(today)
@@ -1144,7 +1161,7 @@ private fun computeAppStats(
             if (isSecondaryValueKey(habitName)) continue
             if (habitName in noPointsHabits) continue
             val raw = entries[dateStr] ?: 0
-            val points = applyDivider(raw, dividers[habitName] ?: 1)
+            val points = effPts(habitName, raw, dateStr)
             totalPoints += points
             if (points > 0) habitsCount++
         }
@@ -1155,8 +1172,8 @@ private fun computeAppStats(
     // ── Overview ──────────────────────────────────────────────────────────
     val totalHabits = db.keys.count { !isSecondaryValueKey(it) }
     val allHabitsList = db.keys.filter { !isSecondaryValueKey(it) }.sorted().map { name ->
-        val total = db[name]?.entries?.sumOf { (_, raw) ->
-            applyDivider(raw, dividers[name] ?: 1).toLong()
+        val total = db[name]?.entries?.sumOf { (dateStr, raw) ->
+            effPts(name, raw, dateStr).toLong()
         } ?: 0L
         Pair(name, formatLargeNumber(total) + " pts")
     }
@@ -1352,17 +1369,25 @@ private fun computeAppStats(
         val singleDayHighDate: String
     )
 
-    val habitStats = db.map { (habitName, entries) ->
+    val habitStats = db.filterKeys { !isSecondaryValueKey(it) }.map { (habitName, entries) ->
         val divider = dividers[habitName] ?: 1
+        val useFallback = habitName in secondaryValueFallbackHabits
+        val secEntries = if (useFallback) db[secondaryValueKey(habitName)] ?: emptyMap() else emptyMap()
+        // Merge secondary values so dates with only secondary data are included
+        val mergedEntries = if (useFallback) {
+            effectiveEntriesWithFallback(entries, secEntries, true)
+        } else entries
+
         var total = 0L
         var maxDay = 0
         var maxDayDate = ""
         var longest = 0
         var run = 0
 
-        val sortedEntries = entries.entries.sortedBy { it.key }
-        for ((dateStr, rawVal) in sortedEntries) {
-            val pts = applyDivider(rawVal, divider)
+        val sortedEntries = mergedEntries.entries.sortedBy { it.key }
+        for ((dateStr, _) in sortedEntries) {
+            val raw = entries[dateStr] ?: 0
+            val pts = effPts(habitName, raw, dateStr)
             total += pts
             if (pts > maxDay) { maxDay = pts; maxDayDate = dateStr }
             if (pts > 0) run++ else { longest = maxOf(longest, run); run = 0 }
@@ -1371,21 +1396,23 @@ private fun computeAppStats(
 
         // Expand entries to include all calendar days up to today so that
         // missing days count as zeros (matching desktop/calculateStreakDisplay behavior)
-        val entriesWithToday = if (entries.isNotEmpty()) {
-            val mutable = entries.toMutableMap()
+        val entriesWithToday = if (mergedEntries.isNotEmpty()) {
+            val mutable = mergedEntries.toMutableMap()
             if (!mutable.containsKey(todayStr)) mutable[todayStr] = 0
             mutable
-        } else entries
+        } else mergedEntries
         val expanded = expandEntriesToCalendarDaysPublic(entriesWithToday)
         val reversedExpanded = expanded.entries.sortedBy { it.key }.reversed()
 
         var curStreak = 0
-        for ((_, rawVal) in reversedExpanded) {
-            if (applyDivider(rawVal, divider) > 0) curStreak++ else break
+        for ((dateStr, _) in reversedExpanded) {
+            val raw = entries[dateStr] ?: 0
+            if (effPts(habitName, raw, dateStr) > 0) curStreak++ else break
         }
         var antiStreak = 0
-        for ((_, rawVal) in reversedExpanded) {
-            if (applyDivider(rawVal, divider) == 0) antiStreak++ else break
+        for ((dateStr, _) in reversedExpanded) {
+            val raw = entries[dateStr] ?: 0
+            if (effPts(habitName, raw, dateStr) == 0) antiStreak++ else break
         }
 
         HabitStat(habitName, total, longest, curStreak, antiStreak, maxDay, maxDayDate)
@@ -1424,7 +1451,13 @@ private fun computeAppStats(
         if (isSecondaryValueKey(habitName)) continue
         if (habitName in disabledHabits) continue
         val divider = dividers[habitName] ?: 1
-        val habitFirstDate = entries.keys.minOrNull()
+        val habitFirstDate = run {
+            val primFirst = entries.keys.minOrNull()
+            if (habitName in secondaryValueFallbackHabits) {
+                val secFirst = db[secondaryValueKey(habitName)]?.keys?.minOrNull()
+                listOfNotNull(primFirst, secFirst).minOrNull()
+            } else primFirst
+        }
         // Track the last date this habit had a non-zero value
         var lastDoneDate: LocalDate? = null
         var streak = 0
@@ -1441,7 +1474,7 @@ private fun computeAppStats(
 
             val currDate = parsedDates[idx] ?: continue
             val raw = entries[dateStr] ?: 0
-            val pts = applyDivider(raw, divider)
+            val pts = effPts(habitName, raw, dateStr)
 
             if (pts > 0) {
                 // Calculate streak: consecutive days done ending today
@@ -1534,7 +1567,7 @@ private fun computeAppStats(
     for ((habitName, entries) in db) {
         if (isSecondaryValueKey(habitName)) continue
         val raw = entries[todayStr] ?: 0
-        val pts = applyDivider(raw, dividers[habitName] ?: 1)
+        val pts = effPts(habitName, raw, todayStr)
         if (pts > 0) {
             habitsDoneToday++
             habitsDoneTodayList.add(Pair(habitName, "$pts pts"))
