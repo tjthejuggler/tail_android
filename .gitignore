@@ -38,6 +38,7 @@ __pycache__/
 tail_bridge/movie_cache.json
 tail_bridge/movie_watcher_state.json
 meditation_output.json
+output.json
 
 # Garmin data files (contain personal health data)
 garmin_cache.json
