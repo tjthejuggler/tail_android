@@ -363,6 +363,14 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // ── GitHub Integration ─────────────────────────────────────────────
+            item {
+                GithubSettingsSection(viewModel = viewModel, settings = settings)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // ── Garmin Integration ────────────────────────────────────────────
             item {
                 GarminSettingsSection(viewModel = viewModel, settings = settings, context = context)
@@ -884,6 +892,84 @@ private fun ChessComSettingsSection(
                 )
             ) {
                 Text("Fetch Entire Backlog", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/**
+ * GitHub Integration settings section — global enable toggle and optional
+ * Personal Access Token for higher API rate limits.
+ *
+ * Per-habit configuration (repo URL, metric) is done in the habit edit panel.
+ */
+@Composable
+private fun GithubSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    var enabled by remember(settings.githubEnabled) { mutableStateOf(settings.githubEnabled) }
+    var token by remember(settings.githubToken) { mutableStateOf(settings.githubToken) }
+
+    Column {
+        Text("🐙 GitHub Integration", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Link habits to public GitHub repositories. Commit activity " +
+                   "(lines changed, commits, etc.) is automatically tracked. " +
+                   "Configure each habit's repo URL in its edit panel.",
+            fontSize = 11.sp,
+            color = Color(0xFF888888)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Enable GitHub", fontSize = 14.sp)
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    viewModel.saveGithubSettings(enabled, token)
+                }
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = token,
+                onValueChange = { token = it },
+                label = { Text("GitHub Token (optional)") },
+                placeholder = { Text("ghp_... — raises limit to 5000/hr") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = PasswordVisualTransformation()
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Without a token, the GitHub API allows 60 requests/hour. " +
+                       "A Personal Access Token (no scopes needed for public repos) " +
+                       "raises this to 5 000/hour.",
+                fontSize = 10.sp,
+                color = Color(0xFF888888)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = { viewModel.saveGithubSettings(enabled, token) }) {
+                Text("Save GitHub Settings", fontSize = 12.sp)
+            }
+
+            val linkedCount = settings.githubRepoUrls.size
+            if (linkedCount > 0) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "$linkedCount habit(s) linked to GitHub repos.",
+                    fontSize = 11.sp,
+                    color = Color(0xFF66BB6A)
+                )
             }
         }
     }

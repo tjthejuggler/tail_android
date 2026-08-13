@@ -19,6 +19,9 @@ import com.example.tail.data.BridgeMovie
 import com.example.tail.data.ChessComType
 import com.example.tail.data.GarminRepository
 import com.example.tail.data.GarminType
+import com.example.tail.data.GitHubMetric
+import com.example.tail.data.GitHubRateLimitException
+import com.example.tail.data.GitHubRepository
 import com.example.tail.data.ImportResult
 import com.example.tail.data.MovieBridgeService
 import com.example.tail.data.DatedEntryRepository
@@ -254,6 +257,19 @@ class HabitViewModel(
 
     /** Interval between chess.com polls (15 minutes). */
     private val CHESS_COM_POLL_INTERVAL_MS = 15 * 60 * 1000L
+
+    // ── GitHub Integration ────────────────────────────────────────────────────
+    private val githubRepo = GitHubRepository(context)
+
+    /** Status message for GitHub sync operations (shown in edit panel + settings). */
+    private val _githubSyncStatus = MutableStateFlow("")
+    val githubSyncStatus: StateFlow<String> = _githubSyncStatus.asStateFlow()
+
+    /** Job for the periodic GitHub polling loop. */
+    private var githubPollingJob: Job? = null
+
+    /** Interval between GitHub polls (30 minutes — GitHub API is rate-limited). */
+    private val GITHUB_POLL_INTERVAL_MS = 30 * 60 * 1000L
 
     // ── Garmin Integration ────────────────────────────────────────────────────
     private val garminRepo = GarminRepository(context)
@@ -492,6 +508,10 @@ class HabitViewModel(
                     // Start chess.com polling if enabled
                     if (s.chessComEnabled && s.chessComUsername.isNotEmpty()) {
                         startChessComPolling()
+                    }
+                    // Start GitHub polling if enabled and at least one habit is linked
+                    if (s.githubEnabled && s.githubRepoUrls.isNotEmpty()) {
+                        startGithubPolling()
                     }
 
                     // Auto-link Garmin habits that have cached data but no link.
@@ -4929,6 +4949,270 @@ class HabitViewModel(
             }
 
             Log.d(TAG, "Chess.com data applied to habits")
+        }
+    }
+
+    // ── GitHub Integration Methods ─────────────────────────────────────────────
+
+    /** Saves GitHub global settings (enabled flag + optional token). */
+    fun saveGithubSettings(enabled: Boolean, token: String) {
+        viewModelScope.launch {
+            val cleanToken = token.trim()
+            settingsRepo.saveGithubSettings(enabled, cleanToken)
+            _settings.value = _settings.value.copy(
+                githubEnabled = enabled,
+                githubToken = cleanToken
+            )
+            if (enabled && _settings.value.githubRepoUrls.isNotEmpty() && lastLoadedUri.isNotEmpty()) {
+                startGithubPolling()
+            } else {
+                stopGithubPolling()
+            }
+        }
+    }
+
+    /**
+     * Sets or clears the GitHub repo URL for a habit.
+     *
+     * When setting a URL, this automatically triggers a full backfill of the
+     * repository's commit history into the habit's daily values. When clearing
+     * (url is null/blank), the habit is unlinked from GitHub.
+     */
+    fun setGithubRepoUrl(habitName: String, url: String?) {
+        viewModelScope.launch {
+            val urls = _settings.value.githubRepoUrls.toMutableMap()
+            val metrics = _settings.value.githubMetrics.toMutableMap()
+
+            if (url.isNullOrBlank()) {
+                urls.remove(habitName)
+                metrics.remove(habitName)
+            } else {
+                urls[habitName] = url.trim()
+                // Default metric is LINES_CHANGED if not already set
+                if (habitName !in metrics) {
+                    metrics[habitName] = GitHubMetric.LINES_CHANGED.name
+                }
+            }
+
+            settingsRepo.saveGithubRepoUrls(urls)
+            settingsRepo.saveGithubMetrics(metrics)
+            _settings.value = _settings.value.copy(
+                githubRepoUrls = urls,
+                githubMetrics = metrics
+            )
+
+            // Auto-backfill when a URL is set
+            if (!url.isNullOrBlank()) {
+                // Ensure polling is running
+                if (_settings.value.githubEnabled && githubPollingJob == null) {
+                    startGithubPolling()
+                }
+                fetchGithubBacklog(habitName)
+            }
+        }
+    }
+
+    /** Sets the GitHub metric for a habit, then re-backfills to update values. */
+    fun setGithubMetric(habitName: String, metric: GitHubMetric) {
+        viewModelScope.launch {
+            val metrics = _settings.value.githubMetrics.toMutableMap()
+            metrics[habitName] = metric.name
+            settingsRepo.saveGithubMetrics(metrics)
+            _settings.value = _settings.value.copy(githubMetrics = metrics)
+
+            // Re-backfill with the new metric
+            if (habitName in _settings.value.githubRepoUrls) {
+                fetchGithubBacklog(habitName)
+            }
+        }
+    }
+
+    /**
+     * Fetches the entire commit history for a habit's linked repo and
+     * retroactively fills the habit's daily values.
+     *
+     * Called automatically when a repo URL is set, or manually from the
+     * edit panel's "Re-fetch" button.
+     */
+    fun fetchGithubBacklog(habitName: String) {
+        val s = _settings.value
+        val url = s.githubRepoUrls[habitName]
+        if (url.isNullOrBlank()) {
+            _githubSyncStatus.value = "No repo URL set for $habitName"
+            return
+        }
+        if (s.fileUri.isEmpty()) {
+            _githubSyncStatus.value = "Set habit database file first"
+            return
+        }
+
+        val parsed = githubRepo.parseRepoUrl(url)
+        if (parsed == null) {
+            _githubSyncStatus.value = "Invalid GitHub URL: $url"
+            return
+        }
+
+        val (owner, repo) = parsed
+        val metric = GitHubMetric.fromKey(s.githubMetrics[habitName])
+        val token = s.githubToken.takeIf { it.isNotBlank() }
+
+        viewModelScope.launch {
+            try {
+                _githubSyncStatus.value = "Fetching $owner/$repo history…"
+
+                var wasRateLimited = false
+
+                val dailyValues = githubRepo.fetchBacklog(
+                    owner, repo, metric, token,
+                    onProgress = { done, total ->
+                        _githubSyncStatus.value = "Fetching commits: $done / ~$total"
+                    },
+                    onRateLimited = { resetEpoch ->
+                        wasRateLimited = true
+                        val mins = ((resetEpoch - System.currentTimeMillis() / 1000) / 60).coerceAtLeast(0)
+                        _githubSyncStatus.value = "Rate limited by GitHub. Resets in ~${mins} min."
+                    }
+                )
+
+                if (dailyValues.isNotEmpty()) {
+                    // Reset this habit's data before applying new data (authoritative source)
+                    resetGithubHabitData(habitName, s)
+                    _githubSyncStatus.value = "Applying backlog to $habitName…"
+                    applyGithubData(habitName, dailyValues, _settings.value)
+                    _githubSyncStatus.value = "GitHub backlog complete: ${dailyValues.size} days for $habitName"
+                } else {
+                    // Don't wipe existing data — just report the issue
+                    if (wasRateLimited) {
+                        // Rate limit message already set by onRateLimited callback
+                        Log.w(TAG, "GitHub backlog for $habitName was rate limited, keeping existing data")
+                    } else {
+                        _githubSyncStatus.value = "No commits found for $owner/$repo. Check the URL is correct."
+                    }
+                }
+            } catch (e: GitHubRateLimitException) {
+                Log.e(TAG, "GitHub backlog rate limited for $habitName: ${e.message}")
+                val mins = ((e.resetEpochSeconds - System.currentTimeMillis() / 1000) / 60).coerceAtLeast(0)
+                _githubSyncStatus.value = "Rate limited by GitHub. Try again in ~${mins} min."
+            } catch (e: Exception) {
+                Log.e(TAG, "GitHub backlog failed for $habitName: ${e.message}")
+                _githubSyncStatus.value = "Backlog failed: ${e.message?.take(80)}"
+            }
+        }
+    }
+
+    /**
+     * Resets a single GitHub-linked habit's entries to 0 for all dates.
+     * Called before a full backlog re-fetch to ensure clean data.
+     */
+    private suspend fun resetGithubHabitData(habitName: String, s: AppSettings) {
+        val phoneUriStr = s.fileUri
+        if (phoneUriStr.isEmpty()) return
+        if (!dbLoaded) {
+            Log.w(TAG, "resetGithubHabitData: DB not loaded yet, refusing to persist (anti-wipe gate)")
+            return
+        }
+
+        val mutableDb = cachedPhoneDb.toMutableMap()
+        val entries = mutableDb[habitName] ?: return
+        val resetEntries = entries.mapValues { 0 }.toSortedMap()
+        if (resetEntries != entries) {
+            mutableDb[habitName] = resetEntries
+            cachedPhoneDb = mutableDb
+            rebuildHabitList()
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
+            }
+            Log.d(TAG, "GitHub habit '$habitName' reset to 0")
+        }
+    }
+
+    /**
+     * Applies GitHub daily values to a habit in the database.
+     * GitHub data is authoritative — values are always overwritten (not max'd).
+     */
+    private suspend fun applyGithubData(
+        habitName: String,
+        dailyValues: Map<String, Int>,
+        s: AppSettings
+    ) {
+        if (dailyValues.isEmpty()) return
+
+        val phoneUriStr = s.fileUri
+        if (phoneUriStr.isEmpty()) return
+        // ANTI-WIPE GATE
+        if (!dbLoaded) {
+            Log.w(TAG, "applyGithubData: DB not loaded yet, skipping persist (anti-wipe gate)")
+            return
+        }
+
+        val mutableDb = cachedPhoneDb.toMutableMap()
+        val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap()
+        var dbChanged = false
+        val todayStr = dateString(LocalDate.now())
+
+        for ((dateStr, value) in dailyValues) {
+            val existing = habitEntries[dateStr] ?: 0
+            if (value != existing) {
+                habitEntries[dateStr] = value
+                dbChanged = true
+            }
+        }
+        mutableDb[habitName] = habitEntries.toSortedMap()
+
+        if (dbChanged) {
+            cachedPhoneDb = mutableDb
+            rebuildHabitList()
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
+            }
+            Log.d(TAG, "GitHub data applied to '$habitName' (${dailyValues.size} days)")
+        }
+    }
+
+    /** Starts the periodic GitHub polling loop. */
+    private fun startGithubPolling() {
+        githubPollingJob?.cancel()
+        githubPollingJob = viewModelScope.launch {
+            // Initial sync shortly after start
+            delay(5_000)
+            while (true) {
+                syncGithubRecent()
+                delay(GITHUB_POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** Stops the GitHub polling loop. */
+    private fun stopGithubPolling() {
+        githubPollingJob?.cancel()
+        githubPollingJob = null
+    }
+
+    /**
+     * Fetches recent commits for all GitHub-linked habits and applies new data.
+     * Called periodically by the polling loop.
+     */
+    private suspend fun syncGithubRecent() {
+        val s = _settings.value
+        if (!s.githubEnabled || s.githubRepoUrls.isEmpty()) return
+        if (s.fileUri.isEmpty()) return
+        if (!dbLoaded) return
+
+        val token = s.githubToken.takeIf { it.isNotBlank() }
+
+        for ((habitName, url) in s.githubRepoUrls) {
+            try {
+                val parsed = githubRepo.parseRepoUrl(url) ?: continue
+                val (owner, repo) = parsed
+                val metric = GitHubMetric.fromKey(s.githubMetrics[habitName])
+
+                val dailyValues = githubRepo.fetchRecent(owner, repo, metric, token)
+                if (dailyValues.isNotEmpty()) {
+                    applyGithubData(habitName, dailyValues, _settings.value)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "GitHub sync failed for $habitName: ${e.message}")
+            }
         }
     }
 

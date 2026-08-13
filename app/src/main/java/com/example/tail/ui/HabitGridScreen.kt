@@ -115,6 +115,7 @@ import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.ChessComType
 import com.example.tail.data.GarminType
+import com.example.tail.data.GitHubMetric
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.RollingHigh
@@ -183,6 +184,7 @@ fun HabitGridScreen(
     val habitScreens by viewModel.habitScreens.collectAsState()
     val activeScreenIndex by viewModel.activeScreenIndex.collectAsState()
     val garminMonthlyData by viewModel.garminMonthlyData.collectAsState()
+    val githubSyncStatus by viewModel.githubSyncStatus.collectAsState()
     val context = LocalContext.current
 
     val today = LocalDate.now()
@@ -954,6 +956,19 @@ fun HabitGridScreen(
                         garminHabitLinks = settings.garminHabitLinks,
                         onSetGarminLink = { name, type -> viewModel.setGarminHabitLink(name, type) },
                         garminDateOfBirth = settings.garminDateOfBirth,
+                        githubContent = {
+                            if (settings.githubEnabled && selectedHabitName != null) {
+                                GitHubLinkToggleSection(
+                                    habitName = selectedHabitName,
+                                    repoUrls = settings.githubRepoUrls,
+                                    metrics = settings.githubMetrics,
+                                    syncStatus = githubSyncStatus,
+                                    onSetRepoUrl = { url -> viewModel.setGithubRepoUrl(selectedHabitName, url) },
+                                    onSetMetric = { metric -> viewModel.setGithubMetric(selectedHabitName, GitHubMetric.fromKey(metric)) },
+                                    onRefetch = { viewModel.fetchGithubBacklog(selectedHabitName) }
+                                )
+                            }
+                        },
                         movieBridgeContent = {
                             if (settings.bridgeEnabled && selectedHabitName != null &&
                                 selectedHabitName in settings.textInputHabits
@@ -2577,6 +2592,8 @@ private fun EditModeControlBar(
     garminHabitLinks: Map<String, String> = emptyMap(),
     onSetGarminLink: (String, String?) -> Unit = { _, _ -> },
     garminDateOfBirth: String = "",
+    // ── GitHub Integration (rendered by caller, like movieBridgeContent) ──
+    githubContent: @Composable () -> Unit = {},
     movieBridgeContent: @Composable () -> Unit = {},
     voiceTriggerEnabled: Boolean = false,
     voiceTriggerHabits: Set<String> = emptySet(),
@@ -4309,6 +4326,9 @@ private fun EditModeControlBar(
                         )
                     }
 
+                    // ── GitHub link toggle (rendered by caller) ──────────
+                    githubContent()
+
                     // ── Movie Bridge link toggle (rendered by caller) ───────
                     movieBridgeContent()
 
@@ -5920,6 +5940,174 @@ private fun GarminLinkToggleSection(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * GitHub link toggle section for the habit edit panel.
+ *
+ * When enabled, shows a text input for a public GitHub repo URL and a metric
+ * selector (Lines Changed, Commits, Additions, Deletions). Entering a URL
+ * automatically triggers a full history backfill.
+ *
+ * Extracted to its own composable to keep [EditModeControlBar]
+ * under the JVM method-size limit.
+ */
+@Composable
+private fun GitHubLinkToggleSection(
+    habitName: String,
+    repoUrls: Map<String, String>,
+    metrics: Map<String, String>,
+    syncStatus: String,
+    onSetRepoUrl: (String?) -> Unit,
+    onSetMetric: (String) -> Unit,
+    onRefetch: () -> Unit
+) {
+    val currentUrl = repoUrls[habitName]
+    val isLinked = currentUrl != null
+    var urlInput by remember(habitName, currentUrl) {
+        mutableStateOf(currentUrl ?: "")
+    }
+    var showUrlInput by remember(habitName) { mutableStateOf(false) }
+    var metricDropdownExpanded by remember { mutableStateOf(false) }
+    val currentMetric = GitHubMetric.fromKey(metrics[habitName])
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = "🐙 GitHub", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isLinked) "Linked: ${currentUrl?.take(40)}" else "Track a public GitHub repo",
+                color = if (isLinked) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isLinked || showUrlInput,
+            onCheckedChange = { checked ->
+                if (checked) {
+                    showUrlInput = true
+                } else {
+                    onSetRepoUrl(null)
+                    showUrlInput = false
+                    urlInput = ""
+                }
+            },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFAA88FF),
+                checkedTrackColor = Color(0xFF2A1A4A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    if (isLinked || showUrlInput || urlInput.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // URL input
+        OutlinedTextField(
+            value = urlInput,
+            onValueChange = { urlInput = it },
+            label = { Text("GitHub Repo URL", fontSize = 11.sp) },
+            placeholder = { Text("https://github.com/owner/repo", fontSize = 11.sp) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = TextStyle(fontSize = 12.sp, color = Color(0xFFCCCCCC))
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Metric selector dropdown
+            Box(modifier = Modifier.weight(1f)) {
+                Button(
+                    onClick = { metricDropdownExpanded = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A1A4A)),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("📊 ${currentMetric.label}", fontSize = 11.sp, color = Color(0xFFAA88FF))
+                }
+                DropdownMenu(
+                    expanded = metricDropdownExpanded,
+                    onDismissRequest = { metricDropdownExpanded = false }
+                ) {
+                    GitHubMetric.entries.forEach { metric ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(metric.label, fontSize = 12.sp)
+                                    Text(metric.description, fontSize = 10.sp, color = Color(0xFF888888))
+                                }
+                            },
+                            onClick = {
+                                onSetMetric(metric.name)
+                                metricDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Save/apply URL button
+            Button(
+                onClick = {
+                    if (urlInput.isNotBlank()) {
+                        onSetRepoUrl(urlInput.trim())
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A1A4A)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("Apply", fontSize = 11.sp, color = Color(0xFFAA88FF))
+            }
+
+            // Cancel button (only when not yet linked)
+            if (showUrlInput && !isLinked) {
+                Button(
+                    onClick = {
+                        showUrlInput = false
+                        urlInput = ""
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A1A1A)),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("Cancel", fontSize = 11.sp, color = Color(0xFF888888))
+                }
+            }
+        }
+
+        // Re-fetch button
+        if (isLinked) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Button(
+                onClick = onRefetch,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A1A3A)),
+                modifier = Modifier.fillMaxWidth().height(32.dp)
+            ) {
+                Text("🔄 Re-fetch History", fontSize = 11.sp, color = Color(0xFF88AAFF))
+            }
+        }
+
+        // Sync status
+        if (syncStatus.isNotBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = syncStatus,
+                color = Color(0xFFAAAAAA),
+                fontSize = 10.sp,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }

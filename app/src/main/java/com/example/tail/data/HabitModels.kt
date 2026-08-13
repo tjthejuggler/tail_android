@@ -513,6 +513,33 @@ data class AppSettings(
      */
     val chessComHabitLinks: Map<String, String> = emptyMap(),
 
+    // ── GitHub Integration settings ────────────────────────────────────────
+    /**
+     * Whether GitHub integration is enabled (global toggle in Settings).
+     * When enabled, the per-habit edit panel shows a GitHub section where the
+     * user can link a habit to a public GitHub repository.
+     */
+    val githubEnabled: Boolean = false,
+    /**
+     * Optional GitHub Personal Access Token (classic or fine-grained).
+     * When set, raises the API rate limit from 60 to 5 000 requests/hour.
+     * Only needs public_repo (or no scopes for public repos) read access.
+     */
+    val githubToken: String = "",
+    /**
+     * Maps habit name → public GitHub repository URL for habits linked to
+     * GitHub data.  When a habit is in this map, its daily count is auto-set
+     * from the repository's commit activity.
+     *
+     * Example value: "https://github.com/torvalds/linux"
+     */
+    val githubRepoUrls: Map<String, String> = emptyMap(),
+    /**
+     * Maps habit name → GitHubMetric.name for the metric to track.
+     * Defaults to LINES_CHANGED when absent.
+     */
+    val githubMetrics: Map<String, String> = emptyMap(),
+
     // ── Voice Trigger settings ────────────────────────────────────────────
     /** Global on/off for voice trigger feature (must be enabled in Settings). */
     val voiceTriggerEnabled: Boolean = false,

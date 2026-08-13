@@ -78,6 +78,13 @@ private val KEY_GARMIN_APP_TOKEN = stringPreferencesKey("garmin_app_token")
 private val KEY_GARMIN_DATE_OF_BIRTH = stringPreferencesKey("garmin_date_of_birth")
 // Stored as "habitName\x00TYPE|||habitName\x00TYPE" pairs
 private val KEY_GARMIN_HABIT_LINKS = stringPreferencesKey("garmin_habit_links")
+// GitHub integration settings
+private val KEY_GITHUB_ENABLED = booleanPreferencesKey("github_enabled")
+private val KEY_GITHUB_TOKEN = stringPreferencesKey("github_token")
+// Stored as "habitName\x00repoUrl|||habitName\x00repoUrl" pairs
+private val KEY_GITHUB_REPO_URLS = stringPreferencesKey("github_repo_urls")
+// Stored as "habitName\x00METRIC|||habitName\x00METRIC" pairs
+private val KEY_GITHUB_METRICS = stringPreferencesKey("github_metrics")
 // Tail Bridge settings (PC↔Phone communication protocol)
 private val KEY_BRIDGE_ENABLED = booleanPreferencesKey("bridge_enabled")
 private val KEY_BRIDGE_URL = stringPreferencesKey("bridge_url")
@@ -612,6 +619,8 @@ class SettingsRepository(private val context: Context) {
         val customInputAmountsRaw = prefs[KEY_CUSTOM_INPUT_AMOUNTS] ?: ""
         val customInputRecentAmountsRaw = prefs[KEY_CUSTOM_INPUT_RECENT_AMOUNTS] ?: ""
         val garminHabitLinksRaw = prefs[KEY_GARMIN_HABIT_LINKS] ?: ""
+        val githubRepoUrlsRaw = prefs[KEY_GITHUB_REPO_URLS] ?: ""
+        val githubMetricsRaw = prefs[KEY_GITHUB_METRICS] ?: ""
         val customPointRangesRaw = prefs[KEY_CUSTOM_POINT_RANGES] ?: ""
         val graphValueModeHabitsRaw = prefs[KEY_GRAPH_VALUE_MODE_HABITS] ?: ""
         val graphMetricSelectionRaw = prefs[KEY_GRAPH_METRIC_SELECTION] ?: ""
@@ -678,6 +687,10 @@ class SettingsRepository(private val context: Context) {
             garminAppToken = prefs[KEY_GARMIN_APP_TOKEN] ?: "",
             garminDateOfBirth = prefs[KEY_GARMIN_DATE_OF_BIRTH] ?: "",
             garminHabitLinks = decodeFileUriMap(garminHabitLinksRaw),
+            githubEnabled = prefs[KEY_GITHUB_ENABLED] ?: false,
+            githubToken = prefs[KEY_GITHUB_TOKEN] ?: "",
+            githubRepoUrls = decodeFileUriMap(githubRepoUrlsRaw),
+            githubMetrics = decodeFileUriMap(githubMetricsRaw),
             bridgeEnabled = prefs[KEY_BRIDGE_ENABLED] ?: false,
             bridgeUrl = prefs[KEY_BRIDGE_URL] ?: "",
             bridgeToken = prefs[KEY_BRIDGE_TOKEN] ?: "",
@@ -971,6 +984,40 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_CHESS_COM_ENABLED] = enabled
             prefs[KEY_CHESS_COM_USERNAME] = username
             prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] = encodeIntMap(minutesPerIncrement)
+        }
+    }
+
+    // ── GitHub Integration ────────────────────────────────────────────────
+
+    /** Saves the GitHub enabled flag. */
+    suspend fun saveGithubEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_GITHUB_ENABLED] = enabled }
+    }
+
+    /** Saves the optional GitHub Personal Access Token. */
+    suspend fun saveGithubToken(token: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_GITHUB_TOKEN] = token }
+    }
+
+    /** Saves the map of habit name → GitHub repo URL. */
+    suspend fun saveGithubRepoUrls(urls: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GITHUB_REPO_URLS] = encodeFileUriMap(urls)
+        }
+    }
+
+    /** Saves the map of habit name → GitHubMetric name. */
+    suspend fun saveGithubMetrics(metrics: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GITHUB_METRICS] = encodeFileUriMap(metrics)
+        }
+    }
+
+    /** Saves all GitHub settings at once. */
+    suspend fun saveGithubSettings(enabled: Boolean, token: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GITHUB_ENABLED] = enabled
+            prefs[KEY_GITHUB_TOKEN] = token
         }
     }
 
