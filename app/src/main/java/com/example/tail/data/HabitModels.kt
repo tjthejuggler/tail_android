@@ -199,6 +199,10 @@ fun defaultLabelForValueKey(valueKey: String): String = when (valueKey) {
     GRAPH_METRIC_CARBS -> "Carbs"
     GRAPH_METRIC_FAT -> "Fat"
     GRAPH_METRIC_IMDB -> "IMDb Avg"
+    GRAPH_METRIC_GITHUB_LINES -> "Lines Changed"
+    GRAPH_METRIC_GITHUB_COMMITS -> "Commits"
+    GRAPH_METRIC_GITHUB_ADDITIONS -> "Additions"
+    GRAPH_METRIC_GITHUB_DELETIONS -> "Deletions"
     else -> valueKey
 }
 
@@ -247,6 +251,16 @@ const val GRAPH_METRIC_FAT = "fat"
  * Only available for movie-type habits linked to the bridge with an OMDb API key.
  */
 const val GRAPH_METRIC_IMDB = "imdb"
+
+// ── GitHub graph metrics (GitHub-type habits only) ───────────────────────────
+/** Total lines changed = additions + deletions per day (GitHub habits only). */
+const val GRAPH_METRIC_GITHUB_LINES = "github_lines"
+/** Number of commits per day (GitHub habits only). */
+const val GRAPH_METRIC_GITHUB_COMMITS = "github_commits"
+/** Lines added per day (GitHub habits only). */
+const val GRAPH_METRIC_GITHUB_ADDITIONS = "github_additions"
+/** Lines deleted per day (GitHub habits only). */
+const val GRAPH_METRIC_GITHUB_DELETIONS = "github_deletions"
 
 /**
  * A selectable graph metric option shown as a toggle button.

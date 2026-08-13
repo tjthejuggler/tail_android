@@ -48,6 +48,10 @@ import com.example.tail.data.GRAPH_METRIC_PROTEIN
 import com.example.tail.data.GRAPH_METRIC_CARBS
 import com.example.tail.data.GRAPH_METRIC_FAT
 import com.example.tail.data.GRAPH_METRIC_IMDB
+import com.example.tail.data.GRAPH_METRIC_GITHUB_LINES
+import com.example.tail.data.GRAPH_METRIC_GITHUB_COMMITS
+import com.example.tail.data.GRAPH_METRIC_GITHUB_ADDITIONS
+import com.example.tail.data.GRAPH_METRIC_GITHUB_DELETIONS
 import com.example.tail.data.GraphMetricOption
 import com.example.tail.data.OmdbService
 import com.example.tail.data.ImdbRatingCache
@@ -270,6 +274,18 @@ class HabitViewModel(
 
     /** Interval between GitHub polls (30 minutes — GitHub API is rate-limited). */
     private val GITHUB_POLL_INTERVAL_MS = 30 * 60 * 1000L
+
+    /**
+     * In-memory cache of all four GitHub metrics per day, keyed by habit name.
+     * Populated during [fetchGithubBacklog] so the graph can display every
+     * metric simultaneously without additional API calls.
+     */
+    private var _githubDailyCache: Map<String, Map<String, GitHubRepository.GithubDailyMetrics>> = emptyMap()
+
+    /** Returns true if [habitName] is linked to a GitHub repository. */
+    fun isGithubHabit(habitName: String): Boolean {
+        return habitName in _settings.value.githubRepoUrls
+    }
 
     // ── Garmin Integration ────────────────────────────────────────────────────
     private val garminRepo = GarminRepository(context)
@@ -3807,6 +3823,13 @@ class HabitViewModel(
             metrics.add(GraphMetricOption(GRAPH_METRIC_CARBS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_CARBS, labels)))
             metrics.add(GraphMetricOption(GRAPH_METRIC_FAT, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_FAT, labels)))
         }
+        // GitHub metrics — available for habits linked to a GitHub repository
+        if (isGithubHabit(habitName)) {
+            metrics.add(GraphMetricOption(GRAPH_METRIC_GITHUB_LINES, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_GITHUB_LINES, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_GITHUB_COMMITS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_GITHUB_COMMITS, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_GITHUB_ADDITIONS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_GITHUB_ADDITIONS, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_GITHUB_DELETIONS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_GITHUB_DELETIONS, labels)))
+        }
         return metrics
     }
 
@@ -3877,7 +3900,12 @@ class HabitViewModel(
         val mealCalories: Int? = null,
         val mealProtein: Int? = null,   // rounded grams
         val mealCarbs: Int? = null,     // rounded grams
-        val mealFat: Int? = null        // rounded grams
+        val mealFat: Int? = null,       // rounded grams
+        // ── GitHub habit data (populated only for GitHub-type habits) ──
+        val githubLinesChanged: Int? = null,
+        val githubCommits: Int? = null,
+        val githubAdditions: Int? = null,
+        val githubDeletions: Int? = null
     )
 
     /**
@@ -4003,6 +4031,7 @@ class HabitViewModel(
             
             val secVal = secondaryEntries?.get(ds)
             val mealDay = mealAggregates[ds]
+            val ghMetrics = _githubDailyCache[habitName]?.get(ds)
             result.add(
                 GraphDataPoint(
                     date = cursor,
@@ -4016,7 +4045,11 @@ class HabitViewModel(
                     mealCalories = mealDay?.calories,
                     mealProtein = mealDay?.proteinGrams?.roundToInt(),
                     mealCarbs = mealDay?.carbsGrams?.roundToInt(),
-                    mealFat = mealDay?.fatGrams?.roundToInt()
+                    mealFat = mealDay?.fatGrams?.roundToInt(),
+                    githubLinesChanged = ghMetrics?.linesChanged,
+                    githubCommits = ghMetrics?.commits,
+                    githubAdditions = ghMetrics?.additions,
+                    githubDeletions = ghMetrics?.deletions
                 )
             )
             cursor = cursor.plusDays(1)
@@ -5062,8 +5095,9 @@ class HabitViewModel(
 
                 var wasRateLimited = false
 
-                val dailyValues = githubRepo.fetchBacklog(
-                    owner, repo, metric, token,
+                // Fetch ALL four metrics in a single pass (same API calls as before)
+                val allMetrics = githubRepo.fetchAllMetricsBacklog(
+                    owner, repo, token,
                     onProgress = { done, total ->
                         _githubSyncStatus.value = "Fetching commits: $done / ~$total"
                     },
@@ -5074,12 +5108,33 @@ class HabitViewModel(
                     }
                 )
 
+                // Cache all four metrics for the graph
+                _githubDailyCache = _githubDailyCache.toMutableMap().apply {
+                    put(habitName, allMetrics)
+                }
+
+                // Extract the selected metric for storing in the habits DB (value1)
+                val dailyValues = allMetrics.mapValues { (_, m) ->
+                    when (metric) {
+                        GitHubMetric.LINES_CHANGED -> m.linesChanged
+                        GitHubMetric.COMMITS -> m.commits
+                        GitHubMetric.ADDITIONS -> m.additions
+                        GitHubMetric.DELETIONS -> m.deletions
+                    }
+                }.filterValues { it != 0 }
+
                 if (dailyValues.isNotEmpty()) {
                     // Reset this habit's data before applying new data (authoritative source)
                     resetGithubHabitData(habitName, s)
                     _githubSyncStatus.value = "Applying backlog to $habitName…"
                     applyGithubData(habitName, dailyValues, _settings.value)
                     _githubSyncStatus.value = "GitHub backlog complete: ${dailyValues.size} days for $habitName"
+                } else if (allMetrics.isNotEmpty()) {
+                    // All metrics data exists but the selected metric has no non-zero days
+                    // (e.g. a day with only deletions when metric is ADDITIONS).
+                    // Still cache and report success.
+                    resetGithubHabitData(habitName, s)
+                    _githubSyncStatus.value = "GitHub backlog complete: ${allMetrics.size} days for $habitName"
                 } else {
                     // Don't wipe existing data — just report the issue
                     if (wasRateLimited) {

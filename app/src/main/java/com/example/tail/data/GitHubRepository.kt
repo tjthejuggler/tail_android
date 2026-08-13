@@ -172,6 +172,143 @@ class GitHubRepository(private val context: Context) {
     }
 
     /**
+     * All four GitHub metrics for a single day.
+     * Used by [fetchAllMetricsBacklog] so the graph can display every metric
+     * simultaneously without additional API calls.
+     */
+    data class GithubDailyMetrics(
+        val linesChanged: Int,
+        val commits: Int,
+        val additions: Int,
+        val deletions: Int
+    )
+
+    /**
+     * Fetches the entire commit history and computes **all four** GitHub metrics
+     * (lines changed, commits, additions, deletions) per day in a single pass.
+     *
+     * Uses the same contributor-stats API call as [fetchBacklog] — no extra
+     * requests are needed because the weekly stats already contain additions,
+     * deletions, and commit counts.
+     *
+     * @return Map of "YYYY-MM-DD" → [GithubDailyMetrics]. Empty if rate-limited
+     *         before any data is collected.
+     */
+    suspend fun fetchAllMetricsBacklog(
+        owner: String,
+        repo: String,
+        token: String? = null,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        onRateLimited: (Long) -> Unit = {}
+    ): Map<String, GithubDailyMetrics> = withContext(Dispatchers.IO) {
+
+        // ── Step 1: Fetch all commit dates (cheap — 100 commits per request) ──
+        val dailyCommitCounts = mutableMapOf<String, Int>()
+        var page = 1
+        var totalCommits = 0
+        var hitRateLimit = false
+
+        while (!hitRateLimit) {
+            val commits = try {
+                service.fetchCommits(owner, repo, page = page, token = token)
+            } catch (e: GitHubRateLimitException) {
+                onRateLimited(e.resetEpochSeconds)
+                hitRateLimit = true
+                emptyList()
+            } catch (e: Exception) {
+                break
+            }
+
+            if (commits.isEmpty()) break
+
+            for (commit in commits) {
+                val dateStr = parseCommitDate(commit.date) ?: continue
+                dailyCommitCounts[dateStr] = (dailyCommitCounts[dateStr] ?: 0) + 1
+                totalCommits++
+            }
+
+            val estimatedTotal = if (commits.size == 100) totalCommits + 100 else totalCommits
+            onProgress(totalCommits, estimatedTotal)
+
+            if (commits.size < 100) break
+            page++
+            delay(100)
+        }
+
+        // ── Step 2: Fetch aggregated weekly stats (1 API call) ──
+        val weeklyStats = try {
+            service.fetchContributorStats(owner, repo, token)
+        } catch (e: GitHubRateLimitException) {
+            onRateLimited(e.resetEpochSeconds)
+            emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        if (weeklyStats.isEmpty()) {
+            Log.w(TAG, "No weekly stats for all-metrics backlog — returning empty")
+            return@withContext emptyMap()
+        }
+
+        // ── Step 3: Distribute ALL four weekly totals across days with commits ──
+        val dailyLines = mutableMapOf<String, Int>()
+        val dailyCommits = mutableMapOf<String, Int>()
+        val dailyAdditions = mutableMapOf<String, Int>()
+        val dailyDeletions = mutableMapOf<String, Int>()
+
+        for (week in weeklyStats) {
+            if (week.commits == 0 && week.additions == 0 && week.deletions == 0) continue
+
+            val weekStartDate = Instant.ofEpochSecond(week.weekStart)
+                .atZone(ZoneId.systemDefault()).toLocalDate()
+            val weekDates = (0..6).map { d -> dateString(weekStartDate.plusDays(d.toLong())) }
+            val commitDays = weekDates.filter { dailyCommitCounts.containsKey(it) }
+
+            if (commitDays.isEmpty()) {
+                // No commit data for this week — assign to week start
+                val d = weekDates[0]
+                dailyLines[d] = (dailyLines[d] ?: 0) + week.total
+                dailyCommits[d] = (dailyCommits[d] ?: 0) + week.commits
+                dailyAdditions[d] = (dailyAdditions[d] ?: 0) + week.additions
+                dailyDeletions[d] = (dailyDeletions[d] ?: 0) + week.deletions
+            } else {
+                val totalCommitsThisWeek = commitDays.sumOf { dailyCommitCounts[it] ?: 0 }
+                if (totalCommitsThisWeek > 0) {
+                    for (day in commitDays) {
+                        val proportion = (dailyCommitCounts[day] ?: 0).toDouble() / totalCommitsThisWeek
+                        val lc = (week.total * proportion).toInt().coerceAtLeast(0)
+                        val co = (week.commits * proportion).toInt().coerceAtLeast(0)
+                        val ad = (week.additions * proportion).toInt().coerceAtLeast(0)
+                        val de = (week.deletions * proportion).toInt().coerceAtLeast(0)
+                        if (lc > 0) dailyLines[day] = (dailyLines[day] ?: 0) + lc
+                        if (co > 0) dailyCommits[day] = (dailyCommits[day] ?: 0) + co
+                        if (ad > 0) dailyAdditions[day] = (dailyAdditions[day] ?: 0) + ad
+                        if (de > 0) dailyDeletions[day] = (dailyDeletions[day] ?: 0) + de
+                    }
+                }
+            }
+        }
+
+        // Merge all four maps into GithubDailyMetrics
+        val allDates = dailyLines.keys + dailyCommits.keys + dailyAdditions.keys + dailyDeletions.keys
+        val result = mutableMapOf<String, GithubDailyMetrics>()
+        for (d in allDates) {
+            result[d] = GithubDailyMetrics(
+                linesChanged = dailyLines[d] ?: 0,
+                commits = dailyCommits[d] ?: 0,
+                additions = dailyAdditions[d] ?: 0,
+                deletions = dailyDeletions[d] ?: 0
+            )
+        }
+
+        Log.d(TAG, "All-metrics backlog for $owner/$repo: ${result.size} days, " +
+            "$totalCommits commits, ${weeklyStats.size} weeks of stats" +
+            if (hitRateLimit) " (partial — rate limited)" else "")
+
+        result
+    }
+
+    /**
      * Fallback: fetches per-commit stats with SHA-keyed caching.
      * Used only when the contributor stats API is unavailable.
      * Reuses already-fetched [dailyCommitCounts] to know which commits to process.

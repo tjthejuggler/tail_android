@@ -717,6 +717,10 @@ private fun displayValueForMetric(
     com.example.tail.data.GRAPH_METRIC_PROTEIN -> dp.mealProtein ?: 0
     com.example.tail.data.GRAPH_METRIC_CARBS -> dp.mealCarbs ?: 0
     com.example.tail.data.GRAPH_METRIC_FAT -> dp.mealFat ?: 0
+    com.example.tail.data.GRAPH_METRIC_GITHUB_LINES -> dp.githubLinesChanged ?: 0
+    com.example.tail.data.GRAPH_METRIC_GITHUB_COMMITS -> dp.githubCommits ?: 0
+    com.example.tail.data.GRAPH_METRIC_GITHUB_ADDITIONS -> dp.githubAdditions ?: 0
+    com.example.tail.data.GRAPH_METRIC_GITHUB_DELETIONS -> dp.githubDeletions ?: 0
     else -> dp.pointsValue
 }
 
@@ -741,6 +745,10 @@ fun metricLabel(metric: String): String = when (metric) {
     com.example.tail.data.GRAPH_METRIC_PROTEIN -> "Protein"
     com.example.tail.data.GRAPH_METRIC_CARBS -> "Carbs"
     com.example.tail.data.GRAPH_METRIC_FAT -> "Fat"
+    com.example.tail.data.GRAPH_METRIC_GITHUB_LINES -> "Lines Changed"
+    com.example.tail.data.GRAPH_METRIC_GITHUB_COMMITS -> "Commits"
+    com.example.tail.data.GRAPH_METRIC_GITHUB_ADDITIONS -> "Additions"
+    com.example.tail.data.GRAPH_METRIC_GITHUB_DELETIONS -> "Deletions"
     else -> "Points"
 }
 
