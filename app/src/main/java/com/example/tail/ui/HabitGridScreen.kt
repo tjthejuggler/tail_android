@@ -3485,7 +3485,8 @@ private fun EditModeControlBar(
                     if (isTextInput && textInputFileUris.containsKey(selectedHabitName)) {
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        if (todayTextEntries.isNotEmpty()) {
+                        val visibleTextEntries = todayTextEntries.filter { it.second.isNotBlank() }
+                        if (visibleTextEntries.isNotEmpty()) {
                             Text(
                                 text = "  Today's entries",
                                 color = Color(0xFF88CCFF),
@@ -3493,7 +3494,7 @@ private fun EditModeControlBar(
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(4.dp))
-                            for ((timestamp, text) in todayTextEntries) {
+                            for ((timestamp, text) in visibleTextEntries) {
                                 var isEditing by remember { mutableStateOf(false) }
                                 var editText by remember { mutableStateOf(text) }
 
