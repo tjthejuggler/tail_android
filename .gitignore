@@ -17,6 +17,28 @@ local.properties
 scripts/_seed_locations_out/
 /garmin_proxy/venv
 
+# Python bytecode and cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Kotlin compiler error logs
+.kotlin/
+
+# Log files
+*.log
+
+# Environment / secrets (keep .env.example tracked)
+.env
+
+# Codebase memory MCP state
+.codebase-memory/
+
+# Runtime data / cache files (regenerate automatically)
+tail_bridge/movie_cache.json
+tail_bridge/movie_watcher_state.json
+meditation_output.json
+
 # Garmin data files (contain personal health data)
 garmin_cache.json
 garmin_fetcher_state.json
