@@ -2126,9 +2126,6 @@ private fun AddSecondaryLocationDialog(
     var selectedMinute by remember { mutableStateOf(now.minute) }
     var editingIndex by remember { mutableStateOf<Int?>(null) }
 
-    val hours = (0..23).map { String.format("%02d", it) }
-    val minutes = (0..59).map { String.format("%02d", it) }
-
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -2165,28 +2162,14 @@ private fun AddSecondaryLocationDialog(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                WheelPicker(
-                                    items = hours,
-                                    selectedIndex = sec.timeMinutes / 60,
-                                    onSelectedChange = { h ->
-                                        onUpdateTime(idx, h * 60 + sec.timeMinutes % 60)
+                                TimeWheelPicker(
+                                    hour24 = sec.timeMinutes / 60,
+                                    minute = sec.timeMinutes % 60,
+                                    onTimeChange = { h, m ->
+                                        onUpdateTime(idx, h * 60 + m)
                                     },
-                                    itemHeight = 28.dp,
-                                    visibleItems = 3,
                                     accent = accent,
-                                    modifier = Modifier.width(56.dp)
-                                )
-                                Text(":", color = Color(0xFF888888), fontSize = 16.sp, modifier = Modifier.padding(horizontal = 2.dp))
-                                WheelPicker(
-                                    items = minutes,
-                                    selectedIndex = sec.timeMinutes % 60,
-                                    onSelectedChange = { m ->
-                                        onUpdateTime(idx, (sec.timeMinutes / 60) * 60 + m)
-                                    },
-                                    itemHeight = 28.dp,
-                                    visibleItems = 3,
-                                    accent = accent,
-                                    modifier = Modifier.width(56.dp)
+                                    compact = true
                                 )
                             }
                             TextButton(onClick = { editingIndex = null }) {
@@ -2265,32 +2248,16 @@ private fun AddSecondaryLocationDialog(
             Text("Time of visit:", color = Color(0xFF888888), fontSize = 11.sp)
             Spacer(Modifier.height(8.dp))
 
-            // 24-hour wheel pickers for hours and minutes
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                WheelPicker(
-                    items = hours,
-                    selectedIndex = selectedHour,
-                    onSelectedChange = { selectedHour = it },
-                    itemHeight = 36.dp,
-                    visibleItems = 5,
-                    accent = accent,
-                    modifier = Modifier.width(80.dp)
-                )
-                Text(":", color = Color(0xFF888888), fontSize = 24.sp, modifier = Modifier.padding(horizontal = 8.dp))
-                WheelPicker(
-                    items = minutes,
-                    selectedIndex = selectedMinute,
-                    onSelectedChange = { selectedMinute = it },
-                    itemHeight = 36.dp,
-                    visibleItems = 5,
-                    accent = accent,
-                    modifier = Modifier.width(80.dp)
-                )
-            }
+            // Wheel-based time picker with AM/PM
+            TimeWheelPicker(
+                hour24 = selectedHour,
+                minute = selectedMinute,
+                onTimeChange = { h, m ->
+                    selectedHour = h
+                    selectedMinute = m
+                },
+                accent = accent
+            )
 
             Spacer(Modifier.height(12.dp))
 

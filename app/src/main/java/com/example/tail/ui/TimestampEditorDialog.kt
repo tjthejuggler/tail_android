@@ -29,6 +29,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -46,8 +47,8 @@ import java.time.format.DateTimeFormatter
  * Dialog for viewing, editing, deleting, and adding habit increment timestamps
  * for a specific habit on a specific day.
  *
- * When editing a timestamp, shows the same +/- hour/minute offset buttons
- * as the QuickTimestampEditorDialog (increment toast "Edit Time" flow).
+ * When editing or adding a timestamp, shows a scrolling wheel time picker
+ * (Hour · Minute · AM/PM) **plus** quick +/- hour/minute offset buttons.
  *
  * @param habitName The habit being edited
  * @param timestamps Current list of "HH:mm:ss" timestamps for today
@@ -67,11 +68,15 @@ fun TimestampEditorDialog(
 ) {
     // -1 = not editing; >= 0 = editing that index; Int.MAX_VALUE = adding new
     var editingIndex by remember { mutableStateOf(-1) }
-    var editingOffsetMinutes by remember { mutableStateOf(0) }
+
+    // Absolute time state for editing an existing timestamp
+    var editingHour24 by remember { mutableIntStateOf(0) }
+    var editingMinute by remember { mutableIntStateOf(0) }
     var editingOriginalTime by remember { mutableStateOf(LocalTime.MIDNIGHT) }
 
-    // For "add new" mode we start from current time
-    var addOffsetMinutes by remember { mutableStateOf(0) }
+    // Absolute time state for "add new" mode
+    var addHour24 by remember { mutableIntStateOf(LocalTime.now().hour) }
+    var addMinute by remember { mutableIntStateOf(LocalTime.now().minute) }
     var addOriginalTime by remember { mutableStateOf(LocalTime.now()) }
 
     val isAddingNew = editingIndex == Int.MAX_VALUE
@@ -104,17 +109,21 @@ fun TimestampEditorDialog(
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 300.dp)
+                            .heightIn(max = 380.dp)
                     ) {
                         itemsIndexed(timestamps) { index, time ->
                             if (editingIndex == index) {
-                                // Inline offset-button edit mode
-                                TimestampOffsetEditor(
+                                // Inline wheel editor mode
+                                TimestampWheelEditor(
                                     originalTime = editingOriginalTime,
-                                    offsetMinutes = editingOffsetMinutes,
-                                    onOffsetChange = { editingOffsetMinutes += it },
+                                    hour24 = editingHour24,
+                                    minute = editingMinute,
+                                    onTimeChange = { h, m ->
+                                        editingHour24 = h
+                                        editingMinute = m
+                                    },
                                     onConfirm = {
-                                        val adjusted = editingOriginalTime.plusMinutes(editingOffsetMinutes.toLong())
+                                        val adjusted = LocalTime.of(editingHour24, editingMinute)
                                         onUpdateTimestamp(index, adjusted.format(DateTimeFormatter.ofPattern("HH:mm:ss")))
                                         editingIndex = -1
                                     },
@@ -148,10 +157,12 @@ fun TimestampEditorDialog(
                                     IconButton(
                                         onClick = {
                                             editingIndex = index
-                                            editingOffsetMinutes = 0
-                                            editingOriginalTime = runCatching {
+                                            val parsed = runCatching {
                                                 LocalTime.parse(time)
                                             }.getOrDefault(LocalTime.now())
+                                            editingOriginalTime = parsed
+                                            editingHour24 = parsed.hour
+                                            editingMinute = parsed.minute
                                         },
                                         modifier = Modifier.size(28.dp)
                                     ) {
@@ -177,15 +188,19 @@ fun TimestampEditorDialog(
                             }
                         }
 
-                        // "Add new" inline offset editor
+                        // "Add new" inline wheel editor
                         if (isAddingNew) {
                             item {
-                                TimestampOffsetEditor(
+                                TimestampWheelEditor(
                                     originalTime = addOriginalTime,
-                                    offsetMinutes = addOffsetMinutes,
-                                    onOffsetChange = { addOffsetMinutes += it },
+                                    hour24 = addHour24,
+                                    minute = addMinute,
+                                    onTimeChange = { h, m ->
+                                        addHour24 = h
+                                        addMinute = m
+                                    },
                                     onConfirm = {
-                                        val adjusted = addOriginalTime.plusMinutes(addOffsetMinutes.toLong())
+                                        val adjusted = LocalTime.of(addHour24, addMinute)
                                         onAddTimestamp(adjusted.format(DateTimeFormatter.ofPattern("HH:mm:ss")))
                                         editingIndex = -1
                                     },
@@ -202,8 +217,10 @@ fun TimestampEditorDialog(
                 if (!isAddingNew && editingIndex == -1) {
                     Button(
                         onClick = {
-                            addOffsetMinutes = 0
-                            addOriginalTime = LocalTime.now()
+                            val now = LocalTime.now()
+                            addOriginalTime = now
+                            addHour24 = now.hour
+                            addMinute = now.minute
                             editingIndex = Int.MAX_VALUE
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A3A)),
@@ -234,20 +251,30 @@ fun TimestampEditorDialog(
 }
 
 /**
- * Inline offset-button editor for a single timestamp.
- * Shows the current adjusted time, +/- hour and minute buttons, and confirm/cancel.
+ * Inline wheel-based editor for a single timestamp.
+ * Shows a scrolling wheel time picker and confirm/cancel.
+ *
+ * @param originalTime The original time before editing (for offset display)
+ * @param hour24 Current hour in24-hour format being edited
+ * @param minute Current minute being edited
+ * @param onTimeChange Called when the wheel changes the time
+ * @param onConfirm Called when the user confirms the edit
+ * @param onCancel Called when the user cancels the edit
  */
 @Composable
-private fun TimestampOffsetEditor(
+private fun TimestampWheelEditor(
     originalTime: LocalTime,
-    offsetMinutes: Int,
-    onOffsetChange: (Int) -> Unit,
+    hour24: Int,
+    minute: Int,
+    onTimeChange: (Int, Int) -> Unit,
     onConfirm: () -> Unit,
     onCancel: () -> Unit
 ) {
-    val displayTime = remember(originalTime, offsetMinutes) {
-        val adjusted = originalTime.plusMinutes(offsetMinutes.toLong())
-        adjusted.format(DateTimeFormatter.ofPattern("h:mm a"))
+    // Compute offset from original for display
+    val offsetMinutes = remember(hour24, minute, originalTime) {
+        val currentTotal = hour24 * 60 + minute
+        val originalTotal = originalTime.hour * 60 + originalTime.minute
+        currentTotal - originalTotal
     }
 
     Column(
@@ -258,22 +285,16 @@ private fun TimestampOffsetEditor(
             .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Time display
-        Box(
-            modifier = Modifier
-                .background(Color(0xFF2A2A2E), RoundedCornerShape(8.dp))
-                .border(1.dp, Color(0xFF555555), RoundedCornerShape(8.dp))
-                .padding(horizontal = 16.dp, vertical = 6.dp)
-        ) {
-            Text(
-                text = displayTime,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF88DDFF),
-                fontFamily = FontFamily.Monospace
-            )
-        }
+        // ── Wheel time picker ──────────────────────────────────────────
+        TimeWheelPicker(
+            hour24 = hour24,
+            minute = minute,
+            onTimeChange = onTimeChange,
+            accent = Color(0xFF88DDFF),
+            compact = true
+        )
 
+        // Offset indicator
         if (offsetMinutes != 0) {
             val offsetHours = offsetMinutes / 60
             val offsetMins = offsetMinutes % 60
@@ -300,39 +321,7 @@ private fun TimestampOffsetEditor(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Hours row
-        Text("Hours", fontSize = 10.sp, color = Color(0xFF888888))
-        Spacer(modifier = Modifier.height(3.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(-3, -2, -1, 1, 2, 3).forEach { offset ->
-                OffsetButton(
-                    label = if (offset > 0) "+${offset}h" else "${offset}h",
-                    onClick = { onOffsetChange(offset * 60) },
-                    size = 34.dp,
-                    fontSize = 10.sp
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Minutes row
-        Text("Minutes", fontSize = 10.sp, color = Color(0xFF888888))
-        Spacer(modifier = Modifier.height(3.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf(-30, -15, -5, 5, 15, 30).forEach { offset ->
-                OffsetButton(
-                    label = if (offset > 0) "+${offset}m" else "${offset}m",
-                    onClick = { onOffsetChange(offset) },
-                    size = 34.dp,
-                    fontSize = 10.sp
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Confirm / Cancel
+        // Confirm / Cancel / Reset
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -340,7 +329,10 @@ private fun TimestampOffsetEditor(
             Box(
                 modifier = Modifier
                     .background(Color(0xFF333333), RoundedCornerShape(6.dp))
-                    .clickable { onOffsetChange(-offsetMinutes) } // reset
+                    .clickable {
+                        // Reset to original
+                        onTimeChange(originalTime.hour, originalTime.minute)
+                    }
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
                 Text("Reset", color = Color(0xFFAAAAAA), fontSize = 12.sp)

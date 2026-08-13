@@ -1,7 +1,6 @@
 package com.example.tail.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,11 +23,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TimePicker
-import androidx.compose.material3.TimePickerDefaults
-import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -64,7 +61,6 @@ import androidx.compose.ui.window.Dialog
  * @param onEdit Called when the user edits an existing entry: (oldTimestamp, newText).
  * @param onDelete Called when the user deletes an existing entry: (timestamp).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TextInputDialog(
     habitName: String,
@@ -87,12 +83,9 @@ fun TextInputDialog(
     // Multi-select state for past options
     val selectedOptions = remember { mutableStateMapOf<String, Boolean>() }
 
-    // Time picker state
-    val timePickerState = rememberTimePickerState(
-        initialHour = initialHour,
-        initialMinute = initialMinute,
-        is24Hour = true
-    )
+    // Time picker state — wheel-based
+    var selectedHour by remember { mutableIntStateOf(initialHour) }
+    var selectedMinute by remember { mutableIntStateOf(initialMinute) }
     var showTimePicker by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -255,7 +248,7 @@ fun TextInputDialog(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     )
-                    val timeLabel = String.format("%02d:%02d", timePickerState.hour, timePickerState.minute)
+                    val timeLabel = String.format("%02d:%02d", selectedHour, selectedMinute)
                     TextButton(
                         onClick = { showTimePicker = !showTimePicker },
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -278,16 +271,14 @@ fun TextInputDialog(
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        TimePicker(
-                            state = timePickerState,
-                            colors = TimePickerDefaults.colors(
-                                clockDialColor = Color(0xFF222222),
-                                selectorColor = Color(0xFFFFAA00),
-                                timeSelectorSelectedContainerColor = Color(0xFF5A3A00),
-                                timeSelectorSelectedContentColor = Color(0xFFFFAA00),
-                                timeSelectorUnselectedContainerColor = Color(0xFF1A1A1A),
-                                timeSelectorUnselectedContentColor = Color(0xFFCCCCCC)
-                            )
+                        TimeWheelPicker(
+                            hour24 = selectedHour,
+                            minute = selectedMinute,
+                            onTimeChange = { h, m ->
+                                selectedHour = h
+                                selectedMinute = m
+                            },
+                            accent = Color(0xFFFFAA00)
                         )
                     }
                     Spacer(modifier = Modifier.height(12.dp))
@@ -451,7 +442,7 @@ fun TextInputDialog(
                                 entries.add(trimmedInput)
                             }
                             if (entries.isNotEmpty()) {
-                                onConfirm(entries, timePickerState.hour, timePickerState.minute)
+                                onConfirm(entries, selectedHour, selectedMinute)
                             }
                         },
                         enabled = hasFreeText || hasSelections,

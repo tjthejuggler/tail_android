@@ -4,11 +4,16 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -207,5 +213,130 @@ fun WheelPicker(
                 }
             }
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TimeWheelPicker — three-wheel time selector (Hour · Minute · AM/PM)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Hour labels for the12-hour wheel. */
+private val HOUR_ITEMS_12 = (1..12).map { it.toString() }
+
+/** Minute labels for the minute wheel. */
+private val MINUTE_ITEMS_60 = (0..59).map { String.format("%02d", it) }
+
+/** AM/PM labels. */
+private val AMPM_ITEMS = listOf("AM", "PM")
+
+/**
+ * Convert a24-hour value to a12-hour display value (1-12).
+ */
+private fun Int.to12Hour(): Int = when {
+    this == 0 -> 12
+    this > 12 -> this - 12
+    else -> this
+}
+
+/**
+ * Convert a12-hour display value + isPm flag to a24-hour value.
+ */
+private fun to24Hour(hour12: Int, isPm: Boolean): Int = when {
+    hour12 == 12 && !isPm -> 0
+    hour12 == 12 && isPm -> 12
+    isPm -> hour12 + 12
+    else -> hour12
+}
+
+/**
+ * A stylish three-wheel time picker: scrollable Hour (1-12), Minute (00-59),
+ * and AM/PM wheels. Designed to be used alongside quick +/- offset buttons.
+ *
+ * The wheels show the **absolute** time — scrolling any wheel directly sets
+ * the target hour/minute. External state changes (e.g. from +/- buttons)
+ * animate the wheels to the new position.
+ *
+ * @param hour24 Current hour in24-hour format (0-23).
+ * @param minute Current minute (0-59).
+ * @param onTimeChange Called with the new (hour24, minute) whenever any wheel settles.
+ * @param accent Accent colour for selected items and highlight bars.
+ * @param itemHeight Height of each wheel row.
+ * @param visibleItems Number of visible rows per wheel (should be odd).
+ * @param compact When true, uses smaller wheels suitable for inline editors.
+ */
+@Composable
+fun TimeWheelPicker(
+    hour24: Int,
+    minute: Int,
+    onTimeChange: (hour24: Int, minute: Int) -> Unit,
+    modifier: Modifier = Modifier,
+    accent: Color = Color(0xFF88DDFF),
+    itemHeight: Dp = 36.dp,
+    visibleItems: Int = 5,
+    compact: Boolean = false
+) {
+    val isPm = hour24 >= 12
+    val displayHour = hour24.to12Hour()
+
+    val hourWheelWidth = if (compact) 44.dp else 56.dp
+    val minuteWheelWidth = if (compact) 50.dp else 60.dp
+    val ampmWheelWidth = if (compact) 40.dp else 48.dp
+    val colonSize = if (compact) 14.sp else 18.sp
+    val wheelItemHeight = if (compact) (itemHeight * 0.85f) else itemHeight
+    val wheelVisible = if (compact) 3 else visibleItems
+
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // ── Hour wheel ──
+        WheelPicker(
+            items = HOUR_ITEMS_12,
+            selectedIndex = displayHour - 1,
+            onSelectedChange = { idx ->
+                val h12 = idx + 1
+                onTimeChange(to24Hour(h12, isPm), minute)
+            },
+            itemHeight = wheelItemHeight,
+            visibleItems = wheelVisible,
+            accent = accent,
+            modifier = Modifier.width(hourWheelWidth)
+        )
+
+        Text(
+            text = ":",
+            color = Color(0xFF888888),
+            fontSize = colonSize,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 2.dp)
+        )
+
+        // ── Minute wheel ──
+        WheelPicker(
+            items = MINUTE_ITEMS_60,
+            selectedIndex = minute,
+            onSelectedChange = { m ->
+                onTimeChange(hour24, m)
+            },
+            itemHeight = wheelItemHeight,
+            visibleItems = wheelVisible,
+            accent = accent,
+            modifier = Modifier.width(minuteWheelWidth)
+        )
+
+        // ── AM/PM wheel ──
+        WheelPicker(
+            items = AMPM_ITEMS,
+            selectedIndex = if (isPm) 1 else 0,
+            onSelectedChange = { idx ->
+                val newIsPm = idx == 1
+                onTimeChange(to24Hour(displayHour, newIsPm), minute)
+            },
+            itemHeight = wheelItemHeight,
+            visibleItems = wheelVisible,
+            accent = accent,
+            modifier = Modifier.width(ampmWheelWidth)
+        )
     }
 }
