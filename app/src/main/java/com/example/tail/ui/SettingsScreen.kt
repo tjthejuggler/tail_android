@@ -1170,6 +1170,98 @@ private fun BridgeSettingsSection(
                     color = Color(0xFF81C784)
                 )
             }
+
+            // ── IMDb Ratings (OMDb API) ───────────────────────────────────
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = Color(0xFF333333), thickness = 0.5.dp)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("IMDb Ratings", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(
+                text = "Fetch IMDb ratings for your watched movies and TV episodes. " +
+                       "Ratings appear in the graph next to each title, and the daily " +
+                       "average is plotted as a separate line.",
+                fontSize = 10.sp,
+                color = Color(0xFF888888)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // API key input
+            var omdbKey by remember(settings.omdbApiKey) {
+                mutableStateOf(settings.omdbApiKey)
+            }
+            var omdbKeyVisible by remember { mutableStateOf(false) }
+            OutlinedTextField(
+                value = omdbKey,
+                onValueChange = { omdbKey = it },
+                label = { Text("OMDb API Key", fontSize = 12.sp) },
+                singleLine = true,
+                visualTransformation = if (omdbKeyVisible) androidx.compose.ui.text.input.VisualTransformation.None
+                    else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { omdbKeyVisible = !omdbKeyVisible }) {
+                        Icon(
+                            painter = androidx.compose.ui.res.painterResource(
+                                if (omdbKeyVisible) android.R.drawable.ic_menu_view
+                                else android.R.drawable.ic_secure
+                            ),
+                            contentDescription = if (omdbKeyVisible) "Hide" else "Show",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = { viewModel.saveOmdbApiKey(omdbKey) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
+                ) {
+                    Text("Save Key", fontSize = 12.sp)
+                }
+                Text(
+                    text = "Get a free key at omdbapi.com/apikey.aspx",
+                    fontSize = 9.sp,
+                    color = Color(0xFF666666),
+                    modifier = Modifier.align(Alignment.CenterVertically)
+                )
+            }
+
+            // Backlog fetch button (only if key is set and habits are linked)
+            if (settings.omdbApiKey.isNotBlank() && settings.bridgeMovieHabits.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val omdbStatus by viewModel.omdbStatus.collectAsState()
+                val backlogRunning by viewModel.omdbBacklogRunning.collectAsState()
+
+                Button(
+                    onClick = { viewModel.fetchImdbBacklog() },
+                    enabled = !backlogRunning,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4E342E))
+                ) {
+                    Text(
+                        text = if (backlogRunning) "Fetching..." else "Fetch IMDb Backlog",
+                        fontSize = 12.sp
+                    )
+                }
+                Text(
+                    text = "Fetches ratings for all previously-watched titles. " +
+                           "Limited to 990 calls/day — click again the next day to continue.",
+                    fontSize = 9.sp,
+                    color = Color(0xFF666666)
+                )
+                if (omdbStatus.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = omdbStatus,
+                        fontSize = 10.sp,
+                        color = Color(0xFFAAAAAA)
+                    )
+                }
+            }
         }
     }
 }

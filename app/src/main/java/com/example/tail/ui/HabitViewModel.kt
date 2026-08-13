@@ -44,7 +44,11 @@ import com.example.tail.data.GRAPH_METRIC_CALORIES
 import com.example.tail.data.GRAPH_METRIC_PROTEIN
 import com.example.tail.data.GRAPH_METRIC_CARBS
 import com.example.tail.data.GRAPH_METRIC_FAT
+import com.example.tail.data.GRAPH_METRIC_IMDB
 import com.example.tail.data.GraphMetricOption
+import com.example.tail.data.OmdbService
+import com.example.tail.data.ImdbRatingCache
+import com.example.tail.data.ParsedTitle
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
@@ -282,6 +286,18 @@ class HabitViewModel(
      */
     private val _movieSuggestion = MutableStateFlow<BridgeMovie?>(null)
     val movieSuggestion: StateFlow<BridgeMovie?> = _movieSuggestion.asStateFlow()
+
+    // ── OMDb / IMDb ratings integration ────────────────────────────────────
+    private val omdbService = OmdbService()
+    private val imdbCache = ImdbRatingCache(context)
+
+    /** Status message for OMDb operations (shown in settings). */
+    private val _omdbStatus = MutableStateFlow("")
+    val omdbStatus: StateFlow<String> = _omdbStatus.asStateFlow()
+
+    /** True while the IMDb backlog fetch is running. */
+    private val _omdbBacklogRunning = MutableStateFlow(false)
+    val omdbBacklogRunning: StateFlow<Boolean> = _omdbBacklogRunning.asStateFlow()
 
     // Track the last loaded URI to avoid reloading on every settings emission
     private var lastLoadedUri: String = ""
@@ -3540,6 +3556,9 @@ class HabitViewModel(
 
                 // Also increment the habit count so it registers as done for today
                 incrementHabit(habitName, 1)
+
+                // Trigger async IMDb rating fetch for movie-bridge habits
+                triggerImdbFetchForEntry(habitName, text)
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save text entry: ${e.message}"
             }
@@ -3609,6 +3628,9 @@ class HabitViewModel(
                 // Increment the habit count by 1 — selecting multiple options
                 // is a single action and must not count as multiple increments.
                 incrementHabit(habitName, 1)
+
+                // Trigger async IMDb rating fetch for movie-bridge habits
+                texts.forEach { triggerImdbFetchForEntry(habitName, it) }
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save text entries: ${e.message}"
             }
@@ -3755,6 +3777,10 @@ class HabitViewModel(
         if (hasSecondaryValue(habitName)) {
             metrics.add(GraphMetricOption(GRAPH_METRIC_VALUE2, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE2, labels)))
         }
+        // IMDb average rating metric — available for movie-bridge habits with an OMDb API key
+        if (hasImdbRatings(habitName)) {
+            metrics.add(GraphMetricOption(GRAPH_METRIC_IMDB, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_IMDB, labels)))
+        }
         if (isMealHabit(habitName)) {
             metrics.add(GraphMetricOption(GRAPH_METRIC_CALORIES, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_CALORIES, labels)))
             metrics.add(GraphMetricOption(GRAPH_METRIC_PROTEIN, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_PROTEIN, labels)))
@@ -3877,7 +3903,9 @@ class HabitViewModel(
         val divider = _settings.value.habitDividers[habitName] ?: 1
 
         // Secondary values (stored under "secondary_value:<habitName>" in the DB)
-        val hasSecondary = habitName in _settings.value.secondaryValueHabits
+        // Also loaded for movie-bridge habits (IMDb average ratings stored there)
+        val hasSecondary = habitName in _settings.value.secondaryValueHabits ||
+            hasImdbRatings(habitName)
         val secondaryEntries = if (hasSecondary) cachedPhoneDb[secondaryValueKey(habitName)] else null
         val useSecondaryFallback = habitName in _settings.value.secondaryValueFallbackHabits
         val startStr = dateString(startDate)
@@ -5640,6 +5668,283 @@ class HabitViewModel(
             }
             _bridgeStatus.value = if (ok) "✓ Bridge connected!" else "✗ Connection failed"
         }
+    }
+
+    // ── OMDb / IMDb ratings methods ──────────────────────────────────────────
+
+    /** Saves the OMDb API key. */
+    fun saveOmdbApiKey(apiKey: String) {
+        viewModelScope.launch {
+            settingsRepo.saveOmdbApiKey(apiKey.trim())
+            _settings.value = _settings.value.copy(omdbApiKey = apiKey.trim())
+        }
+    }
+
+    /** Returns true if [habitName] is a movie-bridge-linked text-input habit. */
+    fun isMovieBridgeHabit(habitName: String): Boolean {
+        val s = _settings.value
+        return habitName in s.bridgeMovieHabits && s.bridgeEnabled
+    }
+
+    /**
+     * Returns true if IMDb ratings are available for [habitName]:
+     * the habit is bridge-linked AND an OMDb API key is configured.
+     */
+    fun hasImdbRatings(habitName: String): Boolean {
+        return isMovieBridgeHabit(habitName) && _settings.value.omdbApiKey.isNotBlank()
+    }
+
+    /**
+     * Looks up the cached IMDb rating for a raw text entry.
+     * Returns the rating as a display string (e.g. "8.8") or null if not cached.
+     */
+    suspend fun getImdbRatingForText(rawText: String): String? {
+        val parsed = OmdbService.parseTitle(rawText)
+        val rating = imdbCache.getRating(parsed.cacheKey) ?: return null
+        if (rating <= 0) return null
+        return String.format("%.1f", rating / 10.0)
+    }
+
+    /**
+     * Fetches the IMDb rating for a single title from OMDb (or returns the
+     * cached value). Does NOT exceed the daily API limit.
+     *
+     * @return The rating x 10, or null if not found / API unavailable.
+     */
+    private suspend fun fetchAndCacheImdbRating(parsed: ParsedTitle): Int? {
+        if (imdbCache.hasBeenLookedUp(parsed.cacheKey)) {
+            return imdbCache.getRating(parsed.cacheKey)?.takeIf { it > 0 }
+        }
+
+        val apiKey = _settings.value.omdbApiKey
+        if (apiKey.isBlank()) return null
+
+        if (imdbCache.remainingCalls() <= 0) {
+            Log.w(TAG, "OMDb daily limit reached, skipping '${parsed.title}'")
+            return null
+        }
+
+        imdbCache.incrementCallCount(1)
+        val result = omdbService.fetchRating(parsed, apiKey)
+        val rating = result?.rating
+        imdbCache.putRating(parsed.cacheKey, rating)
+
+        return rating?.takeIf { it > 0 }
+    }
+
+    /**
+     * Recomputes the daily average IMDb rating for a movie habit and stores
+     * it as a secondary value (x 10) in the habits database.
+     */
+    private suspend fun updateImdbSecondaryValues(habitName: String) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) return
+
+        val fileUri = _settings.value.fileUri
+
+        val textLog = try {
+            textInputRepo.loadTextLog(Uri.parse(uriString), context)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load text log for IMDb update: ${e.message}")
+            return
+        }
+
+        if (textLog.isEmpty()) return
+
+        val ratingsByDate = mutableMapOf<String, MutableList<Int>>()
+        val allRatings = imdbCache.getAllRatings()
+
+        for ((timestamp, text) in textLog) {
+            val dateStr = timestamp.substring(0, 10)
+            val parsed = OmdbService.parseTitle(text)
+            val rating = allRatings[parsed.cacheKey]?.takeIf { it > 0 } ?: continue
+            ratingsByDate.getOrPut(dateStr) { mutableListOf() }.add(rating)
+        }
+
+        val secEntries = mutableMapOf<String, Int>()
+        for ((dateStr, ratings) in ratingsByDate) {
+            if (ratings.isEmpty()) continue
+            val avg = ratings.sum().toDouble() / ratings.size
+            secEntries[dateStr] = Math.round(avg).toInt()
+        }
+
+        if (secEntries.isEmpty()) return
+
+        val mutableDb = cachedPhoneDb.toMutableMap()
+        val secKey = secondaryValueKey(habitName)
+        val existingSec = mutableDb[secKey]?.toMutableMap() ?: mutableMapOf()
+
+        for ((dateStr, avgRating) in secEntries) {
+            existingSec[dateStr] = avgRating
+        }
+
+        mutableDb[secKey] = existingSec
+        cachedPhoneDb = mutableDb
+
+        if (fileUri.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(fileUri), context, mutableDb)
+            }
+        }
+
+        Log.d(TAG, "IMDb secondary values updated for '$habitName': ${secEntries.size} days")
+    }
+
+    /**
+     * Called when a new movie text entry is saved. Fetches the IMDb rating
+     * asynchronously (if not cached) and updates the secondary values.
+     */
+    fun triggerImdbFetchForEntry(habitName: String, text: String) {
+        if (!hasImdbRatings(habitName)) return
+        val parsed = OmdbService.parseTitle(text)
+        if (parsed.title.isBlank()) return
+
+        viewModelScope.launch {
+            try {
+                fetchAndCacheImdbRating(parsed)
+                updateImdbSecondaryValues(habitName)
+            } catch (e: Exception) {
+                Log.w(TAG, "IMDb fetch for '$text' failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Fetches IMDb ratings for all existing movie entries that haven't been
+     * looked up yet (the "backlog"). Respects the daily API limit of 990 calls.
+     */
+    fun fetchImdbBacklog(onProgress: ((String) -> Unit)? = null) {
+        val apiKey = _settings.value.omdbApiKey
+        if (apiKey.isBlank()) {
+            _omdbStatus.value = "Enter an OMDb API key first"
+            return
+        }
+
+        val movieHabits = _settings.value.bridgeMovieHabits.toList()
+        if (movieHabits.isEmpty()) {
+            _omdbStatus.value = "No movie habits linked"
+            return
+        }
+
+        if (_omdbBacklogRunning.value) {
+            _omdbStatus.value = "Already running..."
+            return
+        }
+
+        viewModelScope.launch {
+            _omdbBacklogRunning.value = true
+            try {
+                _omdbStatus.value = "Scanning movie entries..."
+
+                val uniqueTitles = mutableSetOf<String>()
+                val titleMap = mutableMapOf<String, ParsedTitle>()
+
+                for (habitName in movieHabits) {
+                    val uriString = _settings.value.textInputFileUris[habitName]
+                    if (uriString.isNullOrEmpty()) continue
+                    val textLog = try {
+                        textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                    } catch (e: Exception) { continue }
+
+                    for ((_, text) in textLog) {
+                        val parsed = OmdbService.parseTitle(text)
+                        if (parsed.title.isBlank()) continue
+                        if (parsed.cacheKey !in uniqueTitles) {
+                            uniqueTitles.add(parsed.cacheKey)
+                            titleMap[parsed.cacheKey] = parsed
+                        }
+                    }
+                }
+
+                val toFetch = mutableListOf<ParsedTitle>()
+                for (cacheKey in uniqueTitles) {
+                    if (!imdbCache.hasBeenLookedUp(cacheKey)) {
+                        toFetch.add(titleMap[cacheKey]!!)
+                    }
+                }
+
+                val totalToFetch = toFetch.size
+                val alreadyCached = uniqueTitles.size - totalToFetch
+                val remaining = imdbCache.remainingCalls()
+                val willFetch = minOf(totalToFetch, remaining)
+
+                if (totalToFetch == 0) {
+                    _omdbStatus.value = "All $alreadyCached titles already have ratings"
+                    for (habitName in movieHabits) {
+                        updateImdbSecondaryValues(habitName)
+                    }
+                    return@launch
+                }
+
+                _omdbStatus.value = "Fetching $willFetch of $totalToFetch ratings " +
+                    "($alreadyCached cached, $remaining calls left today)..."
+
+                var fetched = 0
+                var found = 0
+                for (parsed in toFetch) {
+                    if (imdbCache.remainingCalls() <= 0) break
+
+                    val rating = fetchAndCacheImdbRating(parsed)
+                    fetched++
+                    if (rating != null && rating > 0) found++
+
+                    if (fetched % 25 == 0) {
+                        val msg = "Progress: $fetched / $willFetch ($found with ratings)..."
+                        _omdbStatus.value = msg
+                        onProgress?.invoke(msg)
+                    }
+                }
+
+                for (habitName in movieHabits) {
+                    updateImdbSecondaryValues(habitName)
+                }
+
+                val skipped = totalToFetch - fetched
+                _omdbStatus.value = buildString {
+                    append("Fetched $fetched ratings ($found with ratings)")
+                    if (skipped > 0) {
+                        append(", $skipped deferred (daily limit)")
+                    }
+                    append(". Run again tomorrow for the rest.")
+                }
+
+                rebuildHabitList()
+            } catch (e: Exception) {
+                Log.e(TAG, "IMDb backlog fetch failed", e)
+                _omdbStatus.value = "Backlog fetch failed: ${e.message}"
+            } finally {
+                _omdbBacklogRunning.value = false
+            }
+        }
+    }
+
+    /** Returns the remaining OMDb API calls for today. */
+    suspend fun getOmdbRemainingCalls(): Int = imdbCache.remainingCalls()
+
+    /**
+     * Returns a map of movie text entry to IMDb rating display string for all
+     * entries on a given date. Used by the graph popup.
+     */
+    suspend fun getImdbRatingsForDate(
+        habitName: String,
+        date: java.time.LocalDate
+    ): Map<String, String?> {
+        if (!hasImdbRatings(habitName)) return emptyMap()
+
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) return emptyMap()
+
+        val datePrefix = dateString(date)
+        val textLog = try {
+            textInputRepo.loadTextLog(Uri.parse(uriString), context)
+        } catch (e: Exception) { return emptyMap() }
+
+        val result = mutableMapOf<String, String?>()
+        for ((timestamp, text) in textLog) {
+            if (!timestamp.startsWith(datePrefix)) continue
+            result[text] = getImdbRatingForText(text)
+        }
+        return result
     }
 
     /**

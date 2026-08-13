@@ -145,6 +145,7 @@ fun GraphsPanel(
     var selectedDataPoint by remember { mutableStateOf<SelectedPoint?>(null) }
     var textEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
     var datedEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
+    var imdbRatingsForPoint by remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
     
     // Text filter state
     var showFilterDialog by remember { mutableStateOf(false) }
@@ -158,6 +159,7 @@ fun GraphsPanel(
         selectedDataPoint = null
         textEntriesForPoint = emptyList()
         datedEntriesForPoint = emptyList()
+        imdbRatingsForPoint = emptyMap()
         
         // Load text entries for text-input habits into the cache
         graphSelectedHabits.forEach { habitName ->
@@ -175,8 +177,15 @@ fun GraphsPanel(
                 viewModel.loadTextEntriesForDate(point.habitName, point.date) { entries ->
                     textEntriesForPoint = entries
                 }
+                // Load IMDb ratings for movie-bridge habits
+                if (viewModel.hasImdbRatings(point.habitName)) {
+                    imdbRatingsForPoint = viewModel.getImdbRatingsForDate(point.habitName, point.date)
+                } else {
+                    imdbRatingsForPoint = emptyMap()
+                }
             } else {
                 textEntriesForPoint = emptyList()
+                imdbRatingsForPoint = emptyMap()
             }
             if (viewModel.isDatedEntryHabit(point.habitName)) {
                 viewModel.loadDatedEntriesForDate(point.habitName, point.date) { chunks ->
@@ -188,6 +197,7 @@ fun GraphsPanel(
         } else {
             textEntriesForPoint = emptyList()
             datedEntriesForPoint = emptyList()
+            imdbRatingsForPoint = emptyMap()
         }
     }
 
@@ -405,6 +415,8 @@ fun GraphsPanel(
                             val valueText = if (garminType == com.example.tail.data.GarminType.FITNESS_AGE ||
                                                 garminType == com.example.tail.data.GarminType.FITNESS_AGE_DISTANCE) {
                                 String.format("%.2f", point.value / 100.0)
+                            } else if (point.metric == com.example.tail.data.GRAPH_METRIC_IMDB && point.value > 0) {
+                                String.format("%.1f", point.value / 10.0)
                             } else {
                                 point.value.toString()
                             }
@@ -460,8 +472,14 @@ fun GraphsPanel(
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     textEntriesForPoint.forEach { entry ->
+                                        val rating = imdbRatingsForPoint[entry]
+                                        val displayText = if (rating != null) {
+                                            "\u2022 $entry  \u2B50 $rating"
+                                        } else {
+                                            "\u2022 $entry"
+                                        }
                                         Text(
-                                            text = "• $entry",
+                                            text = displayText,
                                             color = Color(0xFFCCEECC),
                                             fontSize = 11.sp,
                                             modifier = Modifier.padding(start = 4.dp, top = 2.dp)
@@ -694,6 +712,7 @@ private fun displayValueForMetric(
 ): Int = when (metric) {
     com.example.tail.data.GRAPH_METRIC_VALUE1 -> dp.garminValue ?: dp.rawValue
     com.example.tail.data.GRAPH_METRIC_VALUE2 -> dp.secondaryValue ?: dp.rawValue
+    com.example.tail.data.GRAPH_METRIC_IMDB -> dp.secondaryValue ?: 0
     com.example.tail.data.GRAPH_METRIC_CALORIES -> dp.mealCalories ?: 0
     com.example.tail.data.GRAPH_METRIC_PROTEIN -> dp.mealProtein ?: 0
     com.example.tail.data.GRAPH_METRIC_CARBS -> dp.mealCarbs ?: 0
@@ -701,10 +720,23 @@ private fun displayValueForMetric(
     else -> dp.pointsValue
 }
 
+/**
+ * Formats a display value for the tooltip, with special handling for IMDb
+ * ratings (stored as rating x 10, displayed as a decimal like "8.8").
+ */
+fun formatTooltipValue(value: Int, metric: String): String {
+    return if (metric == com.example.tail.data.GRAPH_METRIC_IMDB && value > 0) {
+        String.format("%.1f", value / 10.0)
+    } else {
+        value.toString()
+    }
+}
+
 /** Returns the human-readable label for a metric key. */
 fun metricLabel(metric: String): String = when (metric) {
     com.example.tail.data.GRAPH_METRIC_VALUE1 -> "Value 1"
     com.example.tail.data.GRAPH_METRIC_VALUE2 -> "Value 2"
+    com.example.tail.data.GRAPH_METRIC_IMDB -> "IMDb Avg"
     com.example.tail.data.GRAPH_METRIC_CALORIES -> "Calories"
     com.example.tail.data.GRAPH_METRIC_PROTEIN -> "Protein"
     com.example.tail.data.GRAPH_METRIC_CARBS -> "Carbs"
@@ -729,7 +761,8 @@ data class SelectedPoint(
     val value: Int,
     val rawValue: Int,
     val color: Color,
-    val metricLabel: String = ""
+    val metricLabel: String = "",
+    val metric: String = com.example.tail.data.GRAPH_METRIC_POINTS
 )
 
 /**
@@ -971,7 +1004,8 @@ private fun HabitLineChart(
                                     value = displayValue,
                                     rawValue = dp.garminValue ?: dp.rawValue,
                                     color = series.color,
-                                    metricLabel = series.metricLabel
+                                    metricLabel = series.metricLabel,
+                                    metric = series.metric
                                 )
                             }
                         }

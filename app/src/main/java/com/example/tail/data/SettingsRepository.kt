@@ -83,6 +83,8 @@ private val KEY_BRIDGE_ENABLED = booleanPreferencesKey("bridge_enabled")
 private val KEY_BRIDGE_URL = stringPreferencesKey("bridge_url")
 private val KEY_BRIDGE_TOKEN = stringPreferencesKey("bridge_token")
 private val KEY_BRIDGE_MOVIE_HABITS = stringSetPreferencesKey("bridge_movie_habits")
+// OMDb API key for IMDb ratings
+private val KEY_OMDB_API_KEY = stringPreferencesKey("omdb_api_key")
 // Voice trigger feature keys
 private val KEY_VOICE_TRIGGER_ENABLED = booleanPreferencesKey("voice_trigger_enabled")
 private val KEY_VOICE_TRIGGER_HABITS = stringSetPreferencesKey("voice_trigger_habits")
@@ -680,6 +682,7 @@ class SettingsRepository(private val context: Context) {
             bridgeUrl = prefs[KEY_BRIDGE_URL] ?: "",
             bridgeToken = prefs[KEY_BRIDGE_TOKEN] ?: "",
             bridgeMovieHabits = prefs[KEY_BRIDGE_MOVIE_HABITS] ?: emptySet(),
+            omdbApiKey = prefs[KEY_OMDB_API_KEY] ?: "",
             customPointRangesHabits = prefs[KEY_CUSTOM_POINT_RANGES_HABITS] ?: emptySet(),
             customPointRanges = decodePointRangesMap(customPointRangesRaw),
             graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw),
@@ -1033,6 +1036,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits linked to the movie bridge. */
     suspend fun saveBridgeMovieHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_BRIDGE_MOVIE_HABITS] = habits }
+    }
+
+    /** Saves the OMDb API key for IMDb rating lookups. */
+    suspend fun saveOmdbApiKey(apiKey: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_OMDB_API_KEY] = apiKey }
     }
 
     // ── Voice Trigger ────────────────────────────────────────────────────

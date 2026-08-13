@@ -198,6 +198,7 @@ fun defaultLabelForValueKey(valueKey: String): String = when (valueKey) {
     GRAPH_METRIC_PROTEIN -> "Protein"
     GRAPH_METRIC_CARBS -> "Carbs"
     GRAPH_METRIC_FAT -> "Fat"
+    GRAPH_METRIC_IMDB -> "IMDb Avg"
     else -> valueKey
 }
 
@@ -240,6 +241,12 @@ const val GRAPH_METRIC_PROTEIN = "protein"
 const val GRAPH_METRIC_CARBS = "carbs"
 /** Fat in grams (meal habits only). */
 const val GRAPH_METRIC_FAT = "fat"
+/**
+ * IMDb average rating — the average IMDb rating of all movies/episodes watched
+ * that day (stored as rating × 10 in the secondary-value slot, e.g. 8.8 → 88).
+ * Only available for movie-type habits linked to the bridge with an OMDb API key.
+ */
+const val GRAPH_METRIC_IMDB = "imdb"
 
 /**
  * A selectable graph metric option shown as a toggle button.
@@ -625,6 +632,15 @@ data class AppSettings(
      * from the desktop and pre-fills the text entry for confirmation/editing.
      */
     val bridgeMovieHabits: Set<String> = emptySet(),
+
+    // ── OMDb / IMDb ratings settings ──────────────────────────────────────
+    /**
+     * API key for the OMDb API (https://omdbapi.com/).
+     * When set, the app fetches IMDb ratings for movie/episode entries and
+     * stores the daily average as a secondary value (see [secondaryValueHabits]).
+     * The key is entered by the user in the Bridge settings section.
+     */
+    val omdbApiKey: String = "",
 
     // ── Custom Point Ranges settings ────────────────────────────────────────
     /**
