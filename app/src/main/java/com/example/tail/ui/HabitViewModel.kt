@@ -3807,9 +3807,12 @@ class HabitViewModel(
     fun getAvailableMetrics(habitName: String): List<GraphMetricOption> {
         val labels = _settings.value.valueDisplayLabels
         val metrics = mutableListOf(
-            GraphMetricOption(GRAPH_METRIC_POINTS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_POINTS, labels)),
-            GraphMetricOption(GRAPH_METRIC_VALUE1, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE1, labels))
+            GraphMetricOption(GRAPH_METRIC_POINTS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_POINTS, labels))
         )
+        // GitHub habits use labeled metric buttons instead of generic "Value 1"
+        if (!isGithubHabit(habitName)) {
+            metrics.add(GraphMetricOption(GRAPH_METRIC_VALUE1, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE1, labels)))
+        }
         if (hasSecondaryValue(habitName)) {
             metrics.add(GraphMetricOption(GRAPH_METRIC_VALUE2, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE2, labels)))
         }
@@ -3842,14 +3845,37 @@ class HabitViewModel(
      */
     fun getSelectedMetrics(habitName: String): Set<String> {
         val stored = _settings.value.graphMetricSelection[habitName]
-        if (stored != null) return stored
+        if (stored != null) {
+            // For GitHub habits, migrate legacy "value1" to the corresponding GitHub metric
+            if (isGithubHabit(habitName) && GRAPH_METRIC_VALUE1 in stored) {
+                val migrated = stored.toMutableSet()
+                migrated.remove(GRAPH_METRIC_VALUE1)
+                migrated.add(primaryGithubMetricKey(habitName))
+                return migrated
+            }
+            return stored
+        }
 
         // Legacy migration: convert old single-select mode to a set
         val oldMode = _settings.value.graphValueModeHabits[habitName] ?: 0
         return when (oldMode) {
-            1 -> setOf(GRAPH_METRIC_VALUE1)
+            1 -> if (isGithubHabit(habitName)) setOf(primaryGithubMetricKey(habitName)) else setOf(GRAPH_METRIC_VALUE1)
             2 -> setOf(GRAPH_METRIC_VALUE2)
-            else -> setOf(GRAPH_METRIC_POINTS)
+            else -> if (isGithubHabit(habitName)) setOf(primaryGithubMetricKey(habitName)) else setOf(GRAPH_METRIC_POINTS)
+        }
+    }
+
+    /**
+     * Returns the graph metric key corresponding to the GitHub habit's configured
+     * primary metric (the one stored as value1 in the habits DB).
+     */
+    private fun primaryGithubMetricKey(habitName: String): String {
+        val metric = GitHubMetric.fromKey(_settings.value.githubMetrics[habitName])
+        return when (metric) {
+            GitHubMetric.LINES_CHANGED -> GRAPH_METRIC_GITHUB_LINES
+            GitHubMetric.COMMITS -> GRAPH_METRIC_GITHUB_COMMITS
+            GitHubMetric.ADDITIONS -> GRAPH_METRIC_GITHUB_ADDITIONS
+            GitHubMetric.DELETIONS -> GRAPH_METRIC_GITHUB_DELETIONS
         }
     }
 
@@ -3861,8 +3887,8 @@ class HabitViewModel(
     fun toggleGraphMetric(habitName: String, metric: String) {
         viewModelScope.launch {
             val current = _settings.value.graphMetricSelection.toMutableMap()
-            val currentSet = current[habitName]?.toMutableSet()
-                ?: getSelectedMetrics(habitName).toMutableSet()
+            // Use getSelectedMetrics which handles GitHub "value1" migration
+            val currentSet = getSelectedMetrics(habitName).toMutableSet()
             if (metric in currentSet) {
                 currentSet.remove(metric)
                 // Ensure at least one metric stays selected
@@ -4032,6 +4058,9 @@ class HabitViewModel(
             val secVal = secondaryEntries?.get(ds)
             val mealDay = mealAggregates[ds]
             val ghMetrics = _githubDailyCache[habitName]?.get(ds)
+            // When cache is empty (before re-fetch), fall back to DB value for the
+            // primary GitHub metric so at least that one shows data immediately.
+            val ghPrimaryKey = if (isGithubHabit(habitName)) primaryGithubMetricKey(habitName) else null
             result.add(
                 GraphDataPoint(
                     date = cursor,
@@ -4046,10 +4075,14 @@ class HabitViewModel(
                     mealProtein = mealDay?.proteinGrams?.roundToInt(),
                     mealCarbs = mealDay?.carbsGrams?.roundToInt(),
                     mealFat = mealDay?.fatGrams?.roundToInt(),
-                    githubLinesChanged = ghMetrics?.linesChanged,
-                    githubCommits = ghMetrics?.commits,
-                    githubAdditions = ghMetrics?.additions,
+                    githubLinesChanged = ghMetrics?.linesChanged
+                        ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_LINES) filteredRaw else null,
+                    githubCommits = ghMetrics?.commits
+                        ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_COMMITS) filteredRaw else null,
+                    githubAdditions = ghMetrics?.additions
+                        ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_ADDITIONS) filteredRaw else null,
                     githubDeletions = ghMetrics?.deletions
+                        ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_DELETIONS) filteredRaw else null
                 )
             )
             cursor = cursor.plusDays(1)
