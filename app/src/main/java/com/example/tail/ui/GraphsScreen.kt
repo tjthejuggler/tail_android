@@ -711,7 +711,10 @@ private fun displayValueForMetric(
     metric: String
 ): Int = when (metric) {
     com.example.tail.data.GRAPH_METRIC_VALUE1 -> dp.garminValue ?: dp.rawValue
-    com.example.tail.data.GRAPH_METRIC_VALUE2 -> dp.secondaryValue ?: dp.rawValue
+    // No rawValue fallback: days without a secondary entry must read as 0,
+    // otherwise sparse secondary data (e.g. timer minutes) would display the
+    // primary value's history.
+    com.example.tail.data.GRAPH_METRIC_VALUE2 -> dp.secondaryValue ?: 0
     com.example.tail.data.GRAPH_METRIC_IMDB -> dp.secondaryValue ?: 0
     com.example.tail.data.GRAPH_METRIC_CALORIES -> dp.mealCalories ?: 0
     com.example.tail.data.GRAPH_METRIC_PROTEIN -> dp.mealProtein ?: 0

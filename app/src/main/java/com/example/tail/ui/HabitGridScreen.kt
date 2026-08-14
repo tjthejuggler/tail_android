@@ -244,6 +244,8 @@ fun HabitGridScreen(
     var addAppLinkAtIndex by remember { mutableStateOf(-1) }
     // Habit name for which the app-association picker is open (null = none)
     var appAssociationPickerHabit by remember { mutableStateOf<String?>(null) }
+    // Habit name for which the widget-trigger app picker is open (null = none)
+    var widgetTriggerPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the multi-app launcher dialog is open (null = none)
     var appLauncherHabit by remember { mutableStateOf<String?>(null) }
     // Habit name pending delete confirmation (null = none)
@@ -1120,6 +1122,16 @@ fun HabitGridScreen(
                         onAddAppAssociation = { name -> appAssociationPickerHabit = name },
                         onRemoveAppAssociation = { name, pkg -> viewModel.removeHabitAppAssociation(name, pkg) },
                         onMoveAppAssociation = { name, from, to -> viewModel.moveHabitAppAssociation(name, from, to) },
+                        widgetTriggerHabits = settings.widgetTriggerHabits,
+                        widgetTriggerApps = settings.widgetTriggerApps,
+                        onToggleWidgetTrigger = { name -> viewModel.toggleWidgetTrigger(name) },
+                        onSetWidgetTriggerApp = { name -> widgetTriggerPickerHabit = name },
+                        hasUsageAccess = viewModel.hasUsageAccess(),
+                        onRequestUsageAccess = { viewModel.openUsageAccessSettings() },
+                        widgetTimerMinutesPrimary = settings.widgetTimerMinutesPrimary,
+                        onSetTimerPrimaryValue = { name, minutesPrimary ->
+                            viewModel.setWidgetTimerPrimaryValue(name, minutesPrimary)
+                        },
                         onInvertHabit = { name -> viewModel.invertHabit(name) },
                         onGetInvertPreview = { name -> viewModel.getInvertPreview(name) }
                     )
@@ -1507,6 +1519,20 @@ fun HabitGridScreen(
                 appAssociationPickerHabit = null
             },
             onDismiss = { appAssociationPickerHabit = null }
+        )
+    }
+
+    // Widget trigger app picker — triggered when user taps "Select App" in the
+    // Use Widget section of edit mode for a selected habit
+    if (widgetTriggerPickerHabit != null) {
+        val habitName = widgetTriggerPickerHabit!!
+        AppPickerDialog(
+            context = context,
+            onConfirm = { packageName, _ ->
+                viewModel.setWidgetTriggerApp(habitName, packageName)
+                widgetTriggerPickerHabit = null
+            },
+            onDismiss = { widgetTriggerPickerHabit = null }
         )
     }
 
@@ -2020,6 +2046,184 @@ private fun AppLinkEditSection(
  * A single row showing an associated app in the edit-mode app association list.
  * Shows the app icon, label, and up/down/remove controls for reordering.
  */
+/**
+ * "Use Widget" section for a habit in edit mode.
+ *
+ * When enabled, the user picks a trigger app. Whenever that app is in the
+ * foreground, the floating bubble widget appears over it; when the app is
+ * left, the bubble disappears.
+ */
+@Composable
+private fun WidgetTriggerSection(
+    habitName: String,
+    widgetTriggerHabits: Set<String>,
+    widgetTriggerApps: Map<String, String>,
+    onToggleWidgetTrigger: (String) -> Unit,
+    onSetWidgetTriggerApp: (String) -> Unit,
+    hasUsageAccess: Boolean,
+    onRequestUsageAccess: () -> Unit,
+    widgetTimerMinutesPrimary: Set<String> = emptySet(),
+    onSetTimerPrimaryValue: (String, Boolean) -> Unit = { _, _ -> }
+) {
+    val context = LocalContext.current
+    val isEnabled = habitName in widgetTriggerHabits
+    val triggerPkg = widgetTriggerApps[habitName]
+    val minutesPrimary = habitName in widgetTimerMinutesPrimary
+
+    // Resolve the trigger app's display label
+    val triggerLabel = remember(triggerPkg) {
+        triggerPkg?.let { pkg ->
+            try {
+                val pm = context.packageManager
+                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+            } catch (e: Exception) { pkg }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Main toggle row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "🫧 Use Widget", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(
+                    text = if (isEnabled) {
+                        if (triggerLabel != null) "Bubble appears over $triggerLabel"
+                        else "Select a trigger app below"
+                    } else {
+                        "Show bubble when an app opens"
+                    },
+                    color = if (isEnabled) Color(0xFF66BB6A) else Color(0xFF888888),
+                    fontSize = 10.sp
+                )
+            }
+            Switch(
+                checked = isEnabled,
+                onCheckedChange = { onToggleWidgetTrigger(habitName) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF44BBFF),
+                    checkedTrackColor = Color(0xFF003355),
+                    uncheckedThumbColor = Color(0xFF888888),
+                    uncheckedTrackColor = Color(0xFF333333)
+                )
+            )
+        }
+
+        // Usage-access permission warning + grant button
+        if (isEnabled && !hasUsageAccess) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "⚠️ Usage access needed",
+                    color = Color(0xFFFFAA33),
+                    fontSize = 10.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = onRequestUsageAccess,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("Grant", fontSize = 10.sp, color = Color(0xFFFFCC66))
+                }
+            }
+        }
+
+        // Trigger app selection row (only when enabled)
+        if (isEnabled) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Trigger App", color = Color(0xFFAAAAAA), fontSize = 11.sp)
+                    Text(
+                        text = triggerLabel ?: "Not set",
+                        color = if (triggerLabel != null) Color(0xFF66CCFF) else Color(0xFF888888),
+                        fontSize = 10.sp
+                    )
+                }
+                Button(
+                    onClick = { onSetWidgetTriggerApp(habitName) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("📱", fontSize = 11.sp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        if (triggerPkg == null) "Select App" else "Change",
+                        fontSize = 11.sp,
+                        color = Color(0xFF66CCFF)
+                    )
+                }
+            }
+
+            // Primary value selector (timer habits): minutes vs sessions.
+            // Whichever is primary drives points/display; the other is the
+            // fallback used only on days where the primary value is zero.
+            if (triggerPkg != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                var primaryExpanded by remember { mutableStateOf(false) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "⏱ Primary Value", color = Color(0xFFAAAAAA), fontSize = 11.sp)
+                        Text(
+                            text = if (minutesPrimary) "Minutes (timer) — sessions fallback"
+                                   else "Sessions — minutes fallback",
+                            color = Color(0xFF999999),
+                            fontSize = 10.sp
+                        )
+                    }
+                    Box {
+                        Button(
+                            onClick = { primaryExpanded = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text(
+                                if (minutesPrimary) "Minutes ▾" else "Sessions ▾",
+                                fontSize = 11.sp,
+                                color = Color(0xFF66CCFF)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = primaryExpanded,
+                            onDismissRequest = { primaryExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Minutes (timer)", fontSize = 13.sp) },
+                                onClick = {
+                                    primaryExpanded = false
+                                    onSetTimerPrimaryValue(habitName, true)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Sessions", fontSize = 13.sp) },
+                                onClick = {
+                                    primaryExpanded = false
+                                    onSetTimerPrimaryValue(habitName, false)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun AssociatedAppRow(
     habitName: String,
@@ -2513,7 +2717,11 @@ private fun ValueLabelsSection(
     hasSecondaryValue: Boolean,
     subtypes: List<String>,
     labels: Map<String, String>,
-    onSetLabel: (String, String, String) -> Unit
+    onSetLabel: (String, String, String) -> Unit,
+    /** True when the secondary slot (Value2) is treated as the primary value. */
+    minutesPrimary: Boolean = false,
+    /** Called when the user changes which value is primary (habitName, value2IsPrimary). */
+    onSetPrimaryValue: (String, Boolean) -> Unit = { _, _ -> }
 ) {
     if (!hasSecondaryValue && subtypes.isEmpty()) return
 
@@ -2545,6 +2753,32 @@ private fun ValueLabelsSection(
             currentLabel = labels[com.example.tail.data.GRAPH_METRIC_VALUE2] ?: "",
             onSetLabel = onSetLabel
         )
+
+        // ── Primary value selector: which slot drives points; the other
+        // becomes the fallback when the primary is zero on a day.
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "⭐ Primary value (the other becomes the points fallback)",
+            color = Color(0xFF88CCFF),
+            fontSize = 11.sp
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        val v1Label = labels[com.example.tail.data.GRAPH_METRIC_VALUE1]?.ifBlank { null }
+            ?: com.example.tail.data.defaultLabelForValueKey(com.example.tail.data.GRAPH_METRIC_VALUE1)
+        val v2Label = labels[com.example.tail.data.GRAPH_METRIC_VALUE2]?.ifBlank { null }
+            ?: com.example.tail.data.defaultLabelForValueKey(com.example.tail.data.GRAPH_METRIC_VALUE2)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PrimaryValuePill(
+                text = v1Label,
+                selected = !minutesPrimary,
+                onClick = { onSetPrimaryValue(habitName, false) }
+            )
+            PrimaryValuePill(
+                text = v2Label,
+                selected = minutesPrimary,
+                onClick = { onSetPrimaryValue(habitName, true) }
+            )
+        }
     }
 
     subtypes.forEach { subtype ->
@@ -2555,6 +2789,34 @@ private fun ValueLabelsSection(
             defaultLabel = subtype,
             currentLabel = labels[subtype] ?: "",
             onSetLabel = onSetLabel
+        )
+    }
+}
+
+/**
+ * Selectable pill for choosing which value type is primary.
+ * The selected pill is highlighted; tapping makes that value primary.
+ */
+@Composable
+private fun PrimaryValuePill(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(14.dp)
+    val bg = if (selected) Color(0xFF2E5A88) else Color(0xFF1E1E1E)
+    val borderColor = if (selected) Color(0xFF88CCFF) else Color(0xFF444444)
+    Box(
+        modifier = Modifier
+            .background(bg, shape)
+            .border(1.dp, borderColor, shape)
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 7.dp)
+    ) {
+        Text(
+            text = if (selected) "★ $text" else text,
+            fontSize = 11.sp,
+            color = if (selected) Color.White else Color(0xFFBBBBBB)
         )
     }
 }
@@ -2689,6 +2951,23 @@ private fun EditModeControlBar(
     onRemoveAppAssociation: (String, String) -> Unit = { _, _ -> },
     /** Called when the user reorders an app association (habitName, fromIndex, toIndex). */
     onMoveAppAssociation: (String, Int, Int) -> Unit = { _, _, _ -> },
+    // ── Widget Trigger parameters ──────────────────────────────────────────
+    /** Habits that have the "Use Widget" feature enabled. */
+    widgetTriggerHabits: Set<String> = emptySet(),
+    /** Maps habit name → trigger app package name. */
+    widgetTriggerApps: Map<String, String> = emptyMap(),
+    /** Called when the user toggles the "Use Widget" feature for a habit. */
+    onToggleWidgetTrigger: (String) -> Unit = {},
+    /** Called when the user taps to select/change the trigger app. */
+    onSetWidgetTriggerApp: (String) -> Unit = {},
+    /** Whether the user has granted Usage Access permission. */
+    hasUsageAccess: Boolean = true,
+    /** Called when the user taps to grant Usage Access. */
+    onRequestUsageAccess: () -> Unit = {},
+    /** Widget-timer habits where minutes (not sessions) is the primary value. */
+    widgetTimerMinutesPrimary: Set<String> = emptySet(),
+    /** Called when the user changes which value is primary (true = minutes). */
+    onSetTimerPrimaryValue: (String, Boolean) -> Unit = { _, _ -> },
     /** Called when the user confirms the invert operation for a habit. */
     onInvertHabit: (String) -> Unit = {},
     /** Returns invert preview stats for a habit, or null if it has no data. */
@@ -4007,7 +4286,9 @@ private fun EditModeControlBar(
                         hasSecondaryValue = selectedHabitName in secondaryValueSettings.habits,
                         subtypes = habitSubtypes[selectedHabitName] ?: emptyList(),
                         labels = valueDisplayLabels[selectedHabitName] ?: emptyMap(),
-                        onSetLabel = onSetValueDisplayLabel
+                        onSetLabel = onSetValueDisplayLabel,
+                        minutesPrimary = selectedHabitName in widgetTimerMinutesPrimary,
+                        onSetPrimaryValue = onSetTimerPrimaryValue
                     )
 
                     // ── Custom Point Ranges toggle ────────────────────────────
@@ -4362,6 +4643,22 @@ private fun EditModeControlBar(
                             )
                         }
                     }
+
+                    // ── Use Widget (app-triggered bubble) ─────────────────────
+                    // When enabled with a trigger app selected, the floating
+                    // bubble automatically appears over that app.
+                    Spacer(modifier = Modifier.height(6.dp))
+                    WidgetTriggerSection(
+                        habitName = selectedHabitName,
+                        widgetTriggerHabits = widgetTriggerHabits,
+                        widgetTriggerApps = widgetTriggerApps,
+                        onToggleWidgetTrigger = onToggleWidgetTrigger,
+                        onSetWidgetTriggerApp = onSetWidgetTriggerApp,
+                        hasUsageAccess = hasUsageAccess,
+                        onRequestUsageAccess = onRequestUsageAccess,
+                        widgetTimerMinutesPrimary = widgetTimerMinutesPrimary,
+                        onSetTimerPrimaryValue = onSetTimerPrimaryValue
+                    )
 
                     // ── Garmin link toggle ────────────────────────────────────
                     // Extracted to its own composable to keep EditModeControlBar

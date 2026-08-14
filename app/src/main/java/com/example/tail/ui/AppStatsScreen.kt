@@ -91,11 +91,12 @@ fun AppStatsScreen(
     val disabledHabits = settings.disabledHabits
     val noPointsHabits = settings.noPointsHabits
     val secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits
+    val timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary
 
     // Compute all stats from the cached database
     val db = viewModel.getCachedDatabase()
-    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits) {
-        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits)
+    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits) {
+        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits)
     }
 
     // State for the habit-list popup
@@ -1121,7 +1122,8 @@ private fun computeAppStats(
     dividers: Map<String, Int>,
     disabledHabits: Set<String> = emptySet(),
     noPointsHabits: Set<String> = emptySet(),
-    secondaryValueFallbackHabits: Set<String> = emptySet()
+    secondaryValueFallbackHabits: Set<String> = emptySet(),
+    timerMinutesPrimaryHabits: Set<String> = emptySet()
 ): AppStats {
     if (db.isEmpty()) return AppStats()
 
@@ -1130,8 +1132,12 @@ private fun computeAppStats(
     // the secondary (sessions) value is used directly as points (no divider).
     fun effPts(habitName: String, raw: Int, dateStr: String): Int {
         val div = dividers[habitName] ?: 1
-        if (habitName !in secondaryValueFallbackHabits) return applyDivider(raw, div)
         val secVal = db[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+        if (habitName in timerMinutesPrimaryHabits) {
+            // Minutes primary: minutes drive points, sessions are the fallback
+            return effectivePointsWithFallback(secVal, div, raw, true)
+        }
+        if (habitName !in secondaryValueFallbackHabits) return applyDivider(raw, div)
         return effectivePointsWithFallback(raw, div, secVal, true)
     }
 
@@ -1371,10 +1377,15 @@ private fun computeAppStats(
 
     val habitStats = db.filterKeys { !isSecondaryValueKey(it) }.map { (habitName, entries) ->
         val divider = dividers[habitName] ?: 1
-        val useFallback = habitName in secondaryValueFallbackHabits
+        val minutesPrimary = habitName in timerMinutesPrimaryHabits
+        val useFallback = minutesPrimary || habitName in secondaryValueFallbackHabits
         val secEntries = if (useFallback) db[secondaryValueKey(habitName)] ?: emptyMap() else emptyMap()
-        // Merge secondary values so dates with only secondary data are included
-        val mergedEntries = if (useFallback) {
+        // Merge secondary values so dates with only secondary data are included.
+        // For minutes-primary habits the roles swap: minutes are primary,
+        // sessions are the fallback.
+        val mergedEntries = if (minutesPrimary) {
+            effectiveEntriesWithFallback(secEntries, entries, true)
+        } else if (useFallback) {
             effectiveEntriesWithFallback(entries, secEntries, true)
         } else entries
 

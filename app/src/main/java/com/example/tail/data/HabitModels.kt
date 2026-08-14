@@ -807,7 +807,40 @@ data class AppSettings(
      * [LONG_PRESS_CAMERA], [LONG_PRESS_DETAILS]).
      * Habits not present in this map default to [LONG_PRESS_APP].
      */
-    val habitLongPressActions: Map<String, String> = emptyMap()
+    val habitLongPressActions: Map<String, String> = emptyMap(),
+
+    // ── Widget Trigger settings ─────────────────────────────────────────────
+    /**
+     * Habits that have the "Use Widget" feature enabled.
+     * When a habit is in this set, the floating bubble widget automatically
+     * appears whenever the associated trigger app (see [widgetTriggerApps])
+     * is in the foreground, and disappears when it leaves.
+     */
+    val widgetTriggerHabits: Set<String> = emptySet(),
+
+    /**
+     * Maps habit name → package name of the app that triggers the floating bubble.
+     * When the app identified by this package name comes to the foreground,
+     * [com.example.tail.widget.FloatingBubbleService] is started.
+     * When it leaves the foreground, the bubble is stopped.
+     * Only meaningful for habits in [widgetTriggerHabits].
+     */
+    val widgetTriggerApps: Map<String, String> = emptyMap(),
+
+    /**
+     * Widget-timer habits where MINUTES is the primary value.
+     *
+     * For habits in this set, the timer minutes (stored in the secondary-value
+     * slot `secondary_value:<habitName>`) are treated as the PRIMARY value for
+     * points/display, and the raw session count becomes the fallback (used for
+     * points only on days where minutes are zero). Habits with a widget trigger
+     * but NOT in this set keep the standard behaviour: sessions primary,
+     * minutes as the fallback secondary value.
+     *
+     * Defaults to "minutes primary" when a trigger app is first configured;
+     * the user can swap this per habit in edit mode.
+     */
+    val widgetTimerMinutesPrimary: Set<String> = emptySet()
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

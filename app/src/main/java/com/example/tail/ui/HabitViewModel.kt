@@ -3,6 +3,7 @@ package com.example.tail.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -440,8 +441,52 @@ class HabitViewModel(
             // in persisted DataStore settings before collecting the flow.
             settingsRepo.migrateHabitNames()
 
+            var widgetTriggerServiceChecked = false
             settingsRepo.settingsFlow.collect { s ->
                 _settings.value = s
+
+                // On first load, ensure the widget-trigger monitoring service
+                // is running if any trigger apps are configured (e.g. after a
+                // device reboot or app force-stop).
+                if (!widgetTriggerServiceChecked) {
+                    widgetTriggerServiceChecked = true
+                    val triggerCount = s.widgetTriggerApps.values.count { it.isNotBlank() }
+                    if (triggerCount > 0) {
+                        com.example.tail.widget.WidgetTriggerService.updateServiceState(context, triggerCount)
+                    }
+
+                    // One-time timer-feature setup for habits that already had a
+                    // trigger app configured before the timer existed: give them
+                    // the "minutes" secondary value, points fallback, and
+                    // minutes-primary default. Guarded on NOT already having a
+                    // secondary value, so a user's later manual primary-value
+                    // choice is never overridden.
+                    val needsSetup = s.widgetTriggerApps.entries
+                        .filter { it.value.isNotBlank() && it.key !in s.secondaryValueHabits }
+                        .map { it.key }
+                    if (needsSetup.isNotEmpty()) {
+                        val secVal = s.secondaryValueHabits + needsSetup
+                        val fallback = s.secondaryValueFallbackHabits + needsSetup
+                        val minutesPrimary = s.widgetTimerMinutesPrimary + needsSetup
+                        val labels = s.valueDisplayLabels.toMutableMap()
+                        needsSetup.forEach { habit ->
+                            labels[habit] = mapOf(
+                                com.example.tail.data.GRAPH_METRIC_VALUE1 to "Sessions",
+                                com.example.tail.data.GRAPH_METRIC_VALUE2 to "Minutes"
+                            )
+                        }
+                        settingsRepo.saveSecondaryValueHabits(secVal)
+                        settingsRepo.saveSecondaryValueFallbackHabits(fallback)
+                        settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
+                        settingsRepo.saveValueDisplayLabels(labels)
+                        _settings.value = _settings.value.copy(
+                            secondaryValueHabits = secVal,
+                            secondaryValueFallbackHabits = fallback,
+                            widgetTimerMinutesPrimary = minutesPrimary,
+                            valueDisplayLabels = labels
+                        )
+                    }
+                }
 
                 // Load today's points from the tasker file so the spinner shows the
                 // correct tier immediately, before the full DB is loaded.
@@ -907,7 +952,8 @@ class HabitViewModel(
                     db = db,
                     dividers = dividers,
                     noPointsHabits = noPointsHabits,
-                    secondaryValueFallbackHabits = _settings.value.secondaryValueFallbackHabits
+                    secondaryValueFallbackHabits = _settings.value.secondaryValueFallbackHabits,
+                    timerMinutesPrimaryHabits = _settings.value.widgetTimerMinutesPrimary
                 )
 
                 val uri = Uri.parse(taskerUriString)
@@ -2676,6 +2722,12 @@ class HabitViewModel(
      */
     private fun effectivePointsForDate(habitName: String, rawCount: Int, dateStr: String): Int {
         val divider = _settings.value.habitDividers[habitName] ?: 1
+        // Widget-timer habits with minutes primary: minutes (secondary-value slot)
+        // drive points (divider applies), sessions are the zero-minutes fallback.
+        if (habitName in _settings.value.widgetTimerMinutesPrimary) {
+            val minutes = cachedPhoneDb[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+            return com.example.tail.data.effectivePointsWithFallback(minutes, divider, rawCount, true)
+        }
         val useFallback = habitName in _settings.value.secondaryValueFallbackHabits
         if (!useFallback) return applyDivider(rawCount, divider)
         val secVal = cachedPhoneDb[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
@@ -2975,6 +3027,125 @@ class HabitViewModel(
         }
     }
 
+    // ── Widget Trigger methods ────────────────────────────────────────────
+
+    /**
+     * Toggles the "Use Widget" feature for [habitName].
+     * When enabling, the habit is added to [AppSettings.widgetTriggerHabits].
+     * When disabling, both the habit and its trigger app are removed.
+     */
+    fun toggleWidgetTrigger(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.widgetTriggerHabits
+            val newHabits: Set<String>
+            val newApps: Map<String, String>
+
+            if (habitName in current) {
+                // Disabling — remove from both sets
+                newHabits = current - habitName
+                newApps = _settings.value.widgetTriggerApps - habitName
+            } else {
+                // Enabling — add to habits set
+                newHabits = current + habitName
+                newApps = _settings.value.widgetTriggerApps
+            }
+
+            settingsRepo.saveWidgetTriggerHabits(newHabits)
+            settingsRepo.saveWidgetTriggerApps(newApps)
+            _settings.value = _settings.value.copy(
+                widgetTriggerHabits = newHabits,
+                widgetTriggerApps = newApps
+            )
+
+            updateWidgetTriggerService(newApps)
+        }
+    }
+
+    /**
+     * Sets the trigger app [packageName] for [habitName].
+     * The habit should already be in [AppSettings.widgetTriggerHabits].
+     */
+    fun setWidgetTriggerApp(habitName: String, packageName: String) {
+        viewModelScope.launch {
+            val settings = _settings.value
+            val apps = settings.widgetTriggerApps.toMutableMap()
+            apps[habitName] = packageName
+            settingsRepo.saveWidgetTriggerApps(apps)
+            _settings.value = _settings.value.copy(widgetTriggerApps = apps)
+
+            // First-time setup for the timer feature: give the habit a "minutes"
+            // secondary value (where the bubble timer writes), enable the points
+            // fallback, and make minutes the PRIMARY value by default (the raw
+            // session count becomes the fallback). Users can swap this later.
+            if (packageName.isNotBlank() && settings.widgetTriggerApps[habitName].isNullOrBlank()) {
+                val secVal = settings.secondaryValueHabits + habitName
+                val fallback = settings.secondaryValueFallbackHabits + habitName
+                val minutesPrimary = settings.widgetTimerMinutesPrimary + habitName
+                val labels = settings.valueDisplayLabels.toMutableMap()
+                labels[habitName] = mapOf(
+                    com.example.tail.data.GRAPH_METRIC_VALUE1 to "Sessions",
+                    com.example.tail.data.GRAPH_METRIC_VALUE2 to "Minutes"
+                )
+                settingsRepo.saveSecondaryValueHabits(secVal)
+                settingsRepo.saveSecondaryValueFallbackHabits(fallback)
+                settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
+                settingsRepo.saveValueDisplayLabels(labels)
+                _settings.value = _settings.value.copy(
+                    secondaryValueHabits = secVal,
+                    secondaryValueFallbackHabits = fallback,
+                    widgetTimerMinutesPrimary = minutesPrimary,
+                    valueDisplayLabels = labels
+                )
+                rebuildHabitList()
+            }
+
+            updateWidgetTriggerService(apps)
+        }
+    }
+
+    /**
+     * Sets which value is PRIMARY for a widget-timer habit:
+     *  - [minutesPrimary] = true  → minutes drive points/display; sessions are
+     *    the fallback used only on days with zero minutes.
+     *  - [minutesPrimary] = false → sessions primary; minutes fallback.
+     */
+    fun setWidgetTimerPrimaryValue(habitName: String, minutesPrimary: Boolean) {
+        viewModelScope.launch {
+            val current = _settings.value.widgetTimerMinutesPrimary
+            val updated = if (minutesPrimary) current + habitName else current - habitName
+            settingsRepo.saveWidgetTimerMinutesPrimary(updated)
+            _settings.value = _settings.value.copy(widgetTimerMinutesPrimary = updated)
+            rebuildHabitList()
+        }
+    }
+
+    /**
+     * Returns whether the user has granted Usage Access permission,
+     * required for the widget trigger feature to work.
+     */
+    fun hasUsageAccess(): Boolean =
+        com.example.tail.widget.WidgetTriggerService.hasUsageAccess(context)
+
+    /**
+     * Opens the system Usage Access settings screen so the user can grant
+     * the permission.
+     */
+    fun openUsageAccessSettings() {
+        val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+    }
+
+    /**
+     * Starts or stops [WidgetTriggerService] based on whether any trigger
+     * apps are configured. Called after every widget-trigger setting change.
+     */
+    private fun updateWidgetTriggerService(apps: Map<String, String>) {
+        val validCount = apps.values.count { it.isNotBlank() }
+        com.example.tail.widget.WidgetTriggerService.updateServiceState(context, validCount)
+    }
+
     /**
      * Deletes the habit at [index] from the active screen (or flat order).
      * Does NOT remove data from JSON files — historical data is preserved.
@@ -3138,6 +3309,9 @@ class HabitViewModel(
                     mealHabits = settings.mealHabits.replaceElement(oldName, newName),
                     habitAppAssociations = settings.habitAppAssociations.replaceKey(oldName, newName),
                     habitLongPressActions = settings.habitLongPressActions.replaceKey(oldName, newName),
+                    widgetTriggerHabits = settings.widgetTriggerHabits.replaceElement(oldName, newName),
+                    widgetTriggerApps = settings.widgetTriggerApps.replaceKey(oldName, newName),
+                    widgetTimerMinutesPrimary = settings.widgetTimerMinutesPrimary.replaceElement(oldName, newName),
                     mapMainHabit = if (settings.mapMainHabit == oldName) newName else settings.mapMainHabit
                 )
                 
@@ -3189,6 +3363,8 @@ class HabitViewModel(
                 settingsRepo.saveMealHabits(newSettings.mealHabits)
                 settingsRepo.saveHabitAppAssociations(newSettings.habitAppAssociations)
                 settingsRepo.saveHabitLongPressActions(newSettings.habitLongPressActions)
+                settingsRepo.saveWidgetTriggerHabits(newSettings.widgetTriggerHabits)
+                settingsRepo.saveWidgetTriggerApps(newSettings.widgetTriggerApps)
                 settingsRepo.saveMapMainHabit(newSettings.mapMainHabit)
                 
                 // Rename in the internal timestamp file so historical timestamps survive
@@ -3811,10 +3987,18 @@ class HabitViewModel(
         )
         // GitHub habits use labeled metric buttons instead of generic "Value 1"
         if (!isGithubHabit(habitName)) {
-            metrics.add(GraphMetricOption(GRAPH_METRIC_VALUE1, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE1, labels)))
-        }
-        if (hasSecondaryValue(habitName)) {
-            metrics.add(GraphMetricOption(GRAPH_METRIC_VALUE2, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE2, labels)))
+            val v1 = GraphMetricOption(GRAPH_METRIC_VALUE1, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE1, labels))
+            val v2 = GraphMetricOption(GRAPH_METRIC_VALUE2, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE2, labels))
+            val hasV2 = hasSecondaryValue(habitName)
+            if (hasV2 && habitName in _settings.value.widgetTimerMinutesPrimary) {
+                // Minutes-primary habit: the primary value (Value2 slot) comes
+                // right after Points, then the secondary (Value1 slot).
+                metrics.add(v2)
+                metrics.add(v1)
+            } else {
+                metrics.add(v1)
+                if (hasV2) metrics.add(v2)
+            }
         }
         // IMDb average rating metric — available for movie-bridge habits with an OMDb API key
         if (hasImdbRatings(habitName)) {
@@ -4066,9 +4250,16 @@ class HabitViewModel(
                     date = cursor,
                     dateStr = ds,
                     rawValue = filteredRaw,
-                    pointsValue = com.example.tail.data.effectivePointsWithFallback(
-                        filteredRaw, divider, secVal ?: 0, useSecondaryFallback
-                    ),
+                    pointsValue = if (habitName in _settings.value.widgetTimerMinutesPrimary) {
+                        // Minutes primary: minutes drive points, sessions fallback
+                        com.example.tail.data.effectivePointsWithFallback(
+                            secVal ?: 0, divider, filteredRaw, true
+                        )
+                    } else {
+                        com.example.tail.data.effectivePointsWithFallback(
+                            filteredRaw, divider, secVal ?: 0, useSecondaryFallback
+                        )
+                    },
                     garminValue = garminVal,
                     secondaryValue = secVal,
                     mealCalories = mealDay?.calories,
@@ -4573,6 +4764,15 @@ class HabitViewModel(
      */
     fun onAppForegrounded() {
         viewModelScope.launch {
+            // Re-check the widget-trigger monitor service: the user may have
+            // just granted Usage Access in system settings (the service is
+            // started regardless of permission state, but this also recovers
+            // the case where the app process was killed while a trigger app
+            // was configured).
+            val triggerCount = _settings.value.widgetTriggerApps.values.count { it.isNotBlank() }
+            if (triggerCount > 0) {
+                com.example.tail.widget.WidgetTriggerService.updateServiceState(context, triggerCount)
+            }
             // Re-read the phone DB so external increments (e.g. from ShareTextActivity)
             // are visible immediately when the user returns to the app.
             val phoneUriStr = _settings.value.fileUri
@@ -6884,13 +7084,21 @@ class HabitViewModel(
         // is always [date], not today (fixes anti-streak stuck on today's value).
         var totalStreakDays = 0
         var totalAntiStreakDays = 0
+        val timerMinutesPrimary = _settings.value.widgetTimerMinutesPrimary
         for (name in tracked) {
             val rawEntries = db[name] ?: continue
+            // Widget-timer habits with minutes primary: swap the roles so minutes
+            // drive the streak and sessions are the fallback.
+            val swapped = name in timerMinutesPrimary
             // Apply secondary-value fallback so days with 0 primary but non-zero
             // secondary count as "done" for streak purposes.
-            val useFallback = name in fallbackHabits
+            val useFallback = name in fallbackHabits || swapped
             val secEntries = if (useFallback) db[secondaryValueKey(name)] ?: emptyMap() else emptyMap()
-            val entries = com.example.tail.data.effectiveEntriesWithFallback(rawEntries, secEntries, useFallback)
+            val entries = if (swapped) {
+                com.example.tail.data.effectiveEntriesWithFallback(secEntries, rawEntries, true)
+            } else {
+                com.example.tail.data.effectiveEntriesWithFallback(rawEntries, secEntries, useFallback)
+            }
             // Cap entries at [date] — only include days up to and including [date]
             val capped = entries.filter { it.key <= dateStr }.toMutableMap()
             if (capped.isEmpty()) continue
@@ -6904,14 +7112,22 @@ class HabitViewModel(
             for (entry in reversed) {
                 val rawPrimary = rawEntries[entry.key] ?: 0
                 val secVal = if (useFallback) secEntries[entry.key] ?: 0 else 0
-                val pts = com.example.tail.data.effectivePointsWithFallback(rawPrimary, divider, secVal, useFallback)
+                val pts = if (swapped) {
+                    com.example.tail.data.effectivePointsWithFallback(secVal, divider, rawPrimary, true)
+                } else {
+                    com.example.tail.data.effectivePointsWithFallback(rawPrimary, divider, secVal, useFallback)
+                }
                 if (pts > 0) habStreak++ else break
             }
             var habAntiStreak = 0
             for (entry in reversed) {
                 val rawPrimary = rawEntries[entry.key] ?: 0
                 val secVal = if (useFallback) secEntries[entry.key] ?: 0 else 0
-                val pts = com.example.tail.data.effectivePointsWithFallback(rawPrimary, divider, secVal, useFallback)
+                val pts = if (swapped) {
+                    com.example.tail.data.effectivePointsWithFallback(secVal, divider, rawPrimary, true)
+                } else {
+                    com.example.tail.data.effectivePointsWithFallback(rawPrimary, divider, secVal, useFallback)
+                }
                 if (pts == 0) habAntiStreak++ else break
             }
 

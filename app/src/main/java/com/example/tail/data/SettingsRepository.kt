@@ -162,6 +162,12 @@ private val KEY_APP_LINKS = stringPreferencesKey("app_links")
 private val KEY_HABIT_APP_ASSOCIATIONS = stringPreferencesKey("habit_app_associations")
 // Habit long-press action keys — stored as "habitName\x00action|||habitName\x00action" pairs
 private val KEY_HABIT_LONG_PRESS_ACTIONS = stringPreferencesKey("habit_long_press_actions")
+// Widget trigger feature keys
+private val KEY_WIDGET_TRIGGER_HABITS = stringSetPreferencesKey("widget_trigger_habits")
+// Stored as "habitName\x00packageName|||habitName\x00packageName" pairs
+private val KEY_WIDGET_TRIGGER_APPS = stringPreferencesKey("widget_trigger_apps")
+// Widget-timer habits where minutes (not sessions) is the primary value
+private val KEY_WIDGET_TIMER_MINUTES_PRIMARY = stringSetPreferencesKey("widget_timer_minutes_primary")
 
 /**
  * One-time rename mapping for legacy "Launch … Widget" habit names.
@@ -711,7 +717,10 @@ class SettingsRepository(private val context: Context) {
             mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet(),
             appLinks = decodeFileUriMap(prefs[KEY_APP_LINKS] ?: ""),
             habitAppAssociations = decodeSubtypesMap(prefs[KEY_HABIT_APP_ASSOCIATIONS] ?: ""),
-            habitLongPressActions = decodeFileUriMap(prefs[KEY_HABIT_LONG_PRESS_ACTIONS] ?: "")
+            habitLongPressActions = decodeFileUriMap(prefs[KEY_HABIT_LONG_PRESS_ACTIONS] ?: ""),
+            widgetTriggerHabits = prefs[KEY_WIDGET_TRIGGER_HABITS] ?: emptySet(),
+            widgetTriggerApps = decodeFileUriMap(prefs[KEY_WIDGET_TRIGGER_APPS] ?: ""),
+            widgetTimerMinutesPrimary = prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] ?: emptySet()
         )
     }
 
@@ -1252,5 +1261,20 @@ class SettingsRepository(private val context: Context) {
     /** Saves the map of habit name → long-press action string. */
     suspend fun saveHabitLongPressActions(actions: Map<String, String>) {
         context.dataStore.edit { prefs -> prefs[KEY_HABIT_LONG_PRESS_ACTIONS] = encodeFileUriMap(actions) }
+    }
+
+    /** Saves the set of habits that have the "Use Widget" feature enabled. */
+    suspend fun saveWidgetTriggerHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_WIDGET_TRIGGER_HABITS] = habits }
+    }
+
+    /** Saves the map of habit name → trigger app package name. */
+    suspend fun saveWidgetTriggerApps(apps: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_WIDGET_TRIGGER_APPS] = encodeFileUriMap(apps) }
+    }
+
+    /** Saves the set of widget-timer habits where minutes is the primary value. */
+    suspend fun saveWidgetTimerMinutesPrimary(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] = habits }
     }
 }

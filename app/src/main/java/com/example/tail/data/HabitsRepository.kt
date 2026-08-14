@@ -762,7 +762,8 @@ class HabitsRepository {
         val order = if (settings.habitOrder.isNotEmpty()) settings.habitOrder else HABIT_ORDER
         return order.map { name ->
             val entries = db[name] ?: emptyMap()
-            val useFallback = name in settings.secondaryValueFallbackHabits
+            val minutesPrimary = name in settings.widgetTimerMinutesPrimary
+            val useFallback = name in settings.secondaryValueFallbackHabits || minutesPrimary
             val secondaryEntries = if (useFallback) {
                 db[secondaryValueKey(name)] ?: emptyMap()
             } else emptyMap()
@@ -773,7 +774,8 @@ class HabitsRepository {
                 divider = settings.habitDividers[name] ?: 1,
                 targetDate = targetDate,
                 secondaryEntries = secondaryEntries,
-                useSecondaryFallback = useFallback
+                useSecondaryFallback = useFallback,
+                swapPrimarySecondary = minutesPrimary
             )
         }
     }

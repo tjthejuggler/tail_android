@@ -25,6 +25,12 @@
     <!-- Required for the floating bubble overlay (draw over other apps) -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Required for the widget trigger feature (detecting foreground apps).
+         This is an app-ops permission the user grants via
+         Settings → Special app access → Usage access. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
     <!-- Required for the floating bubble foreground service on Android 14+ -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
@@ -430,6 +436,22 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Floating overlay bubble for quick habit tracking access" />
+        </service>
+
+        <!--
+            WidgetTriggerService: foreground service that monitors the
+            foreground app (via UsageStatsManager) and automatically
+            shows/hides the FloatingBubbleService when a habit's trigger
+            app opens/closes. Started by the app when any habit has the
+            "Use Widget" feature enabled with a trigger app selected.
+        -->
+        <service
+            android:name=".widget.WidgetTriggerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="App usage monitoring for automatic habit widget display" />
         </service>
 
     </application>

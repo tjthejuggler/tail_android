@@ -9,16 +9,34 @@ import android.content.Intent
 import android.content.res.Resources
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.example.tail.R
+import com.example.tail.data.HabitsRepository
+import com.example.tail.data.SettingsRepository
+import com.example.tail.data.secondaryValueKey
+import com.example.tail.ui.HabitIncrementBus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlin.math.hypot
 
 /**
@@ -47,11 +65,26 @@ class FloatingBubbleService : Service() {
 
         /** Action to stop the bubble from anywhere (e.g. notification action). */
         const val ACTION_STOP_BUBBLE = "com.example.tail.widget.STOP_BUBBLE"
+
+        /** Intent extra: name of the habit whose trigger app opened the bubble. */
+        const val EXTRA_HABIT_NAME = "habit_name"
     }
 
     private lateinit var windowManager: WindowManager
     private var bubbleView: View? = null
     private var dismissZoneView: View? = null
+
+    /** Habit whose trigger app opened the bubble (drives the timer menu). */
+    private var triggerHabitName: String? = null
+
+    // ── Timer menu overlay ────────────────────────────────────────────────
+    private var menuView: LinearLayout? = null
+    private var timerTimeText: TextView? = null
+    private var timerButton: Button? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val settingsRepo by lazy { SettingsRepository(applicationContext) }
+    private val habitsRepo by lazy { HabitsRepository() }
 
     // Bubble layout params (positioned on screen)
     private lateinit var bubbleParams: WindowManager.LayoutParams
@@ -77,6 +110,9 @@ class FloatingBubbleService : Service() {
             }
         }
 
+        // Remember which habit's trigger app opened the bubble (for the timer)
+        intent?.getStringExtra(EXTRA_HABIT_NAME)?.let { triggerHabitName = it }
+
         if (bubbleView == null) {
             showBubble()
         }
@@ -88,6 +124,8 @@ class FloatingBubbleService : Service() {
         super.onDestroy()
         removeBubble()
         removeDismissZone()
+        hideTimerMenu()
+        serviceScope.cancel()
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -414,7 +452,7 @@ class FloatingBubbleService : Service() {
 
     /**
      * Called when the bubble is tapped (not dragged).
-     * Placeholder for future habit-tracking features.
+     * Toggles the timer menu for the habit whose trigger app opened the bubble.
      */
     private fun onBubbleTapped() {
         // Brief scale animation to give visual feedback
@@ -432,6 +470,206 @@ class FloatingBubbleService : Service() {
                 }
                 .start()
         }
+        if (menuView != null) hideTimerMenu() else showTimerMenu()
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    //  Timer menu
+    // ──────────────────────────────────────────────────────────────────────
+
+    /** Live-update runnable — refreshes the elapsed time while the menu is open. */
+    private val timerTickRunnable = object : Runnable {
+        override fun run() {
+            val habit = triggerHabitName
+            if (habit != null && menuView != null) {
+                updateTimerMenuUi(habit)
+                handler.postDelayed(this, 500L)
+            }
+        }
+    }
+
+    /**
+     * Shows the timer menu overlay anchored below the bubble:
+     * habit name, live elapsed time, and a Start/Stop Timer button.
+     */
+    private fun showTimerMenu() {
+        val habit = triggerHabitName ?: return
+        if (menuView != null) return
+
+        val density = resources.displayMetrics.density
+        fun Int.dp(): Int = (this * density).toInt()
+
+        val timeText = TextView(this).apply {
+            text = "0:00"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            typeface = Typeface.MONOSPACE
+            setPadding(0, 10.dp(), 0, 10.dp())
+        }
+        timerTimeText = timeText
+
+        val startStopButton = Button(this).apply {
+            text = "▶ Start Timer"
+            setOnClickListener { onTimerButtonClicked(habit) }
+        }
+        timerButton = startStopButton
+
+        val menu = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dp(), 12.dp(), 16.dp(), 14.dp())
+            background = GradientDrawable().apply {
+                setColor(0xEE161616.toInt())
+                cornerRadius = 16f * density
+                setStroke(1, 0xFF334455.toInt())
+            }
+
+            val header = LinearLayout(this@FloatingBubbleService).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                val title = TextView(this@FloatingBubbleService).apply {
+                    text = habit
+                    textSize = 13f
+                    setTextColor(0xFFBBDDFF.toInt())
+                    maxLines = 1
+                    layoutParams = LinearLayout.LayoutParams(
+                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                    )
+                }
+                val close = TextView(this@FloatingBubbleService).apply {
+                    text = "✕"
+                    textSize = 15f
+                    setTextColor(0xFF888888.toInt())
+                    setPadding(10.dp(), 0, 0, 0)
+                    setOnClickListener { hideTimerMenu() }
+                }
+                addView(title)
+                addView(close)
+            }
+            addView(header)
+            addView(
+                timeText,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                startStopButton,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+        menuView = menu
+
+        val screenW = Resources.getSystem().displayMetrics.widthPixels
+        val screenH = Resources.getSystem().displayMetrics.heightPixels
+        val menuParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            // Center the menu horizontally under the bubble, clamped on-screen
+            val menuMaxWidth = 260.dp()
+            x = (bubbleParams.x + bubbleSize / 2 - menuMaxWidth / 2)
+                .coerceIn(8.dp(), (screenW - menuMaxWidth - 8.dp()).coerceAtLeast(8.dp()))
+            // Below the bubble, or clamped up if too close to the bottom edge
+            y = (bubbleParams.y + bubbleSize + 12.dp()).coerceAtMost(screenH - 250.dp())
+        }
+
+        try {
+            windowManager.addView(menu, menuParams)
+            updateTimerMenuUi(habit)
+            handler.postDelayed(timerTickRunnable, 500L)
+        } catch (e: Exception) {
+            menuView = null
+            timerTimeText = null
+            timerButton = null
+        }
+    }
+
+    /** Removes the timer menu overlay and stops the live tick updates. */
+    private fun hideTimerMenu() {
+        handler.removeCallbacks(timerTickRunnable)
+        menuView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) { /* already removed */ }
+        }
+        menuView = null
+        timerTimeText = null
+        timerButton = null
+    }
+
+    /** Refreshes the live time text and Start/Stop button label. */
+    private fun updateTimerMenuUi(habit: String) {
+        val running = WidgetTimerStore.isTimerRunning(this, habit)
+        timerTimeText?.text = if (running) {
+            WidgetTimerStore.formatElapsed(WidgetTimerStore.elapsedMillis(this, habit))
+        } else {
+            "0:00"
+        }
+        timerButton?.text = if (running) "⏹ Stop Timer" else "▶ Start Timer"
+    }
+
+    /**
+     * Start/Stop button handler. Starting persists a timestamp; stopping
+     * computes the elapsed minutes and writes them to the habit's "minutes"
+     * secondary value (`secondary_value:<habit>` in habitsdb.txt).
+     */
+    private fun onTimerButtonClicked(habit: String) {
+        if (WidgetTimerStore.isTimerRunning(this, habit)) {
+            val minutes = WidgetTimerStore.stopTimerAndComputeMinutes(this, habit)
+            if (minutes > 0) {
+                writeMinutesToHabit(habit, minutes)
+            } else {
+                Toast.makeText(this, "Timer stopped — under a minute, nothing recorded", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            WidgetTimerStore.startTimer(this, habit)
+        }
+        updateTimerMenuUi(habit)
+    }
+
+    /** Adds [minutes] to the habit's minutes secondary value and refreshes UI surfaces. */
+    private fun writeMinutesToHabit(habit: String, minutes: Int) {
+        serviceScope.launch {
+            try {
+                val settings = settingsRepo.settingsFlow.first()
+                val uriStr = settings.fileUri
+                if (uriStr.isEmpty()) {
+                    Toast.makeText(
+                        this@FloatingBubbleService,
+                        "No habits file configured — minutes not saved",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@launch
+                }
+                habitsRepo.incrementHabit(
+                    Uri.parse(uriStr), applicationContext, secondaryValueKey(habit), minutes
+                )
+                // A completed timer session also counts as one session in the
+                // habit's other value slot (independent of the minutes count).
+                habitsRepo.incrementHabit(
+                    Uri.parse(uriStr), applicationContext, habit, 1
+                )
+                HabitIncrementBus.emit(habit)
+                HabitListWidgetProvider.refreshAll(applicationContext)
+                Toast.makeText(
+                    this@FloatingBubbleService,
+                    "+$minutes min · +1 session → $habit",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(this@FloatingBubbleService, "Failed to save minutes: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -445,6 +683,8 @@ class FloatingBubbleService : Service() {
             } catch (e: Exception) { /* already removed */ }
         }
         bubbleView = null
+        // Closing the bubble also closes the timer menu
+        hideTimerMenu()
     }
 
     private fun removeDismissZone() {

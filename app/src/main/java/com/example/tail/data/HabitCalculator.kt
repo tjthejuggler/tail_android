@@ -298,6 +298,11 @@ fun effectivePointsWithFallback(
  * `secondary_value:<habitName>`).  When [useSecondaryFallback] is true, days
  * with a zero primary value but non-zero secondary value use the secondary
  * value for points, streak, and average calculations.
+ *
+ * [swapPrimarySecondary] — for widget-timer habits where minutes (the
+ * secondary-value slot) is the PRIMARY value: the roles are swapped, so
+ * [secondaryEntries] (minutes) drives points/streak/averages with the
+ * [entries] (sessions) used only as the zero-minutes fallback.
  */
 fun buildHabit(
     name: String,
@@ -306,7 +311,8 @@ fun buildHabit(
     divider: Int = 1,
     targetDate: java.time.LocalDate = java.time.LocalDate.now(),
     secondaryEntries: Map<String, Int> = emptyMap(),
-    useSecondaryFallback: Boolean = false
+    useSecondaryFallback: Boolean = false,
+    swapPrimarySecondary: Boolean = false
 ): Habit {
     // Only include entries up to and including targetDate for streak/stat calculations
     val targetDateStr = dateString(targetDate)
@@ -314,17 +320,23 @@ fun buildHabit(
 
     // When fallback is enabled, merge secondary values into the effective entries
     // so that streak / average / ATH calculations see the substituted values.
+    // When swapped (minutes primary), the secondary entries become the primary
+    // series and the raw entries become the fallback.
     val filteredSecondary = secondaryEntries.filter { (k, _) -> k <= targetDateStr }
-    val effectiveEntries = effectiveEntriesWithFallback(
-        filteredEntries, filteredSecondary, useSecondaryFallback
-    )
+    val effectiveEntries = if (swapPrimarySecondary) {
+        effectiveEntriesWithFallback(filteredSecondary, filteredEntries, true)
+    } else {
+        effectiveEntriesWithFallback(filteredEntries, filteredSecondary, useSecondaryFallback)
+    }
 
     val rawCountForDate = getCountForDate(filteredEntries, targetDate)
     val secValForDate = getCountForDate(filteredSecondary, targetDate)
     // todayCount shown on the button is the effective points value (with fallback)
-    val countForDate = effectivePointsWithFallback(
-        rawCountForDate, divider, secValForDate, useSecondaryFallback
-    )
+    val countForDate = if (swapPrimarySecondary) {
+        effectivePointsWithFallback(secValForDate, divider, rawCountForDate, true)
+    } else {
+        effectivePointsWithFallback(rawCountForDate, divider, secValForDate, useSecondaryFallback)
+    }
     val streakDisplay = calculateStreakDisplay(effectiveEntries, targetDate)
     val longestStreak = calculateLongestStreak(effectiveEntries)
 
@@ -380,20 +392,29 @@ fun buildTaskerStatsContent(
     dividers: Map<String, Int>,
     noPointsHabits: Set<String>,
     today: LocalDate = LocalDate.now(),
-    secondaryValueFallbackHabits: Set<String> = emptySet()
+    secondaryValueFallbackHabits: Set<String> = emptySet(),
+    timerMinutesPrimaryHabits: Set<String> = emptySet()
 ): String {
     fun dayTotal(date: LocalDate): Int {
         val ds = dateString(date)
         return db.entries.sumOf { (habitName, entries) ->
             if (habitName in noPointsHabits) return@sumOf 0
             if (isSecondaryValueKey(habitName)) return@sumOf 0
-            val useFallback = habitName in secondaryValueFallbackHabits
-            val secVal = if (useFallback) {
-                db[secondaryValueKey(habitName)]?.get(ds) ?: 0
-            } else 0
-            effectivePointsWithFallback(
-                entries[ds] ?: 0, dividers[habitName] ?: 1, secVal, useFallback
-            )
+            if (habitName in timerMinutesPrimaryHabits) {
+                // Minutes (secondary slot) is primary; sessions are the fallback
+                val minutes = db[secondaryValueKey(habitName)]?.get(ds) ?: 0
+                effectivePointsWithFallback(
+                    minutes, dividers[habitName] ?: 1, entries[ds] ?: 0, true
+                )
+            } else {
+                val useFallback = habitName in secondaryValueFallbackHabits
+                val secVal = if (useFallback) {
+                    db[secondaryValueKey(habitName)]?.get(ds) ?: 0
+                } else 0
+                effectivePointsWithFallback(
+                    entries[ds] ?: 0, dividers[habitName] ?: 1, secVal, useFallback
+                )
+            }
         }
     }
 
