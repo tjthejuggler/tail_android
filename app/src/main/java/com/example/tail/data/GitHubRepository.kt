@@ -480,6 +480,88 @@ class GitHubRepository(private val context: Context) {
         cacheDir.listFiles()?.forEach { it.delete() }
     }
 
+    // ── Daily metrics cache I/O (all four metrics per habit) ───────────────────
+
+    private fun dailyMetricsCacheFile(): File = File(cacheDir, "daily_metrics.json")
+
+    /**
+     * Persists the per-day all-four-metrics data for [habitName] to internal
+     * storage (`github_cache/daily_metrics.json`), keyed by habit name.
+     *
+     * The in-memory `_githubDailyCache` in HabitViewModel is volatile and lost
+     * on every process restart — without this file, all non-primary GitHub
+     * metrics (e.g. commits/additions/deletions when the primary metric is
+     * lines changed) vanish until the next manual backlog re-fetch.
+     */
+    suspend fun saveDailyMetricsCache(
+        habitName: String,
+        metrics: Map<String, GithubDailyMetrics>
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val file = dailyMetricsCacheFile()
+            val json = if (file.exists()) {
+                try {
+                    JSONObject(file.readText())
+                } catch (e: Exception) {
+                    JSONObject()
+                }
+            } else {
+                JSONObject()
+            }
+            val days = JSONObject()
+            for ((date, m) in metrics) {
+                days.put(date, JSONObject().apply {
+                    put("lines", m.linesChanged)
+                    put("commits", m.commits)
+                    put("additions", m.additions)
+                    put("deletions", m.deletions)
+                })
+            }
+            json.put(habitName, days)
+            file.writeText(json.toString())
+            Log.d(TAG, "Saved daily metrics cache for '$habitName' (${metrics.size} days)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to save daily metrics cache: ${e.message}")
+        }
+    }
+
+    /**
+     * Loads the persisted per-day all-four-metrics cache for all habits.
+     * Returns an empty map if no cache exists (first run / cache cleared).
+     */
+    suspend fun loadDailyMetricsCache(): Map<String, Map<String, GithubDailyMetrics>> =
+        withContext(Dispatchers.IO) {
+            val file = dailyMetricsCacheFile()
+            if (!file.exists()) return@withContext emptyMap()
+            try {
+                val json = JSONObject(file.readText())
+                val result = mutableMapOf<String, Map<String, GithubDailyMetrics>>()
+                val habitKeys = json.keys()
+                while (habitKeys.hasNext()) {
+                    val habitName = habitKeys.next()
+                    val daysObj = json.optJSONObject(habitName) ?: continue
+                    val days = mutableMapOf<String, GithubDailyMetrics>()
+                    val dayKeys = daysObj.keys()
+                    while (dayKeys.hasNext()) {
+                        val date = dayKeys.next()
+                        val m = daysObj.optJSONObject(date) ?: continue
+                        days[date] = GithubDailyMetrics(
+                            linesChanged = m.optInt("lines", 0),
+                            commits = m.optInt("commits", 0),
+                            additions = m.optInt("additions", 0),
+                            deletions = m.optInt("deletions", 0)
+                        )
+                    }
+                    result[habitName] = days
+                }
+                Log.d(TAG, "Loaded daily metrics cache for ${result.size} habits")
+                result
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to load daily metrics cache: ${e.message}")
+                emptyMap()
+            }
+        }
+
     // ── Date parsing ──────────────────────────────────────────────────────────
 
     /**

@@ -388,6 +388,23 @@ class HabitViewModel(
             }
         }
 
+        // Load cached GitHub daily metrics on startup so all four GitHub graph
+        // metrics (lines/commits/additions/deletions) survive process restarts.
+        // Without this, only the primary metric (persisted in the habits DB as
+        // value1) is available after a restart and the rest appear "forgotten"
+        // until a manual backlog re-fetch.
+        viewModelScope.launch {
+            try {
+                val cached = withContext(Dispatchers.IO) { githubRepo.loadDailyMetricsCache() }
+                if (cached.isNotEmpty() && _githubDailyCache.isEmpty()) {
+                    _githubDailyCache = cached
+                    Log.d(TAG, "Loaded GitHub daily metrics cache for ${cached.size} habits")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to load cached GitHub daily metrics: ${e.message}")
+            }
+        }
+
         // Collect in-process increment events from VoiceHabitService / IPC receivers
         // so the UI updates instantly without waiting for ON_RESUME.
         viewModelScope.launch {
@@ -5345,6 +5362,10 @@ class HabitViewModel(
                 _githubDailyCache = _githubDailyCache.toMutableMap().apply {
                     put(habitName, allMetrics)
                 }
+
+                // Persist the full metrics cache so all four value types survive
+                // process restarts without a manual re-fetch.
+                githubRepo.saveDailyMetricsCache(habitName, allMetrics)
 
                 // Extract the selected metric for storing in the habits DB (value1)
                 val dailyValues = allMetrics.mapValues { (_, m) ->
