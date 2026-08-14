@@ -150,6 +150,9 @@ private val KEY_MIGRATION_LAUNCH_RENAME_DONE = booleanPreferencesKey("migration_
 // Migration flag — set to true after the one-time apnea secondary-value data migration.
 private val KEY_MIGRATION_APNEA_SECONDARY_DONE = booleanPreferencesKey("migration_apnea_secondary_done")
 
+// Migration flag — set to true after the one-time resonance-breathing secondary-value data migration.
+private val KEY_MIGRATION_RESONANCE_SECONDARY_DONE = booleanPreferencesKey("migration_resonance_secondary_done")
+
 // ── Meal Habit Engine keys ────────────────────────────────────────────────
 private val KEY_MEAL_ENABLED = booleanPreferencesKey("meal_enabled")
 private val KEY_MEAL_BASE_URL = stringPreferencesKey("meal_base_url")
@@ -600,6 +603,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setApneaSecondaryMigrationDone() {
         context.dataStore.edit { it[KEY_MIGRATION_APNEA_SECONDARY_DONE] = true }
+    }
+
+    suspend fun isResonanceSecondaryMigrationDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_RESONANCE_SECONDARY_DONE] ?: false }.first()
+    }
+
+    suspend fun setResonanceSecondaryMigrationDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_RESONANCE_SECONDARY_DONE] = true }
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->

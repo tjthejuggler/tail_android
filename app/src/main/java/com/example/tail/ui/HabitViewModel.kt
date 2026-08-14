@@ -86,6 +86,10 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 private const val TAG = "HabitVM"
+
+// Resonance-breathing secondary-value migration: pre-2026-08-08 primary values at or
+// below this are legacy session counts; anything larger is real backfilled minutes.
+private const val MAX_LEGACY_RESONANCE_SESSION_COUNT = 3
 private const val BRIDGE_PORT = 8001
 
 /** Total cells in the 8×10 habit grid — matches TOTAL_CELLS in HabitGridScreen. */
@@ -834,6 +838,71 @@ class HabitViewModel(
         Log.i(TAG, "Apnea secondary migration complete.")
     }
 
+    /**
+     * One-time migration: moves pre-2026-08-08 session counts from the primary
+     * slot to the secondary_value slot for "Resonance Breathing".
+     *
+     * Before 2026-08-08, wags wrote session counts (+1 per session) to the
+     * primary slot. After that date, wags writes minutes there. The wags
+     * backfill has already replaced the primary values with minutes for every
+     * date that has a resonance/RF record, so the only stale session counts
+     * remaining are SMALL values (≤ 3) on pre-cutoff dates — days with no wags
+     * record (manual increments or sessions whose wags record is gone).
+     *
+     * Unlike the apnea migration (which moves ALL pre-cutoff values), this one
+     * only moves values ≤ [MAX_LEGACY_SESSION_COUNT] because larger pre-cutoff
+     * values are legitimate backfilled minutes.
+     *
+     * Also auto-enables the secondary-value track for the habit so Value 2
+     * (sessions) is visible in the UI, mirroring Meditations.
+     */
+    private suspend fun performResonanceSecondaryMigration(uri: Uri) {
+        val cutoff = "2026-08-08"
+        val habitName = "Resonance Breathing"
+        var totalMoved = 0
+
+        val db = cachedPhoneDb.toMutableMap()
+        val primary = db[habitName]
+        if (primary != null) {
+            val secKey = com.example.tail.data.secondaryValueKey(habitName)
+            val secondary = db[secKey]?.toMutableMap() ?: mutableMapOf()
+            val mutablePrimary = primary.toMutableMap()
+
+            for ((dateStr, value) in primary) {
+                if (dateStr >= cutoff) continue
+                if (value <= 0) continue
+                if (value > MAX_LEGACY_RESONANCE_SESSION_COUNT) continue // real backfilled minutes
+
+                // Move to secondary (max merge)
+                secondary[dateStr] = maxOf(secondary[dateStr] ?: 0, value)
+                // Zero out primary
+                mutablePrimary[dateStr] = 0
+                totalMoved++
+            }
+
+            db[habitName] = mutablePrimary
+            db[secKey] = secondary
+        }
+
+        if (totalMoved > 0) {
+            Log.i(TAG, "Resonance secondary migration: moved $totalMoved dates from primary → secondary " +
+                    "(pre-$cutoff, values ≤ $MAX_LEGACY_RESONANCE_SESSION_COUNT)")
+            cachedPhoneDb = db
+            habitsRepo.persistDatabase(uri, context, db)
+        }
+
+        // Ensure the secondary-value track is enabled so Value 2 (sessions) shows
+        // up in the grid/graph — same setup the user has for Meditations.
+        if (habitName !in _settings.value.secondaryValueHabits) {
+            val updated = _settings.value.secondaryValueHabits + habitName
+            _settings.value = _settings.value.copy(secondaryValueHabits = updated)
+            settingsRepo.saveSecondaryValueHabits(updated)
+        }
+
+        settingsRepo.setResonanceSecondaryMigrationDone()
+        Log.i(TAG, "Resonance secondary migration complete.")
+    }
+
     private suspend fun catchUpAndLoad(uri: Uri) {
         _isLoading.value = true
         _errorMessage.value = null
@@ -859,6 +928,14 @@ class HabitViewModel(
             // mechanism can use them for points on days with 0 minutes.
             if (!settingsRepo.isApneaSecondaryMigrationDone()) {
                 performApneaSecondaryMigration(uri)
+            }
+
+            // ── One-time resonance-breathing secondary-value migration ────────
+            // Pre-Aug-8-2026 resonance session counts were stored in the primary
+            // slot (minutes). Move them to secondary_value so the fallback
+            // mechanism can use them for points on days with 0 minutes.
+            if (!settingsRepo.isResonanceSecondaryMigrationDone()) {
+                performResonanceSecondaryMigration(uri)
             }
 
             // Perform roll forward BEFORE ensureDaysExist creates today=0
