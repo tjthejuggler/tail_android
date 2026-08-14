@@ -7,8 +7,12 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -96,7 +100,9 @@ fun HabitButton(
     /** Map of habit name → GarminType.name for Garmin-linked habits. Used to format values (e.g. metres → km). */
     garminHabitLinks: Map<String, String> = emptyMap(),
     /** True when this habit has one or more associated apps (long-press launches them). */
-    hasAppAssociation: Boolean = false
+    hasAppAssociation: Boolean = false,
+    /** True while this habit should pulse (e.g. jumped to from global search). */
+    isHighlighted: Boolean = false
 ) {
     val habitStyle = getHabitStyle(habit.todayCount)
     // Animate color transitions smoothly to prevent flickering
@@ -113,6 +119,20 @@ fun HabitButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
         label = "habitButtonScale"
     )
+
+    // Search-highlight pulse — a glowing gold border that breathes while highlighted
+    val highlightAlpha = if (isHighlighted) {
+        val transition = rememberInfiniteTransition(label = "searchHighlight")
+        transition.animateFloat(
+            initialValue = 0.15f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(450),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "searchHighlightAlpha"
+        ).value
+    } else 0f
     val iconRes = getHabitIconRes(habit.name, customIconOverrides)
     // Check if this habit uses an AI-generated icon (id starts with "ai_")
     val aiIconId = customIconOverrides[habit.name]?.takeIf { it.startsWith("ai_") }
@@ -208,6 +228,8 @@ fun HabitButton(
 
     // Mode-specific borders — these take visual priority over the tier border
     val modeBorderMod = when {
+        // Search highlight pulse takes top priority so the target is always visible
+        isHighlighted -> Modifier.border(3.dp, Color(0xFFFFD700).copy(alpha = highlightAlpha), shape)
         isMovePendingSource -> Modifier.border(2.dp, Color(0xFF44FFFF), shape)     // cyan border = "in flight"
         isGraphSelected -> Modifier.border(2.dp, Color(0xFF66DD66), shape)         // green border when selected for graph
         isSelected && editMode -> Modifier.border(2.dp, Color(0xFFFFAA00), shape)  // orange border when selected in edit mode

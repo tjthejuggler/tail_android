@@ -34,6 +34,9 @@ import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
+import com.example.tail.data.HabitSearchResult
+import com.example.tail.data.HabitSearcher
+import com.example.tail.data.SearchableHabitInfo
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.APP_LINK_PREFIX
 import com.example.tail.data.appLinkKey
@@ -166,6 +169,111 @@ class HabitViewModel(
     )
     private val _mealTestState = MutableStateFlow(MealTestState())
     val mealTestState: StateFlow<MealTestState> = _mealTestState.asStateFlow()
+
+    // ── Global habit search ──────────────────────────────────────────────────
+
+    /**
+     * Current search query text. Lives in the ViewModel (not dialog-local
+     * state) so closing the search popup — including by tapping a result —
+     * preserves its exact state for the next time the search icon is pressed.
+     */
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    /** Habit names included in the search (filter section). */
+    private val _searchFilters = MutableStateFlow<Set<String>>(emptySet())
+    val searchFilters: StateFlow<Set<String>> = _searchFilters.asStateFlow()
+
+    /** Habits that have any searchable text, for the filter section. */
+    private val _searchableHabits = MutableStateFlow<List<SearchableHabitInfo>>(emptyList())
+    val searchableHabits: StateFlow<List<SearchableHabitInfo>> = _searchableHabits.asStateFlow()
+
+    /** Latest search hits, sorted by relevance then date. */
+    private val _searchResults = MutableStateFlow<List<HabitSearchResult>>(emptyList())
+    val searchResults: StateFlow<List<HabitSearchResult>> = _searchResults.asStateFlow()
+
+    private val _isSearching = MutableStateFlow(false)
+    val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
+
+    private var searchJob: Job? = null
+
+    /** Recomputes the list of habits with searchable text. Defaults the filter to "all". */
+    fun refreshSearchableHabits() {
+        val list = HabitSearcher.searchableHabits(_settings.value)
+        _searchableHabits.value = list
+        if (_searchFilters.value.isEmpty()) {
+            _searchFilters.value = list.map { it.habitName }.toSet()
+        }
+    }
+
+    /** Updates the query and runs a debounced fuzzy search across all text-bearing habits. */
+    fun updateSearchQuery(query: String) {
+        _searchQuery.value = query
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            _searchResults.value = emptyList()
+            _isSearching.value = false
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(300) // debounce keystrokes
+            performSearch(query)
+        }
+    }
+
+    /** Includes/excludes one habit from the search, then re-runs the active query. */
+    fun toggleSearchFilter(habitName: String) {
+        val current = _searchFilters.value
+        _searchFilters.value = if (habitName in current) current - habitName else current + habitName
+        rerunSearchIfActive()
+    }
+
+    /** Re-selects every searchable habit, then re-runs the active query. */
+    fun setAllSearchFilters() {
+        _searchFilters.value = _searchableHabits.value.map { it.habitName }.toSet()
+        rerunSearchIfActive()
+    }
+
+    private fun rerunSearchIfActive() {
+        val q = _searchQuery.value
+        if (q.isBlank()) return
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { performSearch(q) }
+    }
+
+    private suspend fun performSearch(query: String) {
+        _isSearching.value = true
+        try {
+            _searchResults.value = HabitSearcher.search(
+                context = context,
+                settings = _settings.value,
+                textInputRepo = textInputRepo,
+                mealLogRepo = mealLogRepo,
+                query = query,
+                allowedHabits = _searchFilters.value
+            )
+        } finally {
+            _isSearching.value = false
+        }
+    }
+
+    // ── Habit highlight (search-result "you are here" pulse) ────────────────
+
+    /** Name of the habit whose grid cell should pulse, or null for none. */
+    private val _highlightedHabit = MutableStateFlow<String?>(null)
+    val highlightedHabit: StateFlow<String?> = _highlightedHabit.asStateFlow()
+
+    private var highlightJob: Job? = null
+
+    /** Pulses the given habit's grid cell for a couple of seconds (e.g. after a search jump). */
+    fun highlightHabit(habitName: String) {
+        _highlightedHabit.value = habitName
+        highlightJob?.cancel()
+        highlightJob = viewModelScope.launch {
+            delay(2500)
+            _highlightedHabit.value = null
+        }
+    }
 
     // ── Location ─────────────────────────────────────────────────────────────
     /**

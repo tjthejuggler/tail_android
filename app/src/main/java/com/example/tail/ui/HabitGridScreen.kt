@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -190,6 +191,7 @@ fun HabitGridScreen(
     val activeScreenIndex by viewModel.activeScreenIndex.collectAsState()
     val garminMonthlyData by viewModel.garminMonthlyData.collectAsState()
     val githubSyncStatus by viewModel.githubSyncStatus.collectAsState()
+    val highlightedHabit by viewModel.highlightedHabit.collectAsState()
     val context = LocalContext.current
 
     val today = LocalDate.now()
@@ -230,6 +232,10 @@ fun HabitGridScreen(
             ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
     }
+
+    // Global search dialog state (query/filters/results live in the ViewModel,
+    // so closing the dialog preserves its exact state for the next open)
+    var showSearchDialog by remember { mutableStateOf(false) }
 
     // Location edit dialog state
     var showLocationEditDialog by remember { mutableStateOf(false) }
@@ -474,6 +480,13 @@ fun HabitGridScreen(
                             tint = if (graphMode) Color(0xFF66DD66) else Color.White
                         )
                     }
+                    // Global search button — opens the cross-habit text search
+                    IconButton(onClick = {
+                        viewModel.refreshSearchableHabits()
+                        showSearchDialog = true
+                    }) {
+                        Icon(Icons.Default.Search, contentDescription = "Search")
+                    }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
@@ -615,6 +628,7 @@ fun HabitGridScreen(
                         habits = habits,
                         editMode = editMode,
                         graphMode = graphMode,
+                        highlightedHabit = highlightedHabit,
                         graphSelectedHabits = graphSelectedHabits,
                         selectedEditIndex = selectedEditIndex,
                         movePendingSourceIndex = movePendingSourceIndex,
@@ -1730,6 +1744,23 @@ fun HabitGridScreen(
         snackbarHostState.showSnackbar(status)
         viewModel.clearHabitRestoreStatus()
     }
+
+    // Global search dialog — clicking a result closes it (state is preserved
+    // in the ViewModel), jumps to the result's date, switches to the habit's
+    // screen and pulses the habit cell so the user can spot it.
+    if (showSearchDialog) {
+        HabitSearchDialog(
+            viewModel = viewModel,
+            onDismiss = { showSearchDialog = false },
+            onResultClick = { result ->
+                showSearchDialog = false
+                result.date?.let { viewModel.navigateToDate(it) }
+                val screenIdx = viewModel.screenIndexForHabit(result.habitName)
+                if (screenIdx >= 0) viewModel.switchScreen(screenIdx)
+                viewModel.highlightHabit(result.habitName)
+            }
+        )
+    }
 }
 
 // ── Screen tab row ────────────────────────────────────────────────────────────
@@ -1835,6 +1866,8 @@ private fun HabitGrid(
     habits: List<Habit>,
     editMode: Boolean,
     graphMode: Boolean = false,
+    /** Habit name whose cell should pulse (e.g. after a search-result jump). */
+    highlightedHabit: String? = null,
     graphSelectedHabits: Set<String> = emptySet(),
     selectedEditIndex: Int,
     movePendingSourceIndex: Int = -1,
@@ -1889,6 +1922,7 @@ private fun HabitGrid(
                         onLongClick = { onHabitLongClick(habit) },
                         modifier = Modifier.padding(2.dp),
                         editMode = editMode,
+                        isHighlighted = habit.name == highlightedHabit,
                         isSelected = isEditSelected || isGraphSelected,
                         isMovePendingSource = isMovePendingSource,
                         isMovePendingTarget = isMovePending && !isMovePendingSource && editMode,
