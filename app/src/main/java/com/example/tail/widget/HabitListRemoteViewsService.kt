@@ -3,6 +3,10 @@ package com.example.tail.widget
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.util.Log
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
@@ -10,6 +14,7 @@ import com.example.tail.R
 import com.example.tail.data.AppSettings
 import com.example.tail.data.HABIT_ORDER
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.appPackageNameOf
 import com.example.tail.ui.getHabitIconRes
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -39,9 +44,26 @@ class HabitListRemoteViewsService : RemoteViewsService() {
 private data class WidgetRow(
     val habitName: String,
     val iconResId: Int?,
+    /** Launcher icon of an installed app, when the habit uses an "app:<package>" icon. */
+    val iconBitmap: Bitmap? = null,
     /** Greyed out when true (e.g. max-one habit already done today). */
     val dimmed: Boolean
 )
+
+/**
+ * Converts an app icon [Drawable] to a [Bitmap] for RemoteViews rendering
+ * (setImageViewBitmap accepts drawables only as bitmaps).
+ */
+private fun drawableToBitmap(drawable: Drawable): Bitmap {
+    if (drawable is BitmapDrawable) return drawable.bitmap
+    val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 1
+    val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 1
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+    return bitmap
+}
 
 private class HabitListFactory(
     private val context: Context,
@@ -67,10 +89,23 @@ private class HabitListFactory(
 
             val ordered = computeOrderedHabitList(settings, recent, max1Today)
             rows = ordered.map { name ->
-                val iconRes = getHabitIconRes(name, settings.habitIcons)
+                // App icons are resolved via PackageManager; skip the resource
+                // lookup for them (getHabitIconRes would fall back to the
+                // habit's default icon otherwise).
+                val appPkg = appPackageNameOf(settings.habitIcons[name])
+                val iconRes = if (appPkg == null) getHabitIconRes(name, settings.habitIcons) else null
+                val appBitmap = if (appPkg != null) {
+                    try {
+                        drawableToBitmap(context.packageManager.getApplicationIcon(appPkg))
+                    } catch (e: Exception) {
+                        Log.w(TAG, "App icon not found for $appPkg on widget=$widgetId")
+                        null
+                    }
+                } else null
                 WidgetRow(
                     habitName = name,
                     iconResId = iconRes,
+                    iconBitmap = appBitmap,
                     dimmed    = name in max1Today
                 )
             }
@@ -128,11 +163,16 @@ private class HabitListFactory(
         val rv = RemoteViews(context.packageName, R.layout.widget_item)
         rv.setTextViewText(R.id.widget_item_name, row.habitName)
 
-        if (row.iconResId != null) {
-            rv.setImageViewResource(R.id.widget_item_icon, row.iconResId)
-            rv.setViewVisibility(R.id.widget_item_icon, android.view.View.VISIBLE)
-        } else {
-            rv.setViewVisibility(R.id.widget_item_icon, android.view.View.INVISIBLE)
+        when {
+            row.iconBitmap != null -> {
+                rv.setImageViewBitmap(R.id.widget_item_icon, row.iconBitmap)
+                rv.setViewVisibility(R.id.widget_item_icon, android.view.View.VISIBLE)
+            }
+            row.iconResId != null -> {
+                rv.setImageViewResource(R.id.widget_item_icon, row.iconResId)
+                rv.setViewVisibility(R.id.widget_item_icon, android.view.View.VISIBLE)
+            }
+            else -> rv.setViewVisibility(R.id.widget_item_icon, android.view.View.INVISIBLE)
         }
 
         // Dim greyed-out rows (max-one already done today) so they look "done".

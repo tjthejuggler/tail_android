@@ -113,6 +113,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconRepository
+import com.example.tail.data.AppIconInfo
+import com.example.tail.data.AppIconRepository
+import com.example.tail.data.appIconNameOf
+import com.example.tail.data.isAppIconName
 import com.example.tail.data.ChessComType
 import com.example.tail.data.GarminType
 import com.example.tail.data.GitHubMetric
@@ -6639,6 +6643,9 @@ private fun IconPickerDialog(
     var aiPrompt by remember { mutableStateOf("") }
     // AI icon pending delete confirmation (null = no confirmation pending)
     var deleteConfirmAiIcon by remember { mutableStateOf<AiIcon?>(null) }
+    // Mode: false = built-in + AI icons, true = installed-app icons.
+    // Opens on the Apps tab when the habit already uses an app icon.
+    var appPickerMode by remember { mutableStateOf(isAppIconName(currentIconName)) }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -6680,177 +6687,207 @@ private fun IconPickerDialog(
             HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Scrollable grid of all icons — 6 columns
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(6),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(if (settings.aiIconsEnabled) 260.dp else 400.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            // Mode toggle: built-in/AI icons ↔ installed-app icons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(ALL_ICON_NAMES) { iconName ->
-                    val resId = ICON_NAME_TO_RES[iconName]
-                    val isSelected = iconName == currentIconName
-                    Box(
-                        modifier = Modifier
-                            .aspectRatio(1f)
-                            .background(
-                                if (isSelected) Color(0xFF003A3A) else Color(0xFF2A2A2A),
-                                RoundedCornerShape(4.dp)
-                            )
-                            .then(
-                                if (isSelected) Modifier.border(1.dp, Color(0xFF88FFFF), RoundedCornerShape(4.dp))
-                                else Modifier
-                            )
-                            .clickable(
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() }
-                            ) { onIconSelected(iconName) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (resId != null) {
-                            Image(
-                                painter = painterResource(id = resId),
-                                contentDescription = iconName,
-                                modifier = Modifier.size(28.dp),
-                                colorFilter = ColorFilter.tint(Color.White)
-                            )
-                        } else {
-                            Text("?", color = Color(0xFF666666), fontSize = 10.sp)
+                IconPickerModeTab(
+                    label = "Icons",
+                    selected = !appPickerMode,
+                    modifier = Modifier.weight(1f),
+                    onClick = { appPickerMode = false }
+                )
+                IconPickerModeTab(
+                    label = "📱 App Icons",
+                    selected = appPickerMode,
+                    modifier = Modifier.weight(1f),
+                    onClick = { appPickerMode = true }
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+
+            if (appPickerMode) {
+                // ── Installed App Icons section ──────────────────────────────
+                AppIconPickerSection(
+                    currentIconName = currentIconName,
+                    onIconSelected = onIconSelected,
+                    aiIconsEnabled = settings.aiIconsEnabled
+                )
+            } else {
+
+                // Scrollable grid of all icons — 6 columns
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(6),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(if (settings.aiIconsEnabled) 260.dp else 400.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(ALL_ICON_NAMES) { iconName ->
+                        val resId = ICON_NAME_TO_RES[iconName]
+                        val isSelected = iconName == currentIconName
+                        Box(
+                            modifier = Modifier
+                                .aspectRatio(1f)
+                                .background(
+                                    if (isSelected) Color(0xFF003A3A) else Color(0xFF2A2A2A),
+                                    RoundedCornerShape(4.dp)
+                                )
+                                .then(
+                                    if (isSelected) Modifier.border(1.dp, Color(0xFF88FFFF), RoundedCornerShape(4.dp))
+                                    else Modifier
+                                )
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() }
+                                ) { onIconSelected(iconName) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (resId != null) {
+                                Image(
+                                    painter = painterResource(id = resId),
+                                    contentDescription = iconName,
+                                    modifier = Modifier.size(28.dp),
+                                    colorFilter = ColorFilter.tint(Color.White)
+                                )
+                            } else {
+                                Text("?", color = Color(0xFF666666), fontSize = 10.sp)
+                            }
                         }
                     }
                 }
-            }
 
-            // ── AI Generated Icons section ───────────────────────────────────
-            if (settings.aiIconsEnabled) {
-                Spacer(modifier = Modifier.height(6.dp))
-                HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
-                Spacer(modifier = Modifier.height(6.dp))
+                // ── AI Generated Icons section ───────────────────────────────────
+                if (settings.aiIconsEnabled) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "🤖 AI Generated Icons",
-                        color = Color(0xFFAADDFF),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (aiIcons.isNotEmpty()) {
-                        Spacer(modifier = Modifier.weight(1f))
-                        Text(
-                            text = "long-press to delete",
-                            color = Color(0xFF666666),
-                            fontSize = 9.sp
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-
-                // Show existing AI icons in a grid
-                if (aiIcons.isNotEmpty()) {
-                    val aiIconRepo = viewModel.getAiIconRepo()
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(6),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(80.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        items(aiIcons) { aiIcon ->
-                            val isSelected = aiIcon.id == currentIconName
-                            val bitmap = remember(aiIcon.id) {
-                                aiIconRepo.loadBitmap(aiIcon.id)
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .aspectRatio(1f)
-                                    .background(
-                                        if (isSelected) Color(0xFF003A3A) else Color(0xFF2A2A2A),
-                                        RoundedCornerShape(4.dp)
-                                    )
-                                    .then(
-                                        if (isSelected) Modifier.border(1.dp, Color(0xFFAADDFF), RoundedCornerShape(4.dp))
-                                        else Modifier
-                                    )
-                                    .combinedClickable(
-                                        indication = null,
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        onClick = { onIconSelected(aiIcon.id) },
-                                        onLongClick = { deleteConfirmAiIcon = aiIcon }
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (bitmap != null) {
-                                    Image(
-                                        bitmap = bitmap.asImageBitmap(),
-                                        contentDescription = aiIcon.prompt,
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                } else {
-                                    Text("?", color = Color(0xFF666666), fontSize = 10.sp)
-                                }
-                            }
+                        Text(
+                            text = "🤖 AI Generated Icons",
+                            color = Color(0xFFAADDFF),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (aiIcons.isNotEmpty()) {
+                            Spacer(modifier = Modifier.weight(1f))
+                            Text(
+                                text = "long-press to delete",
+                                color = Color(0xFF666666),
+                                fontSize = 9.sp
+                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
-                }
 
-                // Generate new AI icon
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    OutlinedTextField(
-                        value = aiPrompt,
-                        onValueChange = { aiPrompt = it },
-                        placeholder = { Text("Describe icon…", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        textStyle = TextStyle(fontSize = 11.sp, color = Color.White),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFFAADDFF),
-                            unfocusedBorderColor = Color(0xFF444444),
-                            cursorColor = Color(0xFFAADDFF)
-                        )
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Button(
-                        onClick = {
-                            if (aiPrompt.isNotBlank()) {
-                                viewModel.generateAiIcon(aiPrompt.trim())
+                    // Show existing AI icons in a grid
+                    if (aiIcons.isNotEmpty()) {
+                        val aiIconRepo = viewModel.getAiIconRepo()
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(6),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(80.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            items(aiIcons) { aiIcon ->
+                                val isSelected = aiIcon.id == currentIconName
+                                val bitmap = remember(aiIcon.id) {
+                                    aiIconRepo.loadBitmap(aiIcon.id)
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .aspectRatio(1f)
+                                        .background(
+                                            if (isSelected) Color(0xFF003A3A) else Color(0xFF2A2A2A),
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .then(
+                                            if (isSelected) Modifier.border(1.dp, Color(0xFFAADDFF), RoundedCornerShape(4.dp))
+                                            else Modifier
+                                        )
+                                        .combinedClickable(
+                                            indication = null,
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            onClick = { onIconSelected(aiIcon.id) },
+                                            onLongClick = { deleteConfirmAiIcon = aiIcon }
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (bitmap != null) {
+                                        Image(
+                                            bitmap = bitmap.asImageBitmap(),
+                                            contentDescription = aiIcon.prompt,
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    } else {
+                                        Text("?", color = Color(0xFF666666), fontSize = 10.sp)
+                                    }
+                                }
                             }
-                        },
-                        enabled = !aiIconGenerating && aiPrompt.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF1A4A5A)
-                        )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+
+                    // Generate new AI icon
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (aiIconGenerating) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                color = Color(0xFFAADDFF),
-                                strokeWidth = 2.dp
+                        OutlinedTextField(
+                            value = aiPrompt,
+                            onValueChange = { aiPrompt = it },
+                            placeholder = { Text("Describe icon…", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            textStyle = TextStyle(fontSize = 11.sp, color = Color.White),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFFAADDFF),
+                                unfocusedBorderColor = Color(0xFF444444),
+                                cursorColor = Color(0xFFAADDFF)
                             )
-                        } else {
-                            Text("Generate", fontSize = 10.sp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Button(
+                            onClick = {
+                                if (aiPrompt.isNotBlank()) {
+                                    viewModel.generateAiIcon(aiPrompt.trim())
+                                }
+                            },
+                            enabled = !aiIconGenerating && aiPrompt.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF1A4A5A)
+                            )
+                        ) {
+                            if (aiIconGenerating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = Color(0xFFAADDFF),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text("Generate", fontSize = 10.sp)
+                            }
                         }
                     }
-                }
 
-                // Error message
-                aiIconError?.let { error ->
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = error,
-                        color = Color(0xFFFF6666),
-                        fontSize = 10.sp,
-                        maxLines = 2
-                    )
+                    // Error message
+                    aiIconError?.let { error ->
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = error,
+                            color = Color(0xFFFF6666),
+                            fontSize = 10.sp,
+                            maxLines = 2
+                        )
+                    }
                 }
             }
 
@@ -6927,6 +6964,155 @@ private fun IconPickerDialog(
                         )
                     ) {
                         Text("Delete", color = Color(0xFFFF6666))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One of the two mode tabs at the top of [IconPickerDialog]
+ * ("Icons" / "📱 App Icons").
+ */
+@Composable
+private fun IconPickerModeTab(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { onClick() }
+            .background(
+                if (selected) Color(0xFF003A3A) else Color(0xFF2A2A2A),
+                RoundedCornerShape(6.dp)
+            )
+            .then(
+                if (selected) Modifier.border(1.dp, Color(0xFF88FFFF), RoundedCornerShape(6.dp))
+                else Modifier
+            )
+            .padding(vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Color(0xFF88FFFF) else Color(0xFF888888),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+/**
+ * The "App Icons" section of [IconPickerDialog]: a searchable list of
+ * installed apps. Selecting an app stores an "app:<packageName>" icon name,
+ * which renderers resolve to the app's launcher icon at draw time.
+ */
+@Composable
+private fun AppIconPickerSection(
+    currentIconName: String?,
+    onIconSelected: (String?) -> Unit,
+    aiIconsEnabled: Boolean
+) {
+    val context = LocalContext.current
+    val appIconRepo = remember { AppIconRepository(context) }
+    var searchQuery by remember { mutableStateOf("") }
+    // Null while the installed-app list is loading (first composition only).
+    var allApps by remember { mutableStateOf<List<AppIconInfo>?>(null) }
+
+    LaunchedEffect(Unit) {
+        allApps = appIconRepo.listLaunchableApps()
+    }
+
+    val filteredApps = remember(searchQuery, allApps) {
+        val apps = allApps ?: emptyList()
+        if (searchQuery.isBlank()) apps
+        else apps.filter {
+            it.label.contains(searchQuery, ignoreCase = true) ||
+            it.packageName.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    // Keep the dialog the same total height as the built-in icons grid.
+    val listHeight = if (aiIconsEnabled) 200.dp else 340.dp
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("Search app name…", fontSize = 11.sp) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = TextStyle(fontSize = 11.sp, color = Color.White),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                focusedBorderColor = Color(0xFF66CCFF),
+                unfocusedBorderColor = Color(0xFF444444),
+                cursorColor = Color(0xFF66CCFF)
+            )
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+
+        if (allApps == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(listHeight),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    color = Color(0xFF66CCFF),
+                    strokeWidth = 2.dp
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(listHeight)
+            ) {
+                lazyItems(filteredApps, key = { it.packageName }) { app ->
+                    val isSelected = appIconNameOf(app.packageName) == currentIconName
+                    val iconBitmap = remember(app.packageName) {
+                        appIconRepo.loadIconBitmap(app.packageName)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) { onIconSelected(appIconNameOf(app.packageName)) }
+                            .background(
+                                if (isSelected) Color(0xFF003A3A) else Color.Transparent,
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (iconBitmap != null) {
+                            Image(
+                                bitmap = iconBitmap.asImageBitmap(),
+                                contentDescription = app.label,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        } else {
+                            Box(modifier = Modifier.size(26.dp))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = app.label,
+                            color = if (isSelected) Color(0xFF88FFFF) else Color.White,
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
                     }
                 }
             }
