@@ -104,4 +104,22 @@
         <categories android:name="android.shortcut.conversation" />
     </shortcut>
 
+    <!--
+        Static shortcut for "Floating Bubble" — launches the draggable
+        Tail bubble overlay that floats over other apps.
+        Appears in the launcher long-press menu and Samsung Routines.
+    -->
+    <shortcut
+        android:shortcutId="floating_bubble"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_floating_bubble_short"
+        android:shortcutLongLabel="@string/shortcut_floating_bubble_long"
+        android:icon="@drawable/ic_bubble_notification">
+        <intent
+            android:action="com.example.tail.widget.LAUNCH_BUBBLE"
+            android:targetPackage="com.example.tail"
+            android:targetClass="com.example.tail.widget.FloatingBubbleActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
 </shortcuts>

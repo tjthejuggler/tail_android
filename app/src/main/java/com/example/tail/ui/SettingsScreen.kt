@@ -403,6 +403,14 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // ── Floating Bubble ──────────────────────────────────────────────
+            item {
+                FloatingBubbleSettingsSection(context = context)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // ── Meal Habit Engine ─────────────────────────────────────────────
             item {
                 MealSettingsSection(viewModel = viewModel, settings = settings)
@@ -1531,6 +1539,53 @@ private fun VoiceNoteSettingsSection(
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+/**
+ * Floating Bubble settings section — launch button for the overlay bubble.
+ * The bubble floats over other apps and can be dragged around or dismissed.
+ */
+@Composable
+private fun FloatingBubbleSettingsSection(context: Context) {
+    val hasPermission = remember {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            android.provider.Settings.canDrawOverlays(context)
+        } else {
+            true
+        }
+    }
+
+    Column {
+        Text("🫧 Floating Bubble", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Show a draggable Tail bubble that floats over other apps. " +
+                "Drag it to the ✕ at the bottom to dismiss. " +
+                "Future versions will let you track habit sessions directly from the bubble.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (!hasPermission) {
+            Text(
+                text = "⚠ First-time only: you'll be asked to grant \"Display over other apps\" " +
+                    "permission. This is required for the bubble to appear on top of other apps.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.error
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        Button(onClick = {
+            val intent = android.content.Intent(context, com.example.tail.widget.FloatingBubbleActivity::class.java).apply {
+                action = com.example.tail.widget.FloatingBubbleActivity.ACTION_LAUNCH_BUBBLE
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }) {
+            Text("Launch Floating Bubble")
         }
     }
 }

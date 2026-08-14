@@ -22,6 +22,12 @@
     <!-- Required for meal vision capture (CameraX) -->
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- Required for the floating bubble overlay (draw over other apps) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Required for the floating bubble foreground service on Android 14+ -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <!--
         Custom signature permission for IPC.
         Only apps signed with the same keystore can use the ContentProvider or
@@ -388,6 +394,43 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!--
+            ════════════════════════════════════════════════════════════════
+            Floating Bubble Overlay
+            ════════════════════════════════════════════════════════════════
+
+            FloatingBubbleActivity: transparent trampoline that checks for
+            SYSTEM_ALERT_WINDOW permission and starts the bubble service.
+            Launched from the Settings screen and from the launcher shortcut.
+        -->
+        <activity
+            android:name=".widget.FloatingBubbleActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Tail.Transparent">
+            <intent-filter>
+                <action android:name="com.example.tail.widget.LAUNCH_BUBBLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            FloatingBubbleService: foreground service that manages the
+            WindowManager overlay (TYPE_APPLICATION_OVERLAY). Shows a
+            draggable bubble with the Tail icon over other apps.
+            Uses foregroundServiceType="specialUse" as required on Android 14+.
+        -->
+        <service
+            android:name=".widget.FloatingBubbleService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Floating overlay bubble for quick habit tracking access" />
+        </service>
 
     </application>
 
