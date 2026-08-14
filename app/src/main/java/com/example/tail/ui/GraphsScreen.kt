@@ -146,6 +146,7 @@ fun GraphsPanel(
     var textEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
     var datedEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
     var imdbRatingsForPoint by remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
+    var commitMessagesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
     
     // Text filter state
     var showFilterDialog by remember { mutableStateOf(false) }
@@ -160,6 +161,7 @@ fun GraphsPanel(
         textEntriesForPoint = emptyList()
         datedEntriesForPoint = emptyList()
         imdbRatingsForPoint = emptyMap()
+        commitMessagesForPoint = emptyList()
         
         // Load text entries for text-input habits into the cache
         graphSelectedHabits.forEach { habitName ->
@@ -194,10 +196,19 @@ fun GraphsPanel(
             } else {
                 datedEntriesForPoint = emptyList()
             }
+            // Load the actual git commit messages when the Commits metric is shown
+            if (point.metric == com.example.tail.data.GRAPH_METRIC_GITHUB_COMMITS &&
+                viewModel.isGithubHabit(point.habitName)
+            ) {
+                commitMessagesForPoint = viewModel.getCommitMessagesForDate(point.habitName, point.date)
+            } else {
+                commitMessagesForPoint = emptyList()
+            }
         } else {
             textEntriesForPoint = emptyList()
             datedEntriesForPoint = emptyList()
             imdbRatingsForPoint = emptyMap()
+            commitMessagesForPoint = emptyList()
         }
     }
 
@@ -383,7 +394,8 @@ fun GraphsPanel(
             ) {
                 // ── Selected point info tooltip (with X to close) ─────────
                 selectedDataPoint?.let { point ->
-                    val hasContent = textEntriesForPoint.isNotEmpty() || datedEntriesForPoint.isNotEmpty()
+                    val hasContent = textEntriesForPoint.isNotEmpty() || datedEntriesForPoint.isNotEmpty() ||
+                        commitMessagesForPoint.isNotEmpty()
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -480,6 +492,25 @@ fun GraphsPanel(
                                         }
                                         Text(
                                             text = displayText,
+                                            color = Color(0xFFCCEECC),
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                        )
+                                    }
+                                }
+                                if (commitMessagesForPoint.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Commits (${commitMessagesForPoint.size}):",
+                                        color = Color(0xFF66CCFF),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    commitMessagesForPoint.forEach { msg ->
+                                        Text(
+                                            text = "\u2022 $msg",
                                             color = Color(0xFFCCEECC),
                                             fontSize = 11.sp,
                                             modifier = Modifier.padding(start = 4.dp, top = 2.dp)

@@ -284,6 +284,14 @@ class HabitViewModel(
      */
     private var _githubDailyCache: Map<String, Map<String, GitHubRepository.GithubDailyMetrics>> = emptyMap()
 
+    /**
+     * In-memory cache of per-day commit messages (formatted "sha message"),
+     * keyed by habit name then date. Populated during [fetchGithubBacklog] and
+     * the periodic recent sync; used by the graph to list the actual commit
+     * messages when the "Commits" metric is selected.
+     */
+    private var _githubCommitMessages: Map<String, Map<String, List<String>>> = emptyMap()
+
     /** Returns true if [habitName] is linked to a GitHub repository. */
     fun isGithubHabit(habitName: String): Boolean {
         return habitName in _settings.value.githubRepoUrls
@@ -400,6 +408,11 @@ class HabitViewModel(
                 if (cached.isNotEmpty() && _githubDailyCache.isEmpty()) {
                     _githubDailyCache = cached
                     Log.d(TAG, "Loaded GitHub daily metrics cache for ${cached.size} habits")
+                }
+                val cachedMsgs = withContext(Dispatchers.IO) { githubRepo.loadCommitMessagesCache() }
+                if (cachedMsgs.isNotEmpty() && _githubCommitMessages.isEmpty()) {
+                    _githubCommitMessages = cachedMsgs
+                    Log.d(TAG, "Loaded GitHub commit messages cache for ${cachedMsgs.size} habits")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to load cached GitHub daily metrics: ${e.message}")
@@ -4159,6 +4172,15 @@ class HabitViewModel(
     }
 
     /**
+     * Returns the cached commit messages for [habitName] on [date], or an empty
+     * list when there is no message cache for the habit. Used by the graph's
+     * day-details tooltip when the "Commits" metric is shown.
+     */
+    fun getCommitMessagesForDate(habitName: String, date: LocalDate): List<String> {
+        return _githubCommitMessages[habitName]?.get(dateString(date)) ?: emptyList()
+    }
+
+    /**
      * Data point for a single day on the graph.
      */
     data class GraphDataPoint(
@@ -5392,7 +5414,7 @@ class HabitViewModel(
                 var wasRateLimited = false
 
                 // Fetch ALL four metrics in a single pass (same API calls as before)
-                val allMetrics = githubRepo.fetchAllMetricsBacklog(
+                val backlog = githubRepo.fetchAllMetricsBacklog(
                     owner, repo, token,
                     onProgress = { done, total ->
                         _githubSyncStatus.value = "Fetching commits: $done / ~$total"
@@ -5403,10 +5425,20 @@ class HabitViewModel(
                         _githubSyncStatus.value = "Rate limited by GitHub. Resets in ~${mins} min."
                     }
                 )
+                val allMetrics = backlog.dailyMetrics
 
                 // Cache all four metrics for the graph
                 _githubDailyCache = _githubDailyCache.toMutableMap().apply {
                     put(habitName, allMetrics)
+                }
+
+                // Cache the actual commit messages per day so the graph can
+                // list them when the "Commits" metric is selected.
+                if (backlog.commitMessages.isNotEmpty()) {
+                    _githubCommitMessages = _githubCommitMessages.toMutableMap().apply {
+                        put(habitName, backlog.commitMessages)
+                    }
+                    githubRepo.saveCommitMessagesCache(habitName, backlog.commitMessages)
                 }
 
                 // Persist the full metrics cache so all four value types survive
@@ -5564,6 +5596,21 @@ class HabitViewModel(
                 val dailyValues = githubRepo.fetchRecent(owner, repo, metric, token)
                 if (dailyValues.isNotEmpty()) {
                     applyGithubData(habitName, dailyValues, _settings.value)
+                }
+
+                // Refresh the per-day commit messages from the most recent
+                // commits so the graph's commit listing stays current.
+                try {
+                    val recentMessages = githubRepo.fetchRecentCommitMessages(owner, repo, token)
+                    if (recentMessages.isNotEmpty()) {
+                        val merged = (_githubCommitMessages[habitName] ?: emptyMap()) + recentMessages
+                        _githubCommitMessages = _githubCommitMessages.toMutableMap().apply {
+                            put(habitName, merged)
+                        }
+                        githubRepo.saveCommitMessagesCache(habitName, merged)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "GitHub commit message sync failed for $habitName: ${e.message}")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "GitHub sync failed for $habitName: ${e.message}")

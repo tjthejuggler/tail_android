@@ -184,6 +184,16 @@ class GitHubRepository(private val context: Context) {
     )
 
     /**
+     * Result of a full backlog fetch: per-day values for all four GitHub
+     * metrics plus the actual commit messages per day (used by the graph to
+     * list the real commit messages when the "Commits" metric is shown).
+     */
+    data class GithubBacklogResult(
+        val dailyMetrics: Map<String, GithubDailyMetrics>,
+        val commitMessages: Map<String, List<String>>
+    )
+
+    /**
      * Fetches the entire commit history and computes **all four** GitHub metrics
      * (lines changed, commits, additions, deletions) per day in a single pass.
      *
@@ -191,8 +201,9 @@ class GitHubRepository(private val context: Context) {
      * requests are needed because the weekly stats already contain additions,
      * deletions, and commit counts.
      *
-     * @return Map of "YYYY-MM-DD" → [GithubDailyMetrics]. Empty if rate-limited
-     *         before any data is collected.
+     * @return [GithubBacklogResult] with per-day metrics for all four values and
+     *         the per-day commit messages. Empty maps if rate-limited before any
+     *         data is collected.
      */
     suspend fun fetchAllMetricsBacklog(
         owner: String,
@@ -200,10 +211,14 @@ class GitHubRepository(private val context: Context) {
         token: String? = null,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
         onRateLimited: (Long) -> Unit = {}
-    ): Map<String, GithubDailyMetrics> = withContext(Dispatchers.IO) {
+    ): GithubBacklogResult = withContext(Dispatchers.IO) {
 
         // ── Step 1: Fetch all commit dates (cheap — 100 commits per request) ──
         val dailyCommitCounts = mutableMapOf<String, Int>()
+        // Per-day commit messages, collected while iterating the commit list
+        // (the API returns newest-first; reversed into chronological order
+        // before returning).
+        val dailyCommitMessages = mutableMapOf<String, MutableList<String>>()
         var page = 1
         var totalCommits = 0
         var hitRateLimit = false
@@ -224,6 +239,8 @@ class GitHubRepository(private val context: Context) {
             for (commit in commits) {
                 val dateStr = parseCommitDate(commit.date) ?: continue
                 dailyCommitCounts[dateStr] = (dailyCommitCounts[dateStr] ?: 0) + 1
+                dailyCommitMessages.getOrPut(dateStr) { mutableListOf() }
+                    .add(formatCommitMessage(commit))
                 totalCommits++
             }
 
@@ -247,7 +264,12 @@ class GitHubRepository(private val context: Context) {
 
         if (weeklyStats.isEmpty()) {
             Log.w(TAG, "No weekly stats for all-metrics backlog — returning empty")
-            return@withContext emptyMap()
+            // Commit messages were still collected in Step 1 — return them so
+            // the graph's commit listing works even when the stats API fails.
+            return@withContext GithubBacklogResult(
+                emptyMap(),
+                dailyCommitMessages.mapValues { (_, msgs) -> msgs.asReversed() }
+            )
         }
 
         // ── Step 3: Distribute ALL four weekly totals across days with commits ──
@@ -301,11 +323,15 @@ class GitHubRepository(private val context: Context) {
             )
         }
 
+        // Reverse each day's messages into chronological order (the API returns
+        // newest-first and pages are iterated newest → oldest).
+        val commitMessages = dailyCommitMessages.mapValues { (_, msgs) -> msgs.asReversed() }
+
         Log.d(TAG, "All-metrics backlog for $owner/$repo: ${result.size} days, " +
             "$totalCommits commits, ${weeklyStats.size} weeks of stats" +
             if (hitRateLimit) " (partial — rate limited)" else "")
 
-        result
+        GithubBacklogResult(result, commitMessages)
     }
 
     /**
@@ -462,6 +488,34 @@ class GitHubRepository(private val context: Context) {
         dailyValues
     }
 
+    /**
+     * Fetches the commit messages of the most recent commits (single page, up
+     * to 100) grouped per day. Used by the periodic sync to keep the graph's
+     * commit-message listing current without a full backlog re-fetch.
+     *
+     * @return Map of "YYYY-MM-DD" → chronological list of formatted messages.
+     */
+    suspend fun fetchRecentCommitMessages(
+        owner: String,
+        repo: String,
+        token: String? = null
+    ): Map<String, List<String>> = withContext(Dispatchers.IO) {
+        val commits = try {
+            service.fetchCommits(owner, repo, page = 1, token = token)
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchRecentCommitMessages failed: ${e.message}")
+            return@withContext emptyMap()
+        }
+
+        val daily = mutableMapOf<String, MutableList<String>>()
+        for (commit in commits) {
+            val dateStr = parseCommitDate(commit.date) ?: continue
+            daily.getOrPut(dateStr) { mutableListOf() }.add(formatCommitMessage(commit))
+        }
+        // The API returns newest-first — reverse into chronological order per day
+        daily.mapValues { (_, msgs) -> msgs.asReversed() }
+    }
+
     /** Validates that a repository exists and is public. */
     suspend fun validateRepo(owner: String, repo: String, token: String? = null): Boolean {
         return service.validateRepo(owner, repo, token)
@@ -562,6 +616,78 @@ class GitHubRepository(private val context: Context) {
             }
         }
 
+    // ── Commit messages cache I/O (per-day commit listings per habit) ─────────
+
+    private fun commitMessagesCacheFile(): File = File(cacheDir, "commit_messages.json")
+
+    /**
+     * Persists the per-day commit messages for [habitName] to internal storage
+     * (`github_cache/commit_messages.json`), keyed by habit name, so the graph
+     * can list the actual commit messages after process restarts without a
+     * manual backlog re-fetch.
+     */
+    suspend fun saveCommitMessagesCache(
+        habitName: String,
+        messages: Map<String, List<String>>
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val file = commitMessagesCacheFile()
+            val json = if (file.exists()) {
+                try {
+                    JSONObject(file.readText())
+                } catch (e: Exception) {
+                    JSONObject()
+                }
+            } else {
+                JSONObject()
+            }
+            val days = JSONObject()
+            for ((date, msgs) in messages) {
+                days.put(date, JSONArray(msgs))
+            }
+            json.put(habitName, days)
+            file.writeText(json.toString())
+            Log.d(TAG, "Saved commit messages cache for '$habitName' (${messages.size} days)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to save commit messages cache: ${e.message}")
+        }
+    }
+
+    /**
+     * Loads the persisted per-day commit messages for all habits.
+     * Returns an empty map if no cache exists (first run / cache cleared).
+     */
+    suspend fun loadCommitMessagesCache(): Map<String, Map<String, List<String>>> =
+        withContext(Dispatchers.IO) {
+            val file = commitMessagesCacheFile()
+            if (!file.exists()) return@withContext emptyMap()
+            try {
+                val json = JSONObject(file.readText())
+                val result = mutableMapOf<String, Map<String, List<String>>>()
+                val habitKeys = json.keys()
+                while (habitKeys.hasNext()) {
+                    val habitName = habitKeys.next()
+                    val daysObj = json.optJSONObject(habitName) ?: continue
+                    val days = mutableMapOf<String, List<String>>()
+                    val dayKeys = daysObj.keys()
+                    while (dayKeys.hasNext()) {
+                        val date = dayKeys.next()
+                        val arr = daysObj.optJSONArray(date) ?: continue
+                        val msgs = (0 until arr.length())
+                            .map { arr.optString(it, "") }
+                            .filter { it.isNotEmpty() }
+                        if (msgs.isNotEmpty()) days[date] = msgs
+                    }
+                    result[habitName] = days
+                }
+                Log.d(TAG, "Loaded commit messages cache for ${result.size} habits")
+                result
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to load commit messages cache: ${e.message}")
+                emptyMap()
+            }
+        }
+
     // ── Date parsing ──────────────────────────────────────────────────────────
 
     /**
@@ -586,6 +712,15 @@ class GitHubRepository(private val context: Context) {
                 null
             }
         }
+    }
+
+    /**
+     * Formats a commit for display in the graph's commit listing:
+     * "abc1234 Fix crash on rotate" (short SHA + first line of the message).
+     */
+    private fun formatCommitMessage(commit: GitHubCommitSummary): String {
+        val firstLine = commit.message.lineSequence().firstOrNull { it.isNotBlank() } ?: "(no message)"
+        return "${commit.sha.take(7)} $firstLine".trim()
     }
 
     // ── Stats cache I/O ───────────────────────────────────────────────────────
