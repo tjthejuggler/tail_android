@@ -1347,6 +1347,26 @@ private fun BridgeSettingsSection(
                     fontSize = 9.sp,
                     color = Color(0xFF666666)
                 )
+
+                // Retry button: clears cached "no rating" entries and refetches them
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.fetchImdbBacklog(retryFailed = true) },
+                    enabled = !backlogRunning,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4E342E))
+                ) {
+                    Text(
+                        text = "Retry Failed Lookups",
+                        fontSize = 12.sp
+                    )
+                }
+                Text(
+                    text = "Clears all cached \"no rating\" results and fetches them again " +
+                           "with fuzzy title matching (handles missing apostrophes/colons " +
+                           "and release-tag junk). Use once after updating to the new matcher.",
+                    fontSize = 9.sp,
+                    color = Color(0xFF666666)
+                )
                 if (omdbStatus.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(

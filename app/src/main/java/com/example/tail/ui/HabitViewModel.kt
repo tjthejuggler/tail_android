@@ -55,6 +55,7 @@ import com.example.tail.data.GRAPH_METRIC_GITHUB_ADDITIONS
 import com.example.tail.data.GRAPH_METRIC_GITHUB_DELETIONS
 import com.example.tail.data.GraphMetricOption
 import com.example.tail.data.OmdbService
+import com.example.tail.data.OmdbOutcome
 import com.example.tail.data.ImdbRatingCache
 import com.example.tail.data.ParsedTitle
 import com.example.tail.data.HabitsRepository
@@ -6347,6 +6348,10 @@ class HabitViewModel(
      * Fetches the IMDb rating for a single title from OMDb (or returns the
      * cached value). Does NOT exceed the daily API limit.
      *
+     * Uses the OmdbService lookup ladder (exact title → fuzzy IMDb-ID
+     * resolution → ID lookup). Only definitive results are cached: transient
+     * failures (network, rate limit) are left uncached so they retry later.
+     *
      * @return The rating x 10, or null if not found / API unavailable.
      */
     private suspend fun fetchAndCacheImdbRating(parsed: ParsedTitle): Int? {
@@ -6362,12 +6367,28 @@ class HabitViewModel(
             return null
         }
 
-        imdbCache.incrementCallCount(1)
-        val result = omdbService.fetchRating(parsed, apiKey)
-        val rating = result?.rating
-        imdbCache.putRating(parsed.cacheKey, rating)
+        val resolvedId = imdbCache.getResolvedId(parsed.idCacheKey)
+        val outcome = omdbService.fetchRating(parsed, apiKey, resolvedId)
+        imdbCache.incrementCallCount(outcome.callsUsed)
 
-        return rating?.takeIf { it > 0 }
+        when (outcome) {
+            is OmdbOutcome.Found -> {
+                // Cache the resolved IMDb ID so future lookups skip fuzzy resolution
+                outcome.resolvedId?.let { imdbCache.putResolvedId(parsed.idCacheKey, it) }
+                imdbCache.putRating(parsed.cacheKey, outcome.rating)
+                return outcome.rating?.takeIf { it > 0 }
+            }
+            is OmdbOutcome.NotFound -> {
+                // Definitively not on IMDb — safe to negative-cache
+                imdbCache.putRating(parsed.cacheKey, null)
+                return null
+            }
+            is OmdbOutcome.Transient -> {
+                // Network/rate-limit error — do NOT cache; retried next time
+                Log.w(TAG, "OMDb transient failure for '${parsed.title}': ${outcome.message}")
+                return null
+            }
+        }
     }
 
     /**
@@ -6450,8 +6471,12 @@ class HabitViewModel(
     /**
      * Fetches IMDb ratings for all existing movie entries that haven't been
      * looked up yet (the "backlog"). Respects the daily API limit of 990 calls.
+     *
+     * @param retryFailed When true, first clears all cached "no rating"
+     *        entries so previously-failed titles (including ones poisoned by
+     *        transient errors under the old logic) are fetched again.
      */
-    fun fetchImdbBacklog(onProgress: ((String) -> Unit)? = null) {
+    fun fetchImdbBacklog(retryFailed: Boolean = false, onProgress: ((String) -> Unit)? = null) {
         val apiKey = _settings.value.omdbApiKey
         if (apiKey.isBlank()) {
             _omdbStatus.value = "Enter an OMDb API key first"
@@ -6472,6 +6497,10 @@ class HabitViewModel(
         viewModelScope.launch {
             _omdbBacklogRunning.value = true
             try {
+                if (retryFailed) {
+                    val cleared = imdbCache.clearFailedLookups()
+                    Log.i(TAG, "Retry: cleared $cleared failed IMDb lookups")
+                }
                 _omdbStatus.value = "Scanning movie entries..."
 
                 val uniqueTitles = mutableSetOf<String>()

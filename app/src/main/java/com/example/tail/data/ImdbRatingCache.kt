@@ -17,12 +17,18 @@ import java.io.File
  * storage. Also tracks the number of OMDb API calls made today so the caller
  * can respect the 1 000/day free-tier limit.
  *
+ * Also stores resolved IMDb IDs (tt…) per show/movie title so fuzzy resolution
+ * (via IMDb's suggestion endpoint) happens only once per title.
+ *
  * ## File format
  * ```json
  * {
  *   "ratings": {
- *     "inception": 88,
+ *     "inception::y2010": 88,
  *     "breaking bad::s5e14": 95
+ *   },
+ *   "resolvedIds": {
+ *     "breaking bad": "tt0903747"
  *   },
  *   "callTracking": {
  *     "date": "2026-08-13",
@@ -49,6 +55,10 @@ class ImdbRatingCache(private val context: Context) {
 
     @Volatile
     private var ratings: MutableMap<String, Int> = mutableMapOf()
+
+    /** Resolved IMDb IDs (tt…) keyed by [ParsedTitle.idCacheKey]. */
+    @Volatile
+    private var resolvedIds: MutableMap<String, String> = mutableMapOf()
 
     @Volatile
     private var trackingDate: String = ""
@@ -85,6 +95,17 @@ class ImdbRatingCache(private val context: Context) {
                             }
                             ratings = map
                         }
+                        val idsObj = json.optJSONObject("resolvedIds")
+                        if (idsObj != null) {
+                            val idMap = mutableMapOf<String, String>()
+                            val idKeys = idsObj.keys()
+                            while (idKeys.hasNext()) {
+                                val k = idKeys.next()
+                                val v = idsObj.optString(k, "")
+                                if (v.startsWith("tt")) idMap[k] = v
+                            }
+                            resolvedIds = idMap
+                        }
                         val tracking = json.optJSONObject("callTracking")
                         if (tracking != null) {
                             trackingDate = tracking.optString("date", "")
@@ -112,6 +133,12 @@ class ImdbRatingCache(private val context: Context) {
                     ratingsObj.put(k, v)
                 }
                 json.put("ratings", ratingsObj)
+
+                val idsObj = JSONObject()
+                for ((k, v) in resolvedIds) {
+                    idsObj.put(k, v)
+                }
+                json.put("resolvedIds", idsObj)
 
                 val trackingObj = JSONObject()
                 trackingObj.put("date", trackingDate)
@@ -158,6 +185,44 @@ class ImdbRatingCache(private val context: Context) {
     suspend fun hasBeenLookedUp(cacheKey: String): Boolean {
         ensureLoaded()
         return ratings.containsKey(cacheKey)
+    }
+
+    /**
+     * Returns a previously-resolved IMDb ID for [idCacheKey] (see
+     * [ParsedTitle.idCacheKey]), or null if not resolved yet.
+     */
+    suspend fun getResolvedId(idCacheKey: String): String? {
+        ensureLoaded()
+        return resolvedIds[idCacheKey]
+    }
+
+    /**
+     * Stores a resolved IMDb ID (tt…) for a show/movie title and persists.
+     */
+    suspend fun putResolvedId(idCacheKey: String, imdbID: String) {
+        ensureLoaded()
+        mutex.withLock {
+            resolvedIds[idCacheKey] = imdbID
+            persist()
+        }
+    }
+
+    /**
+     * Removes all cached "no rating" entries (values ≤ 0) so those titles are
+     * fetched again on the next backlog run. Used by the "Retry Failed
+     * Lookups" action — necessary because transient failures (rate limit,
+     * network) were historically cached as permanent negatives.
+     *
+     * @return The number of failed entries cleared.
+     */
+    suspend fun clearFailedLookups(): Int {
+        ensureLoaded()
+        return mutex.withLock {
+            val before = ratings.size
+            ratings = ratings.filterValues { it > 0 }.toMutableMap()
+            persist()
+            before - ratings.size
+        }
     }
 
     /**
