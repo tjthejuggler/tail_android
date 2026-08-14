@@ -635,9 +635,21 @@ fun HabitGridScreen(
                                 graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
                                 editMode -> viewModel.selectEditHabit(index)
                                 habit.name in settings.mealHabits -> {
-                                    viewModel.incrementHabit(habit.name)
+                                    viewModel.incrementHabit(habit.name, recordTimestamp = isToday)
                                     mealDialogFromTap = true
                                     mealDialogHabit = habit.name
+                                    // Show increment toast with edit-time option
+                                    incrementToastVersion++
+                                    incrementToastHabit = habit.name
+                                    incrementToastIsTimeless = !isToday
+                                    incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                                    val currentVersion = incrementToastVersion
+                                    toastScope.launch {
+                                        delay(3500)
+                                        if (incrementToastVersion == currentVersion) {
+                                            incrementToastHabit = null
+                                        }
+                                    }
                                 }
                                 habit.name in settings.subtypedHabits -> {
                                     viewModel.loadSubtypeBreakdown(habit.name) { breakdown ->
@@ -1271,9 +1283,21 @@ fun HabitGridScreen(
             quickAmounts = customAmounts,
             recentAmounts = recentAmounts,
             onConfirm = { amount ->
-                viewModel.incrementHabit(habit.name, amount)
+                viewModel.incrementHabit(habit.name, amount, recordTimestamp = isToday)
                 viewModel.recordRecentIncrementAmount(habit.name, amount)
                 dialogHabit = null
+                // Show increment toast with edit-time option (same as normal increment)
+                incrementToastVersion++
+                incrementToastHabit = habit.name
+                incrementToastIsTimeless = !isToday
+                incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                val currentVersion = incrementToastVersion
+                toastScope.launch {
+                    delay(3500)
+                    if (incrementToastVersion == currentVersion) {
+                        incrementToastHabit = null
+                    }
+                }
             },
             onDismiss = { dialogHabit = null }
         )
@@ -1350,6 +1374,18 @@ fun HabitGridScreen(
                                 viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { _ ->
                                     // Don't reopen the dialog - just dismiss it
                                     textInputDialogState = null
+                                    // Show increment toast with edit-time option
+                                    incrementToastVersion++
+                                    incrementToastHabit = state.habit.name
+                                    incrementToastIsTimeless = !isToday
+                                    incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                                    val currentVersion = incrementToastVersion
+                                    toastScope.launch {
+                                        delay(3500)
+                                        if (incrementToastVersion == currentVersion) {
+                                            incrementToastHabit = null
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1357,6 +1393,18 @@ fun HabitGridScreen(
                 } else {
                     viewModel.saveTextEntries(state.habit.name, entries, dateForEntry, entryTime)
                     textInputDialogState = null
+                    // Show increment toast with edit-time option
+                    incrementToastVersion++
+                    incrementToastHabit = state.habit.name
+                    incrementToastIsTimeless = !isToday
+                    incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                    val currentVersion = incrementToastVersion
+                    toastScope.launch {
+                        delay(3500)
+                        if (incrementToastVersion == currentVersion) {
+                            incrementToastHabit = null
+                        }
+                    }
                 }
             },
             onDismiss = { textInputDialogState = null },
