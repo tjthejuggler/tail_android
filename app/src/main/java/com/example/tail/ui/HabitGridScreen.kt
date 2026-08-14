@@ -902,6 +902,7 @@ fun HabitGridScreen(
                         customInputAmounts = settings.customInputAmounts,
                         textInputHabits = settings.textInputHabits,
                         textInputOptionsHabits = settings.textInputOptionsHabits,
+                        sharableTextHabits = settings.sharableTextHabits,
                         textInputFileUris = settings.textInputFileUris,
                         datedEntryHabits = settings.datedEntryHabits,
                         datedEntryFileUris = settings.datedEntryFileUris,
@@ -933,6 +934,7 @@ fun HabitGridScreen(
                         onSetCustomInputAmounts = { name, amounts -> viewModel.setCustomInputAmounts(name, amounts) },
                         onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
                         onToggleTextInputOptions = { name -> viewModel.toggleTextInputOptions(name) },
+                        onToggleSharableText = { name -> viewModel.toggleSharableText(name) },
                         onPickTextInputFile = { name ->
                             textInputPickerHabit = name
                             textInputFilePicker.launch(arrayOf("application/json", "*/*"))
@@ -2865,6 +2867,43 @@ private fun PrimaryValuePill(
     }
 }
 
+/**
+ * "Sharable" sub-toggle for text-input habits, shown in edit mode under
+ * "Text input". When enabled, the habit appears in ShareTextActivity's picker
+ * so text shared from anywhere on the phone can be saved into it
+ * (timestamped entry + count increment).
+ * Extracted from EditModeControlBar to keep it under the JVM method-size limit.
+ */
+@Composable
+private fun SharableTextToggle(
+    isSharable: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "  Sharable", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+            Text(
+                text = if (isSharable) "Accepts shared text from any app" else "Not in share sheet",
+                color = Color(0xFF666666), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isSharable,
+            onCheckedChange = { onToggle() },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFFFAA88),
+                checkedTrackColor = Color(0xFF4A2A1A),
+                uncheckedThumbColor = Color(0xFF666666),
+                uncheckedTrackColor = Color(0xFF2A2A2A)
+            )
+        )
+    }
+}
+
 @Composable
 private fun EditModeControlBar(
     selectedIndex: Int,
@@ -2881,6 +2920,8 @@ private fun EditModeControlBar(
     customInputAmounts: Map<String, List<Int>> = emptyMap(),
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
+    /** Text-input habits that appear in the system share sheet (ShareTextActivity picker). */
+    sharableTextHabits: Set<String> = emptySet(),
     textInputFileUris: Map<String, String>,
     datedEntryHabits: Set<String>,
     datedEntryFileUris: Map<String, String>,
@@ -2906,6 +2947,8 @@ private fun EditModeControlBar(
     onSetCustomInputAmounts: (String, List<Int>) -> Unit = { _, _ -> },
     onToggleTextInput: (String) -> Unit,
     onToggleTextInputOptions: (String) -> Unit,
+    /** Called when the user toggles the "Sharable" sub-feature for a habit. */
+    onToggleSharableText: (String) -> Unit = {},
     onPickTextInputFile: (String) -> Unit,
     onToggleDatedEntry: (String) -> Unit,
     onPickDatedEntryFile: (String) -> Unit,
@@ -3748,6 +3791,15 @@ private fun EditModeControlBar(
                                 )
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Sharable sub-toggle — rendered by [SharableTextToggle],
+                        // extracted to keep EditModeControlBar under the JVM method-size limit
+                        SharableTextToggle(
+                            isSharable = selectedHabitName in sharableTextHabits,
+                            onToggle = { onToggleSharableText(selectedHabitName) }
+                        )
 
                         Spacer(modifier = Modifier.height(4.dp))
 

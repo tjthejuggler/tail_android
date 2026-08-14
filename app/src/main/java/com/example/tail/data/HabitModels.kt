@@ -336,6 +336,16 @@ data class AppSettings(
     val textInputOptionsHabits: Set<String> = emptySet(),
 
     /**
+     * Text-input habits that are "sharable" via the Android system share sheet.
+     * Only meaningful when the habit is also in [textInputHabits].
+     * When a habit is in this set, ShareTextActivity (the "Share → tail" target)
+     * lists it as a destination: sharing selected text from anywhere on the phone
+     * saves it as a timestamped entry in the habit's text log and increments
+     * the habit count by 1.
+     */
+    val sharableTextHabits: Set<String> = emptySet(),
+
+    /**
      * Maps habit name → SAF URI string for the per-habit text-log JSON file.
      * Format of that file: { "2023-07-07 10:00:17": "some text", ... }
      */

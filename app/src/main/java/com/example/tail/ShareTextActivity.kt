@@ -56,7 +56,8 @@ import kotlinx.coroutines.launch
  *
  * The activity:
  *  1. Reads the shared text from the intent.
- *  2. Loads the list of habits that have "text input" enabled (from DataStore).
+ *  2. Loads the list of habits that have "text input" AND "sharable" enabled
+ *     (from DataStore). Sharable is a per-habit opt-in toggled in edit mode.
  *  3. Shows a dialog listing those habits.
  *  4. When the user picks one, appends the shared text to that habit's log file
  *     and also increments the habit count by 1 (same as tapping the habit in-app).
@@ -115,9 +116,11 @@ class ShareTextActivity : ComponentActivity() {
 
         LaunchedEffect(Unit) {
             val settings = settingsRepo.settingsFlow.first()
-            // Collect only habits that have BOTH text input enabled AND a file URI set.
+            // Collect only habits that have text input enabled, are explicitly
+            // marked "sharable" in edit mode, AND have a file URI set.
             // Without a file URI the entry can't be saved, so we filter those out.
             val eligible = settings.textInputHabits
+                .filter { it in settings.sharableTextHabits }
                 .filter { settings.textInputFileUris.containsKey(it) }
                 .sorted()
             textInputHabits = eligible
@@ -167,12 +170,12 @@ class ShareTextActivity : ComponentActivity() {
                         }
                     }
 
-                    // ── No text-input habits configured ────────────────────────
+                    // ── No sharable habits configured ─────────────────────────
                     textInputHabits!!.isEmpty() -> {
                         Text(
-                            text = "No habits have Text Input enabled with a log file set.\n\n" +
-                                    "To set one up: open Tail → tap ✏ Edit → select a habit → " +
-                                    "enable \"Text input\" → link a log file.",
+                            text = "No habits are sharable yet.\n\n" +
+                                    "To set one up: open Tail → tap ✏ Edit → select a text-input " +
+                                    "habit → enable \"Sharable\" → make sure a text log file is linked.",
                             color = Color(0xFFFF8844),
                             fontSize = 12.sp
                         )

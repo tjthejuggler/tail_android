@@ -3451,6 +3451,7 @@ class HabitViewModel(
                     customInputHabits = settings.customInputHabits.replaceElement(oldName, newName),
                     textInputHabits = settings.textInputHabits.replaceElement(oldName, newName),
                     textInputOptionsHabits = settings.textInputOptionsHabits.replaceElement(oldName, newName),
+                    sharableTextHabits = settings.sharableTextHabits.replaceElement(oldName, newName),
                     textInputFileUris = settings.textInputFileUris.replaceKey(oldName, newName),
                     habitIcons = settings.habitIcons.replaceKey(oldName, newName),
                     datedEntryHabits = settings.datedEntryHabits.replaceElement(oldName, newName),
@@ -3505,6 +3506,7 @@ class HabitViewModel(
                 settingsRepo.saveCustomInputHabits(newSettings.customInputHabits)
                 settingsRepo.saveTextInputHabits(newSettings.textInputHabits)
                 settingsRepo.saveTextInputOptionsHabits(newSettings.textInputOptionsHabits)
+                settingsRepo.saveSharableTextHabits(newSettings.sharableTextHabits)
                 settingsRepo.saveTextInputFileUris(newSettings.textInputFileUris)
                 settingsRepo.saveHabitIcons(newSettings.habitIcons)
                 settingsRepo.saveDatedEntryHabits(newSettings.datedEntryHabits)
@@ -3850,7 +3852,8 @@ class HabitViewModel(
 
     /**
      * Toggles the "text input" feature on/off for [habitName].
-     * When turned off, also removes the habit from the options set (options requires text input).
+     * When turned off, also removes the habit from the options and sharable sets
+     * (both sub-features require text input to be on).
      */
     fun toggleTextInput(habitName: String) {
         viewModelScope.launch {
@@ -3862,6 +3865,11 @@ class HabitViewModel(
                 opts.remove(habitName)
                 settingsRepo.saveTextInputOptionsHabits(opts)
                 _settings.value = _settings.value.copy(textInputOptionsHabits = opts)
+                // Also remove from sharable set — sharable requires text input to be on
+                val sharable = _settings.value.sharableTextHabits.toMutableSet()
+                sharable.remove(habitName)
+                settingsRepo.saveSharableTextHabits(sharable)
+                _settings.value = _settings.value.copy(sharableTextHabits = sharable)
             } else {
                 current.add(habitName)
             }
@@ -3880,6 +3888,21 @@ class HabitViewModel(
             if (habitName in current) current.remove(habitName) else current.add(habitName)
             settingsRepo.saveTextInputOptionsHabits(current)
             _settings.value = _settings.value.copy(textInputOptionsHabits = current)
+        }
+    }
+
+    /**
+     * Toggles the "sharable" sub-feature on/off for [habitName].
+     * When on, the habit appears in ShareTextActivity's picker so text shared
+     * from anywhere on the phone can be saved into it (timestamped + counted).
+     * Only has effect when the habit already has text input enabled.
+     */
+    fun toggleSharableText(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.sharableTextHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveSharableTextHabits(current)
+            _settings.value = _settings.value.copy(sharableTextHabits = current)
         }
     }
 

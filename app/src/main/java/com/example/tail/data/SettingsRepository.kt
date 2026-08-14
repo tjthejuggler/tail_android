@@ -25,6 +25,7 @@ private val KEY_HABIT_SCREENS = stringPreferencesKey("habit_screens")
 private val KEY_ACTIVE_SCREEN_INDEX = intPreferencesKey("active_screen_index")
 private val KEY_TEXT_INPUT_HABITS = stringSetPreferencesKey("text_input_habits")
 private val KEY_TEXT_INPUT_OPTIONS_HABITS = stringSetPreferencesKey("text_input_options_habits")
+private val KEY_SHARABLE_TEXT_HABITS = stringSetPreferencesKey("sharable_text_habits")
 // Stored as "habitName\x00uri|||habitName\x00uri" pairs
 private val KEY_TEXT_INPUT_FILE_URIS = stringPreferencesKey("text_input_file_uris")
 // Stored as "habitName\x00iconName|||habitName\x00iconName" pairs
@@ -530,6 +531,7 @@ class SettingsRepository(private val context: Context) {
             migrateStringSet(KEY_MAX_ONE_HABITS)
             migrateStringSet(KEY_TEXT_INPUT_HABITS)
             migrateStringSet(KEY_TEXT_INPUT_OPTIONS_HABITS)
+            migrateStringSet(KEY_SHARABLE_TEXT_HABITS)
             migrateStringSet(KEY_DATED_ENTRY_HABITS)
             migrateStringSet(KEY_CONDITIONAL_HABITS)
             migrateStringSet(KEY_SUBTYPED_HABITS)
@@ -642,6 +644,7 @@ class SettingsRepository(private val context: Context) {
             maxOneHabits = prefs[KEY_MAX_ONE_HABITS] ?: emptySet(),
             textInputHabits = prefs[KEY_TEXT_INPUT_HABITS] ?: emptySet(),
             textInputOptionsHabits = prefs[KEY_TEXT_INPUT_OPTIONS_HABITS] ?: emptySet(),
+            sharableTextHabits = prefs[KEY_SHARABLE_TEXT_HABITS] ?: emptySet(),
             textInputFileUris = decodeFileUriMap(textInputFileUrisRaw),
             habitIcons = decodeFileUriMap(habitIconsRaw),
             datedEntryHabits = prefs[KEY_DATED_ENTRY_HABITS] ?: emptySet(),
@@ -813,6 +816,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveTextInputOptionsHabits(habits: Set<String>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_TEXT_INPUT_OPTIONS_HABITS] = habits
+        }
+    }
+
+    /** Saves the set of text-input habits that accept shares from the system share sheet. */
+    suspend fun saveSharableTextHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_SHARABLE_TEXT_HABITS] = habits
         }
     }
 
