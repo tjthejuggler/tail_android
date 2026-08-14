@@ -15,22 +15,27 @@ import android.net.Uri
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.example.tail.MainActivity
 import com.example.tail.R
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.dateString
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.ui.HabitIncrementBus
+import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,7 +50,9 @@ import kotlin.math.hypot
  * The bubble shows the Tail app icon and can be:
  *  - Dragged anywhere on the screen
  *  - Dismissed by dragging to the X zone at the bottom center
- *  - Tapped (placeholder for future habit-tracking features)
+ *  - Tapped to start/stop the trigger habit's timer — while it runs, the live
+ *    elapsed time is shown in a small pill right above the bubble
+ *  - Long-pressed to stop a running timer (recording it) and open the Tail app
  *
  * Requires [android.Manifest.permission.SYSTEM_ALERT_WINDOW] ("draw over other apps").
  */
@@ -68,20 +75,36 @@ class FloatingBubbleService : Service() {
 
         /** Intent extra: name of the habit whose trigger app opened the bubble. */
         const val EXTRA_HABIT_NAME = "habit_name"
+
+        /** Intent extra: names of ALL habits sharing the trigger app (picker menu). */
+        const val EXTRA_HABIT_NAMES = "habit_names"
     }
 
     private lateinit var windowManager: WindowManager
     private var bubbleView: View? = null
+    private var bubbleRingView: View? = null
     private var dismissZoneView: View? = null
 
-    /** Habit whose trigger app opened the bubble (drives the timer menu). */
+    /** Habit whose trigger app opened the bubble (drives the tap timer). */
     private var triggerHabitName: String? = null
 
-    // ── Timer menu overlay ────────────────────────────────────────────────
-    private var menuView: LinearLayout? = null
-    private var timerTimeText: TextView? = null
-    private var timerButton: Button? = null
+    /** Every habit sharing the trigger app that opened the bubble. */
+    private var triggerHabitNames: List<String> = emptyList()
+
+    // ── Timer chip overlay (live elapsed time above the bubble) ───────────
+    private var timerChipView: TextView? = null
+
+    // ── Habit picker menu (several habits share one trigger app) ──────────
+    private var habitMenuView: LinearLayout? = null
+
+    // ── Increment flash message (shown after a session is recorded) ──────
+    private var flashView: LinearLayout? = null
+    private val flashDismissRunnable = Runnable { hideIncrementFlash() }
     private val handler = Handler(Looper.getMainLooper())
+
+    // ── Long-press detection ──────────────────────────────────────────────
+    private var longPressConsumed = false
+    private val longPressRunnable = Runnable { onBubbleLongPressed() }
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val settingsRepo by lazy { SettingsRepository(applicationContext) }
     private val habitsRepo by lazy { HabitsRepository() }
@@ -92,6 +115,7 @@ class FloatingBubbleService : Service() {
     // Bubble size in px
     private val bubbleSize by lazy { 56.dp(resources) }
     private val dismissZoneSize by lazy { 72.dp(resources) }
+    private val timerChipHeight by lazy { 30.dp(resources) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -110,8 +134,18 @@ class FloatingBubbleService : Service() {
             }
         }
 
-        // Remember which habit's trigger app opened the bubble (for the timer)
-        intent?.getStringExtra(EXTRA_HABIT_NAME)?.let { triggerHabitName = it }
+        // Remember which habits' trigger app opened the bubble (for the timer).
+        // Several habits can share one trigger app; if so, the first tap shows
+        // a picker menu instead of starting a timer right away.
+        val habits = intent?.getStringArrayListExtra(EXTRA_HABIT_NAMES)
+            ?: intent?.getStringExtra(EXTRA_HABIT_NAME)?.let { arrayListOf(it) }
+        if (habits != null) {
+            triggerHabitNames = habits
+            // Auto-select the single habit, or the one already being timed
+            // (bubble re-shown mid-session); otherwise wait for the user to pick.
+            triggerHabitName = habits.firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
+                ?: habits.singleOrNull()
+        }
 
         if (bubbleView == null) {
             showBubble()
@@ -124,7 +158,9 @@ class FloatingBubbleService : Service() {
         super.onDestroy()
         removeBubble()
         removeDismissZone()
-        hideTimerMenu()
+        hideTimerChip()
+        hideHabitPickerMenu()
+        hideIncrementFlash()
         serviceScope.cancel()
     }
 
@@ -150,6 +186,12 @@ class FloatingBubbleService : Service() {
             y = Resources.getSystem().displayMetrics.heightPixels / 3
         }
 
+        // Border ring around the bubble (turns green while the timer runs)
+        val ring = View(this).apply {
+            background = createRingDrawable(running = false)
+        }
+        bubbleRingView = ring
+
         val container = FrameLayout(this).apply {
             // Render the app icon as a circular bitmap inside an ImageView
             val imageView = ImageView(this@FloatingBubbleService).apply {
@@ -164,11 +206,6 @@ class FloatingBubbleService : Service() {
                 }
                 // Circular background behind the icon
                 background = createCircularBackground()
-            }
-
-            // Add a subtle white border ring around the bubble
-            val ring = View(this@FloatingBubbleService).apply {
-                background = createRingDrawable()
             }
 
             addView(ring, FrameLayout.LayoutParams(
@@ -198,6 +235,15 @@ class FloatingBubbleService : Service() {
         } catch (e: Exception) {
             // Permission not granted or other error — stop the service
             stopSelf()
+            return
+        }
+
+        // If the habit's timer is already running (e.g. the bubble was hidden
+        // while the trigger app was left), resume the live timer display.
+        val habit = triggerHabitName
+        if (habit != null && WidgetTimerStore.isTimerRunning(this, habit)) {
+            setBubbleRunningVisuals(running = true)
+            showTimerChip()
         }
     }
 
@@ -208,12 +254,20 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun createRingDrawable(): android.graphics.drawable.GradientDrawable {
-        return android.graphics.drawable.GradientDrawable().apply {
-            shape = android.graphics.drawable.GradientDrawable.OVAL
-            setStroke(3.dp(resources), Color.argb(80, 0, 0, 0))
+    private fun createRingDrawable(running: Boolean): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setStroke(
+                3.dp(resources),
+                if (running) 0xFF4CAF50.toInt() else Color.argb(80, 0, 0, 0)
+            )
             setColor(Color.TRANSPARENT)
         }
+    }
+
+    /** Toggles the bubble's "timer running" look (green ring while running). */
+    private fun setBubbleRunningVisuals(running: Boolean) {
+        bubbleRingView?.background = createRingDrawable(running)
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -298,6 +352,9 @@ class FloatingBubbleService : Service() {
         private var isDragging = false
         private val touchSlop = 10.dp(resources) // px threshold to distinguish tap from drag
 
+        /** System long-press timeout, used to detect long-presses on the bubble. */
+        private val longPressTimeout = ViewConfiguration.getLongPressTimeout()
+
         // For dismiss-zone proximity detection
         private val dismissProximityRadius by lazy { dismissZoneSize.toFloat() * 0.8f }
 
@@ -309,6 +366,8 @@ class FloatingBubbleService : Service() {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
+                    longPressConsumed = false
+                    handler.postDelayed(longPressRunnable, longPressTimeout.toLong())
                     return true
                 }
 
@@ -318,6 +377,8 @@ class FloatingBubbleService : Service() {
 
                     if (!isDragging && hypot(dx, dy) > touchSlop) {
                         isDragging = true
+                        cancelLongPress()
+                        hideHabitPickerMenu()
                         showDismissZone()
                     }
 
@@ -335,6 +396,9 @@ class FloatingBubbleService : Service() {
                             windowManager.updateViewLayout(bubbleView, bubbleParams)
                         } catch (e: Exception) { /* view removed */ }
 
+                        // Keep the timer chip glued above the bubble
+                        positionTimerChip()
+
                         // Highlight dismiss zone when bubble is near it
                         updateDismissZoneHighlight()
                     }
@@ -342,6 +406,14 @@ class FloatingBubbleService : Service() {
                 }
 
                 MotionEvent.ACTION_UP -> {
+                    cancelLongPress()
+
+                    // The long-press already acted — don't treat the release as a tap
+                    if (longPressConsumed) {
+                        longPressConsumed = false
+                        return true
+                    }
+
                     if (isDragging) {
                         hideDismissZone()
 
@@ -354,13 +426,15 @@ class FloatingBubbleService : Service() {
                         // Snap to nearest horizontal edge (left or right)
                         snapToEdge()
                     } else {
-                        // It was a tap — placeholder for future features
+                        // It was a tap — toggle the habit timer
                         onBubbleTapped()
                     }
                     return true
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
+                    cancelLongPress()
+                    longPressConsumed = false
                     if (isDragging) {
                         hideDismissZone()
                         snapToEdge()
@@ -439,6 +513,7 @@ class FloatingBubbleService : Service() {
 
                     try {
                         windowManager.updateViewLayout(bubbleView, bubbleParams)
+                        positionTimerChip()
                     } catch (e: Exception) { return }
 
                     if (progress < 1f) {
@@ -451,8 +526,9 @@ class FloatingBubbleService : Service() {
     }
 
     /**
-     * Called when the bubble is tapped (not dragged).
-     * Toggles the timer menu for the habit whose trigger app opened the bubble.
+     * Called when the bubble is tapped (not dragged). Toggles the trigger
+     * habit's timer: first tap starts it (a live elapsed-time pill appears
+     * above the bubble), second tap stops it and records the minutes.
      */
     private fun onBubbleTapped() {
         // Brief scale animation to give visual feedback
@@ -470,175 +546,414 @@ class FloatingBubbleService : Service() {
                 }
                 .start()
         }
-        if (menuView != null) hideTimerMenu() else showTimerMenu()
+
+        val habit = triggerHabitName
+        if (habit == null) {
+            if (triggerHabitNames.size > 1) {
+                // Several habits share this trigger app — ask which one to time
+                showHabitPickerMenu()
+            } else {
+                // Bubble started manually (no trigger habit) — tapping just opens Tail
+                openTailApp()
+            }
+            return
+        }
+
+        if (WidgetTimerStore.isTimerRunning(this, habit)) {
+            stopTimerAndRecord(habit)
+        } else if (triggerHabitNames.size > 1) {
+            // Multiple habits available and nothing running — pick which to start
+            showHabitPickerMenu()
+        } else {
+            startTimerForHabit(habit)
+        }
+    }
+
+    /**
+     * Called when the bubble is long-pressed. Stops a running timer (recording
+     * the elapsed minutes) and opens the Tail app either way.
+     */
+    private fun onBubbleLongPressed() {
+        longPressConsumed = true
+        hideHabitPickerMenu()
+
+        // Haptic confirmation
+        try {
+            getSystemService(Vibrator::class.java)?.vibrate(
+                VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE)
+            )
+        } catch (e: Exception) { /* no vibrator */ }
+
+        val habit = triggerHabitName
+        if (habit != null && WidgetTimerStore.isTimerRunning(this, habit)) {
+            // Record first, then open Tail once the write has landed —
+            // opening immediately would race the app's startup DB load
+            // against our write and could clobber it (lost increments).
+            stopTimerAndRecord(habit) { openTailApp() }
+        } else {
+            openTailApp()
+        }
+    }
+
+    /** Cancels a pending long-press detection (drag started / finger lifted). */
+    private fun cancelLongPress() {
+        handler.removeCallbacks(longPressRunnable)
+    }
+
+    /** Launches the Tail app's main activity from the overlay. */
+    private fun openTailApp() {
+        val intent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(intent)
+        } catch (e: Exception) { /* activity unavailable */ }
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    //  Timer menu
+    //  Timer chip (live elapsed time above the bubble)
     // ──────────────────────────────────────────────────────────────────────
 
-    /** Live-update runnable — refreshes the elapsed time while the menu is open. */
+    /** Live-update runnable — refreshes the elapsed-time pill while visible. */
     private val timerTickRunnable = object : Runnable {
         override fun run() {
-            val habit = triggerHabitName
-            if (habit != null && menuView != null) {
-                updateTimerMenuUi(habit)
+            val habit = triggerHabitName ?: return
+            val chip = timerChipView ?: return
+            if (WidgetTimerStore.isTimerRunning(this@FloatingBubbleService, habit)) {
+                val elapsed = WidgetTimerStore.formatElapsed(
+                    WidgetTimerStore.elapsedMillis(this@FloatingBubbleService, habit)
+                )
+                chip.text = elapsed
+                // Shrink slightly once the string gets long (e.g. h:mm:ss)
+                chip.textSize = if (elapsed.length > 5) 12f else 14f
                 handler.postDelayed(this, 500L)
+            } else {
+                hideTimerChip()
             }
         }
     }
 
     /**
-     * Shows the timer menu overlay anchored below the bubble:
-     * habit name, live elapsed time, and a Start/Stop Timer button.
+     * Shows the live elapsed-time pill anchored above the bubble (or directly
+     * below it when the bubble sits at the very top of the screen).
      */
-    private fun showTimerMenu() {
+    private fun showTimerChip() {
+        if (timerChipView != null) return
         val habit = triggerHabitName ?: return
-        if (menuView != null) return
+
+        val density = resources.displayMetrics.density
+        val chip = TextView(this).apply {
+            text = WidgetTimerStore.formatElapsed(
+                WidgetTimerStore.elapsedMillis(this@FloatingBubbleService, habit)
+            )
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            typeface = Typeface.MONOSPACE
+            background = GradientDrawable().apply {
+                setColor(0xEE161616.toInt())
+                cornerRadius = 14f * density
+                setStroke(1, 0xFF334455.toInt())
+            }
+        }
+        timerChipView = chip
+
+        val params = WindowManager.LayoutParams(
+            bubbleSize, // same width as the bubble → stays centered on it
+            timerChipHeight,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+
+        try {
+            windowManager.addView(chip, params)
+            positionTimerChip()
+            handler.removeCallbacks(timerTickRunnable)
+            handler.postDelayed(timerTickRunnable, 500L)
+        } catch (e: Exception) {
+            timerChipView = null
+        }
+    }
+
+    /** Removes the timer chip overlay and stops the live tick updates. */
+    private fun hideTimerChip() {
+        handler.removeCallbacks(timerTickRunnable)
+        timerChipView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) { /* already removed */ }
+        }
+        timerChipView = null
+    }
+
+    /**
+     * Repositions the timer chip so it floats just above the bubble (flipping
+     * below it if the bubble is at the top edge). Called whenever the bubble
+     * moves — drag, snap animation, or chip creation.
+     */
+    private fun positionTimerChip() {
+        val chip = timerChipView ?: return
+        val params = chip.layoutParams as? WindowManager.LayoutParams ?: return
+        val gap = 8.dp(resources)
+        params.x = bubbleParams.x
+        params.y = if (bubbleParams.y - timerChipHeight - gap >= 0) {
+            bubbleParams.y - timerChipHeight - gap
+        } else {
+            bubbleParams.y + bubbleSize + gap
+        }
+        try {
+            windowManager.updateViewLayout(chip, params)
+        } catch (e: Exception) { /* view removed */ }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    //  Habit picker menu (several habits share one trigger app)
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * Shows a small menu anchored next to the bubble listing every habit that
+     * shares the current trigger app. Tapping an item starts that habit's
+     * timer immediately; tapping anywhere outside dismisses the menu.
+     */
+    private fun showHabitPickerMenu() {
+        if (habitMenuView != null) return
+        val habits = triggerHabitNames
+        if (habits.size < 2) return
 
         val density = resources.displayMetrics.density
         fun Int.dp(): Int = (this * density).toInt()
 
-        val timeText = TextView(this).apply {
-            text = "0:00"
-            textSize = 26f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            typeface = Typeface.MONOSPACE
-            setPadding(0, 10.dp(), 0, 10.dp())
-        }
-        timerTimeText = timeText
-
-        val startStopButton = Button(this).apply {
-            text = "▶ Start Timer"
-            setOnClickListener { onTimerButtonClicked(habit) }
-        }
-        timerButton = startStopButton
-
         val menu = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(16.dp(), 12.dp(), 16.dp(), 14.dp())
+            background = GradientDrawable().apply {
+                setColor(0xEE161616.toInt())
+                cornerRadius = 12f * density
+                setStroke(1, 0xFF334455.toInt())
+            }
+            setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+        }
+
+        habits.forEachIndexed { index, habit ->
+            val item = TextView(this).apply {
+                text = habit
+                textSize = 15f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+                background = GradientDrawable().apply {
+                    setColor(0xFF1A2A3A.toInt())
+                    cornerRadius = 8f * density
+                }
+                setOnClickListener {
+                    hideHabitPickerMenu()
+                    startTimerForHabit(habit)
+                }
+            }
+            menu.addView(item, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = if (index == habits.lastIndex) 0 else 6.dp()
+            })
+        }
+
+        // Dismiss when the user taps anywhere outside the menu
+        menu.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                hideHabitPickerMenu()
+                true
+            } else false
+        }
+
+        // Measure so the menu can be anchored beside the bubble
+        menu.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val menuWidth = menu.measuredWidth
+        val menuHeight = menu.measuredHeight
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            val gap = 8.dp()
+            val screenW = Resources.getSystem().displayMetrics.widthPixels
+            val screenH = Resources.getSystem().displayMetrics.heightPixels
+            // Open on the side of the bubble with more room
+            val bubbleCenterX = bubbleParams.x + bubbleSize / 2f
+            x = if (bubbleCenterX > screenW / 2f) {
+                (bubbleParams.x - menuWidth - gap).coerceAtLeast(gap)
+            } else {
+                (bubbleParams.x + bubbleSize + gap).coerceAtMost(screenW - menuWidth - gap)
+            }
+            y = (bubbleParams.y + bubbleSize / 2f - menuHeight / 2f).toInt()
+                .coerceIn(gap, (screenH - menuHeight - gap).coerceAtLeast(gap))
+        }
+
+        try {
+            windowManager.addView(menu, params)
+            habitMenuView = menu
+        } catch (e: Exception) { /* overlay failed */ }
+    }
+
+    /** Removes the habit picker menu overlay. */
+    private fun hideHabitPickerMenu() {
+        habitMenuView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) { /* already removed */ }
+        }
+        habitMenuView = null
+    }
+
+    /** Starts the timer for [habit] and updates the bubble visuals. */
+    private fun startTimerForHabit(habit: String) {
+        triggerHabitName = habit
+        WidgetTimerStore.startTimer(this, habit)
+        setBubbleRunningVisuals(running = true)
+        showTimerChip()
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    //  Increment flash message
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * Shows a brief flash banner at the top of the screen summarising what
+     * the finished timer session recorded in Tail: habit name, minutes added
+     * and the day's new minute total, and the session added / new total.
+     */
+    private fun showIncrementFlash(
+        habit: String,
+        addedMinutes: Int,
+        totalMinutes: Int,
+        addedSessions: Int,
+        totalSessions: Int
+    ) {
+        hideIncrementFlash()
+
+        val density = resources.displayMetrics.density
+        fun Int.dp(): Int = (this * density).toInt()
+
+        val title = TextView(this).apply {
+            text = "✓ $habit"
+            textSize = 15f
+            setTextColor(0xFF88FF88.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+        }
+        val minutesLine = TextView(this).apply {
+            text = "⏱ +$addedMinutes min → $totalMinutes min today"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+        val sessionsLine = TextView(this).apply {
+            text = "● +$addedSessions session → $totalSessions today"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+
+        val flash = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(18.dp(), 12.dp(), 18.dp(), 14.dp())
             background = GradientDrawable().apply {
                 setColor(0xEE161616.toInt())
                 cornerRadius = 16f * density
                 setStroke(1, 0xFF334455.toInt())
             }
-
-            val header = LinearLayout(this@FloatingBubbleService).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                val title = TextView(this@FloatingBubbleService).apply {
-                    text = habit
-                    textSize = 13f
-                    setTextColor(0xFFBBDDFF.toInt())
-                    maxLines = 1
-                    layoutParams = LinearLayout.LayoutParams(
-                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-                    )
-                }
-                val close = TextView(this@FloatingBubbleService).apply {
-                    text = "✕"
-                    textSize = 15f
-                    setTextColor(0xFF888888.toInt())
-                    setPadding(10.dp(), 0, 0, 0)
-                    setOnClickListener { hideTimerMenu() }
-                }
-                addView(title)
-                addView(close)
-            }
-            addView(header)
-            addView(
-                timeText,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            )
-            addView(
-                startStopButton,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            )
+            addView(title, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+            addView(minutesLine, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+            addView(sessionsLine, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
         }
-        menuView = menu
+        flash.alpha = 0f
 
-        val screenW = Resources.getSystem().displayMetrics.widthPixels
-        val screenH = Resources.getSystem().displayMetrics.heightPixels
-        val menuParams = WindowManager.LayoutParams(
+        val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            // Center the menu horizontally under the bubble, clamped on-screen
-            val menuMaxWidth = 260.dp()
-            x = (bubbleParams.x + bubbleSize / 2 - menuMaxWidth / 2)
-                .coerceIn(8.dp(), (screenW - menuMaxWidth - 8.dp()).coerceAtLeast(8.dp()))
-            // Below the bubble, or clamped up if too close to the bottom edge
-            y = (bubbleParams.y + bubbleSize + 12.dp()).coerceAtMost(screenH - 250.dp())
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = 64.dp() // below the status bar
         }
 
+        flashView = flash
         try {
-            windowManager.addView(menu, menuParams)
-            updateTimerMenuUi(habit)
-            handler.postDelayed(timerTickRunnable, 500L)
+            windowManager.addView(flash, params)
+            flash.animate().alpha(1f).setDuration(150).start()
+            handler.postDelayed(flashDismissRunnable, 3000L)
         } catch (e: Exception) {
-            menuView = null
-            timerTimeText = null
-            timerButton = null
+            flashView = null
         }
     }
 
-    /** Removes the timer menu overlay and stops the live tick updates. */
-    private fun hideTimerMenu() {
-        handler.removeCallbacks(timerTickRunnable)
-        menuView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (e: Exception) { /* already removed */ }
+    /** Fades out and removes the increment flash banner, if showing. */
+    private fun hideIncrementFlash() {
+        handler.removeCallbacks(flashDismissRunnable)
+        flashView?.let { v ->
+            v.animate()
+                .alpha(0f)
+                .setDuration(200)
+                .withEndAction {
+                    try {
+                        windowManager.removeView(v)
+                    } catch (e: Exception) { /* already removed */ }
+                }
+                .start()
         }
-        menuView = null
-        timerTimeText = null
-        timerButton = null
-    }
-
-    /** Refreshes the live time text and Start/Stop button label. */
-    private fun updateTimerMenuUi(habit: String) {
-        val running = WidgetTimerStore.isTimerRunning(this, habit)
-        timerTimeText?.text = if (running) {
-            WidgetTimerStore.formatElapsed(WidgetTimerStore.elapsedMillis(this, habit))
-        } else {
-            "0:00"
-        }
-        timerButton?.text = if (running) "⏹ Stop Timer" else "▶ Start Timer"
+        flashView = null
     }
 
     /**
-     * Start/Stop button handler. Starting persists a timestamp; stopping
-     * computes the elapsed minutes and writes them to the habit's "minutes"
+     * Stops the habit's timer, hides the live display and — if at least a
+     * (rounded) minute elapsed — writes the minutes to the habit's "minutes"
      * secondary value (`secondary_value:<habit>` in habitsdb.txt).
      */
-    private fun onTimerButtonClicked(habit: String) {
-        if (WidgetTimerStore.isTimerRunning(this, habit)) {
-            val minutes = WidgetTimerStore.stopTimerAndComputeMinutes(this, habit)
-            if (minutes > 0) {
-                writeMinutesToHabit(habit, minutes)
-            } else {
-                Toast.makeText(this, "Timer stopped — under a minute, nothing recorded", Toast.LENGTH_SHORT).show()
-            }
+    private fun stopTimerAndRecord(habit: String, onFinished: (() -> Unit)? = null) {
+        val minutes = WidgetTimerStore.stopTimerAndComputeMinutes(this, habit)
+        hideTimerChip()
+        setBubbleRunningVisuals(running = false)
+        if (minutes > 0) {
+            writeMinutesToHabit(habit, minutes, onFinished)
         } else {
-            WidgetTimerStore.startTimer(this, habit)
+            Toast.makeText(
+                this, "Timer stopped — under a minute, nothing recorded", Toast.LENGTH_SHORT
+            ).show()
+            onFinished?.invoke()
         }
-        updateTimerMenuUi(habit)
     }
 
-    /** Adds [minutes] to the habit's minutes secondary value and refreshes UI surfaces. */
-    private fun writeMinutesToHabit(habit: String, minutes: Int) {
+    /**
+     * Records a finished timer session ATOMICALLY: adds [minutes] to the
+     * habit's minutes secondary value AND +1 session to the habit's own slot
+     * in a single read-modify-write, then refreshes UI surfaces and shows
+     * the increment flash. (Two separate writes allowed a concurrent
+     * reader/writer — e.g. the app starting up — to interleave between them
+     * and lose the session increment.)
+     */
+    private fun writeMinutesToHabit(habit: String, minutes: Int, onFinished: (() -> Unit)? = null) {
         serviceScope.launch {
             try {
                 val settings = settingsRepo.settingsFlow.first()
@@ -651,23 +966,23 @@ class FloatingBubbleService : Service() {
                     ).show()
                     return@launch
                 }
-                habitsRepo.incrementHabit(
-                    Uri.parse(uriStr), applicationContext, secondaryValueKey(habit), minutes
+
+                val db = habitsRepo.incrementHabitWithMinutes(
+                    Uri.parse(uriStr), applicationContext, habit, minutes, 1
                 )
-                // A completed timer session also counts as one session in the
-                // habit's other value slot (independent of the minutes count).
-                habitsRepo.incrementHabit(
-                    Uri.parse(uriStr), applicationContext, habit, 1
-                )
+
                 HabitIncrementBus.emit(habit)
                 HabitListWidgetProvider.refreshAll(applicationContext)
-                Toast.makeText(
-                    this@FloatingBubbleService,
-                    "+$minutes min · +1 session → $habit",
-                    Toast.LENGTH_SHORT
-                ).show()
+
+                // Day totals straight from the just-saved state
+                val today = dateString(LocalDate.now())
+                val totalMinutes = db[secondaryValueKey(habit)]?.get(today) ?: minutes
+                val totalSessions = db[habit]?.get(today) ?: 1
+                showIncrementFlash(habit, minutes, totalMinutes, 1, totalSessions)
             } catch (e: Exception) {
                 Toast.makeText(this@FloatingBubbleService, "Failed to save minutes: ${e.message}", Toast.LENGTH_LONG).show()
+            } finally {
+                onFinished?.invoke()
             }
         }
     }
@@ -683,8 +998,9 @@ class FloatingBubbleService : Service() {
             } catch (e: Exception) { /* already removed */ }
         }
         bubbleView = null
-        // Closing the bubble also closes the timer menu
-        hideTimerMenu()
+        bubbleRingView = null
+        // Closing the bubble also removes the timer chip
+        hideTimerChip()
     }
 
     private fun removeDismissZone() {
@@ -723,7 +1039,7 @@ class FloatingBubbleService : Service() {
 
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Tail Bubble")
-            .setContentText("Floating bubble is active. Drag to ✕ to dismiss.")
+            .setContentText("Tap: start/stop timer · Long-press: open Tail · Drag to ✕ to dismiss")
             .setSmallIcon(R.drawable.ic_bubble_notification)
             .setOngoing(true)
             .addAction(

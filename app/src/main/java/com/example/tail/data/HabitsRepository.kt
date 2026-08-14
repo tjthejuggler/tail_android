@@ -562,6 +562,48 @@ class HabitsRepository {
     ): HabitsDatabase = incrementHabitForDate(uri, context, habitName, amount, LocalDate.now())
 
     /**
+     * Atomically increments BOTH value slots of a widget-timer habit for
+     * today in a single read-modify-write: +[sessions] in the habit's own
+     * slot and +[minutes] in its secondary-value slot
+     * (`secondary_value:<habitName>`).
+     *
+     * One atomic write instead of two back-to-back [incrementHabit] calls
+     * matters: a concurrent reader/writer (e.g. the app's startup
+     * ensure-days fill) can otherwise interleave BETWEEN the two writes,
+     * load the half-updated state, and later persist it — silently losing
+     * the session increment while keeping the minutes.
+     *
+     * Returns the saved database (useful for reading back the new day totals).
+     */
+    suspend fun incrementHabitWithMinutes(
+        uri: Uri,
+        context: Context,
+        habitName: String,
+        minutes: Int,
+        sessions: Int
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "incrementHabitWithMinutes: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+        val dateStr = dateString(LocalDate.now())
+
+        val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
+        habitEntries[dateStr] = (habitEntries[dateStr] ?: 0) + sessions
+        db[habitName] = habitEntries.toSortedMap()
+
+        val secKey = secondaryValueKey(habitName)
+        val secEntries = db[secKey]?.toMutableMap() ?: mutableMapOf()
+        secEntries[dateStr] = (secEntries[dateStr] ?: 0) + minutes
+        db[secKey] = secEntries.toSortedMap()
+
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
      * **Protocol v2** — SETS (replaces) the stored value for a habit on [date]
      * to [value], then saves. Unlike [incrementHabitForDate] which adds, this
      * method overwrites whatever value was previously stored for that date.

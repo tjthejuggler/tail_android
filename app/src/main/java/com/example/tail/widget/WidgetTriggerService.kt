@@ -88,9 +88,16 @@ class WidgetTriggerService : Service() {
          * The service is started regardless of usage-access state — without the
          * permission the usage queries return empty and the service simply does
          * nothing until the user grants it (no restart needed).
+         *
+         * The start intent ALWAYS carries ACTION_REFRESH: for an ALREADY-RUNNING
+         * service a plain start intent is a no-op, so without the refresh the
+         * monitor would keep watching the stale package list from when it first
+         * started and never notice newly added (or removed) trigger apps.
          */
         fun updateServiceState(context: Context, triggerAppCount: Int) {
-            val intent = Intent(context, WidgetTriggerService::class.java)
+            val intent = Intent(context, WidgetTriggerService::class.java).apply {
+                action = ACTION_REFRESH
+            }
             if (triggerAppCount > 0) {
                 try {
                     context.startForegroundService(intent)
@@ -113,8 +120,9 @@ class WidgetTriggerService : Service() {
     /** Package names that should trigger the bubble. */
     private var watchedPackages: Set<String> = emptySet()
 
-    /** Reverse of the trigger-app setting: package → habit name (for the timer menu). */
-    private var habitByPackage: Map<String, String> = emptyMap()
+    /** Reverse of the trigger-app setting: package → habit names
+     *  (several habits can share one trigger app). */
+    private var habitsByPackage: Map<String, List<String>> = emptyMap()
 
     /** The package that is currently in the foreground (or null). */
     private var currentForegroundPackage: String? = null
@@ -163,13 +171,15 @@ class WidgetTriggerService : Service() {
     private fun loadWatchedPackages() {
         serviceScope.launch {
             val settings = settingsRepo.settingsFlow.first()
+            // groupBy (not associate!) so habits sharing one trigger app are
+            // ALL kept — associate would silently drop all but the last one.
             val newByPackage = settings.widgetTriggerApps.entries
                 .filter { it.value.isNotBlank() }
-                .associate { (habit, pkg) -> pkg to habit }
+                .groupBy({ it.value }, { it.key })
             val newPackages = newByPackage.keys
 
             watchedPackages = newPackages
-            habitByPackage = newByPackage
+            habitsByPackage = newByPackage
             Log.d(TAG, "Watched packages loaded: $newPackages")
 
             if (newPackages.isEmpty()) {
@@ -239,7 +249,7 @@ class WidgetTriggerService : Service() {
             if (foregroundPkg in watchedPackages) {
                 if (!bubbleActive) {
                     Log.d(TAG, "Trigger app detected ($foregroundPkg) — showing bubble")
-                    startBubble(habitByPackage[foregroundPkg])
+                    startBubble(habitsByPackage[foregroundPkg].orEmpty())
                 }
             } else {
                 if (bubbleActive) {
@@ -281,9 +291,11 @@ class WidgetTriggerService : Service() {
     //  Bubble start / stop
     // ──────────────────────────────────────────────────────────────────────
 
-    private fun startBubble(triggerHabit: String?) {
+    private fun startBubble(triggerHabits: List<String>) {
         val intent = Intent(this, FloatingBubbleService::class.java).apply {
-            triggerHabit?.let { putExtra(FloatingBubbleService.EXTRA_HABIT_NAME, it) }
+            if (triggerHabits.isNotEmpty()) {
+                putStringArrayListExtra(FloatingBubbleService.EXTRA_HABIT_NAMES, ArrayList(triggerHabits))
+            }
         }
         startForegroundService(intent)
         bubbleActive = true

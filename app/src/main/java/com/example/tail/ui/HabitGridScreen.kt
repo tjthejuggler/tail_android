@@ -932,6 +932,10 @@ fun HabitGridScreen(
                         onChangeIcon = { name -> iconPickerHabitName = name },
                         onSetCount = { name, count -> viewModel.setHabitCount(name, count) },
                         onSetCountWithRollForward = { name, count, endDate -> viewModel.setHabitCountWithRollForward(name, count, endDate) },
+                        onSetSecondaryCount = { name, count -> viewModel.setHabitSecondaryCount(name, count) },
+                        selectedHabitSecondaryTodayCount = selectedHabitName?.let {
+                            viewModel.getSecondaryTodayCount(it)
+                        } ?: 0,
                         onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
                         onToggleConditional = { name -> viewModel.toggleConditional(name) },
                         onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name },
@@ -2876,6 +2880,10 @@ private fun EditModeControlBar(
     onRenameHabit: (String, String) -> Unit,
     onSetCount: (String, Int) -> Unit,
     onSetCountWithRollForward: (String, Int, java.time.LocalDate) -> Unit = { _, _, _ -> },
+    /** Called when the user sets the SECONDARY value (timer minutes) for a habit. */
+    onSetSecondaryCount: (String, Int) -> Unit = { _, _ -> },
+    /** Today's secondary-value count (timer minutes) for the selected habit. */
+    selectedHabitSecondaryTodayCount: Int = 0,
     onSetDivider: (String, Int) -> Unit,
     onToggleConditional: (String) -> Unit,
     onSetConditionalLinks: (String) -> Unit,
@@ -3289,113 +3297,27 @@ private fun EditModeControlBar(
                         }
                     }
                 }
-                // For divider habits, show editable true value (undivided total) under the counter
-                // For Garmin-linked habits, show read-only Garmin metric value
-                val isGarminLinked = selectedHabitName != null && selectedHabitName in garminHabitLinks
-                val isDivider = selectedHabitName != null && (habitDividers[selectedHabitName] ?: 1) > 1
-                if (isGarminLinked || isDivider) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    // For Garmin habits, derive the value live on every recomposition so it
-                    // reflects garminMonthlyData updates that arrive asynchronously (e.g. after
-                    // a "Test Connection" sync). Caching it in remember() keyed only on the
-                    // habit name would leave a stale "-" when the data lands after selection.
-                    val garminValueText: String = if (isGarminLinked) {
-                        val garminType = garminHabitLinks[selectedHabitName]?.let { GarminType.fromKey(it) }
-                        val rawValue: Int? = when (garminType) {
-                            GarminType.FITNESS_AGE_DISTANCE -> {
-                                // Calculate fitness age distance on-demand from FITNESS_AGE
-                                // Fitness age is stored as hundredths of a year (e.g., 3704 for 37.04)
-                                try {
-                                    val fitnessAgeData = garminMonthlyData[GarminType.FITNESS_AGE]
-                                    if (fitnessAgeData != null && garminDateOfBirth.isNotEmpty()) {
-                                        val fitnessAge = fitnessAgeData[selectedDate.toString()]
-                                        if (fitnessAge != null) {
-                                            val dob = java.time.LocalDate.parse(garminDateOfBirth)
-                                            // Calculate biological age in hundredths of a year
-                                            val biologicalAgeYears = java.time.temporal.ChronoUnit.YEARS.between(dob, selectedDate).toDouble()
-                                            val biologicalAgeHundredths = (biologicalAgeYears * 100).toInt()
-                                            // Distance = fitness_age - biological_age (both in hundredths of a year)
-                                            fitnessAge - biologicalAgeHundredths
-                                        } else null
-                                    } else null
-                                } catch (e: Exception) {
-                                    null
-                                }
-                            }
-                            else -> {
-                                val dailyValues = garminType?.let { garminMonthlyData[it] }
-                                dailyValues?.get(selectedDate.toString())
-                            }
-                        }
-                        // Format per-metric for display (e.g. distance metres → km, 1 decimal).
-                        rawValue?.let { garminType?.formatDisplayValue(it) ?: it.toString() } ?: "-"
-                    } else {
-                        "-"
-                    }
-                    // For divider habits, keep an editable remembered field bound to the raw count.
-                    var trueValueText by remember(selectedHabitName) {
-                        mutableStateOf(selectedHabitRawTodayCount.toString())
-                    }
-                    // Sync when external count changes (e.g., from [−]/[+] buttons)
-                    if (!isGarminLinked && trueValueText.toIntOrNull() != selectedHabitRawTodayCount) {
-                        trueValueText = selectedHabitRawTodayCount.toString()
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (isGarminLinked) "garmin value:" else "true value:",
-                            color = Color(0xFFAA88FF),
-                            fontSize = 10.sp
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        if (isGarminLinked) {
-                            // Garmin value is read-only — it is derived from
-                            // garminMonthlyData. Render it as a plain label.
-                            //
-                            // It must NOT be an editable text field: a TextField
-                            // with a no-op onValueChange keeps its own internal
-                            // text buffer from first composition, which could latch
-                            // a stale value (e.g. "1") that never refreshed when the
-                            // real value arrived asynchronously — the user had to
-                            // type into it to force it to the correct number. A
-                            // Text always reflects the live derived value.
-                            Text(
-                                text = garminValueText,
-                                color = Color(0xFFAA88FF),
-                                fontSize = 12.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.width(64.dp)
-                            )
-                        } else {
-                            OutlinedTextField(
-                                value = trueValueText,
-                                onValueChange = { v: String ->
-                                    trueValueText = v.filter { it.isDigit() }
-                                    val newCount = trueValueText.toIntOrNull() ?: 0
-                                    onSetCount(selectedHabitName, newCount)
-                                },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(
-                                    keyboardType = KeyboardType.Number
-                                ),
-                                modifier = Modifier.width(64.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color(0xFFAA88FF),
-                                    unfocusedTextColor = Color(0xFFAA88FF),
-                                    focusedBorderColor = Color(0xFFAA88FF),
-                                    unfocusedBorderColor = Color(0xFF664488)
-                                ),
-                                textStyle = TextStyle(
-                                    fontSize = 12.sp,
-                                    textAlign = TextAlign.Center
-                                )
-                            )
-                        }
-                    }
-                }
+                // Value editor row — for timer habits (two value tracks:
+                // sessions + minutes) a dropdown picks which value to edit,
+                // defaulting to the habit's PRIMARY value. Single-track
+                // habits get a plain labelled field. For Garmin-linked
+                // habits, show the read-only Garmin metric value.
+                // Extracted to its own composable to keep EditModeControlBar
+                // under the JVM method-size limit.
+                EditModeValueEditorRow(
+                    selectedHabitName = selectedHabitName,
+                    garminHabitLinks = garminHabitLinks,
+                    garminMonthlyData = garminMonthlyData,
+                    garminDateOfBirth = garminDateOfBirth,
+                    selectedDate = selectedDate,
+                    habitDividers = habitDividers,
+                    widgetTriggerApps = widgetTriggerApps,
+                    widgetTimerMinutesPrimary = widgetTimerMinutesPrimary,
+                    rawTodayCount = selectedHabitRawTodayCount,
+                    secondaryTodayCount = selectedHabitSecondaryTodayCount,
+                    onSetCount = onSetCount,
+                    onSetSecondaryCount = onSetSecondaryCount
+                )
                 // Timestamps button — always available so timestamps can be
                 // added/edited for any habit on any day (past or current),
                 // even when none exist yet.
@@ -4697,6 +4619,202 @@ private fun EditModeControlBar(
                     )
                 }
             }
+        }
+    }
+}
+
+// ── Value editor row ────────────────────────────────────────────────────────
+
+/**
+ * Edit-mode row for setting a habit's "true value" for the selected date.
+ *
+ * - Timer habits (widget trigger app configured) track TWO values — sessions
+ *   (the habit's own slot) and minutes (the secondary_value slot) — so they
+ *   get a dropdown that picks which value to edit. The default selection is
+ *   the habit's PRIMARY value (per [widgetTimerMinutesPrimary]).
+ * - Garmin-linked habits show a read-only label with the derived Garmin
+ *   metric value.
+ * - Other single-value habits (e.g. divider habits) get a plain label naming
+ *   the value, with an editable field.
+ *
+ * Extracted from EditModeControlBar to keep it under the JVM method-size limit.
+ */
+@Composable
+private fun EditModeValueEditorRow(
+    selectedHabitName: String?,
+    garminHabitLinks: Map<String, String>,
+    garminMonthlyData: Map<com.example.tail.data.GarminType, Map<String, Int>>,
+    garminDateOfBirth: String,
+    selectedDate: java.time.LocalDate,
+    habitDividers: Map<String, Int>,
+    widgetTriggerApps: Map<String, String>,
+    widgetTimerMinutesPrimary: Set<String>,
+    rawTodayCount: Int,
+    secondaryTodayCount: Int,
+    onSetCount: (String, Int) -> Unit,
+    onSetSecondaryCount: (String, Int) -> Unit
+) {
+    val habitName = selectedHabitName ?: return
+    val isGarminLinked = habitName in garminHabitLinks
+    val isDivider = (habitDividers[habitName] ?: 1) > 1
+    val isTimerHabit = !widgetTriggerApps[habitName].isNullOrBlank()
+    val minutesPrimary = habitName in widgetTimerMinutesPrimary
+    if (!(isGarminLinked || isDivider || isTimerHabit)) return
+
+    Spacer(modifier = Modifier.height(2.dp))
+    // For Garmin habits, derive the value live on every recomposition so it
+    // reflects garminMonthlyData updates that arrive asynchronously (e.g. after
+    // a "Test Connection" sync). Caching it in remember() keyed only on the
+    // habit name would leave a stale "-" when the data lands after selection.
+    val garminValueText: String = if (isGarminLinked) {
+        val garminType = garminHabitLinks[habitName]?.let { GarminType.fromKey(it) }
+        val rawValue: Int? = when (garminType) {
+            GarminType.FITNESS_AGE_DISTANCE -> {
+                // Calculate fitness age distance on-demand from FITNESS_AGE
+                // Fitness age is stored as hundredths of a year (e.g., 3704 for 37.04)
+                try {
+                    val fitnessAgeData = garminMonthlyData[GarminType.FITNESS_AGE]
+                    if (fitnessAgeData != null && garminDateOfBirth.isNotEmpty()) {
+                        val fitnessAge = fitnessAgeData[selectedDate.toString()]
+                        if (fitnessAge != null) {
+                            val dob = java.time.LocalDate.parse(garminDateOfBirth)
+                            // Calculate biological age in hundredths of a year
+                            val biologicalAgeYears = java.time.temporal.ChronoUnit.YEARS.between(dob, selectedDate).toDouble()
+                            val biologicalAgeHundredths = (biologicalAgeYears * 100).toInt()
+                            // Distance = fitness_age - biological_age (both in hundredths of a year)
+                            fitnessAge - biologicalAgeHundredths
+                        } else null
+                    } else null
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            else -> {
+                val dailyValues = garminType?.let { garminMonthlyData[it] }
+                dailyValues?.get(selectedDate.toString())
+            }
+        }
+        // Format per-metric for display (e.g. distance metres → km, 1 decimal).
+        rawValue?.let { garminType?.formatDisplayValue(it) ?: it.toString() } ?: "-"
+    } else {
+        "-"
+    }
+    // Which value track the editor edits (timer habits only).
+    // Defaults to the habit's PRIMARY value and resets if the
+    // primary value setting changes.
+    var editingMinutes by remember(habitName, minutesPrimary) {
+        mutableStateOf(minutesPrimary)
+    }
+    var valuePickerExpanded by remember { mutableStateOf(false) }
+    // The value being edited: minutes live in the secondary-
+    // value slot, sessions in the habit's own slot.
+    val editingValue = if (editingMinutes) secondaryTodayCount else rawTodayCount
+    // Editable remembered field bound to the edited value.
+    var trueValueText by remember(habitName) {
+        mutableStateOf(editingValue.toString())
+    }
+    // Sync when the edited value changes externally (e.g.
+    // [−]/[+] buttons, bubble timer, or switching tracks).
+    if (!isGarminLinked && trueValueText.toIntOrNull() != editingValue) {
+        trueValueText = editingValue.toString()
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (isTimerHabit && !isGarminLinked) {
+            // Multi-value habit: dropdown choosing which
+            // value to set (default = primary value).
+            Box {
+                Button(
+                    onClick = { valuePickerExpanded = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
+                    modifier = Modifier.height(28.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        text = if (editingMinutes) "Minutes ▾" else "Sessions ▾",
+                        fontSize = 10.sp,
+                        color = Color(0xFF66CCFF)
+                    )
+                }
+                DropdownMenu(
+                    expanded = valuePickerExpanded,
+                    onDismissRequest = { valuePickerExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Minutes (timer)", fontSize = 13.sp) },
+                        onClick = {
+                            valuePickerExpanded = false
+                            editingMinutes = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Sessions", fontSize = 13.sp) },
+                        onClick = {
+                            valuePickerExpanded = false
+                            editingMinutes = false
+                        }
+                    )
+                }
+            }
+        } else {
+            // Single-value habit: just the name of the value
+            // it represents, as a plain label.
+            Text(
+                text = if (isGarminLinked) "garmin value:" else "true value:",
+                color = Color(0xFFAA88FF),
+                fontSize = 10.sp
+            )
+        }
+        Spacer(modifier = Modifier.width(4.dp))
+        if (isGarminLinked) {
+            // Garmin value is read-only — it is derived from
+            // garminMonthlyData. Render it as a plain label.
+            //
+            // It must NOT be an editable text field: a TextField
+            // with a no-op onValueChange keeps its own internal
+            // text buffer from first composition, which could latch
+            // a stale value (e.g. "1") that never refreshed when the
+            // real value arrived asynchronously — the user had to
+            // type into it to force it to the correct number. A
+            // Text always reflects the live derived value.
+            Text(
+                text = garminValueText,
+                color = Color(0xFFAA88FF),
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.width(64.dp)
+            )
+        } else {
+            OutlinedTextField(
+                value = trueValueText,
+                onValueChange = { v: String ->
+                    trueValueText = v.filter { it.isDigit() }
+                    val newCount = trueValueText.toIntOrNull() ?: 0
+                    if (editingMinutes) {
+                        onSetSecondaryCount(habitName, newCount)
+                    } else {
+                        onSetCount(habitName, newCount)
+                    }
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number
+                ),
+                modifier = Modifier.width(64.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFFAA88FF),
+                    unfocusedTextColor = Color(0xFFAA88FF),
+                    focusedBorderColor = Color(0xFFAA88FF),
+                    unfocusedBorderColor = Color(0xFF664488)
+                ),
+                textStyle = TextStyle(
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
+                )
+            )
         }
     }
 }

@@ -1779,6 +1779,51 @@ class HabitViewModel(
     }
 
     /**
+     * Returns the SECONDARY value (e.g. timer minutes, stored under
+     * `secondary_value:<habitName>`) for [habitName] on the currently
+     * selected date. Returns 0 if the habit has no secondary value.
+     */
+    fun getSecondaryTodayCount(habitName: String): Int {
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        return cachedPhoneDb[com.example.tail.data.secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+    }
+
+    /**
+     * Sets the SECONDARY value (e.g. timer minutes, stored under
+     * `secondary_value:<habitName>`) for [habitName] on the currently
+     * selected date to an absolute [newCount]. Clamps to >= 0 and persists
+     * to the DB file. Used by the edit-mode value picker for timer habits.
+     */
+    fun setHabitSecondaryCount(habitName: String, newCount: Int) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            _errorMessage.value = "No file selected. Please pick a file in Settings."
+            return
+        }
+        val clamped = newCount.coerceAtLeast(0)
+        val secKey = com.example.tail.data.secondaryValueKey(habitName)
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+
+        // Step 1: instant in-memory cache update
+        val secEntries = cachedPhoneDb[secKey]?.toMutableMap() ?: mutableMapOf()
+        secEntries[dateStr] = clamped
+        val updatedDb = cachedPhoneDb.toMutableMap()
+        updatedDb[secKey] = secEntries.toSortedMap()
+        cachedPhoneDb = updatedDb
+
+        // Step 2: rebuild (minutes drive points for minutes-primary habits)
+        // + disk write in background
+        viewModelScope.launch {
+            rebuildHabitList()
+            try {
+                habitsRepo.persistDatabase(Uri.parse(uriString), context, updatedDb)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to save: ${e.message}"
+            }
+        }
+    }
+
+    /**
      * Sets the count for [habitName] on the currently selected date to an absolute [newCount]
      * with roll forward to a specified end date.
      * This is used when the user confirms the roll forward dialog for count changes.
