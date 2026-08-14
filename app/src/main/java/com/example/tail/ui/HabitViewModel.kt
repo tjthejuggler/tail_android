@@ -108,10 +108,15 @@ private const val TOTAL_GRID_CELLS = 80
 private fun extractCountry(label: String, ignoredNames: Set<String> = emptySet()): String? {
     val parts = label.split(",").map { it.trim() }.filter { it.isNotEmpty() }
     if (parts.isEmpty()) return null
-    val country = parts.last()
+    val raw = parts.last()
+    // Canonicalise aliases (e.g. "USA" → "United States") so variants of the
+    // same country aggregate into a single entry — shared with the stats screen.
+    val country = com.example.tail.ui.map.canonicalCountryName(raw)
     // Case-insensitive check: the ignore list stores properly-capitalised names
-    // (e.g. "Massachusetts") but location labels may vary in casing.
-    if (ignoredNames.any { it.equals(country, ignoreCase = true) }) return null
+    // (e.g. "Massachusetts") but location labels may vary in casing. Both the
+    // raw and canonical spellings are checked so canonicalisation can never
+    // un-ignore a country.
+    if (ignoredNames.any { it.equals(raw, ignoreCase = true) || it.equals(country, ignoreCase = true) }) return null
     return country
 }
 
@@ -7237,6 +7242,21 @@ class HabitViewModel(
         for ((dateStr, coord) in raw) {
             val d = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: continue
             out[d] = coord
+        }
+        return out
+    }
+
+    /**
+     * Returns ALL stored location labels as a map of [LocalDate] → label in
+     * ONE SharedPrefs read + parse pass (mirrors [getAllStoredCoordsParsed]).
+     * Used by the travel-stats screen for city/country aggregation.
+     */
+    fun getAllStoredLabelsParsed(): Map<LocalDate, String> {
+        val raw = locationRepo.getAllStoredLabels()
+        val out = HashMap<LocalDate, String>(raw.size)
+        for ((dateStr, label) in raw) {
+            val d = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: continue
+            out[d] = label
         }
         return out
     }

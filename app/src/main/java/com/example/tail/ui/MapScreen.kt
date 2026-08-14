@@ -35,6 +35,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -163,7 +164,8 @@ private fun requiredAnimMs(distancePx: Float, mapWidthPx: Float): Long {
 @Composable
 fun MapScreen(
     viewModel: HabitViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToStats: () -> Unit = {}
 ) {
     // ── Force landscape while this screen is visible ────────────────────────
     val context = LocalContext.current
@@ -895,20 +897,34 @@ fun MapScreen(
             )
         }
 
-        // Settings gear overlay at absolute top-right corner
-        IconButton(
-            onClick = { showMapSettingsDialog = true },
+        // Stats + settings overlays at absolute top-right corner
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(top = 8.dp, end = 8.dp)
-                .size(28.dp)
         ) {
-            Icon(
-                Icons.Default.Settings,
-                contentDescription = "Map settings",
-                tint = Color(0xFF888888),
-                modifier = Modifier.size(16.dp)
-            )
+            IconButton(
+                onClick = onNavigateToStats,
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    Icons.Default.BarChart,
+                    contentDescription = "Travel stats",
+                    tint = Color(0xFF888888),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            IconButton(
+                onClick = { showMapSettingsDialog = true },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    Icons.Default.Settings,
+                    contentDescription = "Map settings",
+                    tint = Color(0xFF888888),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
         }
     }
     }
