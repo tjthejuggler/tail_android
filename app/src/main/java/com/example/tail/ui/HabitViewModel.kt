@@ -1323,15 +1323,29 @@ class HabitViewModel(
         // This is O(n) list copy with zero calculations, so it's effectively instant.
         val dateStr = com.example.tail.data.dateString(_selectedDate.value)
         val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
-        val rawNewCount = (currentEntries[dateStr] ?: 0) + amount
-        // If this habit has the "1 max" cap, clamp to 1
-        val newCount = if (habitName in _settings.value.maxOneHabits) rawNewCount.coerceAtMost(1) else rawNewCount
-        // If the count didn't actually change (e.g. already at 1 with 1-max), bail out early
-        if (newCount == (currentEntries[dateStr] ?: 0)) return
+        val currentStored = currentEntries[dateStr] ?: 0
+        // Custom point ranges: the entered amount is the RAW input for the day.
+        // Store the calculated points tier (set semantics, like the Garmin path).
+        val rangePoints = customRangePointsForInput(habitName, amount)
+        val newCount: Int
+        val dbDelta: Int
+        if (rangePoints != null) {
+            newCount = rangePoints
+            dbDelta = newCount - currentStored
+            // If the tier didn't actually change, bail out early
+            if (dbDelta == 0) return
+        } else {
+            val rawNewCount = currentStored + amount
+            // If this habit has the "1 max" cap, clamp to 1
+            newCount = if (habitName in _settings.value.maxOneHabits) rawNewCount.coerceAtMost(1) else rawNewCount
+            // If the count didn't actually change (e.g. already at 1 with 1-max), bail out early
+            if (newCount == currentStored) return
+            dbDelta = amount
+        }
         val divider = _settings.value.habitDividers[habitName] ?: 1
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(
-                todayCount = applyDivider(newCount, divider),
+                todayCount = rangePoints ?: applyDivider(newCount, divider),
                 rawTodayCount = newCount
             ) else h
         }
@@ -1348,7 +1362,7 @@ class HabitViewModel(
             .firstOrNull { it > _selectedDate.value }
         } else null
         
-        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, amount, _selectedDate.value)
+        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, dbDelta, _selectedDate.value)
         
         // Step 2b: Track this date as manually set for roll forward habits
         if (habitName in _settings.value.rollForwardHabits) {
@@ -1474,20 +1488,33 @@ class HabitViewModel(
         // Step 1: instant targeted update — just flip todayCount for this one habit.
         val dateStr = com.example.tail.data.dateString(_selectedDate.value)
         val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
-        val rawNewCount = (currentEntries[dateStr] ?: 0) + amount
-        val newCount = if (habitName in _settings.value.maxOneHabits) rawNewCount.coerceAtMost(1) else rawNewCount
-        if (newCount == (currentEntries[dateStr] ?: 0)) return
+        val currentStored = currentEntries[dateStr] ?: 0
+        // Custom point ranges: the entered amount is the RAW input for the day.
+        // Store the calculated points tier (set semantics, like the Garmin path).
+        val rangePoints = customRangePointsForInput(habitName, amount)
+        val newCount: Int
+        val dbDelta: Int
+        if (rangePoints != null) {
+            newCount = rangePoints
+            dbDelta = newCount - currentStored
+            if (dbDelta == 0) return
+        } else {
+            val rawNewCount = currentStored + amount
+            newCount = if (habitName in _settings.value.maxOneHabits) rawNewCount.coerceAtMost(1) else rawNewCount
+            if (newCount == currentStored) return
+            dbDelta = amount
+        }
         val divider = _settings.value.habitDividers[habitName] ?: 1
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(
-                todayCount = applyDivider(newCount, divider),
+                todayCount = rangePoints ?: applyDivider(newCount, divider),
                 rawTodayCount = newCount
             ) else h
         }
         screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
 
         // Step 2: update in-memory cache
-        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, amount, _selectedDate.value)
+        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, dbDelta, _selectedDate.value)
         
         // Step 2b: Track this date as manually set for roll forward habits
         if (habitName in _settings.value.rollForwardHabits) {
@@ -1892,8 +1919,24 @@ class HabitViewModel(
     }
 
     /**
+     * Translates a raw manual input value into the value that should be STORED for
+     * [habitName]. For habits with custom point ranges enabled, the stored value is
+     * the points tier (the index of the first range containing the raw value) — the
+     * same contract used by [applyGarminData] and [recalculateHabitPointsForCustomRanges].
+     * Returns null when the habit does not use custom point ranges.
+     */
+    private fun customRangePointsForInput(habitName: String, rawValue: Int): Int? {
+        if (habitName !in _settings.value.customPointRangesHabits) return null
+        val ranges = _settings.value.customPointRanges[habitName] ?: return null
+        return com.example.tail.data.calculatePointsFromRanges(rawValue, ranges)
+    }
+
+    /**
      * Sets the count for [habitName] on the currently selected date to an absolute [newCount].
      * [newCount] is the raw value to store. Clamps to >= 0. Persists to the DB file.
+     * For habits with custom point ranges enabled, [newCount] is treated as the raw input
+     * ("true value") and the calculated points tier is stored instead — matching the
+     * Garmin-linked write path.
      */
     fun setHabitCount(habitName: String, newCount: Int) {
         val uriString = _settings.value.fileUri
@@ -1903,12 +1946,14 @@ class HabitViewModel(
         }
         val clamped = newCount.coerceAtLeast(0)
         val divider = _settings.value.habitDividers[habitName] ?: 1
+        val rangePoints = customRangePointsForInput(habitName, clamped)
+        val storedValue = rangePoints ?: clamped
 
         // Step 1: instant targeted UI update
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(
-                todayCount = applyDivider(clamped, divider),
-                rawTodayCount = clamped
+                todayCount = rangePoints ?: applyDivider(clamped, divider),
+                rawTodayCount = storedValue
             ) else h
         }
         // Keep per-screen cache in sync
@@ -1918,7 +1963,7 @@ class HabitViewModel(
         val dateStr = com.example.tail.data.dateString(_selectedDate.value)
         val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
         val currentCount = currentEntries[dateStr] ?: 0
-        val delta = clamped - currentCount
+        val delta = storedValue - currentCount
         
         // For roll forward habits, find the next manually set date BEFORE applying the change
         val nextManualDate = if (habitName in _settings.value.rollForwardHabits && delta != 0) {
@@ -1959,7 +2004,7 @@ class HabitViewModel(
             
             while (currentDate <= endDate) {
                 val currentDateStr = com.example.tail.data.dateString(currentDate)
-                habitEntries[currentDateStr] = clamped
+                habitEntries[currentDateStr] = storedValue
                 currentDate = currentDate.plusDays(1)
             }
             
@@ -2048,12 +2093,14 @@ class HabitViewModel(
         }
         val clamped = newCount.coerceAtLeast(0)
         val divider = _settings.value.habitDividers[habitName] ?: 1
+        val rangePoints = customRangePointsForInput(habitName, clamped)
+        val storedValue = rangePoints ?: clamped
 
         // Step 1: instant targeted UI update
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(
-                todayCount = applyDivider(clamped, divider),
-                rawTodayCount = clamped
+                todayCount = rangePoints ?: applyDivider(clamped, divider),
+                rawTodayCount = storedValue
             ) else h
         }
         // Keep per-screen cache in sync
@@ -2063,7 +2110,7 @@ class HabitViewModel(
         val dateStr = com.example.tail.data.dateString(_selectedDate.value)
         val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
         val currentCount = currentEntries[dateStr] ?: 0
-        val delta = clamped - currentCount
+        val delta = storedValue - currentCount
         
         var updatedDb = if (delta != 0) {
             habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, delta, _selectedDate.value)
@@ -2094,7 +2141,7 @@ class HabitViewModel(
             
             while (currentDate <= endDate) {
                 val currentDateStr = com.example.tail.data.dateString(currentDate)
-                habitEntries[currentDateStr] = clamped
+                habitEntries[currentDateStr] = storedValue
                 currentDate = currentDate.plusDays(1)
             }
             
