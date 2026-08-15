@@ -3656,6 +3656,8 @@ class HabitViewModel(
                     mealHabits = settings.mealHabits.replaceElement(oldName, newName),
                     habitAppAssociations = settings.habitAppAssociations.replaceKey(oldName, newName),
                     habitLongPressActions = settings.habitLongPressActions.replaceKey(oldName, newName),
+                    habitLongPressUrls = settings.habitLongPressUrls.replaceKey(oldName, newName),
+                    habitLongPressUrlApps = settings.habitLongPressUrlApps.replaceKey(oldName, newName),
                     widgetTriggerHabits = settings.widgetTriggerHabits.replaceElement(oldName, newName),
                     widgetTriggerApps = settings.widgetTriggerApps.replaceKey(oldName, newName),
                     widgetTimerMinutesPrimary = settings.widgetTimerMinutesPrimary.replaceElement(oldName, newName),
@@ -3711,6 +3713,8 @@ class HabitViewModel(
                 settingsRepo.saveMealHabits(newSettings.mealHabits)
                 settingsRepo.saveHabitAppAssociations(newSettings.habitAppAssociations)
                 settingsRepo.saveHabitLongPressActions(newSettings.habitLongPressActions)
+                settingsRepo.saveHabitLongPressUrls(newSettings.habitLongPressUrls)
+                settingsRepo.saveHabitLongPressUrlApps(newSettings.habitLongPressUrlApps)
                 settingsRepo.saveWidgetTriggerHabits(newSettings.widgetTriggerHabits)
                 settingsRepo.saveWidgetTriggerApps(newSettings.widgetTriggerApps)
                 settingsRepo.saveMapMainHabit(newSettings.mapMainHabit)
@@ -7987,6 +7991,43 @@ class HabitViewModel(
             }
             settingsRepo.saveHabitLongPressActions(current)
             _settings.value = _settings.value.copy(habitLongPressActions = current)
+        }
+    }
+
+    /**
+     * Sets the URL opened when long-pressing a habit whose action is
+     * [com.example.tail.data.LONG_PRESS_URL]. Passing a blank [url]
+     * removes the entry (long-press then falls back to app behaviour).
+     */
+    fun setHabitLongPressUrl(habitName: String, url: String) {
+        viewModelScope.launch {
+            val current = _settings.value.habitLongPressUrls.toMutableMap()
+            if (url.isBlank()) {
+                current.remove(habitName)
+            } else {
+                // Bare domains get an https:// prefix so ACTION_VIEW resolves them
+                current[habitName] = url.trim().let { if ("://" in it) it else "https://$it" }
+            }
+            settingsRepo.saveHabitLongPressUrls(current)
+            _settings.value = _settings.value.copy(habitLongPressUrls = current)
+        }
+    }
+
+    /**
+     * Sets the app that should handle the long-press URL for a habit
+     * (via Intent.setPackage). Pass a null/blank [packageName] to clear it,
+     * which makes the URL open in the default browser again.
+     */
+    fun setHabitLongPressUrlApp(habitName: String, packageName: String?) {
+        viewModelScope.launch {
+            val current = _settings.value.habitLongPressUrlApps.toMutableMap()
+            if (packageName.isNullOrBlank()) {
+                current.remove(habitName)
+            } else {
+                current[habitName] = packageName
+            }
+            settingsRepo.saveHabitLongPressUrlApps(current)
+            _settings.value = _settings.value.copy(habitLongPressUrlApps = current)
         }
     }
 

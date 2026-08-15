@@ -169,6 +169,10 @@ private val KEY_APP_LINKS = stringPreferencesKey("app_links")
 private val KEY_HABIT_APP_ASSOCIATIONS = stringPreferencesKey("habit_app_associations")
 // Habit long-press action keys — stored as "habitName\x00action|||habitName\x00action" pairs
 private val KEY_HABIT_LONG_PRESS_ACTIONS = stringPreferencesKey("habit_long_press_actions")
+// Habit long-press URL keys — stored as "habitName\x00url|||habitName\x00url" pairs
+private val KEY_HABIT_LONG_PRESS_URLS = stringPreferencesKey("habit_long_press_urls")
+// Habit long-press URL app keys — stored as "habitName\x00pkg|||habitName\x00pkg" pairs
+private val KEY_HABIT_LONG_PRESS_URL_APPS = stringPreferencesKey("habit_long_press_url_apps")
 // Widget trigger feature keys
 private val KEY_WIDGET_TRIGGER_HABITS = stringSetPreferencesKey("widget_trigger_habits")
 // Stored as "habitName\x00packageName|||habitName\x00packageName" pairs
@@ -735,6 +739,8 @@ class SettingsRepository(private val context: Context) {
             appLinks = decodeFileUriMap(prefs[KEY_APP_LINKS] ?: ""),
             habitAppAssociations = decodeSubtypesMap(prefs[KEY_HABIT_APP_ASSOCIATIONS] ?: ""),
             habitLongPressActions = decodeFileUriMap(prefs[KEY_HABIT_LONG_PRESS_ACTIONS] ?: ""),
+            habitLongPressUrls = decodeFileUriMap(prefs[KEY_HABIT_LONG_PRESS_URLS] ?: ""),
+            habitLongPressUrlApps = decodeFileUriMap(prefs[KEY_HABIT_LONG_PRESS_URL_APPS] ?: ""),
             widgetTriggerHabits = prefs[KEY_WIDGET_TRIGGER_HABITS] ?: emptySet(),
             widgetTriggerApps = decodeFileUriMap(prefs[KEY_WIDGET_TRIGGER_APPS] ?: ""),
             widgetTimerMinutesPrimary = prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] ?: emptySet(),
@@ -1287,6 +1293,16 @@ class SettingsRepository(private val context: Context) {
     /** Saves the map of habit name → long-press action string. */
     suspend fun saveHabitLongPressActions(actions: Map<String, String>) {
         context.dataStore.edit { prefs -> prefs[KEY_HABIT_LONG_PRESS_ACTIONS] = encodeFileUriMap(actions) }
+    }
+
+    /** Saves the map of habit name → URL opened on long-press (LONG_PRESS_URL action). */
+    suspend fun saveHabitLongPressUrls(urls: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_HABIT_LONG_PRESS_URLS] = encodeFileUriMap(urls) }
+    }
+
+    /** Saves the map of habit name → package that handles the long-press URL. */
+    suspend fun saveHabitLongPressUrlApps(apps: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_HABIT_LONG_PRESS_URL_APPS] = encodeFileUriMap(apps) }
     }
 
     /** Saves the set of habits that have the "Use Widget" feature enabled. */

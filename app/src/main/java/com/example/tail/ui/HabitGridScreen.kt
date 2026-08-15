@@ -259,6 +259,8 @@ fun HabitGridScreen(
     var appAssociationPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the widget-trigger app picker is open (null = none)
     var widgetTriggerPickerHabit by remember { mutableStateOf<String?>(null) }
+    // Habit name for which the long-press URL app picker is open (null = none)
+    var longPressUrlAppPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the multi-app launcher dialog is open (null = none)
     var appLauncherHabit by remember { mutableStateOf<String?>(null) }
     // Habit name pending delete confirmation (null = none)
@@ -813,10 +815,17 @@ fun HabitGridScreen(
                         },
                         onHabitLongClick = { habit ->
                             if (!editMode && !graphMode && !isAppLink(habit.name)) {
-                                // Determine the configured long-press action (defaults to "app")
+                                // URL configured for the LONG_PRESS_URL action (null/blank = not set)
+                                val longPressUrl = settings.habitLongPressUrls[habit.name]
+                                // Determine the configured long-press action (defaults to "app").
+                                // A URL action without a configured URL falls back to the app behaviour.
                                 val action = com.example.tail.data.effectiveLongPressAction(
                                     settings.habitLongPressActions[habit.name]
-                                )
+                                ).let { effective ->
+                                    if (effective == com.example.tail.data.LONG_PRESS_URL &&
+                                        longPressUrl.isNullOrBlank()
+                                    ) com.example.tail.data.LONG_PRESS_APP else effective
+                                }
                                 when (action) {
                                     com.example.tail.data.LONG_PRESS_CAMERA -> {
                                         // Launch camera capture for this meal habit
@@ -835,6 +844,45 @@ fun HabitGridScreen(
                                         // Open the meal details dialog
                                         mealDialogFromTap = false
                                         mealDialogHabit = habit.name
+                                    }
+                                    com.example.tail.data.LONG_PRESS_URL -> {
+                                        // Open the configured URL — inside the chosen app
+                                        // when one is set, otherwise in the default browser.
+                                        val urlIntent = android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse(longPressUrl)
+                                        )
+                                        val urlApp = settings.habitLongPressUrlApps[habit.name]
+                                        if (!urlApp.isNullOrBlank()) urlIntent.setPackage(urlApp)
+                                        try {
+                                            context.startActivity(urlIntent)
+                                        } catch (_: Exception) {
+                                            // Chosen app can't handle this URL — fall back to any handler
+                                            if (!urlApp.isNullOrBlank()) {
+                                                // Tell the user WHY the browser opened — the chosen
+                                                // app declares no intent filter for this link's host/path.
+                                                val appLabel = try {
+                                                    context.packageManager.getApplicationLabel(
+                                                        context.packageManager.getApplicationInfo(urlApp, 0)
+                                                    ).toString()
+                                                } catch (_: Exception) { urlApp }
+                                                android.widget.Toast.makeText(
+                                                    context,
+                                                    "$appLabel can't open this link — opening in browser",
+                                                    android.widget.Toast.LENGTH_LONG
+                                                ).show()
+                                                try {
+                                                    context.startActivity(
+                                                        android.content.Intent(
+                                                            android.content.Intent.ACTION_VIEW,
+                                                            android.net.Uri.parse(longPressUrl)
+                                                        )
+                                                    )
+                                                } catch (_: Exception) {
+                                                    // No handler at all — ignore
+                                                }
+                                            }
+                                        }
                                     }
                                     else -> {
                                         // LONG_PRESS_APP (default) — launch associated app(s)
@@ -978,6 +1026,13 @@ fun HabitGridScreen(
                         onSetLongPressAction = { name, action ->
                             viewModel.setHabitLongPressAction(name, action)
                         },
+                        habitLongPressUrls = settings.habitLongPressUrls,
+                        onSetLongPressUrl = { name, url ->
+                            viewModel.setHabitLongPressUrl(name, url)
+                        },
+                        habitLongPressUrlApps = settings.habitLongPressUrlApps,
+                        onPickLongPressUrlApp = { name -> longPressUrlAppPickerHabit = name },
+                        onClearLongPressUrlApp = { name -> viewModel.setHabitLongPressUrlApp(name, null) },
                         hiddenScreenIds = settings.hiddenScreens,
                         onToggleScreenHidden = { viewModel.toggleScreenHidden(activeScreenIndex) },
                         disabledHabits = settings.disabledHabits,
@@ -1565,6 +1620,20 @@ fun HabitGridScreen(
                 widgetTriggerPickerHabit = null
             },
             onDismiss = { widgetTriggerPickerHabit = null }
+        )
+    }
+
+    // Long-press URL app picker — triggered when user taps "Select App" in the
+    // URL section of the long-press action settings for a selected habit
+    if (longPressUrlAppPickerHabit != null) {
+        val habitName = longPressUrlAppPickerHabit!!
+        AppPickerDialog(
+            context = context,
+            onConfirm = { packageName, _ ->
+                viewModel.setHabitLongPressUrlApp(habitName, packageName)
+                longPressUrlAppPickerHabit = null
+            },
+            onDismiss = { longPressUrlAppPickerHabit = null }
         )
     }
 
@@ -2520,15 +2589,26 @@ private fun MealToggleSection(
 /**
  * Settings section for configuring the long-press action of a habit.
  *
- * For meal habits the user can choose between App (default), Camera, and Details.
- * For non-meal habits only App is available.
+ * For meal habits the user can choose between App (default), URL, Camera, and Details.
+ * For non-meal habits App and URL are available. When URL is selected, a text
+ * field below lets the user enter the link to open on long-press.
  */
 @Composable
 private fun LongPressActionSection(
     habitName: String,
     isMeal: Boolean,
     currentAction: String,
-    onSetAction: (String, String) -> Unit
+    onSetAction: (String, String) -> Unit,
+    /** URL currently configured for the LONG_PRESS_URL action ("" = none). */
+    currentUrl: String = "",
+    /** Called when the user edits the long-press URL (habitName, url). */
+    onSetUrl: (String, String) -> Unit = { _, _ -> },
+    /** Package name of the app chosen to handle the long-press URL (null = browser). */
+    currentUrlApp: String? = null,
+    /** Called when the user taps the button to pick the app for the long-press URL. */
+    onPickUrlApp: (String) -> Unit = {},
+    /** Called when the user clears the chosen app (back to default browser). */
+    onClearUrlApp: (String) -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -2538,12 +2618,16 @@ private fun LongPressActionSection(
     val actionLabel = when (currentAction) {
         com.example.tail.data.LONG_PRESS_CAMERA -> "Camera"
         com.example.tail.data.LONG_PRESS_DETAILS -> "Meal Details"
+        com.example.tail.data.LONG_PRESS_URL -> "URL"
         else -> "App"
     }
 
     val actionDesc = when (currentAction) {
         com.example.tail.data.LONG_PRESS_CAMERA -> "Opens camera capture"
         com.example.tail.data.LONG_PRESS_DETAILS -> "Opens meal details for this day"
+        com.example.tail.data.LONG_PRESS_URL ->
+            if (currentUrl.isNotBlank()) "Opens ${currentUrl.take(40)}"
+            else "Opens a link — set the URL below"
         else -> "Launches associated app"
     }
 
@@ -2574,6 +2658,7 @@ private fun LongPressActionSection(
                     val label = when (option) {
                         com.example.tail.data.LONG_PRESS_CAMERA -> "Camera"
                         com.example.tail.data.LONG_PRESS_DETAILS -> "Meal Details"
+                        com.example.tail.data.LONG_PRESS_URL -> "URL"
                         else -> "App"
                     }
                     DropdownMenuItem(
@@ -2582,6 +2667,83 @@ private fun LongPressActionSection(
                             onSetAction(habitName, option)
                             expanded = false
                         }
+                    )
+                }
+            }
+        }
+    }
+
+    // URL editor — shown only when the long-press action is URL.
+    // Saves on every change (same pattern as the voice-trigger words field).
+    if (currentAction == com.example.tail.data.LONG_PRESS_URL) {
+        Spacer(modifier = Modifier.height(4.dp))
+        var urlText by remember(habitName) { mutableStateOf(currentUrl) }
+        OutlinedTextField(
+            value = urlText,
+            onValueChange = { newText ->
+                urlText = newText
+                onSetUrl(habitName, newText)
+            },
+            placeholder = { Text("https://example.com", fontSize = 11.sp, color = Color(0xFF666666)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color(0xFF66CCFF),
+                unfocusedTextColor = Color(0xFF66CCFF),
+                focusedBorderColor = Color(0xFF66CCFF),
+                unfocusedBorderColor = Color(0xFF225577)
+            ),
+            textStyle = TextStyle(fontSize = 12.sp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+        )
+
+        // "Open in" selector — route the URL into a specific app (e.g. a
+        // Gemini conversation link into the Gemini app) via Intent.setPackage.
+        Spacer(modifier = Modifier.height(4.dp))
+        val appContext = LocalContext.current
+        val urlAppLabel = remember(currentUrlApp) {
+            currentUrlApp?.let { pkg ->
+                try {
+                    val pm = appContext.packageManager
+                    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                } catch (e: Exception) { pkg }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "Open in app", color = Color(0xFFAAAAAA), fontSize = 11.sp)
+                Text(
+                    text = urlAppLabel ?: "Default browser",
+                    color = if (urlAppLabel != null) Color(0xFF66CCFF) else Color(0xFF888888),
+                    fontSize = 10.sp
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (currentUrlApp != null) {
+                    Button(
+                        onClick = { onClearUrlApp(habitName) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A1A00)),
+                        modifier = Modifier.height(32.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Text("✕", fontSize = 11.sp, color = Color(0xFFFF6644))
+                    }
+                }
+                Button(
+                    onClick = { onPickUrlApp(habitName) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("📱", fontSize = 11.sp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        if (currentUrlApp == null) "Select App" else "Change",
+                        fontSize = 11.sp,
+                        color = Color(0xFF66CCFF)
                     )
                 }
             }
@@ -2982,6 +3144,16 @@ private fun EditModeControlBar(
     habitLongPressActions: Map<String, String> = emptyMap(),
     /** Called when the user changes the long-press action (habitName, action). */
     onSetLongPressAction: (String, String) -> Unit = { _, _ -> },
+    /** Map of habit name → URL opened on long-press (LONG_PRESS_URL action). */
+    habitLongPressUrls: Map<String, String> = emptyMap(),
+    /** Called when the user edits the long-press URL (habitName, url). */
+    onSetLongPressUrl: (String, String) -> Unit = { _, _ -> },
+    /** Map of habit name → package that handles the long-press URL. */
+    habitLongPressUrlApps: Map<String, String> = emptyMap(),
+    /** Called when the user wants to pick the app for the long-press URL. */
+    onPickLongPressUrlApp: (String) -> Unit = {},
+    /** Called when the user clears the long-press URL app (back to browser). */
+    onClearLongPressUrlApp: (String) -> Unit = {},
     hiddenScreenIds: Set<String> = emptySet(),
     onToggleScreenHidden: () -> Unit = {},
     disabledHabits: Set<String> = emptySet(),
@@ -3605,246 +3777,29 @@ private fun EditModeControlBar(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    // ── Note section ───────────────────────────────────────────
-                    val currentNote = habitNotes[selectedHabitName] ?: ""
-                    var showNoteDialog by remember { mutableStateOf(false) }
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Note", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                            Text(
-                                text = if (currentNote.isNotEmpty()) "Has note" else "No note",
-                                color = Color(0xFF888888), fontSize = 10.sp
-                            )
-                        }
-                        Button(
-                            onClick = { showNoteDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text("Edit", fontSize = 11.sp, color = Color(0xFFFFCC44))
-                        }
-                    }
-                    
-                    if (showNoteDialog) {
-                        HabitNoteDialog(
-                            habitName = selectedHabitName!!,
-                            initialNote = currentNote,
-                            onConfirm = { newNote ->
-                                onSetHabitNote(selectedHabitName!!, newNote)
-                                showNoteDialog = false
-                            },
-                            onDismiss = { showNoteDialog = false }
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // 1 max toggle
-                    val isMaxOne = selectedHabitName in maxOneHabits
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(text = "1 max", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                            Text(
-                                text = if (isMaxOne) "Capped at 1 per day (binary)" else "No daily cap",
-                                color = Color(0xFF888888), fontSize = 10.sp
-                            )
-                        }
-                        Switch(
-                            checked = isMaxOne,
-                            onCheckedChange = { onToggleMaxOne(selectedHabitName) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFF88FF88),
-                                checkedTrackColor = Color(0xFF1A4A1A),
-                                uncheckedThumbColor = Color(0xFF888888),
-                                uncheckedTrackColor = Color(0xFF333333)
-                            )
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // Custom input toggle
-                    val isCustomInput = selectedHabitName in customInputHabits
-                    var showIncrementAmountsDialog by remember { mutableStateOf(false) }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(text = "Custom input", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                            Text(
-                                text = if (isCustomInput) "Shows number picker on tap" else "Simple +1 on tap",
-                                color = Color(0xFF888888), fontSize = 10.sp
-                            )
-                        }
-                        Switch(
-                            checked = isCustomInput,
-                            onCheckedChange = { onToggleCustomInput(selectedHabitName) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFFFFAA00),
-                                checkedTrackColor = Color(0xFF5A3A00),
-                                uncheckedThumbColor = Color(0xFF888888),
-                                uncheckedTrackColor = Color(0xFF333333)
-                            )
-                        )
-                    }
-
-                    // "Set increment amounts" button — only shown when custom input is on
-                    if (isCustomInput) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        val currentAmounts = customInputAmounts[selectedHabitName]
-                            ?: com.example.tail.data.DEFAULT_CUSTOM_INPUT_AMOUNTS
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "  Increment amounts",
-                                    color = Color(0xFFAAAAAA), fontSize = 12.sp
-                                )
-                                Text(
-                                    text = currentAmounts.joinToString(", "),
-                                    color = Color(0xFF888888), fontSize = 10.sp
-                                )
-                            }
-                            Button(
-                                onClick = { showIncrementAmountsDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2800)),
-                                modifier = Modifier.height(32.dp),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
-                            ) {
-                                Text("Edit", fontSize = 11.sp, color = Color(0xFFFFCC44))
-                            }
-                        }
-
-                        if (showIncrementAmountsDialog) {
-                            IncrementAmountsEditorDialog(
-                                habitName = selectedHabitName,
-                                currentAmounts = currentAmounts,
-                                onSave = { amounts ->
-                                    onSetCustomInputAmounts(selectedHabitName, amounts)
-                                    showIncrementAmountsDialog = false
-                                },
-                                onDismiss = { showIncrementAmountsDialog = false }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // Text input toggle
+                    // ── Note / 1-max / Custom input / Text input toggles ──────
+                    // Extracted into [HabitInputModesSection] to keep
+                    // EditModeControlBar under the JVM method-size limit.
                     val isTextInput = selectedHabitName in textInputHabits
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(text = "Text input", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                            Text(
-                                text = if (isTextInput) "Shows text entry on tap" else "No text entry",
-                                color = Color(0xFF888888), fontSize = 10.sp
-                            )
-                        }
-                        Switch(
-                            checked = isTextInput,
-                            onCheckedChange = { onToggleTextInput(selectedHabitName) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFF44AAFF),
-                                checkedTrackColor = Color(0xFF003A5A),
-                                uncheckedThumbColor = Color(0xFF888888),
-                                uncheckedTrackColor = Color(0xFF333333)
-                            )
-                        )
-                    }
-
-                    if (isTextInput) {
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // Options sub-toggle
-                        val isOptions = selectedHabitName in textInputOptionsHabits
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(text = "  Options", color = Color(0xFFAAAAAA), fontSize = 12.sp)
-                                Text(
-                                    text = if (isOptions) "Shows past entries as choices" else "Free-text only",
-                                    color = Color(0xFF666666), fontSize = 10.sp
-                                )
-                            }
-                            Switch(
-                                checked = isOptions,
-                                onCheckedChange = { onToggleTextInputOptions(selectedHabitName) },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Color(0xFF88FFCC),
-                                    checkedTrackColor = Color(0xFF004433),
-                                    uncheckedThumbColor = Color(0xFF666666),
-                                    uncheckedTrackColor = Color(0xFF2A2A2A)
-                                )
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // Sharable sub-toggle — rendered by [SharableTextToggle],
-                        // extracted to keep EditModeControlBar under the JVM method-size limit
-                        SharableTextToggle(
-                            isSharable = selectedHabitName in sharableTextHabits,
-                            onToggle = { onToggleSharableText(selectedHabitName) }
-                        )
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // File picker row
-                        val hasFile = textInputFileUris.containsKey(selectedHabitName)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "  Text log file", color = Color(0xFFAAAAAA), fontSize = 12.sp)
-                                Text(
-                                    text = if (hasFile) "✓ File selected" else "⚠ No file selected",
-                                    color = if (hasFile) Color(0xFF88FF88) else Color(0xFFFF8844),
-                                    fontSize = 10.sp
-                                )
-                            }
-                            Button(
-                                onClick = { onPickTextInputFile(selectedHabitName) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Folder,
-                                    contentDescription = "Pick text log file",
-                                    tint = Color(0xFF88CCFF),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    if (hasFile) "Change" else "Select",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF88CCFF)
-                                )
-                            }
-                        }
-                    }
+                    HabitInputModesSection(
+                        selectedHabitName = selectedHabitName,
+                        habitNotes = habitNotes,
+                        onSetHabitNote = onSetHabitNote,
+                        maxOneHabits = maxOneHabits,
+                        onToggleMaxOne = onToggleMaxOne,
+                        customInputHabits = customInputHabits,
+                        customInputAmounts = customInputAmounts,
+                        onToggleCustomInput = onToggleCustomInput,
+                        onSetCustomInputAmounts = onSetCustomInputAmounts,
+                        textInputHabits = textInputHabits,
+                        textInputOptionsHabits = textInputOptionsHabits,
+                        sharableTextHabits = sharableTextHabits,
+                        textInputFileUris = textInputFileUris,
+                        onToggleTextInput = onToggleTextInput,
+                        onToggleTextInputOptions = onToggleTextInputOptions,
+                        onToggleSharableText = onToggleSharableText,
+                        onPickTextInputFile = onPickTextInputFile
+                    )
 
                     // ── Today's text entries (view/edit) ──────────────────────
                     if (isTextInput && textInputFileUris.containsKey(selectedHabitName)) {
@@ -4285,7 +4240,12 @@ private fun EditModeControlBar(
                         currentAction = com.example.tail.data.effectiveLongPressAction(
                             habitLongPressActions[selectedHabitName]
                         ),
-                        onSetAction = onSetLongPressAction
+                        onSetAction = onSetLongPressAction,
+                        currentUrl = habitLongPressUrls[selectedHabitName] ?: "",
+                        onSetUrl = onSetLongPressUrl,
+                        currentUrlApp = habitLongPressUrlApps[selectedHabitName],
+                        onPickUrlApp = onPickLongPressUrlApp,
+                        onClearUrlApp = onClearLongPressUrlApp
                     )
 
                     // ── Disabled / No-points / Secondary-value toggles ──────
@@ -4715,6 +4675,278 @@ private fun EditModeControlBar(
         }
     }
 }
+
+/**
+ * Edit-mode rows for the selected habit's note, "1 max" daily cap, custom
+ * input increment amounts, and text-input features (options sub-toggle,
+ * sharable text, log-file picker).
+ *
+ * Extracted from EditModeControlBar to keep it under the JVM 64KB
+ * method-size limit (hit a MethodTooLargeException after adding the
+ * long-press URL-app parameters).
+ */
+@Composable
+private fun HabitInputModesSection(
+    selectedHabitName: String,
+    habitNotes: Map<String, String>,
+    onSetHabitNote: (String, String) -> Unit,
+    maxOneHabits: Set<String>,
+    onToggleMaxOne: (String) -> Unit,
+    customInputHabits: Set<String>,
+    customInputAmounts: Map<String, List<Int>>,
+    onToggleCustomInput: (String) -> Unit,
+    onSetCustomInputAmounts: (String, List<Int>) -> Unit,
+    textInputHabits: Set<String>,
+    textInputOptionsHabits: Set<String>,
+    sharableTextHabits: Set<String>,
+    textInputFileUris: Map<String, String>,
+    onToggleTextInput: (String) -> Unit,
+    onToggleTextInputOptions: (String) -> Unit,
+    onToggleSharableText: (String) -> Unit,
+    onPickTextInputFile: (String) -> Unit
+) {
+    // ── Note section ───────────────────────────────────────────
+    val currentNote = habitNotes[selectedHabitName] ?: ""
+    var showNoteDialog by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = "Note", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (currentNote.isNotEmpty()) "Has note" else "No note",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Button(
+            onClick = { showNoteDialog = true },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
+            modifier = Modifier.height(32.dp)
+        ) {
+            Text("Edit", fontSize = 11.sp, color = Color(0xFFFFCC44))
+        }
+    }
+
+    if (showNoteDialog) {
+        HabitNoteDialog(
+            habitName = selectedHabitName,
+            initialNote = currentNote,
+            onConfirm = { newNote ->
+                onSetHabitNote(selectedHabitName, newNote)
+                showNoteDialog = false
+            },
+            onDismiss = { showNoteDialog = false }
+        )
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    // 1 max toggle
+    val isMaxOne = selectedHabitName in maxOneHabits
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "1 max", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isMaxOne) "Capped at 1 per day (binary)" else "No daily cap",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isMaxOne,
+            onCheckedChange = { onToggleMaxOne(selectedHabitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF88FF88),
+                checkedTrackColor = Color(0xFF1A4A1A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    // Custom input toggle
+    val isCustomInput = selectedHabitName in customInputHabits
+    var showIncrementAmountsDialog by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Custom input", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isCustomInput) "Shows number picker on tap" else "Simple +1 on tap",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isCustomInput,
+            onCheckedChange = { onToggleCustomInput(selectedHabitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFFFAA00),
+                checkedTrackColor = Color(0xFF5A3A00),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    // "Set increment amounts" button — only shown when custom input is on
+    if (isCustomInput) {
+        Spacer(modifier = Modifier.height(4.dp))
+        val currentAmounts = customInputAmounts[selectedHabitName]
+            ?: com.example.tail.data.DEFAULT_CUSTOM_INPUT_AMOUNTS
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "  Increment amounts",
+                    color = Color(0xFFAAAAAA), fontSize = 12.sp
+                )
+                Text(
+                    text = currentAmounts.joinToString(", "),
+                    color = Color(0xFF888888), fontSize = 10.sp
+                )
+            }
+            Button(
+                onClick = { showIncrementAmountsDialog = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2800)),
+                modifier = Modifier.height(32.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+            ) {
+                Text("Edit", fontSize = 11.sp, color = Color(0xFFFFCC44))
+            }
+        }
+
+        if (showIncrementAmountsDialog) {
+            IncrementAmountsEditorDialog(
+                habitName = selectedHabitName,
+                currentAmounts = currentAmounts,
+                onSave = { amounts ->
+                    onSetCustomInputAmounts(selectedHabitName, amounts)
+                    showIncrementAmountsDialog = false
+                },
+                onDismiss = { showIncrementAmountsDialog = false }
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    // Text input toggle
+    val isTextInput = selectedHabitName in textInputHabits
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Text input", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isTextInput) "Shows text entry on tap" else "No text entry",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isTextInput,
+            onCheckedChange = { onToggleTextInput(selectedHabitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF44AAFF),
+                checkedTrackColor = Color(0xFF003A5A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    if (isTextInput) {
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Options sub-toggle
+        val isOptions = selectedHabitName in textInputOptionsHabits
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = "  Options", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                Text(
+                    text = if (isOptions) "Shows past entries as choices" else "Free-text only",
+                    color = Color(0xFF666666), fontSize = 10.sp
+                )
+            }
+            Switch(
+                checked = isOptions,
+                onCheckedChange = { onToggleTextInputOptions(selectedHabitName) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF88FFCC),
+                    checkedTrackColor = Color(0xFF004433),
+                    uncheckedThumbColor = Color(0xFF666666),
+                    uncheckedTrackColor = Color(0xFF2A2A2A)
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Sharable sub-toggle — rendered by [SharableTextToggle],
+        // extracted to keep EditModeControlBar under the JVM method-size limit
+        SharableTextToggle(
+            isSharable = selectedHabitName in sharableTextHabits,
+            onToggle = { onToggleSharableText(selectedHabitName) }
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // File picker row
+        val hasFile = textInputFileUris.containsKey(selectedHabitName)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "  Text log file", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                Text(
+                    text = if (hasFile) "✓ File selected" else "⚠ No file selected",
+                    color = if (hasFile) Color(0xFF88FF88) else Color(0xFFFF8844),
+                    fontSize = 10.sp
+                )
+            }
+            Button(
+                onClick = { onPickTextInputFile(selectedHabitName) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = "Pick text log file",
+                    tint = Color(0xFF88CCFF),
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    if (hasFile) "Change" else "Select",
+                    fontSize = 11.sp,
+                    color = Color(0xFF88CCFF)
+                )
+            }
+        }
+    }
+}
+
 
 // ── Value editor row ────────────────────────────────────────────────────────
 

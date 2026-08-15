@@ -10,6 +10,8 @@ const val LONG_PRESS_APP = "app"
 const val LONG_PRESS_CAMERA = "camera"
 /** Long-press opens the meal details dialog (meal habits only). */
 const val LONG_PRESS_DETAILS = "details"
+/** Long-press opens the configured URL (see AppSettings.habitLongPressUrls). */
+const val LONG_PRESS_URL = "url"
 
 /**
  * Returns the effective long-press action for a habit.
@@ -21,12 +23,12 @@ fun effectiveLongPressAction(stored: String?): String =
 /**
  * All valid long-press actions for a non-meal habit.
  */
-val STANDARD_LONG_PRESS_ACTIONS = listOf(LONG_PRESS_APP)
+val STANDARD_LONG_PRESS_ACTIONS = listOf(LONG_PRESS_APP, LONG_PRESS_URL)
 
 /**
  * All valid long-press actions for a meal habit.
  */
-val MEAL_LONG_PRESS_ACTIONS = listOf(LONG_PRESS_APP, LONG_PRESS_CAMERA, LONG_PRESS_DETAILS)
+val MEAL_LONG_PRESS_ACTIONS = listOf(LONG_PRESS_APP, LONG_PRESS_URL, LONG_PRESS_CAMERA, LONG_PRESS_DETAILS)
 
 /**
  * All-time high for a rolling window: the peak average value and the date it occurred.
@@ -821,10 +823,25 @@ data class AppSettings(
     // ── Long-press action settings ──────────────────────────────────────────
     /**
      * Maps habit name → long-press action string (one of [LONG_PRESS_APP],
-     * [LONG_PRESS_CAMERA], [LONG_PRESS_DETAILS]).
+     * [LONG_PRESS_URL], [LONG_PRESS_CAMERA], [LONG_PRESS_DETAILS]).
      * Habits not present in this map default to [LONG_PRESS_APP].
      */
     val habitLongPressActions: Map<String, String> = emptyMap(),
+
+    /**
+     * Maps habit name → URL opened when the habit's long-press action is
+     * [LONG_PRESS_URL]. Habits without an entry (or with a blank URL) fall
+     * back to the default app-launch behaviour.
+     */
+    val habitLongPressUrls: Map<String, String> = emptyMap(),
+
+    /**
+     * Maps habit name → package name of the app that should handle the
+     * [LONG_PRESS_URL] link (via Intent.setPackage). Habits without an entry
+     * open the URL in the default browser; if the chosen app can't handle
+     * the link, the browser is used as a fallback.
+     */
+    val habitLongPressUrlApps: Map<String, String> = emptyMap(),
 
     // ── Widget Trigger settings ─────────────────────────────────────────────
     /**
