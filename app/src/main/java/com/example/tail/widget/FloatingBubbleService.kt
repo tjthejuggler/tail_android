@@ -78,6 +78,9 @@ class FloatingBubbleService : Service() {
 
         /** Intent extra: names of ALL habits sharing the trigger app (picker menu). */
         const val EXTRA_HABIT_NAMES = "habit_names"
+
+        /** Intent extra: true when the trigger app is the Chess Readiness app. */
+        const val EXTRA_CHESS_READINESS = "chess_readiness"
     }
 
     private lateinit var windowManager: WindowManager
@@ -90,6 +93,9 @@ class FloatingBubbleService : Service() {
 
     /** Every habit sharing the trigger app that opened the bubble. */
     private var triggerHabitNames: List<String> = emptyList()
+
+    /** True when the bubble was opened over the Chess Readiness app. */
+    private var chessReadinessActive = false
 
     // ── Timer chip overlay (live elapsed time above the bubble) ───────────
     private var timerChipView: TextView? = null
@@ -143,9 +149,16 @@ class FloatingBubbleService : Service() {
             triggerHabitNames = habits
             // Auto-select the single habit, or the one already being timed
             // (bubble re-shown mid-session); otherwise wait for the user to pick.
-            triggerHabitName = habits.firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
-                ?: habits.singleOrNull()
+            // With Chess Readiness active the menu always offers a choice, so
+            // no auto-selection happens (the user must pick explicitly).
+            triggerHabitName = if (intent?.getBooleanExtra(EXTRA_CHESS_READINESS, false) == true) {
+                habits.firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
+            } else {
+                habits.firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
+                    ?: habits.singleOrNull()
+            }
         }
+        chessReadinessActive = intent?.getBooleanExtra(EXTRA_CHESS_READINESS, false) == true
 
         if (bubbleView == null) {
             showBubble()
@@ -549,8 +562,9 @@ class FloatingBubbleService : Service() {
 
         val habit = triggerHabitName
         if (habit == null) {
-            if (triggerHabitNames.size > 1) {
-                // Several habits share this trigger app — ask which one to time
+            if (chessReadinessActive || triggerHabitNames.size > 1) {
+                // Chess Readiness option and/or several habits share this
+                // trigger app — show the picker menu
                 showHabitPickerMenu()
             } else {
                 // Bubble started manually (no trigger habit) — tapping just opens Tail
@@ -561,8 +575,9 @@ class FloatingBubbleService : Service() {
 
         if (WidgetTimerStore.isTimerRunning(this, habit)) {
             stopTimerAndRecord(habit)
-        } else if (triggerHabitNames.size > 1) {
-            // Multiple habits available and nothing running — pick which to start
+        } else if (chessReadinessActive || triggerHabitNames.size > 1) {
+            // Chess Readiness option and/or multiple habits available and
+            // nothing running — pick from the menu
             showHabitPickerMenu()
         } else {
             startTimerForHabit(habit)
@@ -722,7 +737,9 @@ class FloatingBubbleService : Service() {
     private fun showHabitPickerMenu() {
         if (habitMenuView != null) return
         val habits = triggerHabitNames
-        if (habits.size < 2) return
+        // Show the menu when several habits share the trigger app OR when the
+        // Chess Readiness option is available (even with 0 or 1 habits).
+        if (habits.size < 2 && !chessReadinessActive) return
 
         val density = resources.displayMetrics.density
         fun Int.dp(): Int = (this * density).toInt()
@@ -735,6 +752,35 @@ class FloatingBubbleService : Service() {
                 setStroke(1, 0xFF334455.toInt())
             }
             setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+        }
+
+        // Chess Readiness entry (shown when the bubble is over the
+        // Chess Readiness app). Listed FIRST so it stays prominent.
+        if (chessReadinessActive) {
+            // Show a "resume" hint when a step-by-step test is in progress
+            val resuming = ChessReadinessStore.loadSession(this) != null
+            val chessItem = TextView(this).apply {
+                text = if (resuming) "♟ Chess Readiness ▸ resume" else "♟ Chess Readiness"
+                textSize = 15f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+                background = GradientDrawable().apply {
+                    setColor(0xFF2A1A3A.toInt())
+                    cornerRadius = 8f * density
+                    setStroke(1, 0xFF8866CC.toInt())
+                }
+                setOnClickListener {
+                    hideHabitPickerMenu()
+                    openChessReadiness()
+                }
+            }
+            menu.addView(chessItem, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = 6.dp()
+            })
         }
 
         habits.forEachIndexed { index, habit ->
@@ -812,6 +858,15 @@ class FloatingBubbleService : Service() {
             } catch (e: Exception) { /* already removed */ }
         }
         habitMenuView = null
+    }
+
+    /** Launches the Chess Readiness diagnostic activity from the overlay. */
+    private fun openChessReadiness() {
+        val intent = Intent(this, ChessReadinessActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(intent)
+        } catch (e: Exception) { /* activity unavailable */ }
     }
 
     /** Starts the timer for [habit] and updates the bubble visuals. */

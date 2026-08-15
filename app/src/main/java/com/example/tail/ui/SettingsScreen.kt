@@ -70,6 +70,7 @@ import com.example.tail.data.ChessComType
 import com.example.tail.data.backup.AutoBackupManager
 import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.debug.DebugPreferences
+import com.example.tail.widget.ChessReadinessStore
 import com.example.tail.ui.AdviceDialog
 import com.example.tail.ui.AdviceViewModel
 
@@ -406,6 +407,14 @@ fun SettingsScreen(
             // ── Floating Bubble ──────────────────────────────────────────────
             item {
                 FloatingBubbleSettingsSection(context = context)
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // ── Chess Readiness ──────────────────────────────────────────────
+            item {
+                ChessReadinessSettingsSection(viewModel = viewModel, settings = settings)
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1627,6 +1636,160 @@ private fun FloatingBubbleSettingsSection(context: Context) {
         }) {
             Text("Launch Floating Bubble")
         }
+    }
+}
+
+/**
+ * ♟ Chess Readiness settings section — global toggle + app association.
+ *
+ * When enabled with an app chosen (typically the chess app), the floating
+ * bubble also appears over that app and its popup menu gains a
+ * "Chess Readiness" option that launches the Phase 1 Pre-Session Diagnostic
+ * (CCRS 0–100 → Green / Yellow / Red authorization).
+ */
+@Composable
+private fun ChessReadinessSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    val context = LocalContext.current
+    val enabled = settings.chessReadinessEnabled
+    val chessPkg = settings.chessReadinessApp
+    var showAppPicker by remember { mutableStateOf(false) }
+    var rushHighText by remember {
+        mutableStateOf(
+            ChessReadinessStore.lastRushAllTimeHigh(context)
+                .takeIf { it > 0 }?.toString() ?: ""
+        )
+    }
+    var rushHighSaved by remember { mutableStateOf(false) }
+
+    // Resolve the associated app's display label
+    val appLabel = remember(chessPkg) {
+        if (chessPkg.isBlank()) null
+        else try {
+            val pm = context.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(chessPkg, 0)).toString()
+        } catch (e: Exception) {
+            chessPkg
+        }
+    }
+
+    Column {
+        Text("♟ Chess Readiness", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Pre-session diagnostic that gates your chess activity. " +
+                "Associate an app (your chess app): the bubble appears over it " +
+                "and its menu gains a Chess Readiness option. Step-by-step flow: " +
+                "Garmin sleep score (asked if missing), clarity sliders, three " +
+                "timed rated puzzles, then a 3-minute Puzzle Rush — tap the " +
+                "widget between steps to resume where you left off.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Enable toggle
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Enable Chess Readiness", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (enabled) {
+                        if (appLabel != null) "Bubble appears over $appLabel"
+                        else "Select an associated app below"
+                    } else "Diagnostic disabled",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (enabled) Color(0xFF66BB6A)
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = { viewModel.setChessReadinessEnabled(it) }
+            )
+        }
+
+        // Associated app picker (only when enabled)
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Associated App", fontSize = 14.sp)
+                    Text(
+                        text = appLabel ?: "Not set",
+                        fontSize = 11.sp,
+                        color = if (appLabel != null) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.error
+                    )
+                }
+                Button(onClick = { showAppPicker = true }) {
+                    Text(if (chessPkg.isBlank()) "Select App" else "Change", fontSize = 12.sp)
+                }
+            }
+
+            // 3-Minute Puzzle Rush all-time best (readiness baseline)
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("3-Minute Puzzle Rush — All-Time Best", fontSize = 14.sp)
+            Text(
+                "The readiness test only asks how many puzzles you solved and " +
+                    "how many failures — your run is scored against this best " +
+                    "(minimum baseline 10). It also updates automatically here " +
+                    "whenever a test run beats it.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = rushHighText,
+                    onValueChange = {
+                        rushHighText = it.filter { c -> c.isDigit() }.take(3)
+                        rushHighSaved = false
+                    },
+                    label = { Text("Best score (puzzles solved)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        ChessReadinessStore.saveRushAllTimeHigh(
+                            context, rushHighText.toIntOrNull() ?: 0
+                        )
+                        rushHighSaved = true
+                    },
+                    enabled = rushHighText.isNotBlank()
+                ) {
+                    Text(if (rushHighSaved) "✓ Saved" else "Save", fontSize = 12.sp)
+                }
+            }
+            val storedHigh = rushHighText.toIntOrNull() ?: 0
+            if (storedHigh > 0) {
+                Text(
+                    "Readiness baseline: max($storedHigh, 10) = ${maxOf(storedHigh, 10)}",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+
+    if (showAppPicker) {
+        AppPickerDialog(
+            context = context,
+            onConfirm = { packageName, _ ->
+                viewModel.setChessReadinessApp(packageName)
+                showAppPicker = false
+            },
+            onDismiss = { showAppPicker = false }
+        )
     }
 }
 

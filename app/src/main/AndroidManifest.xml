@@ -424,6 +424,22 @@
         </activity>
 
         <!--
+            ChessReadinessActivity: dialog-style Phase 1 Pre-Session
+            Diagnostic launched from the floating bubble's popup menu when
+            the bubble is shown over the Chess Readiness app. Transparent /
+            no-history so it floats over the chess app and vanishes from
+            recents when dismissed.
+        -->
+        <activity
+            android:name=".widget.ChessReadinessActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Tail.Transparent" />
+
+        <!--
             FloatingBubbleService: foreground service that manages the
             WindowManager overlay (TYPE_APPLICATION_OVERLAY). Shows a
             draggable bubble with the Tail icon over other apps.

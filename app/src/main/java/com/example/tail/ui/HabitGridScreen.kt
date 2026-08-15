@@ -7794,7 +7794,7 @@ private data class AppPickerItem(
  * The user can browse and select one to create an app-link cell.
  */
 @Composable
-private fun AppPickerDialog(
+internal fun AppPickerDialog(
     context: Context,
     onConfirm: (packageName: String, label: String) -> Unit,
     onDismiss: () -> Unit

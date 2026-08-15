@@ -844,6 +844,23 @@ data class AppSettings(
      */
     val widgetTriggerApps: Map<String, String> = emptyMap(),
 
+    // ── Chess Readiness settings ───────────────────────────────────────────
+    /**
+     * Whether the Chess Readiness feature is enabled (global toggle in the
+     * widget section of Settings). When enabled together with
+     * [chessReadinessApp], the floating bubble also appears over that app and
+     * its popup menu gains a "Chess Readiness" option that launches the
+     * Phase 1 Pre-Session Diagnostic flow.
+     */
+    val chessReadinessEnabled: Boolean = false,
+
+    /**
+     * Package name of the app associated with Chess Readiness (typically the
+     * chess app). The floating bubble appears over this app and offers the
+     * readiness diagnostic. Only meaningful when [chessReadinessEnabled].
+     */
+    val chessReadinessApp: String = "",
+
     /**
      * Widget-timer habits where MINUTES is the primary value.
      *

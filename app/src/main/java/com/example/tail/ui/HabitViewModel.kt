@@ -599,7 +599,8 @@ class HabitViewModel(
                 // device reboot or app force-stop).
                 if (!widgetTriggerServiceChecked) {
                     widgetTriggerServiceChecked = true
-                    val triggerCount = s.widgetTriggerApps.values.count { it.isNotBlank() }
+                    val triggerCount = s.widgetTriggerApps.values.count { it.isNotBlank() } +
+                        if (s.chessReadinessEnabled && s.chessReadinessApp.isNotBlank()) 1 else 0
                     if (triggerCount > 0) {
                         com.example.tail.widget.WidgetTriggerService.updateServiceState(context, triggerCount)
                     }
@@ -3406,11 +3407,42 @@ class HabitViewModel(
 
     /**
      * Starts or stops [WidgetTriggerService] based on whether any trigger
-     * apps are configured. Called after every widget-trigger setting change.
+     * apps are configured (habit trigger apps OR the Chess Readiness app).
+     * Called after every widget-trigger / chess-readiness setting change.
      */
     private fun updateWidgetTriggerService(apps: Map<String, String>) {
-        val validCount = apps.values.count { it.isNotBlank() }
+        val s = _settings.value
+        val validCount = apps.values.count { it.isNotBlank() } +
+            if (s.chessReadinessEnabled && s.chessReadinessApp.isNotBlank()) 1 else 0
         com.example.tail.widget.WidgetTriggerService.updateServiceState(context, validCount)
+    }
+
+    // ── Chess Readiness methods ───────────────────────────────────────────
+
+    /**
+     * Enables or disables the Chess Readiness feature (global toggle in the
+     * widget section of Settings). Disabling keeps the associated app in
+     * settings but stops the bubble from watching it.
+     */
+    fun setChessReadinessEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepo.saveChessReadinessEnabled(enabled)
+            _settings.value = _settings.value.copy(chessReadinessEnabled = enabled)
+            updateWidgetTriggerService(_settings.value.widgetTriggerApps)
+        }
+    }
+
+    /**
+     * Sets the app associated with Chess Readiness. The floating bubble will
+     * appear over this app and its popup menu gains a "Chess Readiness"
+     * option. Only meaningful while the feature is enabled.
+     */
+    fun setChessReadinessApp(packageName: String) {
+        viewModelScope.launch {
+            settingsRepo.saveChessReadinessApp(packageName)
+            _settings.value = _settings.value.copy(chessReadinessApp = packageName)
+            updateWidgetTriggerService(_settings.value.widgetTriggerApps)
+        }
     }
 
     /**
@@ -5094,7 +5126,9 @@ class HabitViewModel(
             // started regardless of permission state, but this also recovers
             // the case where the app process was killed while a trigger app
             // was configured).
-            val triggerCount = _settings.value.widgetTriggerApps.values.count { it.isNotBlank() }
+            val triggerSettings = _settings.value
+            val triggerCount = triggerSettings.widgetTriggerApps.values.count { it.isNotBlank() } +
+                if (triggerSettings.chessReadinessEnabled && triggerSettings.chessReadinessApp.isNotBlank()) 1 else 0
             if (triggerCount > 0) {
                 com.example.tail.widget.WidgetTriggerService.updateServiceState(context, triggerCount)
             }

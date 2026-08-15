@@ -124,6 +124,9 @@ class WidgetTriggerService : Service() {
      *  (several habits can share one trigger app). */
     private var habitsByPackage: Map<String, List<String>> = emptyMap()
 
+    /** Package of the Chess Readiness app (null when feature is off/unset). */
+    private var chessReadinessPackage: String? = null
+
     /** The package that is currently in the foreground (or null). */
     private var currentForegroundPackage: String? = null
 
@@ -176,11 +179,15 @@ class WidgetTriggerService : Service() {
             val newByPackage = settings.widgetTriggerApps.entries
                 .filter { it.value.isNotBlank() }
                 .groupBy({ it.value }, { it.key })
-            val newPackages = newByPackage.keys
+            val newChessPkg = if (settings.chessReadinessEnabled &&
+                settings.chessReadinessApp.isNotBlank()
+            ) settings.chessReadinessApp else null
+            val newPackages = newByPackage.keys + listOfNotNull(newChessPkg)
 
             watchedPackages = newPackages
             habitsByPackage = newByPackage
-            Log.d(TAG, "Watched packages loaded: $newPackages")
+            chessReadinessPackage = newChessPkg
+            Log.d(TAG, "Watched packages loaded: $newPackages (chess readiness: $newChessPkg)")
 
             if (newPackages.isEmpty()) {
                 // No trigger apps configured — stop everything
@@ -249,7 +256,10 @@ class WidgetTriggerService : Service() {
             if (foregroundPkg in watchedPackages) {
                 if (!bubbleActive) {
                     Log.d(TAG, "Trigger app detected ($foregroundPkg) — showing bubble")
-                    startBubble(habitsByPackage[foregroundPkg].orEmpty())
+                    startBubble(
+                        habitsByPackage[foregroundPkg].orEmpty(),
+                        chessReadiness = foregroundPkg == chessReadinessPackage
+                    )
                 }
             } else {
                 if (bubbleActive) {
@@ -291,11 +301,12 @@ class WidgetTriggerService : Service() {
     //  Bubble start / stop
     // ──────────────────────────────────────────────────────────────────────
 
-    private fun startBubble(triggerHabits: List<String>) {
+    private fun startBubble(triggerHabits: List<String>, chessReadiness: Boolean = false) {
         val intent = Intent(this, FloatingBubbleService::class.java).apply {
             if (triggerHabits.isNotEmpty()) {
                 putStringArrayListExtra(FloatingBubbleService.EXTRA_HABIT_NAMES, ArrayList(triggerHabits))
             }
+            putExtra(FloatingBubbleService.EXTRA_CHESS_READINESS, chessReadiness)
         }
         startForegroundService(intent)
         bubbleActive = true

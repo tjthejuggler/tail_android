@@ -118,6 +118,9 @@ private val KEY_MAP_STATS_SHOW_TEXT_HABITS = stringSetPreferencesKey("map_stats_
 private val KEY_MAP_MAIN_HABIT = stringPreferencesKey("map_main_habit")
 private val KEY_MAP_HIDE_ZERO_DAYS = booleanPreferencesKey("map_hide_zero_days")
 private val KEY_MAP_BEGIN_DATE = stringPreferencesKey("map_begin_date")
+// Chess Readiness feature (Phase 1 diagnostic over the floating bubble)
+private val KEY_CHESS_READINESS_ENABLED = booleanPreferencesKey("chess_readiness_enabled")
+private val KEY_CHESS_READINESS_APP = stringPreferencesKey("chess_readiness_app")
 // Stored as "habitName\x000|||habitName\x001" pairs (0 = points, 1 = value/raw, 2 = value2)
 private val KEY_GRAPH_VALUE_MODE_HABITS = stringPreferencesKey("graph_value_mode_habits")
 // Multi-select graph metrics: "habitName\x00metric1,metric2|||habitName\x00metric1"
@@ -734,7 +737,9 @@ class SettingsRepository(private val context: Context) {
             habitLongPressActions = decodeFileUriMap(prefs[KEY_HABIT_LONG_PRESS_ACTIONS] ?: ""),
             widgetTriggerHabits = prefs[KEY_WIDGET_TRIGGER_HABITS] ?: emptySet(),
             widgetTriggerApps = decodeFileUriMap(prefs[KEY_WIDGET_TRIGGER_APPS] ?: ""),
-            widgetTimerMinutesPrimary = prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] ?: emptySet()
+            widgetTimerMinutesPrimary = prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] ?: emptySet(),
+            chessReadinessEnabled = prefs[KEY_CHESS_READINESS_ENABLED] ?: false,
+            chessReadinessApp = prefs[KEY_CHESS_READINESS_APP] ?: ""
         )
     }
 
@@ -1297,5 +1302,15 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of widget-timer habits where minutes is the primary value. */
     suspend fun saveWidgetTimerMinutesPrimary(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] = habits }
+    }
+
+    /** Saves the Chess Readiness global toggle. */
+    suspend fun saveChessReadinessEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_CHESS_READINESS_ENABLED] = enabled }
+    }
+
+    /** Saves the package name of the app associated with Chess Readiness. */
+    suspend fun saveChessReadinessApp(packageName: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_CHESS_READINESS_APP] = packageName }
     }
 }
