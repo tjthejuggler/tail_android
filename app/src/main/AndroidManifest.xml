@@ -34,6 +34,9 @@
     <!-- Required for the floating bubble foreground service on Android 14+ -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
+    <!-- Required so the widget watchdog can revive the monitor after reboot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!--
         Custom signature permission for IPC.
         Only apps signed with the same keystore can use the ContentProvider or
@@ -424,38 +427,6 @@
         </activity>
 
         <!--
-            ChessReadinessActivity: dialog-style Phase 1 Pre-Session
-            Diagnostic launched from the floating bubble's popup menu when
-            the bubble is shown over the Chess Readiness app. Transparent /
-            no-history so it floats over the chess app and vanishes from
-            recents when dismissed.
-        -->
-        <activity
-            android:name=".widget.ChessReadinessActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:noHistory="true"
-            android:taskAffinity=""
-            android:launchMode="singleTask"
-            android:theme="@style/Theme.Tail.Transparent" />
-
-        <!--
-            ChessPhase2Activity: dialog-style Phase 2 Post-Game Performance
-            Audit launched from the floating bubble's popup menu after every
-            rated game played over the Chess Readiness app. Transparent /
-            no-history so it floats over the chess app and vanishes from
-            recents when dismissed.
-        -->
-        <activity
-            android:name=".widget.ChessPhase2Activity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:noHistory="true"
-            android:taskAffinity=""
-            android:launchMode="singleTask"
-            android:theme="@style/Theme.Tail.Transparent" />
-
-        <!--
             FloatingBubbleService: foreground service that manages the
             WindowManager overlay (TYPE_APPLICATION_OVERLAY). Shows a
             draggable bubble with the Tail icon over other apps.
@@ -485,6 +456,22 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="App usage monitoring for automatic habit widget display" />
         </service>
+
+        <!--
+            WidgetWatchdogReceiver: self-healing watchdog for the widget
+            stack. A 2-minute allow-while-idle heartbeat alarm restarts
+            WidgetTriggerService whenever it should be running but was
+            killed (APK install, crash, OEM cleanup — install-time kills
+            do NOT restart START_STICKY services). BOOT_COMPLETED revives
+            the monitor after a reboot.
+        -->
+        <receiver
+            android:name=".widget.WidgetWatchdogReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

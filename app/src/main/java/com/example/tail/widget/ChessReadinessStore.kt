@@ -35,7 +35,7 @@ data class ReadinessSession(
     /** Sleep score 0–100 from Garmin, or entered manually (null = not yet). */
     val sleepScore: Int?,
     val sleepFromGarmin: Boolean,
-    /** Clarity slider answers 0–10 (empty = not yet answered). */
+    /** Clarity slider answers, raw 1–5 (stress / focus / energy; empty = not yet answered). */
     val clarityScores: List<Int>,
     /** Effective solve times of the puzzles completed so far. */
     val puzzleTimesSec: List<Int>,
@@ -153,9 +153,15 @@ object ChessReadinessStore {
                 sleepScore = if (o.has("sleepScore") && !o.isNull("sleepScore"))
                     o.getInt("sleepScore") else null,
                 sleepFromGarmin = o.optBoolean("sleepFromGarmin", false),
-                clarityScores = o.optJSONArray("clarityScores")?.let { arr ->
-                    (0 until arr.length()).map { arr.getInt(it) }
-                } ?: emptyList(),
+                clarityScores = normalizeClarity(
+                    o.optJSONArray("clarityScores")?.let { arr ->
+                        (0 until arr.length()).map { arr.getInt(it) }
+                    } ?: emptyList(),
+                    // Sessions saved before the anchor flip stored stress
+                    // inverted (1 = calm); the marker below is only written
+                    // by the new convention.
+                    legacyStressInverted = !o.optBoolean("clarityV2", false)
+                ),
                 puzzleTimesSec = o.optJSONArray("puzzleTimesSec")?.let { arr ->
                     (0 until arr.length()).map { arr.getInt(it) }
                 } ?: emptyList(),
@@ -180,6 +186,7 @@ object ChessReadinessStore {
             put("sleepScore", session.sleepScore ?: JSONObject.NULL)
             put("sleepFromGarmin", session.sleepFromGarmin)
             put("clarityScores", JSONArray(session.clarityScores))
+            put("clarityV2", true)
             put("puzzleTimesSec", JSONArray(session.puzzleTimesSec))
             put("stepStartedAt", session.stepStartedAt)
         }
@@ -188,5 +195,28 @@ object ChessReadinessStore {
 
     fun clearSession(context: Context) {
         prefs(context).edit().remove(KEY_SESSION).apply()
+    }
+
+    /**
+     * Normalizes persisted clarity answers to the current 3-slider format
+     * (stress / focus / energy, each 1–5, positive end = 5). Legacy
+     * sessions stored four 0–10 values (focus / calm / energy / alertness)
+     * — those are converted; 3-slider sessions written before the anchor
+     * flip stored stress inverted (1 = calm) and are re-inverted via
+     * [legacyStressInverted]; anything else is dropped (the user simply
+     * re-answers the step).
+     */
+    private fun normalizeClarity(
+        raw: List<Int>,
+        legacyStressInverted: Boolean = false
+    ): List<Int> = when {
+        raw.size == 3 && raw.all { it in 1..5 } ->
+            if (legacyStressInverted) listOf(6 - raw[0], raw[1], raw[2]) else raw
+        raw.size == 4 -> listOf(
+            Math.round(raw[1] / 2.0).toInt().coerceIn(1, 5), // calm 0–10 → stress 1–5 (5 = calm)
+            Math.round(raw[0] / 2.0).toInt().coerceIn(1, 5), // focus
+            Math.round(raw[2] / 2.0).toInt().coerceIn(1, 5)  // energy
+        )
+        else -> emptyList()
     }
 }

@@ -247,7 +247,7 @@ class ChessReadinessEngineTest {
     }
 
     @Test
-    fun `red result enforces 30 minute rest period`() {
+    fun `red result enforces score-scaled recovery lock`() {
         val history = listOf(test(NOW - 20L * 60 * 1000, 40)) // 20 min ago, RED
         val status = ChessReadinessEngine.checkGate(history, NOW)
         assertTrue(status is ChessReadinessEngine.GateStatus.Blocked)
@@ -258,10 +258,56 @@ class ChessReadinessEngineTest {
     }
 
     @Test
-    fun `rest period expires after 30 minutes`() {
-        val history = listOf(test(NOW - 31L * 60 * 1000, 40))
+    fun `poor fail lock expires after 60 minutes`() {
+        // ccrs 40 sits in the 60-minute tier
+        val history = listOf(test(NOW - 61L * 60 * 1000, 40))
         assertTrue(
             ChessReadinessEngine.checkGate(history, NOW)
+                is ChessReadinessEngine.GateStatus.Allowed
+        )
+    }
+
+    @Test
+    fun `recovery lock scales with how poor the failed attempt was`() {
+        val E = ChessReadinessEngine
+        // Pass — no rest lock (the pass cooldown path applies instead)
+        assertEquals(0L, E.restPeriodForScore(70))
+        assertEquals(0L, E.restPeriodForScore(100))
+        // Marginal fail (60–69) → 30 min
+        assertEquals(E.REST_MS_MARGINAL, E.restPeriodForScore(69))
+        assertEquals(E.REST_MS_MARGINAL, E.restPeriodForScore(60))
+        // Poor fail (40–59) → 60 min
+        assertEquals(E.REST_MS_POOR, E.restPeriodForScore(59))
+        assertEquals(E.REST_MS_POOR, E.restPeriodForScore(40))
+        // Severe fail (< 40) → 120 min
+        assertEquals(E.REST_MS_SEVERE, E.restPeriodForScore(39))
+        assertEquals(E.REST_MS_SEVERE, E.restPeriodForScore(0))
+    }
+
+    @Test
+    fun `marginal fail re-test allowed after 31 minutes but poor fail still locked`() {
+        val marginal = listOf(test(NOW - 31L * 60 * 1000, 65)) // 30-min tier
+        assertTrue(
+            ChessReadinessEngine.checkGate(marginal, NOW)
+                is ChessReadinessEngine.GateStatus.Allowed
+        )
+        val poor = listOf(test(NOW - 31L * 60 * 1000, 50)) // 60-min tier
+        assertTrue(
+            ChessReadinessEngine.checkGate(poor, NOW)
+                is ChessReadinessEngine.GateStatus.Blocked
+        )
+    }
+
+    @Test
+    fun `severe fail stays locked for two hours`() {
+        val history = listOf(test(NOW - 90L * 60 * 1000, 10)) // 120-min tier
+        assertTrue(
+            ChessReadinessEngine.checkGate(history, NOW)
+                is ChessReadinessEngine.GateStatus.Blocked
+        )
+        val expired = listOf(test(NOW - 121L * 60 * 1000, 10))
+        assertTrue(
+            ChessReadinessEngine.checkGate(expired, NOW)
                 is ChessReadinessEngine.GateStatus.Allowed
         )
     }
@@ -307,5 +353,60 @@ class ChessReadinessEngineTest {
     fun `all-time high ignores negative submissions`() {
         assertEquals(12, ChessReadinessEngine.nextAllTimeHigh(12, -5))
         assertEquals(0, ChessReadinessEngine.nextAllTimeHigh(0, -1))
+    }
+
+    // ── 1–5 clarity sliders (stress / focus / energy, positive end = 5) ────
+
+    @Test
+    fun `best slider answers map to a 10 clarity average`() {
+        assertEquals(10.0, ChessReadinessEngine.clarityAverageFromSliders(5, 5, 5), 1e-9)
+    }
+
+    @Test
+    fun `worst slider answers map to a 0 clarity average`() {
+        assertEquals(0.0, ChessReadinessEngine.clarityAverageFromSliders(1, 1, 1), 1e-9)
+    }
+
+    @Test
+    fun `mid slider answers map to a 5 clarity average`() {
+        assertEquals(5.0, ChessReadinessEngine.clarityAverageFromSliders(3, 3, 3), 1e-9)
+    }
+
+    @Test
+    fun `stress slider works like the others - calm at 5 scores highest`() {
+        val calm = ChessReadinessEngine.clarityAverageFromSliders(5, 3, 3)
+        val stressed = ChessReadinessEngine.clarityAverageFromSliders(1, 3, 3)
+        assertEquals(20.0 / 3.0, calm, 1e-9)
+        assertEquals(10.0 / 3.0, stressed, 1e-9)
+    }
+
+    @Test
+    fun `slider inputs outside 1-5 are clamped`() {
+        // stress 0 → 1 (stressed), focus 9 → 5 (max), energy 3 → mid
+        assertEquals(5.0, ChessReadinessEngine.clarityAverageFromSliders(0, 9, 3), 1e-9)
+    }
+
+    @Test
+    fun `slider mapping feeds the tier thresholds correctly`() {
+        // (5, 5, 2) → calm 10 + focus 10 + energy 2.5 = 7.5 — Tier 1 boundary
+        assertEquals(7.5, ChessReadinessEngine.clarityAverageFromSliders(5, 5, 2), 1e-9)
+        assertEquals(
+            ChessReadinessEngine.ClarityTier.TIER_1,
+            ChessReadinessEngine.clarityTierFromAverage(
+                ChessReadinessEngine.clarityAverageFromSliders(5, 5, 2)
+            )
+        )
+        assertEquals(
+            ChessReadinessEngine.ClarityTier.TIER_2,
+            ChessReadinessEngine.clarityTierFromAverage(
+                ChessReadinessEngine.clarityAverageFromSliders(3, 3, 3)
+            )
+        )
+        assertEquals(
+            ChessReadinessEngine.ClarityTier.TIER_3,
+            ChessReadinessEngine.clarityTierFromAverage(
+                ChessReadinessEngine.clarityAverageFromSliders(1, 1, 1)
+            )
+        )
     }
 }

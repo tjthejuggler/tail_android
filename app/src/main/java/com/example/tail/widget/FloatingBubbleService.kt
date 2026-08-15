@@ -81,6 +81,29 @@ class FloatingBubbleService : Service() {
 
         /** Intent extra: true when the trigger app is the Chess Readiness app. */
         const val EXTRA_CHESS_READINESS = "chess_readiness"
+
+        /**
+         * True while this service is alive. Lets [WidgetTriggerService] detect
+         * when the bubble died unexpectedly (process kill / crash) and revive
+         * it — the widget must never stay gone.
+         */
+        @Volatile
+        var isRunning = false
+            private set
+
+        /**
+         * True when the last stop was deliberate (dismiss drag or
+         * ACTION_STOP_BUBBLE) rather than an unexpected death. The trigger
+         * service only auto-revives the bubble when this is false.
+         */
+        @Volatile
+        var stoppedByUser = false
+            private set
+    }
+
+    /** Marks the current/next stop as deliberate (user or monitor initiated). */
+    private fun noteDeliberateStop() {
+        stoppedByUser = true
     }
 
     private lateinit var windowManager: WindowManager
@@ -127,6 +150,8 @@ class FloatingBubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
+        stoppedByUser = false
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
@@ -135,6 +160,7 @@ class FloatingBubbleService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP_BUBBLE -> {
+                noteDeliberateStop()
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -160,6 +186,23 @@ class FloatingBubbleService : Service() {
         }
         chessReadinessActive = intent?.getBooleanExtra(EXTRA_CHESS_READINESS, false) == true
 
+        if (intent != null) {
+            // Remember the configuration so a sticky restart after a process
+            // kill can restore it (the trigger service normally re-sends it,
+            // but it may itself be dead at that moment).
+            try {
+                BubbleStateStore.save(this, triggerHabitNames, chessReadinessActive)
+            } catch (_: Exception) { /* prefs are best-effort */ }
+        } else if (triggerHabitNames.isEmpty()) {
+            // Sticky restart with a null intent — restore the last config.
+            val saved = BubbleStateStore.load(this)
+            triggerHabitNames = saved.habitNames
+            triggerHabitName =
+                saved.habitNames.firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
+                    ?: if (saved.chessReadiness) null else saved.habitNames.singleOrNull()
+            chessReadinessActive = saved.chessReadiness
+        }
+
         if (bubbleView == null) {
             showBubble()
         }
@@ -169,6 +212,8 @@ class FloatingBubbleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
+        dismissChessOverlays()
         removeBubble()
         removeDismissZone()
         hideTimerChip()
@@ -432,6 +477,7 @@ class FloatingBubbleService : Service() {
 
                         // Check if dropped on dismiss zone
                         if (isOverDismissZone(event.rawX, event.rawY)) {
+                            noteDeliberateStop()
                             stopSelf()
                             return true
                         }
@@ -544,6 +590,15 @@ class FloatingBubbleService : Service() {
      * above the bubble), second tap stops it and records the minutes.
      */
     private fun onBubbleTapped() {
+        try {
+            onBubbleTappedInner()
+        } catch (e: Exception) {
+            // A menu/overlay failure must NEVER take the bubble (and with it
+            // the whole widget) down.
+        }
+    }
+
+    private fun onBubbleTappedInner() {
         // Brief scale animation to give visual feedback
         bubbleView?.let { bubble ->
             bubble.animate()
@@ -890,22 +945,42 @@ class FloatingBubbleService : Service() {
         habitMenuView = null
     }
 
-    /** Launches the Chess Readiness diagnostic activity from the overlay. */
+    // ──────────────────────────────────────────────────────────────────────
+    //  Chess Readiness overlay dialogs
+    // ──────────────────────────────────────────────────────────────────────
+
+    // Shown directly through the WindowManager ON TOP of the chess app — no
+    // activity is started, so the chess app stays the focused, dominant app;
+    // closing a dialog hands focus straight back to it.
+    private var chessReadinessOverlay: ChessReadinessOverlay? = null
+    private var chessPhase2Overlay: ChessPhase2Overlay? = null
+
+    /** Shows the Phase 1 readiness wizard as a floating overlay dialog. */
     private fun openChessReadiness() {
-        val intent = Intent(this, ChessReadinessActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
-            startActivity(intent)
-        } catch (e: Exception) { /* activity unavailable */ }
+            chessPhase2Overlay?.dismiss()
+            chessPhase2Overlay = null
+            chessReadinessOverlay?.dismiss()
+            chessReadinessOverlay = ChessReadinessOverlay(this).also { it.show() }
+        } catch (e: Exception) { /* never crash the bubble */ }
     }
 
-    /** Launches the Phase 2 post-game audit activity from the overlay. */
+    /** Shows the Phase 2 post-game audit as a floating overlay dialog. */
     private fun openChessPhase2() {
-        val intent = Intent(this, ChessPhase2Activity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
-            startActivity(intent)
-        } catch (e: Exception) { /* activity unavailable */ }
+            chessReadinessOverlay?.dismiss()
+            chessReadinessOverlay = null
+            chessPhase2Overlay?.dismiss()
+            chessPhase2Overlay = ChessPhase2Overlay(this).also { it.show() }
+        } catch (e: Exception) { /* never crash the bubble */ }
+    }
+
+    /** Removes any open chess overlay dialog (e.g. when the service dies). */
+    private fun dismissChessOverlays() {
+        try { chessReadinessOverlay?.dismiss() } catch (_: Exception) {}
+        try { chessPhase2Overlay?.dismiss() } catch (_: Exception) {}
+        chessReadinessOverlay = null
+        chessPhase2Overlay = null
     }
 
     /** Starts the timer for [habit] and updates the bubble visuals. */
@@ -1144,5 +1219,37 @@ class FloatingBubbleService : Service() {
                 ).build()
             )
             .build()
+    }
+}
+
+/**
+ * Persists the bubble's last start configuration (trigger habits + chess
+ * readiness flag) so a START_STICKY restart after a process kill restores
+ * the bubble exactly as it was — the widget must never stay gone.
+ */
+private object BubbleStateStore {
+    private const val PREFS = "tail_floating_bubble"
+    private const val KEY_HABITS = "last_habits"
+    private const val KEY_CHESS = "last_chess_readiness"
+
+    /** Separator that cannot appear inside a habit name. */
+    private const val SEP = "\u0000"
+
+    data class State(val habitNames: List<String>, val chessReadiness: Boolean)
+
+    fun save(context: Context, habits: List<String>, chess: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_HABITS, habits.joinToString(SEP))
+            .putBoolean(KEY_CHESS, chess)
+            .apply()
+    }
+
+    fun load(context: Context): State {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val habits = prefs.getString(KEY_HABITS, null)
+            ?.split(SEP)
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        return State(habits, prefs.getBoolean(KEY_CHESS, false))
     }
 }

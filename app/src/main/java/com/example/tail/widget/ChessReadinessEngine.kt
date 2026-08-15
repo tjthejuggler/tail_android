@@ -26,7 +26,7 @@ package com.example.tail.widget
  *
  * The engine is PURE — no Android dependencies — so it is unit-testable.
  * Persistence lives in [ChessReadinessStore]; UI lives in
- * [ChessReadinessActivity].
+ * [ChessReadinessOverlay].
  *
  * Rate-limiting rules (anti "test-hunting"):
  *  - Max 4 tests per rolling 24-hour window.
@@ -44,8 +44,16 @@ object ChessReadinessEngine {
     /** Cool-down after a Green/Yellow result (ms). */
     const val COOLDOWN_MS = 60L * 60 * 1000
 
-    /** Mandatory rest period after a Red result (ms). */
-    const val REST_PERIOD_MS = 30L * 60 * 1000
+    /**
+     * Recovery lock after a FAILED (Red) Phase 1 test, scaled by how poor
+     * the attempt was — the worse the score, the longer the mandatory rest:
+     *  - ccrs 60–69 (marginal fail) → 30 min
+     *  - ccrs 40–59 (poor)          → 60 min
+     *  - ccrs < 40  (severe)        → 120 min
+     */
+    const val REST_MS_MARGINAL = 30L * 60 * 1000
+    const val REST_MS_POOR = 60L * 60 * 1000
+    const val REST_MS_SEVERE = 120L * 60 * 1000
 
     /** A Green/Yellow authorization expires after this long (ms). */
     const val SESSION_VALIDITY_MS = 60L * 60 * 1000
@@ -129,6 +137,24 @@ object ChessReadinessEngine {
         average >= 7.5 -> ClarityTier.TIER_1
         average >= 5.0 -> ClarityTier.TIER_2
         else -> ClarityTier.TIER_3
+    }
+
+    /**
+     * Maps the raw 1–5 clarity slider answers (stress / focus / energy) to
+     * the 0–10 "higher = better" clarity average consumed by
+     * [clarityTierFromAverage].
+     *
+     * All three sliders share one convention — the positive end is 5 on
+     * the right: stress 1 = very stressed → 0 … 5 = very calm → 10, and
+     * focus / energy map 1 → 0 … 5 → 10. With three discrete 5-point
+     * sliders every value is always selectable (no missed ticks).
+     */
+    fun clarityAverageFromSliders(stress: Int, focus: Int, energy: Int): Double {
+        fun to10(v: Int): Double = (v.coerceIn(1, 5) - 1) * 2.5
+        val calm10 = to10(stress)
+        val focus10 = to10(focus)
+        val energy10 = to10(energy)
+        return (calm10 + focus10 + energy10) / 3.0
     }
 
     /** All questionnaire inputs for a single Phase 1 test submission. */
@@ -265,16 +291,29 @@ object ChessReadinessEngine {
                 )
             } else GateStatus.Allowed(testsLast24h.size)
         } else {
-            if (timeSinceLast < REST_PERIOD_MS) {
-                val minsRemaining = ((REST_PERIOD_MS - timeSinceLast) / 60000L).toInt() + 1
+            val restMs = restPeriodForScore(lastTest.ccrs)
+            if (timeSinceLast < restMs) {
+                val minsRemaining = ((restMs - timeSinceLast) / 60000L).toInt() + 1
                 GateStatus.Blocked(
                     GateError.RestPeriodActive(
-                        "Mandatory recovery rest in progress. Re-test available in " +
-                            "$minsRemaining more minute(s)."
+                        "Failed test (score ${lastTest.ccrs}) — recovery lock. " +
+                            "Re-test in $minsRemaining more minute(s)."
                     )
                 )
             } else GateStatus.Allowed(testsLast24h.size)
         }
+    }
+
+    /**
+     * Recovery lock length for a given Phase 1 score: 0 for a pass (≥ 70),
+     * otherwise one of the stepped [REST_MS_MARGINAL] / [REST_MS_POOR] /
+     * [REST_MS_SEVERE] tiers — worse attempts lock the re-test for longer.
+     */
+    fun restPeriodForScore(ccrs: Int): Long = when {
+        ccrs >= 70 -> 0L
+        ccrs >= 60 -> REST_MS_MARGINAL
+        ccrs >= 40 -> REST_MS_POOR
+        else -> REST_MS_SEVERE
     }
 
     // ── Sub-component scoring ──────────────────────────────────────────────

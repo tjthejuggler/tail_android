@@ -55,6 +55,23 @@ class WidgetTriggerService : Service() {
          */
         private const val EVENT_WINDOW_MS = 60_000L
 
+        /**
+         * Look-back used for the FIRST poll after the service starts: if the
+         * monitor was just revived (watchdog / boot) while the user is deep
+         * inside a watched app, the last ACTIVITY_RESUMED may be several
+         * minutes old — 15 min ensures the bubble comes back without the
+         * user having to leave and re-enter the app.
+         */
+        private const val FIRST_EVENT_WINDOW_MS = 15L * 60_000
+
+        /**
+         * True while this service is alive — checked by
+         * [WidgetWatchdogReceiver] so a killed monitor is revived.
+         */
+        @Volatile
+        var isRunning = false
+            private set
+
         /** Action to tell the service to re-read its trigger-app configuration. */
         const val ACTION_REFRESH = "com.example.tail.widget.REFRESH_TRIGGERS"
 
@@ -99,6 +116,8 @@ class WidgetTriggerService : Service() {
                 action = ACTION_REFRESH
             }
             if (triggerAppCount > 0) {
+                WidgetWatchdogReceiver.setMonitorShouldRun(context, true)
+                WidgetWatchdogReceiver.schedule(context)
                 try {
                     context.startForegroundService(intent)
                     Log.d(TAG, "Monitor started ($triggerAppCount trigger app(s) configured)")
@@ -106,6 +125,9 @@ class WidgetTriggerService : Service() {
                     Log.e(TAG, "Failed to start monitor service", e)
                 }
             } else {
+                // Deliberate stop — stand the watchdog down too.
+                WidgetWatchdogReceiver.setMonitorShouldRun(context, false)
+                WidgetWatchdogReceiver.cancel(context)
                 context.stopService(intent)
                 Log.d(TAG, "Monitor stopped (no trigger apps configured)")
             }
@@ -136,6 +158,11 @@ class WidgetTriggerService : Service() {
     /** Whether the polling loop is currently scheduled. */
     private var isPolling = false
 
+    /** True until the first poll runs — the first query uses a wider event
+     *  window so a freshly (re)started monitor picks up the app that is
+     *  ALREADY in the foreground without waiting for a new resume event. */
+    private var firstPoll = true
+
     // ──────────────────────────────────────────────────────────────────────
     //  Service lifecycle
     // ──────────────────────────────────────────────────────────────────────
@@ -144,7 +171,13 @@ class WidgetTriggerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         Log.d(TAG, "Service created")
+        // Arm the watchdog so that if THIS service is ever killed without a
+        // matching stop (process death, install-time kill, crash), the alarm
+        // receiver brings it back within ~2 minutes.
+        WidgetWatchdogReceiver.setMonitorShouldRun(this, true)
+        WidgetWatchdogReceiver.schedule(this)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         loadWatchedPackages()
@@ -160,6 +193,7 @@ class WidgetTriggerService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
         Log.d(TAG, "Service destroyed")
         stopPolling()
         // Ensure the bubble is removed when the service stops
@@ -231,6 +265,25 @@ class WidgetTriggerService : Service() {
     private fun checkForegroundApp() {
         if (watchedPackages.isEmpty()) return
 
+        // ── Self-heal: revive a bubble that died unexpectedly ──────────
+        // If we believe the bubble is up but its service is gone (process
+        // kill, crash, overlay failure), bring it straight back — the
+        // widget must never stay gone while a watched app is in use.
+        if (bubbleActive && !FloatingBubbleService.isRunning) {
+            if (FloatingBubbleService.stoppedByUser) {
+                // The user (or this monitor) dismissed it deliberately.
+                bubbleActive = false
+            } else if (currentForegroundPackage in watchedPackages) {
+                Log.d(TAG, "Bubble died unexpectedly — reviving")
+                startBubble(
+                    habitsByPackage[currentForegroundPackage].orEmpty(),
+                    chessReadiness = currentForegroundPackage == chessReadinessPackage
+                )
+            } else {
+                bubbleActive = false
+            }
+        }
+
         val foregroundPkg = getForegroundPackage()
 
         // No ACTIVITY_RESUMED events in the window — the foreground app is
@@ -283,7 +336,12 @@ class WidgetTriggerService : Service() {
     private fun getForegroundPackage(): String? {
         val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val now = System.currentTimeMillis()
-        val events = usageStatsManager.queryEvents(now - EVENT_WINDOW_MS, now)
+        // First poll after (re)start looks further back so an in-progress
+        // chess session is detected immediately instead of being missed
+        // because its resume event predates the normal short window.
+        val windowMs = if (firstPoll) FIRST_EVENT_WINDOW_MS else EVENT_WINDOW_MS
+        firstPoll = false
+        val events = usageStatsManager.queryEvents(now - windowMs, now)
 
         val event = UsageEvents.Event()
         var lastForegroundPackage: String? = null
@@ -308,15 +366,28 @@ class WidgetTriggerService : Service() {
             }
             putExtra(FloatingBubbleService.EXTRA_CHESS_READINESS, chessReadiness)
         }
-        startForegroundService(intent)
-        bubbleActive = true
+        try {
+            startForegroundService(intent)
+            bubbleActive = true
+        } catch (e: Exception) {
+            // Blocked (e.g. background FGS restriction). Clear the cached
+            // foreground package so the next poll re-evaluates and retries
+            // instead of wedging.
+            Log.e(TAG, "Failed to start bubble — will retry", e)
+            bubbleActive = false
+            currentForegroundPackage = null
+        }
     }
 
     private fun stopBubble() {
         if (!bubbleActive) return
         val intent = Intent(this, FloatingBubbleService::class.java)
             .apply { action = FloatingBubbleService.ACTION_STOP_BUBBLE }
-        startService(intent)
+        try {
+            startService(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop bubble service", e)
+        }
         bubbleActive = false
     }
 
