@@ -72,6 +72,7 @@ import com.example.tail.data.AiModelInfo
 import com.example.tail.data.ChessComType
 import com.example.tail.data.backup.AutoBackupManager
 import com.example.tail.data.backup.BackupManager
+import com.example.tail.data.backup.GoogleDriveManager
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.widget.ChessReadinessStore
 import com.example.tail.ui.AdviceDialog
@@ -154,6 +155,7 @@ fun SettingsScreen(
     debugPrefs: DebugPreferences,
     backupManager: BackupManager,
     autoBackupManager: AutoBackupManager,
+    gdriveManager: GoogleDriveManager,
     onNavigateBack: () -> Unit,
     onNavigateToAppStats: () -> Unit = {}
 ) {
@@ -471,7 +473,8 @@ fun SettingsScreen(
             item {
                 BackupSettingsSection(
                     backupManager = backupManager,
-                    autoBackupManager = autoBackupManager
+                    autoBackupManager = autoBackupManager,
+                    gdriveManager = gdriveManager
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()

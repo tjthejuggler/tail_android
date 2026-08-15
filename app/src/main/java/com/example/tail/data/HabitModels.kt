@@ -891,7 +891,15 @@ data class AppSettings(
      * Defaults to "minutes primary" when a trigger app is first configured;
      * the user can swap this per habit in edit mode.
      */
-    val widgetTimerMinutesPrimary: Set<String> = emptySet()
+    val widgetTimerMinutesPrimary: Set<String> = emptySet(),
+
+    // ── Google Drive backup settings ─────────────────────────────────────
+    /** Whether the automatic daily Google Drive backup is enabled. */
+    val gdriveAutoEnabled: Boolean = false,
+    /** Account name (e-mail) of the signed-in Google account used for Drive backups. */
+    val gdriveAccountName: String = "",
+    /** ISO date ("YYYY-MM-DD") of the most recent successful Drive auto-backup. */
+    val gdriveLastBackupDate: String = ""
 )
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

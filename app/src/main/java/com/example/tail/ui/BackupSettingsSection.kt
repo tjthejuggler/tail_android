@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import com.example.tail.data.backup.AutoBackupManager
 import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.backup.BackupResult
+import com.example.tail.data.backup.GoogleDriveManager
 import kotlinx.coroutines.launch
 
 /**
@@ -48,7 +49,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun BackupSettingsSection(
     backupManager: BackupManager,
-    autoBackupManager: AutoBackupManager
+    autoBackupManager: AutoBackupManager,
+    gdriveManager: GoogleDriveManager
 ) {
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<String?>(null) }
@@ -147,6 +149,12 @@ fun BackupSettingsSection(
         HorizontalDivider()
         Spacer(modifier = Modifier.height(8.dp))
         AutoBackupSection(autoBackupManager = autoBackupManager)
+
+        // ── Google Drive backup sub-section ────────────────────────────────
+        Spacer(modifier = Modifier.height(12.dp))
+        HorizontalDivider()
+        Spacer(modifier = Modifier.height(8.dp))
+        GoogleDriveSection(gdriveManager = gdriveManager)
     }
 
     // Confirmation dialog before applying an import — destructive op, must be opt-in.

@@ -66,6 +66,10 @@ dependencies {
     // WorkManager — for offline vision-queue processing with network constraints
     implementation(libs.androidx.work.runtime.ktx)
 
+    // Google Sign-In — for the Google Drive backup feature (account picker +
+    // OAuth token for the Drive REST API)
+    implementation(libs.play.services.auth)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

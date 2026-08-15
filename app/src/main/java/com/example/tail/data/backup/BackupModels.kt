@@ -60,7 +60,20 @@ data class BackupBundle(
     val perHabitFiles: PerHabitFilesSection = PerHabitFilesSection(),
 
     /** Full markdown text of the voice-note dictation file (or null). */
-    val voiceNoteMarkdown: String? = null
+    val voiceNoteMarkdown: String? = null,
+
+    /** Meal-habit logs + captured meal photos (base64 JPEG). */
+    val meal: MealSection = MealSection(),
+
+    /** Raw content of `files/vision_queue.json` (pending vision captures), or null. */
+    val visionQueueJson: String? = null,
+
+    /**
+     * Additional SharedPreferences stores that hold user data but are not part
+     * of AppSettings (chess readiness history, chess phase-2 audits, …).
+     * Keyed by prefs file name.
+     */
+    val extraPrefs: Map<String, List<PrefEntryBackup>> = emptyMap()
 ) {
     companion object {
         const val SCHEMA_VERSION = 1
@@ -117,7 +130,66 @@ data class SettingsSection(
     val voiceTriggerIncrements: Map<String, Int> = emptyMap(),
     val voiceSubtypeHabits: List<String> = emptyList(),
     val voiceNoteEnabled: Boolean = false,
-    val voiceNoteFileUri: String = ""
+    val voiceNoteFileUri: String = "",
+
+    // ── Fields added in the 2026-08 completeness audit ───────────────────
+    val sharableTextHabits: List<String> = emptyList(),
+    val secondaryValueHabits: List<String> = emptyList(),
+    val secondaryValueFallbackHabits: List<String> = emptyList(),
+    val valueDisplayLabels: Map<String, Map<String, String>> = emptyMap(),
+    val customInputAmounts: Map<String, List<Int>> = emptyMap(),
+    val customInputRecentAmounts: Map<String, List<Int>> = emptyMap(),
+    val autoBackupFolderUri: String = "",
+    val mapStatsHabits: List<String> = emptyList(),
+    val mapStatsShowTextHabits: List<String> = emptyList(),
+    val mapMainHabit: String? = null,
+    val mapHideZeroDays: Boolean = false,
+    val mapBeginDate: String = "",
+    val garminEnabled: Boolean = false,
+    val garminProxyUrl: String = "",
+    val garminAppToken: String = "",
+    val garminDateOfBirth: String = "",
+    val garminHabitLinks: Map<String, String> = emptyMap(),
+    val githubEnabled: Boolean = false,
+    val githubToken: String = "",
+    val githubRepoUrls: Map<String, String> = emptyMap(),
+    val githubMetrics: Map<String, String> = emptyMap(),
+    val bridgeEnabled: Boolean = false,
+    val bridgeUrl: String = "",
+    val bridgeToken: String = "",
+    val bridgeMovieHabits: List<String> = emptyList(),
+    val omdbApiKey: String = "",
+    val customPointRangesHabits: List<String> = emptyList(),
+    val customPointRanges: Map<String, List<PointRangeBackup>> = emptyMap(),
+    val graphValueModeHabits: Map<String, Int> = emptyMap(),
+    val graphMetricSelection: Map<String, List<String>> = emptyMap(),
+    val habitNotes: Map<String, String> = emptyMap(),
+    val rollForwardHabits: List<String> = emptyList(),
+    val rollForwardManualDates: Map<String, List<String>> = emptyMap(),
+    val mealEnabled: Boolean = false,
+    val mealBaseUrl: String = "",
+    val mealApiKey: String = "",
+    val mealModel: String = "",
+    val mealSystemPrompt: String = "",
+    val mealHabits: List<String> = emptyList(),
+    val appLinks: Map<String, String> = emptyMap(),
+    val habitAppAssociations: Map<String, List<String>> = emptyMap(),
+    val habitLongPressActions: Map<String, String> = emptyMap(),
+    val habitLongPressUrls: Map<String, String> = emptyMap(),
+    val habitLongPressUrlApps: Map<String, String> = emptyMap(),
+    val widgetTriggerHabits: List<String> = emptyList(),
+    val widgetTriggerApps: Map<String, String> = emptyMap(),
+    val widgetTimerMinutesPrimary: List<String> = emptyList(),
+    val chessReadinessEnabled: Boolean = false,
+    val chessReadinessApp: String = "",
+    val gdriveAutoEnabled: Boolean = false,
+    val gdriveAccountName: String = ""
+)
+
+/** Backup form of [com.example.tail.data.PointRange]. */
+data class PointRangeBackup(
+    val min: Int = 0,
+    val max: Int = 0
 )
 
 /** Backup form of [com.example.tail.data.HabitScreen]. */
@@ -149,7 +221,9 @@ data class LocationsSection(
 data class DebugSection(
     val debugModeEnabled: Boolean = false,
     val debugFileDirUri: String = "",
-    val savedNotes: List<DebugSavedNoteBackup> = emptyList()
+    val savedNotes: List<DebugSavedNoteBackup> = emptyList(),
+    /** Raw content of `files/debug_tail.json` (submitted debug notes archive), or null. */
+    val debugTailJson: String? = null
 )
 
 /** Backup form of [com.example.tail.data.debug.SavedNote]. */
@@ -197,4 +271,29 @@ data class PerHabitFilesSection(
      * through Gson reflection.
      */
     val timedData: Map<String, Map<String, Map<String, Any?>>> = emptyMap()
+)
+
+/**
+ * Meal-habit engine data from internal storage:
+ *  - `files/meal_logs/<sanitised-habit>.json` — raw JSON text per file
+ *  - `files/meal_images/<uuid>.jpg` — base64-encoded JPEG bytes per file
+ */
+data class MealSection(
+    val logs: Map<String, String> = emptyMap(),
+    val images: Map<String, String> = emptyMap()
+)
+
+/**
+ * One typed SharedPreferences entry. The explicit type tag lets restore write
+ * the value back with the correct putX() call (SharedPreferences stores values
+ * per-type; writing an Int as Long would crash later getInt() readers).
+ */
+data class PrefEntryBackup(
+    val key: String = "",
+    val type: String = "",
+    val boolValue: Boolean? = null,
+    val intValue: Long? = null,
+    val floatValue: Double? = null,
+    val stringValue: String? = null,
+    val stringSetValue: List<String> = emptyList()
 )

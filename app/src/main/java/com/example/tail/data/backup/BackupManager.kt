@@ -8,6 +8,7 @@ import com.example.tail.data.AdviceItem
 import com.example.tail.data.AdviceRepository
 import com.example.tail.data.AppSettings
 import com.example.tail.data.HabitScreen
+import com.example.tail.data.PointRange
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.SubtypeDataRepository
@@ -83,12 +84,27 @@ data class HabitRestorePreview(
  *      subtype JSONs, timed JSONs) — content embedded so the bundle is
  *      fully portable.
  *   9. Voice-note markdown content
+ *  10. Meal logs + captured meal photos (internal `meal_logs/`, `meal_images/`)
+ *  11. Vision-processing queue (`vision_queue.json`) so pending captures survive
+ *  12. `debug_tail.json` (submitted debug-notes archive)
+ *  13. Extra SharedPreferences stores with user data (chess readiness
+ *      history/ATH, chess phase-2 audits/ACC history)
+ *  14. EVERY AppSettings field (2026-08 audit: previously ~50 fields —
+ *      sharable-text, secondary values, custom amounts, map stats, Garmin,
+ *      GitHub, Bridge, OMDb, point ranges, graph metrics, habit notes,
+ *      roll-forward, meal engine, app links, long-press actions, widget
+ *      triggers, chess readiness, GDrive — were missing and are now included)
  *
  * Things deliberately NOT backed up (because they are derived / re-fetchable):
  *   - Tasker stats relay file (regenerated after every habit change)
  *   - Screens-layout relay file (regenerated whenever screens change)
  *   - chess.com monthly cache (re-fetched from the API)
+ *   - Garmin / GitHub API caches (re-fetched from the API)
+ *   - IMDb rating cache (re-fetched from the API)
  *   - One-time migration flags (let them re-run on a fresh install)
+ *   - Widget tap-state DataStore + active widget timers (transient UI state)
+ *   - Habit DB snapshots (`habit_snapshots/` — internal recovery copies of the
+ *     habits DB itself, which is already backed up in full)
  */
 class BackupManager(
     private val context: Context,
@@ -121,8 +137,7 @@ class BackupManager(
      */
     suspend fun exportBackup(destUri: Uri): BackupResult = withContext(Dispatchers.IO) {
         try {
-            val bundle = buildBundle()
-            val json = gson.toJson(bundle)
+            val json = buildBackupJson()
 
             val cr = context.contentResolver
             cr.openOutputStream(destUri, "wt")?.use { out ->
@@ -135,6 +150,15 @@ class BackupManager(
             Log.e(TAG, "Export failed", e)
             BackupResult.Failure("Export failed: ${e.message}", e)
         }
+    }
+
+    /**
+     * Builds the full backup bundle and returns it as a JSON string. Public so
+     * alternative transports (e.g. Google Drive upload) can reuse the exact
+     * same wire format as SAF file exports.
+     */
+    suspend fun buildBackupJson(): String = withContext(Dispatchers.IO) {
+        gson.toJson(buildBundle())
     }
 
     /** Reads every data source and assembles a [BackupBundle] in memory. */
@@ -152,6 +176,10 @@ class BackupManager(
         val voiceNoteMd = readSafText(settings.voiceNoteFileUri)
         val aiIcons = readAiIconsSection()
 
+        val meal = readMealSection()
+        val visionQueue = readVisionQueueJson()
+        val extraPrefs = readExtraPrefs()
+
         return BackupBundle(
             schemaVersion = BackupBundle.SCHEMA_VERSION,
             appVersion = appVersionLabel(),
@@ -165,7 +193,10 @@ class BackupManager(
             habitTimestamps = habitTimestamps,
             aiIcons = aiIcons,
             perHabitFiles = perHabit,
-            voiceNoteMarkdown = voiceNoteMd
+            voiceNoteMarkdown = voiceNoteMd,
+            meal = meal,
+            visionQueueJson = visionQueue,
+            extraPrefs = extraPrefs
         )
     }
 
@@ -235,8 +266,84 @@ class BackupManager(
         return DebugSection(
             debugModeEnabled = debugPrefs.debugModeEnabled,
             debugFileDirUri = debugPrefs.debugFileDirUri,
-            savedNotes = savedNotes
+            savedNotes = savedNotes,
+            debugTailJson = readInternalFileText("debug_tail.json")
         )
+    }
+
+    /** Reads a text file from [context.filesDir], or null if missing/unreadable. */
+    private fun readInternalFileText(name: String): String? {
+        return try {
+            val f = File(context.filesDir, name)
+            if (f.exists()) f.readText() else null
+        } catch (e: Exception) {
+            Log.w(TAG, "$name read failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Snapshots meal logs (raw JSON per file) and meal photos (base64). */
+    private fun readMealSection(): MealSection {
+        val logs = mutableMapOf<String, String>()
+        val logsDir = File(context.filesDir, "meal_logs")
+        if (logsDir.isDirectory) {
+            logsDir.listFiles()?.filter { it.isFile && it.name.endsWith(".json") }?.forEach { f ->
+                try {
+                    val text = f.readText()
+                    if (text.isNotBlank()) logs[f.name] = text
+                } catch (e: Exception) {
+                    Log.w(TAG, "meal log read failed for '${f.name}': ${e.message}")
+                }
+            }
+        }
+
+        val images = mutableMapOf<String, String>()
+        val imagesDir = File(context.filesDir, "meal_images")
+        if (imagesDir.isDirectory) {
+            imagesDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jpg") }?.forEach { f ->
+                try {
+                    images[f.name] = Base64.encodeToString(f.readBytes(), Base64.NO_WRAP)
+                } catch (e: Exception) {
+                    Log.w(TAG, "meal image read failed for '${f.name}': ${e.message}")
+                }
+            }
+        }
+        return MealSection(logs = logs, images = images)
+    }
+
+    /** Raw content of `files/vision_queue.json` (pending vision captures). */
+    private fun readVisionQueueJson(): String? = readInternalFileText("vision_queue.json")
+
+    /**
+     * SharedPreferences files that hold user data outside AppSettings.
+     * Each entry is stored with an explicit type tag so restore can use the
+     * correct putX() overload.
+     */
+    private fun readExtraPrefs(): Map<String, List<PrefEntryBackup>> {
+        val names = listOf("tail_chess_readiness", "tail_chess_phase2")
+        val out = mutableMapOf<String, List<PrefEntryBackup>>()
+        for (name in names) {
+            val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+            val entries = mutableListOf<PrefEntryBackup>()
+            for ((key, value) in prefs.all) {
+                val entry = when (value) {
+                    is Boolean -> PrefEntryBackup(key = key, type = "bool", boolValue = value)
+                    is Int -> PrefEntryBackup(key = key, type = "int", intValue = value.toLong())
+                    is Long -> PrefEntryBackup(key = key, type = "long", intValue = value)
+                    is Float -> PrefEntryBackup(key = key, type = "float", floatValue = value.toDouble())
+                    is String -> PrefEntryBackup(key = key, type = "string", stringValue = value)
+                    is Set<*> -> PrefEntryBackup(
+                        key = key,
+                        type = "stringset",
+                        stringSetValue = value.filterIsInstance<String>()
+                    )
+                    else -> null
+                }
+                if (entry != null) entries.add(entry)
+            }
+            if (entries.isNotEmpty()) out[name] = entries
+        }
+        return out
     }
 
     private suspend fun readPerHabitFiles(settings: AppSettings): PerHabitFilesSection {
@@ -599,6 +706,9 @@ class BackupManager(
         applyAiIcons(b.aiIcons)
         applyPerHabitFiles(b.settings, b.perHabitFiles)
         applyVoiceNote(b.settings.voiceNoteFileUri, b.voiceNoteMarkdown)
+        applyMealSection(b.meal)
+        applyVisionQueueJson(b.visionQueueJson)
+        applyExtraPrefs(b.extraPrefs)
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -666,6 +776,63 @@ class BackupManager(
 
         settingsRepo.saveVoiceNoteEnabled(s.voiceNoteEnabled)
         settingsRepo.saveVoiceNoteFileUri(s.voiceNoteFileUri)
+
+        // ── Fields added in the 2026-08 completeness audit ───────────────
+        settingsRepo.saveSharableTextHabits(s.sharableTextHabits.toSet())
+        settingsRepo.saveSecondaryValueHabits(s.secondaryValueHabits.toSet())
+        settingsRepo.saveSecondaryValueFallbackHabits(s.secondaryValueFallbackHabits.toSet())
+        settingsRepo.saveValueDisplayLabels(s.valueDisplayLabels)
+        settingsRepo.saveCustomInputAmounts(s.customInputAmounts)
+        settingsRepo.saveCustomInputRecentAmounts(s.customInputRecentAmounts)
+        settingsRepo.saveAutoBackupFolderUri(s.autoBackupFolderUri)
+        settingsRepo.saveMapStatsHabits(s.mapStatsHabits.toSet())
+        settingsRepo.saveMapStatsShowTextHabits(s.mapStatsShowTextHabits.toSet())
+        settingsRepo.saveMapMainHabit(s.mapMainHabit?.takeIf { it.isNotEmpty() })
+        settingsRepo.saveMapHideZeroDays(s.mapHideZeroDays)
+        settingsRepo.saveMapBeginDate(s.mapBeginDate)
+        settingsRepo.saveGarminEnabled(s.garminEnabled)
+        settingsRepo.saveGarminProxyUrl(s.garminProxyUrl)
+        settingsRepo.saveGarminAppToken(s.garminAppToken)
+        settingsRepo.saveGarminDateOfBirth(s.garminDateOfBirth)
+        settingsRepo.saveGarminHabitLinks(s.garminHabitLinks)
+        settingsRepo.saveGithubEnabled(s.githubEnabled)
+        settingsRepo.saveGithubToken(s.githubToken)
+        settingsRepo.saveGithubRepoUrls(s.githubRepoUrls)
+        settingsRepo.saveGithubMetrics(s.githubMetrics)
+        settingsRepo.saveBridgeSettings(s.bridgeEnabled, s.bridgeUrl, s.bridgeToken)
+        settingsRepo.saveBridgeMovieHabits(s.bridgeMovieHabits.toSet())
+        settingsRepo.saveOmdbApiKey(s.omdbApiKey)
+        settingsRepo.saveCustomPointRangesHabits(s.customPointRangesHabits.toSet())
+        settingsRepo.saveCustomPointRanges(
+            s.customPointRanges.mapValues { (_, ranges) ->
+                ranges.map { PointRange(it.min, it.max) }
+            }
+        )
+        settingsRepo.saveGraphValueModeHabits(s.graphValueModeHabits)
+        settingsRepo.saveGraphMetricSelection(s.graphMetricSelection.mapValues { it.value.toSet() })
+        settingsRepo.saveHabitNotes(s.habitNotes)
+        settingsRepo.saveRollForwardHabits(s.rollForwardHabits.toSet())
+        settingsRepo.saveRollForwardManualDates(s.rollForwardManualDates.mapValues { it.value.toSet() })
+        settingsRepo.saveMealSettings(
+            enabled = s.mealEnabled,
+            baseUrl = s.mealBaseUrl,
+            apiKey = s.mealApiKey,
+            model = s.mealModel,
+            systemPrompt = s.mealSystemPrompt
+        )
+        settingsRepo.saveMealHabits(s.mealHabits.toSet())
+        settingsRepo.saveAppLinks(s.appLinks)
+        settingsRepo.saveHabitAppAssociations(s.habitAppAssociations)
+        settingsRepo.saveHabitLongPressActions(s.habitLongPressActions)
+        settingsRepo.saveHabitLongPressUrls(s.habitLongPressUrls)
+        settingsRepo.saveHabitLongPressUrlApps(s.habitLongPressUrlApps)
+        settingsRepo.saveWidgetTriggerHabits(s.widgetTriggerHabits.toSet())
+        settingsRepo.saveWidgetTriggerApps(s.widgetTriggerApps)
+        settingsRepo.saveWidgetTimerMinutesPrimary(s.widgetTimerMinutesPrimary.toSet())
+        settingsRepo.saveChessReadinessEnabled(s.chessReadinessEnabled)
+        settingsRepo.saveChessReadinessApp(s.chessReadinessApp)
+        settingsRepo.saveGdriveAutoEnabled(s.gdriveAutoEnabled)
+        settingsRepo.saveGdriveAccountName(s.gdriveAccountName)
     }
 
     private suspend fun applyAdvice(items: List<AdviceBackupItem>) {
@@ -719,6 +886,69 @@ class BackupManager(
         }
         debugPrefs.saveSavedNotes(notes)
         debugPrefs.refresh()
+        d.debugTailJson?.let { json ->
+            try {
+                File(context.filesDir, "debug_tail.json").writeText(json)
+            } catch (e: Exception) {
+                Log.w(TAG, "debug_tail.json write failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Restores meal logs (raw JSON) and meal photos (base64 → bytes). */
+    private fun applyMealSection(m: MealSection) {
+        val logsDir = File(context.filesDir, "meal_logs").apply { mkdirs() }
+        for ((name, json) in m.logs) {
+            try {
+                File(logsDir, name).writeText(json)
+            } catch (e: Exception) {
+                Log.w(TAG, "meal log write failed for '$name': ${e.message}")
+            }
+        }
+        if (m.images.isNotEmpty()) {
+            val imagesDir = File(context.filesDir, "meal_images").apply { mkdirs() }
+            for ((name, b64) in m.images) {
+                try {
+                    val bytes = Base64.decode(b64, Base64.NO_WRAP or Base64.DEFAULT)
+                    File(imagesDir, name).writeBytes(bytes)
+                } catch (e: Exception) {
+                    Log.w(TAG, "meal image write failed for '$name': ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun applyVisionQueueJson(json: String?) {
+        if (json.isNullOrBlank()) return
+        try {
+            File(context.filesDir, "vision_queue.json").writeText(json)
+        } catch (e: Exception) {
+            Log.w(TAG, "vision_queue.json write failed: ${e.message}")
+        }
+    }
+
+    /** Restores typed SharedPreferences entries using their type tags. */
+    private fun applyExtraPrefs(extra: Map<String, List<PrefEntryBackup>>) {
+        for ((name, entries) in extra) {
+            try {
+                val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+                val ed = prefs.edit().clear()
+                for (e in entries) {
+                    when (e.type) {
+                        "bool" -> ed.putBoolean(e.key, e.boolValue ?: false)
+                        "int" -> ed.putInt(e.key, (e.intValue ?: 0L).toInt())
+                        "long" -> ed.putLong(e.key, e.intValue ?: 0L)
+                        "float" -> ed.putFloat(e.key, (e.floatValue ?: 0.0).toFloat())
+                        "string" -> ed.putString(e.key, e.stringValue)
+                        "stringset" -> ed.putStringSet(e.key, e.stringSetValue.toSet())
+                        else -> Log.w(TAG, "extraPrefs: unknown type '${e.type}' for key ${e.key}")
+                    }
+                }
+                ed.apply()
+            } catch (e: Exception) {
+                Log.w(TAG, "extraPrefs restore failed for '$name': ${e.message}")
+            }
+        }
     }
 
     private suspend fun applyHabitsDb(fileUri: String, db: Map<String, Map<String, Int>>) {
@@ -914,7 +1144,62 @@ class BackupManager(
         voiceTriggerIncrements = s.voiceTriggerIncrements,
         voiceSubtypeHabits = s.voiceSubtypeHabits.toList(),
         voiceNoteEnabled = s.voiceNoteEnabled,
-        voiceNoteFileUri = s.voiceNoteFileUri
+        voiceNoteFileUri = s.voiceNoteFileUri,
+
+        // ── Fields added in the 2026-08 completeness audit ───────────────
+        sharableTextHabits = s.sharableTextHabits.toList(),
+        secondaryValueHabits = s.secondaryValueHabits.toList(),
+        secondaryValueFallbackHabits = s.secondaryValueFallbackHabits.toList(),
+        valueDisplayLabels = s.valueDisplayLabels,
+        customInputAmounts = s.customInputAmounts,
+        customInputRecentAmounts = s.customInputRecentAmounts,
+        autoBackupFolderUri = s.autoBackupFolderUri,
+        mapStatsHabits = s.mapStatsHabits.toList(),
+        mapStatsShowTextHabits = s.mapStatsShowTextHabits.toList(),
+        mapMainHabit = s.mapMainHabit,
+        mapHideZeroDays = s.mapHideZeroDays,
+        mapBeginDate = s.mapBeginDate,
+        garminEnabled = s.garminEnabled,
+        garminProxyUrl = s.garminProxyUrl,
+        garminAppToken = s.garminAppToken,
+        garminDateOfBirth = s.garminDateOfBirth,
+        garminHabitLinks = s.garminHabitLinks,
+        githubEnabled = s.githubEnabled,
+        githubToken = s.githubToken,
+        githubRepoUrls = s.githubRepoUrls,
+        githubMetrics = s.githubMetrics,
+        bridgeEnabled = s.bridgeEnabled,
+        bridgeUrl = s.bridgeUrl,
+        bridgeToken = s.bridgeToken,
+        bridgeMovieHabits = s.bridgeMovieHabits.toList(),
+        omdbApiKey = s.omdbApiKey,
+        customPointRangesHabits = s.customPointRangesHabits.toList(),
+        customPointRanges = s.customPointRanges.mapValues { (_, ranges) ->
+            ranges.map { PointRangeBackup(it.min, it.max) }
+        },
+        graphValueModeHabits = s.graphValueModeHabits,
+        graphMetricSelection = s.graphMetricSelection.mapValues { it.value.toList() },
+        habitNotes = s.habitNotes,
+        rollForwardHabits = s.rollForwardHabits.toList(),
+        rollForwardManualDates = s.rollForwardManualDates.mapValues { it.value.toList() },
+        mealEnabled = s.mealEnabled,
+        mealBaseUrl = s.mealBaseUrl,
+        mealApiKey = s.mealApiKey,
+        mealModel = s.mealModel,
+        mealSystemPrompt = s.mealSystemPrompt,
+        mealHabits = s.mealHabits.toList(),
+        appLinks = s.appLinks,
+        habitAppAssociations = s.habitAppAssociations,
+        habitLongPressActions = s.habitLongPressActions,
+        habitLongPressUrls = s.habitLongPressUrls,
+        habitLongPressUrlApps = s.habitLongPressUrlApps,
+        widgetTriggerHabits = s.widgetTriggerHabits.toList(),
+        widgetTriggerApps = s.widgetTriggerApps,
+        widgetTimerMinutesPrimary = s.widgetTimerMinutesPrimary.toList(),
+        chessReadinessEnabled = s.chessReadinessEnabled,
+        chessReadinessApp = s.chessReadinessApp,
+        gdriveAutoEnabled = s.gdriveAutoEnabled,
+        gdriveAccountName = s.gdriveAccountName
     )
 
     private fun AdviceItem.toBackup() = AdviceBackupItem(

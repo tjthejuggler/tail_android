@@ -24,6 +24,7 @@ import com.example.tail.data.TextInputRepository
 import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.backup.AutoBackupManager
 import com.example.tail.data.backup.BackupManager
+import com.example.tail.data.backup.GoogleDriveManager
 import com.example.tail.data.debug.DebugNoteRepository
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.data.parseDate
@@ -79,6 +80,12 @@ class MainActivity : ComponentActivity() {
             backupManager = backupManager
         )
 
+        val gdriveManager = GoogleDriveManager(
+            context = applicationContext,
+            settingsRepo = settingsRepo,
+            backupManager = backupManager
+        )
+
         setContent {
             TailTheme(darkTheme = true) {
                 TailApp(
@@ -92,7 +99,8 @@ class MainActivity : ComponentActivity() {
                     debugPrefs = debugPrefs,
                     debugNoteRepo = debugNoteRepo,
                     backupManager = backupManager,
-                    autoBackupManager = autoBackupManager
+                    autoBackupManager = autoBackupManager,
+                    gdriveManager = gdriveManager
                 )
             }
         }
@@ -111,7 +119,8 @@ private fun TailApp(
     debugPrefs: DebugPreferences,
     debugNoteRepo: DebugNoteRepository,
     backupManager: BackupManager,
-    autoBackupManager: AutoBackupManager
+    autoBackupManager: AutoBackupManager,
+    gdriveManager: GoogleDriveManager
 ) {
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -161,6 +170,15 @@ private fun TailApp(
                             android.util.Log.w("TailApp", "auto-backup threw: ${t.message}", t)
                         }
                     }
+                    // Google Drive auto-backup runs AFTER the local one so a
+                    // slow/failing Drive upload never delays the local backup.
+                    appScope.launch {
+                        try {
+                            gdriveManager.runAutoBackupIfNeeded()
+                        } catch (t: Throwable) {
+                            android.util.Log.w("TailApp", "gdrive auto-backup threw: ${t.message}", t)
+                        }
+                    }
                 }
                 Lifecycle.Event.ON_RESUME -> viewModel.onAppForegrounded()
                 else -> Unit
@@ -200,6 +218,7 @@ private fun TailApp(
                     debugPrefs = debugPrefs,
                     backupManager = backupManager,
                     autoBackupManager = autoBackupManager,
+                    gdriveManager = gdriveManager,
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToAppStats = { navController.navigate(ROUTE_APP_STATS) }
                 )

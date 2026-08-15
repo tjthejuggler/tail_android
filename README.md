@@ -1,6 +1,6 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-08-14T14:17Z
+**Last updated:** 2026-08-15T15:32Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
@@ -497,6 +497,7 @@ TARGET_TZ = ZoneInfo("Your/Timezone")  # e.g., "America/New_York"
 - **Travel Stats screen** *(added 2026-08-14T16:16Z, updated 17:40Z)* — the world-map screen gained a 📊 bar-chart button (top-right, next to the gear) opening a full **Travel Stats** screen ([`MapStatsScreen.kt`](app/src/main/java/com/example/tail/ui/MapStatsScreen.kt:1)) styled like App Stats (dark navy cards, gold titles). It aggregates the daily location history in one off-thread pass ([`computeTravelStats`](app/src/main/java/com/example/tail/ui/map/TravelStats.kt:1)) and shows: summary chips (countries / cities / continents / total km), a **time-range selector (1M · 1Y · 5Y · 10Y · All)** — 1M shows daily buckets with dates on the axis, 1Y monthly, 5Y/10Y/All get a Monthly ↔ Yearly granularity toggle — bar charts of **new countries, new cities, new continents, and distance traveled** per period (custom Canvas charts, [`StatsCharts.kt`](app/src/main/java/com/example/tail/ui/map/StatsCharts.kt:1)) with **sp-to-px sized axis text** (2-digit year labels), **horizontal swipe panning** of the fixed windows back in time, and **tap-a-bar detail popups** listing the exact places first-visited (with dates) or the biggest hops + total km of that period; **expandable leaderboards** (most-visited countries / cities, days per continent — top 8 with a "Show all (N)" toggle in the header), plus a Records section (longest stay in one place, biggest single hop, northern-/southernmost points, unique places, days tracked). Continents are classified from the daily coords via a bounding-box heuristic ([`continentForCoord`](app/src/main/java/com/example/tail/ui/map/TravelStats.kt:82)); distance is great-circle km between consecutive tracked days (haversine, same as the map's dedup). Country counting respects the existing ignored-countries list. New ViewModel accessor [`getAllStoredLabelsParsed()`](app/src/main/java/com/example/tail/ui/HabitViewModel.kt:7244) mirrors the coords snapshot pattern. *(Update 16:26Z: fixed a bug where `buildPeriods` returned the zero-filled skeleton instead of the aggregated buckets, so charts rendered with no bars.)* *(Update 16:54Z: assumed (*) locations now count — days with no record inherit the last known city, country and continent (fill-forward through today, field-level so ignored-country labels never inherit a foreign country); x-axis labels are measured with `measureText` and thinned by real width so 10Y and All show every year (All at 9 sp) with no right-edge overlap on 1M or 1Y, and the 1M chart shows day-of-month numbers only.)* *(Update 17:40Z: fixed the 1M tap bug — pointerInput was keyed on list size, which never changes while panning a fixed 30-day window, so taps fired stale closures pointing at pre-pan days; gesture handlers now use rememberUpdatedState, popups dismiss on pan, and tapping an empty bucket no longer opens an empty popup. Also, country aliases are canonicalised (USA, US, U.S., U.S.A. → United States) in both the stats and the map screen country counting, with the ignore list matched against both spellings.)*
 - **IMDb rating match-rate overhaul** *(added 2026-08-14T13:07Z)* — fixed the mass-missing IMDb ratings. Root causes found by auditing the real `movie_cache.json` corpus (860 unique titles): (1) the `(2024)` year suffix was never stripped, so 76% of movie queries hit OMDb as `t=Anora (2024)` — an exact-match parameter — and failed; (2) scene-release names lose apostrophes/colons (`The Handmaids Tale`, `A Quiet Place Day One`) which exact match also rejects; (3) any transient failure (network error, HTTP 401 rate-limit) was permanently negative-cached as "no rating". [`OmdbService`](app/src/main/java/com/example/tail/data/OmdbService.kt:1) now (a) extracts the year and passes it as `&y=` with `&type=` hints, (b) falls back to IMDb's free key-less suggestion endpoint (`v2.sg.media-imdb.com/suggestion`) for fuzzy title→ID resolution — scoring candidates by normalised Levenshtein similarity + token containment + year/type agreement (empirically validated at 15/15 correct resolutions on tricky real titles, junk correctly rejected) — then fetches the rating by the resolved `i=<ttID>`, and (c) returns a sealed [`OmdbOutcome`](app/src/main/java/com/example/tail/data/OmdbService.kt:60) (Found/NotFound/Transient) so only definitive misses are negative-cached; transient errors retry later. [`ImdbRatingCache`](app/src/main/java/com/example/tail/data/ImdbRatingCache.kt:1) additionally persists resolved IMDb IDs per show (episodes of one show resolve once) and supports clearing failed lookups. Settings → Bridge gains a **"Retry Failed Lookups"** button that un-poisons all cached zeros and refetches with the new matcher — run it once after updating. Unit tests: [`OmdbServiceTest`](app/src/test/java/com/example/tail/OmdbServiceTest.kt:1).
 - **Unified desktop supervisor** *(added 2026-08-12T14:40Z)* — all PC-side services (Garmin proxy, Garmin fetch timers, Tail Bridge, movie watcher) are now managed by a single Python process supervisor ([`tail_supervisor.py`](tail_supervisor.py:1)) reading from a TOML config ([`tail_services.toml`](tail_services.toml:1)). Only ONE systemd user service (`tail-supervisor.service`) is in autostart. Adding a new service = add a `[[service]]` block to the TOML and restart. The installer ([`install_supervisor.sh`](install_supervisor.sh:1)) creates venvs, installs dependencies, stops old individual services, and starts the supervisor — one command for fresh installs. See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for details.
+- **Complete backup coverage + Google Drive backups** *(added 2026-08-15T15:32Z)* — the backup bundle now captures **everything**: all ~90 `AppSettings` fields (previously ~40), meal logs + meal images, `vision_queue.json`, `debug_tail.json`, and the chess readiness/phase2 SharedPreferences. New **Google Drive Backup** section in Settings → Backup & Restore: Google login, auto-daily-upload toggle, manual "Back up to Drive now", and restore/delete of Drive backups. Drive backups use the exact same `BackupBundle` JSON as local exports. One-time Google Cloud Console registration is required — see **Google Drive backup setup** below.
 
 ---
 
@@ -511,3 +512,38 @@ TARGET_TZ = ZoneInfo("Your/Timezone")  # e.g., "America/New_York"
 | 5 | Sleep watch | 6 | Apnea walked |
 | 7 | Cold Shower Widget | 8 | Programming sessions |
 | ... | *(see `HABIT_ORDER` in HabitModels.kt)* | 76 | Memory practice |
+
+---
+
+## Google Drive backup setup *(added 2026-08-15T15:32Z)*
+
+Google Sign-In with the `drive.file` scope only works after the app is registered
+as an OAuth client in Google Cloud Console. Without this, the account picker opens,
+an account can be chosen, and sign-in then fails with **code 10 (DEVELOPER_ERROR)**.
+
+One-time setup (any Google account, ~5 minutes):
+
+1. Open <https://console.cloud.google.com/> and create (or pick) a project, e.g. `tail`.
+2. **APIs & Services → Library** → search **Google Drive API** → **Enable**.
+3. **APIs & Services → OAuth consent screen** → User type **External** → fill in
+   App name (`Tail`), user support email, developer contact email → Save.
+   (Personal use: leave it in *Testing*; no scope verification needed for `drive.file`
+   with only your own account.)
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID → Android**:
+   - Package name: `com.example.tail`
+   - SHA-1 (debug keystore): `D3:3B:39:6C:CE:65:75:42:4C:44:99:37:5C:0F:E9:FF:54:04:CD:00`
+5. Wait ~5–10 minutes for propagation, then in the app: Settings → Backup & Restore
+   → **Sign in with Google**.
+
+Notes:
+
+- The debug SHA-1 comes from `~/.android/debug.keystore`:
+  `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`
+- After creating the client, Google shows a **Client ID / secret** and offers a
+  JSON download — the app does **not** need them. Android OAuth clients are matched
+  automatically via package name + SHA-1; the secret is only used by server-side
+  "Web application" flows. If you keep the JSON, keep it out of the repo.
+- A release build signed with a different keystore needs its own SHA-1 added as a
+  second entry under the same OAuth client.
+- If a Drive operation ever fails with "Google needs you to approve Drive access",
+  the app automatically opens the consent screen on the next tap — approve and retry.

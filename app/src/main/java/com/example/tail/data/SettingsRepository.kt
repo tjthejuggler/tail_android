@@ -180,6 +180,14 @@ private val KEY_WIDGET_TRIGGER_APPS = stringPreferencesKey("widget_trigger_apps"
 // Widget-timer habits where minutes (not sessions) is the primary value
 private val KEY_WIDGET_TIMER_MINUTES_PRIMARY = stringSetPreferencesKey("widget_timer_minutes_primary")
 
+// ── Google Drive backup settings ──────────────────────────────────────
+// Whether the automatic daily Google Drive backup is enabled.
+private val KEY_GDRIVE_AUTO_ENABLED = booleanPreferencesKey("gdrive_auto_enabled")
+// Account name (e-mail) of the signed-in Google account used for Drive backups.
+private val KEY_GDRIVE_ACCOUNT_NAME = stringPreferencesKey("gdrive_account_name")
+// ISO date ("YYYY-MM-DD") of the most recent successful Drive auto-backup.
+private val KEY_GDRIVE_LAST_DATE = stringPreferencesKey("gdrive_last_backup_date")
+
 /**
  * One-time rename mapping for legacy "Launch … Widget" habit names.
  * Applied to all DataStore keys that store habit names (sets, lists, map keys, screen lists).
@@ -745,7 +753,10 @@ class SettingsRepository(private val context: Context) {
             widgetTriggerApps = decodeFileUriMap(prefs[KEY_WIDGET_TRIGGER_APPS] ?: ""),
             widgetTimerMinutesPrimary = prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] ?: emptySet(),
             chessReadinessEnabled = prefs[KEY_CHESS_READINESS_ENABLED] ?: false,
-            chessReadinessApp = prefs[KEY_CHESS_READINESS_APP] ?: ""
+            chessReadinessApp = prefs[KEY_CHESS_READINESS_APP] ?: "",
+            gdriveAutoEnabled = prefs[KEY_GDRIVE_AUTO_ENABLED] ?: false,
+            gdriveAccountName = prefs[KEY_GDRIVE_ACCOUNT_NAME] ?: "",
+            gdriveLastBackupDate = prefs[KEY_GDRIVE_LAST_DATE] ?: ""
         )
     }
 
@@ -1328,5 +1339,22 @@ class SettingsRepository(private val context: Context) {
     /** Saves the package name of the app associated with Chess Readiness. */
     suspend fun saveChessReadinessApp(packageName: String) {
         context.dataStore.edit { prefs -> prefs[KEY_CHESS_READINESS_APP] = packageName }
+    }
+
+    // ── Google Drive Backup ──────────────────────────────────────────────
+
+    /** Saves whether the automatic daily Google Drive backup is enabled. */
+    suspend fun saveGdriveAutoEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_GDRIVE_AUTO_ENABLED] = enabled }
+    }
+
+    /** Saves the account name (e-mail) of the signed-in Google account. */
+    suspend fun saveGdriveAccountName(accountName: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_GDRIVE_ACCOUNT_NAME] = accountName }
+    }
+
+    /** Saves the ISO date of the most recent successful Drive auto-backup. */
+    suspend fun saveGdriveLastBackupDate(date: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_GDRIVE_LAST_DATE] = date }
     }
 }
