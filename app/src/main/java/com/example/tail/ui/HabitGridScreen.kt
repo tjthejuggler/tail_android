@@ -104,6 +104,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -5010,13 +5011,23 @@ private fun EditModeValueEditorRow(
     // The value being edited: minutes live in the secondary-
     // value slot, sessions in the habit's own slot.
     val editingValue = if (editingMinutes) secondaryTodayCount else rawTodayCount
-    // Editable remembered field bound to the edited value.
-    var trueValueText by remember(habitName) {
+    // Editable remembered field bound to the edited value. Re-keyed on the
+    // edited track so switching Minutes/Sessions reloads the other track's
+    // stored value instead of keeping stale text.
+    var trueValueText by remember(habitName, editingMinutes) {
         mutableStateOf(editingValue.toString())
     }
+    var valueFieldFocused by remember { mutableStateOf(false) }
     // Sync when the edited value changes externally (e.g.
     // [−]/[+] buttons, bubble timer, or switching tracks).
-    if (!isGarminLinked && trueValueText.toIntOrNull() != editingValue) {
+    // While the field is focused, an EMPTY text is a legitimate mid-edit
+    // state (the user just cleared it) and must NOT be coerced back to
+    // "0" — that programmatic overwrite moved the cursor in front of the
+    // injected "0", so the next digit typed landed as "50" instead of "5".
+    val parsedTrueValue = trueValueText.toIntOrNull()
+    if (!isGarminLinked && parsedTrueValue != editingValue &&
+        (parsedTrueValue != null || !valueFieldFocused)
+    ) {
         trueValueText = editingValue.toString()
     }
     Row(
@@ -5092,7 +5103,12 @@ private fun EditModeValueEditorRow(
             OutlinedTextField(
                 value = trueValueText,
                 onValueChange = { v: String ->
-                    trueValueText = v.filter { it.isDigit() }
+                    // Digits only, with leading zeros collapsed ("05" → "5").
+                    // An empty string is allowed here: it is a mid-edit state
+                    // that commits a count of 0 and stays empty until the user
+                    // types the new number.
+                    val digits = v.filter { it.isDigit() }
+                    trueValueText = digits.toIntOrNull()?.toString() ?: ""
                     val newCount = trueValueText.toIntOrNull() ?: 0
                     if (editingMinutes) {
                         onSetSecondaryCount(habitName, newCount)
@@ -5104,7 +5120,9 @@ private fun EditModeValueEditorRow(
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Number
                 ),
-                modifier = Modifier.width(64.dp),
+                modifier = Modifier
+                    .width(64.dp)
+                    .onFocusChanged { valueFieldFocused = it.isFocused },
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = Color(0xFFAA88FF),
                     unfocusedTextColor = Color(0xFFAA88FF),
