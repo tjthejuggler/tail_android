@@ -318,7 +318,13 @@ class ChessReadinessOverlay(service: Context) {
         else puzzleTimeField?.text?.toString()?.toIntOrNull() ?: 0
         puzzleTimes = puzzleTimes + effective
         puzzleTimeText = ""
-        ChessHabitCredit.grant(context, ChessReadinessStore.linkedPuzzleHabit(context))
+        // Credit the linked habit with the minutes this puzzle took (rounded
+        // to the nearest minute, minimum 1) — written to the habit's minutes
+        // secondary value, NOT its session count.
+        val puzzleMinutes = Math.round(effective / 60.0).toInt().coerceAtLeast(1)
+        ChessHabitCredit.grant(
+            context, ChessReadinessStore.linkedPuzzleHabit(context), puzzleMinutes
+        )
         if (puzzleIndex + 1 < ChessReadinessEngine.RATED_PUZZLE_COUNT) {
             puzzleIndex += 1
             persist(SessionStep.PUZZLE_GO, puzzleIdx = puzzleIndex)
@@ -399,7 +405,13 @@ class ChessReadinessOverlay(service: Context) {
                     context,
                     ChessReadinessEngine.ReadinessTest(r.timestamp, r.ccrs, r.state.name)
                 )
-                ChessHabitCredit.grant(context, ChessReadinessStore.linkedRushHabit(context))
+                // The rush run itself lasts 3 minutes — credit those to the
+                // linked habit's minutes value (plus the usual +1 session).
+                ChessHabitCredit.grant(
+                    context,
+                    ChessReadinessStore.linkedRushHabit(context),
+                    ChessReadinessEngine.RUSH_RUN_MINUTES
+                )
                 val newAth = ChessReadinessEngine.nextAllTimeHigh(rushAth, input.rushScore)
                 if (newAth != rushAth) {
                     ChessReadinessStore.saveRushAllTimeHigh(context, newAth)
@@ -456,14 +468,23 @@ class ChessReadinessOverlay(service: Context) {
 }
 
 /**
- * Credits +1 to [habitName] (if linked in Settings) for puzzle/rush activity
- * completed during a readiness test. Fire-and-forget on IO; mirrors the IPC
- * increment path (respects the max-1/day cap, emits the increment bus so
- * open UIs refresh, records a timestamp).
+ * Credits time spent on a readiness-test step to [habitName] (if linked in
+ * Settings): adds [minutes] to the habit's MINUTES secondary value
+ * (`secondary_value:<habitName>` in habitsdb.txt) and +[sessions] to the
+ * habit's own session-count slot, in one atomic read-modify-write — the
+ * same write the bubble timer uses
+ * ([HabitsRepository.incrementHabitWithMinutes]).
+ *
+ * Minute-based credits are cumulative durations, not binary "did it"
+ * counts, so they bypass the max-1/day cap (mirroring the IPC v2
+ * EXTRA_MINUTES rule); a pure session credit ([minutes] <= 0) still
+ * respects it. Fire-and-forget on IO; emits the increment bus so open UIs
+ * refresh, records a timestamp.
  */
 object ChessHabitCredit {
-    fun grant(context: Context, habitName: String) {
+    fun grant(context: Context, habitName: String, minutes: Int, sessions: Int = 1) {
         if (habitName.isBlank()) return
+        if (minutes <= 0 && sessions <= 0) return
         val appContext = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -473,13 +494,17 @@ object ChessHabitCredit {
                 if (uriStr.isEmpty()) return@launch
                 val uri = Uri.parse(uriStr)
 
-                if (habitName in settings.maxOneHabits) {
+                // The max-1/day cap only makes sense for count-based credits;
+                // minutes are cumulative durations (same rule as IPC v2).
+                if (minutes <= 0 && habitName in settings.maxOneHabits) {
                     val db = habitsRepo.loadDatabase(uri, appContext)
                     val today = LocalDate.now().toString()
                     if ((db[habitName]?.get(today) ?: 0) >= 1) return@launch
                 }
 
-                habitsRepo.incrementHabit(uri, appContext, habitName, 1)
+                habitsRepo.incrementHabitWithMinutes(
+                    uri, appContext, habitName, minutes.coerceAtLeast(0), sessions
+                )
                 HabitIncrementBus.emit(habitName)
                 try {
                     HabitTimestampRepository(appContext).addTimestamp(habitName)

@@ -111,9 +111,9 @@ object ChessReadinessStore {
     // ── Linked habits (puzzle / rush credit) ───────────────────────────────
 
     /**
-     * Habit credited +1 for each rated puzzle completed during the Phase 1
-     * test ("" = no habit linked). Chosen in Settings from the full habit
-     * list.
+     * Habit credited the minutes each rated puzzle takes (plus +1 session)
+     * during the Phase 1 test ("" = no habit linked). Chosen in Settings
+     * from the full habit list.
      */
     fun linkedPuzzleHabit(context: Context): String =
         prefs(context).getString(KEY_PUZZLE_HABIT, "") ?: ""
@@ -123,8 +123,8 @@ object ChessReadinessStore {
     }
 
     /**
-     * Habit credited +1 when the 3-minute Puzzle Rush run is reported during
-     * the Phase 1 test ("" = no habit linked).
+     * Habit credited the 3 rush minutes (plus +1 session) when the Puzzle
+     * Rush run is reported during the Phase 1 test ("" = no habit linked).
      */
     fun linkedRushHabit(context: Context): String =
         prefs(context).getString(KEY_RUSH_HABIT, "") ?: ""

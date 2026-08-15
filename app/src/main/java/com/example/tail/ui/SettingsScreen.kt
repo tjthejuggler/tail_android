@@ -1788,13 +1788,15 @@ private fun ChessReadinessSettingsSection(
             }
 
             // Linked habits — puzzle/rush activity in the readiness test
-            // also credits these habits (+1 each).
+            // also credits these habits (minutes + 1 session each).
             Spacer(modifier = Modifier.height(12.dp))
             Text("Habit Links", fontSize = 14.sp)
             Text(
                 "Get habit credit for the puzzle steps of the readiness test: " +
-                    "Rated Puzzles +1 per puzzle solved/attempted, Puzzle Rush " +
-                    "+1 per run reported.",
+                    "each step's minutes are added to the habit's minutes value " +
+                    "(Rated Puzzles credit their solve time — a failed attempt " +
+                    "counts as 3 min — and Puzzle Rush credits its 3-minute " +
+                    "run), plus +1 session per puzzle/run.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

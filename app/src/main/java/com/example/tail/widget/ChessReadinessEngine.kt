@@ -70,6 +70,12 @@ object ChessReadinessEngine {
     /** Effective solve time (seconds) contributed by a FAILED puzzle. */
     const val PUZZLE_FAIL_TIME_SEC = 180
 
+    /**
+     * Duration of the Puzzle Rush run (minutes). Credited to the linked
+     * rush habit's minutes secondary value when a run is reported.
+     */
+    const val RUSH_RUN_MINUTES = 3
+
     // ── Input models ───────────────────────────────────────────────────────
 
     /**
