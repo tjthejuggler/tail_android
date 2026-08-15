@@ -5,12 +5,19 @@ import android.net.Uri
 import android.util.Log
 import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import com.example.tail.data.GarminType
 import com.example.tail.data.ImportResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,10 +32,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,6 +60,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -54,10 +70,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -161,7 +181,6 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsState()
     val debugSnapshot by debugPrefs.snapshot.collectAsState()
-    val adviceState by adviceViewModel.state.collectAsState()
     val context = LocalContext.current
 
     // Picker for habitsdb.txt — needs read+write so the app can increment habits
@@ -243,286 +262,414 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .imePadding()
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
         ) {
-            // ── Habit database file ──────────────────────────────────────────
+            // ── Data Files ────────────────────────────────────────────────────
             item {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Habit Database (habitsdb.txt)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(
-                    text = "The unified habit database shared between this device and the PC via Syncthing. " +
-                           "Both devices read and write this single file.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (settings.fileUri.isEmpty()) "No file selected"
-                           else settings.fileUri,
-                    fontSize = 12.sp,
-                    color = if (settings.fileUri.isEmpty())
-                        MaterialTheme.colorScheme.error
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = { filePicker.launch(arrayOf("*/*")) }) {
-                    Text("Change File")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Screens relay file ───────────────────────────────────────────
-            item {
-                Text("Screens Layout (screens_layout.json)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(
-                    text = "Shared with the PC widget to keep screen names and habit arrangement in sync. " +
-                           "Pick the screens_layout.json file in your noteVault/tail/ folder. " +
-                           "The app writes to it whenever you add, rename, or rearrange screens.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (settings.screensRelayFileUri.isEmpty()) "No file selected (PC widget won't sync screens)"
-                           else settings.screensRelayFileUri,
-                    fontSize = 12.sp,
-                    color = if (settings.screensRelayFileUri.isEmpty())
-                        MaterialTheme.colorScheme.error
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = { screensRelayFilePicker.launch(arrayOf("*/*")) }) {
-                    Text("Change Relay File")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Tasker stats file ────────────────────────────────────────────
-            item {
-                Text("Tasker Stats File (total_habits.txt)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(
-                    text = "A simple txt file Tasker can read for habit stats. " +
-                           "Updated after every habit count change. " +
-                           "Format: today=N / avg7=X.XX / avg30=X.XX",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (settings.taskerFileUri.isEmpty()) "No file selected"
-                           else settings.taskerFileUri,
-                    fontSize = 12.sp,
-                    color = if (settings.taskerFileUri.isEmpty())
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = { taskerFilePicker.launch(arrayOf("*/*")) }) {
-                    Text("Change Tasker File")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "If the totals look wrong (e.g. after a Garmin import), tap below to " +
-                           "rewrite the file now. \"Don't affect points\" habits are excluded.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Button(
-                    onClick = { viewModel.refreshTaskerStatsFile() },
-                    enabled = settings.taskerFileUri.isNotEmpty()
+                SettingsCategory(
+                    title = "Data Files",
+                    summary = "Habit database · screens layout · Tasker stats",
+                    icon = Icons.Filled.FolderOpen
                 ) {
-                    Text("🔄 Recalculate Stats File Now")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-
-            // ── AI Icon Generation ────────────────────────────────────────────
-            item {
-                AiIconSettingsSection(viewModel = viewModel, settings = settings)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Chess.com Integration ─────────────────────────────────────────
-            item {
-                ChessComSettingsSection(viewModel = viewModel, settings = settings)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── GitHub Integration ─────────────────────────────────────────────
-            item {
-                GithubSettingsSection(viewModel = viewModel, settings = settings)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Garmin Integration ────────────────────────────────────────────
-            item {
-                GarminSettingsSection(viewModel = viewModel, settings = settings, context = context)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Tail Bridge (Movies + future tethered features) ─────────────
-            item {
-                BridgeSettingsSection(viewModel = viewModel, settings = settings)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Voice Trigger ────────────────────────────────────────────────
-            item {
-                VoiceTriggerSettingsSection(viewModel = viewModel, settings = settings)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Voice Note Dictation ─────────────────────────────────────────
-            item {
-                VoiceNoteSettingsSection(viewModel = viewModel, settings = settings)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Floating Bubble ──────────────────────────────────────────────
-            item {
-                FloatingBubbleSettingsSection(context = context)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Chess Readiness ──────────────────────────────────────────────
-            item {
-                ChessReadinessSettingsSection(viewModel = viewModel, settings = settings)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Meal Habit Engine ─────────────────────────────────────────────
-            item {
-                MealSettingsSection(viewModel = viewModel, settings = settings)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // ── Advice Banner ─────────────────────────────────────────────────
-            item {
-                val adviceCount = adviceState.items.size
-                var showAdviceDialog by remember { mutableStateOf(false) }
-                Text("Advice Banner", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(
-                    text = "Add reminders or tips that appear at the top of the habits screen. " +
-                           "Swipe left/right on the banner to cycle through advice.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (adviceCount == 0) "No advice set"
-                    else "$adviceCount piece${if (adviceCount != 1) "s" else ""} of advice",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = { showAdviceDialog = true }) {
-                    Text("Manage Advice")
-                }
-                if (showAdviceDialog) {
-                    AdviceDialog(
-                        adviceList = adviceState.items,
-                        onAdd = { text -> adviceViewModel.addAdvice(text) },
-                        onUpdate = { entity, text -> adviceViewModel.updateAdvice(entity, text) },
-                        onDelete = { id -> adviceViewModel.deleteAdvice(id) },
-                        onDismiss = { showAdviceDialog = false }
+                    HabitDatabaseFileSection(
+                        fileUri = settings.fileUri,
+                        onPickFile = { filePicker.launch(arrayOf("*/*")) }
+                    )
+                    SettingsSubSectionDivider()
+                    ScreensRelayFileSection(
+                        fileUri = settings.screensRelayFileUri,
+                        onPickFile = { screensRelayFilePicker.launch(arrayOf("*/*")) }
+                    )
+                    SettingsSubSectionDivider()
+                    TaskerStatsFileSection(
+                        fileUri = settings.taskerFileUri,
+                        onPickFile = { taskerFilePicker.launch(arrayOf("*/*")) },
+                        onRefresh = { viewModel.refreshTaskerStatsFile() }
                     )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // ── Backup & Restore ─────────────────────────────────────────────
+
+            // ── Integrations ───────────────────────────────────────────────────
             item {
-                BackupSettingsSection(
-                    backupManager = backupManager,
-                    autoBackupManager = autoBackupManager,
-                    gdriveManager = gdriveManager
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
+                SettingsCategory(
+                    title = "Integrations",
+                    summary = "Chess.com · GitHub · Garmin · Tail Bridge",
+                    icon = Icons.Filled.Extension
+                ) {
+                    ChessComSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    GithubSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    GarminSettingsSection(viewModel = viewModel, settings = settings, context = context)
+                    SettingsSubSectionDivider()
+                    BridgeSettingsSection(viewModel = viewModel, settings = settings)
+                }
             }
 
-            // ── Automatic snapshots (wipe recovery) ──────────────────────────
+            // ── Voice & Input ──────────────────────────────────────────────────
             item {
-                SnapshotRestoreSection(viewModel = viewModel)
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
+                SettingsCategory(
+                    title = "Voice & Input",
+                    summary = "Voice trigger · voice note dictation",
+                    icon = Icons.Filled.Mic
+                ) {
+                    VoiceTriggerSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    VoiceNoteSettingsSection(viewModel = viewModel, settings = settings)
+                }
             }
 
-            // ── Debug Mode ───────────────────────────────────────────────────
+            // ── Overlays & Tools ───────────────────────────────────────────────
             item {
-                DebugModeCard(
-                    debugModeEnabled = debugSnapshot.debugModeEnabled,
-                    debugFileDirUri = debugSnapshot.debugFileDirUri,
-                    onToggleDebugMode = { debugPrefs.debugModeEnabled = it },
-                    onChooseDirectory = { debugDirLauncher.launch(null) },
-                    onClearDirectory = { debugPrefs.debugFileDirUri = "" }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
+                SettingsCategory(
+                    title = "Overlays & Tools",
+                    summary = "Floating bubble · chess readiness · debug mode",
+                    icon = Icons.Filled.Layers
+                ) {
+                    FloatingBubbleSettingsSection(context = context)
+                    SettingsSubSectionDivider()
+                    ChessReadinessSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    DebugModeCard(
+                        debugModeEnabled = debugSnapshot.debugModeEnabled,
+                        debugFileDirUri = debugSnapshot.debugFileDirUri,
+                        onToggleDebugMode = { debugPrefs.debugModeEnabled = it },
+                        onChooseDirectory = { debugDirLauncher.launch(null) },
+                        onClearDirectory = { debugPrefs.debugFileDirUri = "" }
+                    )
+                }
             }
 
-            // ── Per-habit settings hint ──────────────────────────────────────
+            // ── Habit Features ─────────────────────────────────────────────────
             item {
-                Text(
-                    text = "Per-habit settings",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "To change settings for a specific habit (e.g. custom input mode), " +
-                           "go back to the main screen, tap the ✏ edit button, then tap the habit " +
-                           "you want to configure.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(16.dp))
+                SettingsCategory(
+                    title = "Habit Features",
+                    summary = "AI icons · meal engine · advice banner",
+                    icon = Icons.Filled.AutoAwesome
+                ) {
+                    AiIconSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    MealSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    AdviceBannerSection(adviceViewModel = adviceViewModel)
+                }
+            }
+
+            // ── Backup & Recovery ──────────────────────────────────────────────
+            item {
+                SettingsCategory(
+                    title = "Backup & Recovery",
+                    summary = "Backups · Google Drive · automatic snapshots",
+                    icon = Icons.Filled.Backup
+                ) {
+                    BackupSettingsSection(
+                        backupManager = backupManager,
+                        autoBackupManager = autoBackupManager,
+                        gdriveManager = gdriveManager
+                    )
+                    SettingsSubSectionDivider()
+                    SnapshotRestoreSection(viewModel = viewModel)
+                }
+            }
+
+            // ── Per-habit settings hint (always visible footer) ───────────────
+            item {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Per-habit settings",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "To change settings for a specific habit (e.g. custom input mode), " +
+                                   "go back to the main screen, tap the ✏ edit button, then tap the habit " +
+                                   "you want to configure.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }
     } // closes grayscale MaterialTheme
+}
+
+// ── Collapsible category card ────────────────────────────────────────────────
+
+/**
+ * A collapsible settings category card.
+ *
+ * Collapsed by default — tapping the header expands it with an animated
+ * reveal and a rotating chevron. Purely presentational grouping: the
+ * [content] lambda is only composed while expanded, so collapsed categories
+ * cost nothing to render.
+ */
+@Composable
+private fun SettingsCategory(
+    title: String,
+    summary: String,
+    icon: ImageVector,
+    content: @Composable () -> Unit
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "chevronRotation"
+    )
+
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            )
+        ) {
+            // Header row — always visible, tap to toggle
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp
+                    )
+                    Text(
+                        text = summary,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.rotate(chevronRotation)
+                )
+            }
+
+            // Content — only composed while expanded
+            if (expanded) {
+                Column(
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    content()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Thin divider between sub-sections inside a category card.
+ */
+@Composable
+private fun SettingsSubSectionDivider() {
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+        thickness = 0.5.dp
+    )
+}
+
+/**
+ * Habit database (habitsdb.txt) picker sub-section.
+ */
+@Composable
+private fun HabitDatabaseFileSection(
+    fileUri: String,
+    onPickFile: () -> Unit
+) {
+    Column {
+        Text("Habit Database (habitsdb.txt)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(
+            text = "The unified habit database shared between this device and the PC via Syncthing. " +
+                   "Both devices read and write this single file.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = if (fileUri.isEmpty()) "No file selected" else fileUri,
+            fontSize = 12.sp,
+            color = if (fileUri.isEmpty())
+                MaterialTheme.colorScheme.error
+            else
+                MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = onPickFile) {
+            Text("Change File")
+        }
+    }
+}
+
+/**
+ * Screens relay (screens_layout.json) picker sub-section.
+ */
+@Composable
+private fun ScreensRelayFileSection(
+    fileUri: String,
+    onPickFile: () -> Unit
+) {
+    Column {
+        Text("Screens Layout (screens_layout.json)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(
+            text = "Shared with the PC widget to keep screen names and habit arrangement in sync. " +
+                   "Pick the screens_layout.json file in your noteVault/tail/ folder. " +
+                   "The app writes to it whenever you add, rename, or rearrange screens.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = if (fileUri.isEmpty()) "No file selected (PC widget won't sync screens)" else fileUri,
+            fontSize = 12.sp,
+            color = if (fileUri.isEmpty())
+                MaterialTheme.colorScheme.error
+            else
+                MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = onPickFile) {
+            Text("Change Relay File")
+        }
+    }
+}
+
+/**
+ * Tasker stats (total_habits.txt) picker sub-section with recalculate action.
+ */
+@Composable
+private fun TaskerStatsFileSection(
+    fileUri: String,
+    onPickFile: () -> Unit,
+    onRefresh: () -> Unit
+) {
+    Column {
+        Text("Tasker Stats File (total_habits.txt)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(
+            text = "A simple txt file Tasker can read for habit stats. " +
+                   "Updated after every habit count change. " +
+                   "Format: today=N / avg7=X.XX / avg30=X.XX",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = if (fileUri.isEmpty()) "No file selected" else fileUri,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = onPickFile) {
+            Text("Change Tasker File")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "If the totals look wrong (e.g. after a Garmin import), tap below to " +
+                   "rewrite the file now. \"Don't affect points\" habits are excluded.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Button(
+            onClick = onRefresh,
+            enabled = fileUri.isNotEmpty()
+        ) {
+            Text("🔄 Recalculate Stats File Now")
+        }
+    }
+}
+
+/**
+ * Advice Banner sub-section — manage the advice items shown on the main screen.
+ */
+@Composable
+private fun AdviceBannerSection(adviceViewModel: AdviceViewModel) {
+    val adviceState by adviceViewModel.state.collectAsState()
+    val adviceCount = adviceState.items.size
+    var showAdviceDialog by remember { mutableStateOf(false) }
+
+    Column {
+        Text("Advice Banner", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(
+            text = "Add reminders or tips that appear at the top of the habits screen. " +
+                   "Swipe left/right on the banner to cycle through advice.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = if (adviceCount == 0) "No advice set"
+            else "$adviceCount piece${if (adviceCount != 1) "s" else ""} of advice",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = { showAdviceDialog = true }) {
+            Text("Manage Advice")
+        }
+        if (showAdviceDialog) {
+            AdviceDialog(
+                adviceList = adviceState.items,
+                onAdd = { text -> adviceViewModel.addAdvice(text) },
+                onUpdate = { entity, text -> adviceViewModel.updateAdvice(entity, text) },
+                onDelete = { id -> adviceViewModel.deleteAdvice(id) },
+                onDismiss = { showAdviceDialog = false }
+            )
+        }
+    }
 }
 
 /**
