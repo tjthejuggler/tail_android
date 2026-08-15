@@ -23,6 +23,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -66,11 +67,16 @@ private val tightTextStyle = TextStyle(
 )
 
 /**
+ * Tiny corner badge identifying a special (integration-linked) habit.
+ */
+enum class HabitSpecialBadge { MOVIE, MEAL, GARMIN, CHESS }
+
+/**
  * A single habit cell in the 8×10 grid.
  *
  * Layout:
  *   Top-left:     all-time high day count
- *   Top-right:    "+" badge if custom input mode
+ *   Top-right:    long-press arrow (blue = app, green = URL) + special-habit badge
  *   Center:       icon image + habit name (truncated)
  *   Bottom-left:  current streak (positive) or antistreak (negative)
  *   Bottom-right: longest streak
@@ -99,8 +105,12 @@ fun HabitButton(
     aiIconRepo: AiIconRepository? = null,
     /** Map of habit name → GarminType.name for Garmin-linked habits. Used to format values (e.g. metres → km). */
     garminHabitLinks: Map<String, String> = emptyMap(),
-    /** True when this habit has one or more associated apps (long-press launches them). */
+    /** True when this habit has one or more associated apps (long-press launches them → blue arrow). */
     hasAppAssociation: Boolean = false,
+    /** True when long-press opens the configured URL (green arrow; wins over the blue app arrow). */
+    hasLongPressUrl: Boolean = false,
+    /** Tiny corner icon identifying a special (integration-linked) habit. */
+    specialBadge: HabitSpecialBadge? = null,
     /** True while this habit should pulse (e.g. jumped to from global search). */
     isHighlighted: Boolean = false
 ) {
@@ -282,88 +292,82 @@ fun HabitButton(
                 .padding(start = 1.dp, top = 0.dp)
         )
 
-        // Disabled overlay: red ✕ in top-right corner
-        if (isDisabled) {
-            Text(
-                text = "✕",
-                color = Color(0xFFFF2222),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.ExtraBold,
-                style = tightTextStyle,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 0.dp, top = 0.dp)
-            )
-        }
-
-        // Top-right: move-pending indicator OR graph mode indicator OR edit mode handle OR custom input badge
-        if (isGraphSelected) {
-            Text(
-                text = "📊",
-                color = Color(0xFF66DD66),
-                fontSize = 9.sp,
-                fontWeight = FontWeight.ExtraBold,
-                style = tightTextStyle,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 1.dp, top = 0.dp)
-            )
-        } else if (graphMode) {
-            Text(
-                text = "○",
-                color = Color(0xFF1A4A1A),
-                fontSize = 9.sp,
-                fontWeight = FontWeight.ExtraBold,
-                style = tightTextStyle,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 1.dp, top = 0.dp)
-            )
-        } else if (isMovePendingSource) {
-            Text(
-                text = "↕",
-                color = Color(0xFF44FFFF),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.ExtraBold,
-                style = tightTextStyle,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 1.dp, top = 0.dp)
-            )
-        } else if (editMode) {
-            Text(
-                text = "⠿",
-                color = Color(0xFFFF8C00),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.ExtraBold,
-                style = tightTextStyle,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 1.dp, top = 0.dp)
-            )
-        } else if (hasAppAssociation) {
-            // Blue arrow indicates long-press launches an associated app
-            Text(
-                text = "↗",
-                color = Color(0xFF66CCFF),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.ExtraBold,
-                style = tightTextStyle,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 1.dp, top = 0.dp)
-            )
-        } else if (habit.useCustomInput) {
-            Text(
-                text = "+",
-                color = Color.Yellow,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.ExtraBold,
-                style = tightTextStyle,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 1.dp, top = 0.dp)
-            )
+        // Top-right corner stack: disabled mark / mode indicator / long-press arrow,
+        // with the special-habit badge (if any) rendered directly beneath.
+        Column(
+            horizontalAlignment = Alignment.End,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 1.dp, top = 0.dp)
+        ) {
+            when {
+                // Disabled overlay: red ✕
+                isDisabled -> Text(
+                    text = "✕",
+                    color = Color(0xFFFF2222),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = tightTextStyle
+                )
+                isGraphSelected -> Text(
+                    text = "📊",
+                    color = Color(0xFF66DD66),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = tightTextStyle
+                )
+                graphMode -> Text(
+                    text = "○",
+                    color = Color(0xFF1A4A1A),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = tightTextStyle
+                )
+                isMovePendingSource -> Text(
+                    text = "↕",
+                    color = Color(0xFF44FFFF),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = tightTextStyle
+                )
+                editMode -> Text(
+                    text = "⠿",
+                    color = Color(0xFFFF8C00),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = tightTextStyle
+                )
+                // Green arrow indicates long-press opens the configured URL
+                hasLongPressUrl -> Text(
+                    text = "↗",
+                    color = Color(0xFF66DD66),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = tightTextStyle
+                )
+                // Blue arrow indicates long-press launches an associated app
+                hasAppAssociation -> Text(
+                    text = "↗",
+                    color = Color(0xFF66CCFF),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = tightTextStyle
+                )
+            }
+            // Tiny icon identifying a special (integration-linked) habit
+            when (specialBadge) {
+                HabitSpecialBadge.MOVIE -> Text(text = "🎬", fontSize = 9.sp, style = tightTextStyle)
+                HabitSpecialBadge.MEAL -> Text(text = "🍽️", fontSize = 9.sp, style = tightTextStyle)
+                HabitSpecialBadge.GARMIN -> Text(text = "⌚", fontSize = 9.sp, style = tightTextStyle)
+                HabitSpecialBadge.CHESS -> Text(
+                    text = "♞",
+                    color = Color(0xFF9DC463),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    style = tightTextStyle
+                )
+                null -> {}
+            }
         }
 
         // Center: icon — app icon takes priority over AI icon, then drawable resource

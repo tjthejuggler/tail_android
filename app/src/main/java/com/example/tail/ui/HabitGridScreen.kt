@@ -642,6 +642,11 @@ fun HabitGridScreen(
                         garminHabitLinks = settings.garminHabitLinks,
                         appLinks = settings.appLinks,
                         habitAppAssociations = settings.habitAppAssociations,
+                        mealHabits = settings.mealHabits,
+                        bridgeMovieHabits = if (settings.bridgeEnabled) settings.bridgeMovieHabits else emptySet(),
+                        chessComHabitLinks = settings.chessComHabitLinks,
+                        habitLongPressActions = settings.habitLongPressActions,
+                        habitLongPressUrls = settings.habitLongPressUrls,
                         onHabitClick = { habit, index ->
                             when {
                                 isAppLink(habit.name) -> {
@@ -1955,6 +1960,16 @@ private fun HabitGrid(
     garminHabitLinks: Map<String, String> = emptyMap(),
     appLinks: Map<String, String> = emptyMap(),
     habitAppAssociations: Map<String, List<String>> = emptyMap(),
+    /** Meal habits (camera/details long-press actions, meal dialog on tap). */
+    mealHabits: Set<String> = emptySet(),
+    /** Movie-bridge-linked habits (auto-filled from the tail_bridge watcher). */
+    bridgeMovieHabits: Set<String> = emptySet(),
+    /** Map of habit name → chess.com time control for chess.com-linked habits. */
+    chessComHabitLinks: Map<String, String> = emptyMap(),
+    /** Map of habit name → configured long-press action string. */
+    habitLongPressActions: Map<String, String> = emptyMap(),
+    /** Map of habit name → URL opened on long-press (LONG_PRESS_URL action). */
+    habitLongPressUrls: Map<String, String> = emptyMap(),
     onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit,
     onPlaceholderClick: (Int) -> Unit
@@ -1994,6 +2009,23 @@ private fun HabitGrid(
                         isMovePendingTarget = isMovePending && !isMovePendingSource && editMode
                     )
                 } else {
+                    // Effective long-press action — mirrors the grid's long-press handler:
+                    // a URL action without a configured URL falls back to the app behaviour.
+                    val longPressUrl = habitLongPressUrls[habit.name]
+                    val effectiveAction = com.example.tail.data.effectiveLongPressAction(
+                        habitLongPressActions[habit.name]
+                    ).let { effective ->
+                        if (effective == com.example.tail.data.LONG_PRESS_URL && longPressUrl.isNullOrBlank())
+                            com.example.tail.data.LONG_PRESS_APP else effective
+                    }
+                    // Tiny corner badge for special (integration-linked) habits
+                    val specialBadge = when {
+                        habit.name in bridgeMovieHabits -> HabitSpecialBadge.MOVIE
+                        habit.name in mealHabits -> HabitSpecialBadge.MEAL
+                        habit.name in garminHabitLinks -> HabitSpecialBadge.GARMIN
+                        habit.name in chessComHabitLinks -> HabitSpecialBadge.CHESS
+                        else -> null
+                    }
                     HabitButton(
                         habit = habit,
                         onClick = { onHabitClick(habit, index) },
@@ -2010,7 +2042,10 @@ private fun HabitGrid(
                         isDisabled = habit.name in disabledHabits,
                         aiIconRepo = aiIconRepo,
                         garminHabitLinks = garminHabitLinks,
-                        hasAppAssociation = habit.name in habitAppAssociations
+                        hasAppAssociation = effectiveAction == com.example.tail.data.LONG_PRESS_APP &&
+                            habit.name in habitAppAssociations,
+                        hasLongPressUrl = effectiveAction == com.example.tail.data.LONG_PRESS_URL,
+                        specialBadge = specialBadge
                     )
                 }
             } else if (editMode) {
