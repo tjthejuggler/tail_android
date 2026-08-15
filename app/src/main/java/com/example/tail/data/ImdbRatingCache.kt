@@ -27,6 +27,10 @@ import java.io.File
  *     "inception::y2010": 88,
  *     "breaking bad::s5e14": 95
  *   },
+ *   "runtimes": {
+ *     "inception::y2010": 148,
+ *     "breaking bad::s5e14": 47
+ *   },
  *   "resolvedIds": {
  *     "breaking bad": "tt0903747"
  *   },
@@ -59,6 +63,10 @@ class ImdbRatingCache(private val context: Context) {
     /** Resolved IMDb IDs (tt…) keyed by [ParsedTitle.idCacheKey]. */
     @Volatile
     private var resolvedIds: MutableMap<String, String> = mutableMapOf()
+
+    /** Runtimes in minutes keyed by [ParsedTitle.cacheKey]. 0 = looked up, none found. */
+    @Volatile
+    private var runtimes: MutableMap<String, Int> = mutableMapOf()
 
     @Volatile
     private var trackingDate: String = ""
@@ -106,6 +114,17 @@ class ImdbRatingCache(private val context: Context) {
                             }
                             resolvedIds = idMap
                         }
+                        val runtimesObj = json.optJSONObject("runtimes")
+                        if (runtimesObj != null) {
+                            val runtimeMap = mutableMapOf<String, Int>()
+                            val runtimeKeys = runtimesObj.keys()
+                            while (runtimeKeys.hasNext()) {
+                                val k = runtimeKeys.next()
+                                val v = runtimesObj.optInt(k, -1)
+                                if (v >= 0) runtimeMap[k] = v
+                            }
+                            runtimes = runtimeMap
+                        }
                         val tracking = json.optJSONObject("callTracking")
                         if (tracking != null) {
                             trackingDate = tracking.optString("date", "")
@@ -139,6 +158,12 @@ class ImdbRatingCache(private val context: Context) {
                     idsObj.put(k, v)
                 }
                 json.put("resolvedIds", idsObj)
+
+                val runtimesObj = JSONObject()
+                for ((k, v) in runtimes) {
+                    runtimesObj.put(k, v)
+                }
+                json.put("runtimes", runtimesObj)
 
                 val trackingObj = JSONObject()
                 trackingObj.put("date", trackingDate)
@@ -203,6 +228,33 @@ class ImdbRatingCache(private val context: Context) {
         ensureLoaded()
         mutex.withLock {
             resolvedIds[idCacheKey] = imdbID
+            persist()
+        }
+    }
+
+    /**
+     * Returns the cached runtime in minutes for [cacheKey], or null if not
+     * looked up yet. A stored 0 means "looked up but OMDb had no runtime".
+     */
+    suspend fun getRuntime(cacheKey: String): Int? {
+        ensureLoaded()
+        return runtimes[cacheKey]?.takeIf { it > 0 }
+    }
+
+    /** True if a runtime lookup already happened for [cacheKey] (even if none found). */
+    suspend fun hasRuntime(cacheKey: String): Boolean {
+        ensureLoaded()
+        return runtimes.containsKey(cacheKey)
+    }
+
+    /**
+     * Stores a runtime in minutes for [cacheKey] and persists.
+     * Null is stored as 0 ("looked up, no runtime") so it is not re-fetched.
+     */
+    suspend fun putRuntime(cacheKey: String, runtimeMin: Int?) {
+        ensureLoaded()
+        mutex.withLock {
+            runtimes[cacheKey] = runtimeMin ?: 0
             persist()
         }
     }

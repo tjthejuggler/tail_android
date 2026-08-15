@@ -199,6 +199,7 @@ fun defaultLabelForValueKey(valueKey: String): String = when (valueKey) {
     GRAPH_METRIC_CARBS -> "Carbs"
     GRAPH_METRIC_FAT -> "Fat"
     GRAPH_METRIC_IMDB -> "IMDb Avg"
+    GRAPH_METRIC_RUNTIME -> "Runtime (min)"
     GRAPH_METRIC_GITHUB_LINES -> "Lines Changed"
     GRAPH_METRIC_GITHUB_COMMITS -> "Commits"
     GRAPH_METRIC_GITHUB_ADDITIONS -> "Additions"
@@ -251,6 +252,12 @@ const val GRAPH_METRIC_FAT = "fat"
  * Only available for movie-type habits linked to the bridge with an OMDb API key.
  */
 const val GRAPH_METRIC_IMDB = "imdb"
+/**
+ * Runtime minutes — the total watch-minutes of all movies/episodes watched that
+ * day, summed from the "(N min)" annotations in the habit's text entries.
+ * Available for movie-type habits linked to the bridge (no OMDb API key needed).
+ */
+const val GRAPH_METRIC_RUNTIME = "runtime"
 
 // ── GitHub graph metrics (GitHub-type habits only) ───────────────────────────
 /** Total lines changed = additions + deletions per day (GitHub habits only). */

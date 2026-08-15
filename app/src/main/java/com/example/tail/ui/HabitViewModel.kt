@@ -52,6 +52,7 @@ import com.example.tail.data.GRAPH_METRIC_PROTEIN
 import com.example.tail.data.GRAPH_METRIC_CARBS
 import com.example.tail.data.GRAPH_METRIC_FAT
 import com.example.tail.data.GRAPH_METRIC_IMDB
+import com.example.tail.data.GRAPH_METRIC_RUNTIME
 import com.example.tail.data.GRAPH_METRIC_GITHUB_LINES
 import com.example.tail.data.GRAPH_METRIC_GITHUB_COMMITS
 import com.example.tail.data.GRAPH_METRIC_GITHUB_ADDITIONS
@@ -4293,6 +4294,11 @@ class HabitViewModel(
         if (hasImdbRatings(habitName)) {
             metrics.add(GraphMetricOption(GRAPH_METRIC_IMDB, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_IMDB, labels)))
         }
+        // Runtime minutes metric — available for all movie-bridge habits; values
+        // are derived from "(N min)" annotations in the text entries
+        if (isMovieBridgeHabit(habitName)) {
+            metrics.add(GraphMetricOption(GRAPH_METRIC_RUNTIME, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_RUNTIME, labels)))
+        }
         if (isMealHabit(habitName)) {
             metrics.add(GraphMetricOption(GRAPH_METRIC_CALORIES, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_CALORIES, labels)))
             metrics.add(GraphMetricOption(GRAPH_METRIC_PROTEIN, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_PROTEIN, labels)))
@@ -4413,7 +4419,10 @@ class HabitViewModel(
         val githubLinesChanged: Int? = null,
         val githubCommits: Int? = null,
         val githubAdditions: Int? = null,
-        val githubDeletions: Int? = null
+        val githubDeletions: Int? = null,
+        // ── Movie-bridge habit data ──
+        /** Total watch-minutes for the day (sum of "(N min)" entry annotations). */
+        val movieRuntimeMinutes: Int? = null
     )
 
     /**
@@ -4486,6 +4495,23 @@ class HabitViewModel(
             _textEntriesCache.value[habitName] ?: emptyMap()
         } else {
             emptyMap()
+        }
+
+        // Per-day total runtime minutes for movie-bridge habits, derived from
+        // the "(N min)" annotations in the cached text entries
+        val runtimeByDate = if (isMovieBridgeHabit(habitName)) {
+            val log = _textEntriesCache.value[habitName] ?: emptyMap()
+            val totals = mutableMapOf<String, Int>()
+            for ((timestamp, text) in log) {
+                val minutes = OmdbService.parseTitle(text).minutes ?: continue
+                if (timestamp.length >= 10) {
+                    val dateStr = timestamp.substring(0, 10)
+                    totals[dateStr] = (totals[dateStr] ?: 0) + minutes
+                }
+            }
+            totals
+        } else {
+            null
         }
 
         val result = mutableListOf<GraphDataPoint>()
@@ -4571,7 +4597,8 @@ class HabitViewModel(
                     githubAdditions = ghMetrics?.additions
                         ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_ADDITIONS) filteredRaw else null,
                     githubDeletions = ghMetrics?.deletions
-                        ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_DELETIONS) filteredRaw else null
+                        ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_DELETIONS) filteredRaw else null,
+                    movieRuntimeMinutes = runtimeByDate?.get(ds)
                 )
             )
             cursor = cursor.plusDays(1)
@@ -6606,17 +6633,23 @@ class HabitViewModel(
 
     /**
      * Fetches the IMDb rating for a single title from OMDb (or returns the
-     * cached value). Does NOT exceed the daily API limit.
+     * cached value). Does NOT exceed the daily API limit. The runtime from the
+     * same OMDb response is cached alongside the rating.
      *
      * Uses the OmdbService lookup ladder (exact title → fuzzy IMDb-ID
      * resolution → ID lookup). Only definitive results are cached: transient
      * failures (network, rate limit) are left uncached so they retry later.
      *
+     * @param needRuntime When true, a title whose rating is already cached is
+     *        still re-fetched if its runtime isn't cached yet (the runtime
+     *        lives in the same response but was not stored by older versions).
      * @return The rating x 10, or null if not found / API unavailable.
      */
-    private suspend fun fetchAndCacheImdbRating(parsed: ParsedTitle): Int? {
+    private suspend fun fetchAndCacheImdbRating(parsed: ParsedTitle, needRuntime: Boolean = false): Int? {
         if (imdbCache.hasBeenLookedUp(parsed.cacheKey)) {
-            return imdbCache.getRating(parsed.cacheKey)?.takeIf { it > 0 }
+            if (!needRuntime || imdbCache.hasRuntime(parsed.cacheKey)) {
+                return imdbCache.getRating(parsed.cacheKey)?.takeIf { it > 0 }
+            }
         }
 
         val apiKey = _settings.value.omdbApiKey
@@ -6636,11 +6669,13 @@ class HabitViewModel(
                 // Cache the resolved IMDb ID so future lookups skip fuzzy resolution
                 outcome.resolvedId?.let { imdbCache.putResolvedId(parsed.idCacheKey, it) }
                 imdbCache.putRating(parsed.cacheKey, outcome.rating)
+                imdbCache.putRuntime(parsed.cacheKey, outcome.runtimeMin)
                 return outcome.rating?.takeIf { it > 0 }
             }
             is OmdbOutcome.NotFound -> {
                 // Definitively not on IMDb — safe to negative-cache
                 imdbCache.putRating(parsed.cacheKey, null)
+                imdbCache.putRuntime(parsed.cacheKey, null)
                 return null
             }
             is OmdbOutcome.Transient -> {
@@ -6839,6 +6874,169 @@ class HabitViewModel(
             } catch (e: Exception) {
                 Log.e(TAG, "IMDb backlog fetch failed", e)
                 _omdbStatus.value = "Backlog fetch failed: ${e.message}"
+            } finally {
+                _omdbBacklogRunning.value = false
+            }
+        }
+    }
+
+    /**
+     * Backfills watch-length minutes for movie-habit entries that lack a
+     * "(N min)" annotation, using runtimes from the same OMDb lookup ladder
+     * as the IMDb ratings (same API response, same daily limit).
+     *
+     * ## Split rule
+     * When the same film/episode (same parsed cache key) was logged on more
+     * than one day, its runtime is split evenly across those backlog days —
+     * and within a day, across that day's entries — so a title is never
+     * counted at full length more than once. Entries that already carry a
+     * length are left untouched (the user set those deliberately), as are
+     * titles whose runtime could not be resolved.
+     */
+    fun fetchMovieMinutesBacklog(onProgress: ((String) -> Unit)? = null) {
+        val apiKey = _settings.value.omdbApiKey
+        if (apiKey.isBlank()) {
+            _omdbStatus.value = "Enter an OMDb API key first"
+            return
+        }
+
+        val movieHabits = _settings.value.bridgeMovieHabits.toList()
+        if (movieHabits.isEmpty()) {
+            _omdbStatus.value = "No movie habits linked"
+            return
+        }
+
+        if (_omdbBacklogRunning.value) {
+            _omdbStatus.value = "Already running..."
+            return
+        }
+
+        // A movie text entry that still needs a length annotation
+        data class PendingEntry(
+            val timestamp: String,
+            val date: String,
+            val rawText: String,
+            val parsed: ParsedTitle
+        )
+
+        viewModelScope.launch {
+            _omdbBacklogRunning.value = true
+            try {
+                _omdbStatus.value = "Scanning movie entries for missing lengths..."
+
+                val perHabit = mutableMapOf<String, MutableList<PendingEntry>>()
+                val titleMap = mutableMapOf<String, ParsedTitle>()
+
+                for (habitName in movieHabits) {
+                    val uriString = _settings.value.textInputFileUris[habitName]
+                    if (uriString.isNullOrEmpty()) continue
+                    val textLog = try {
+                        textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                    } catch (e: Exception) { continue }
+
+                    val list = perHabit.getOrPut(habitName) { mutableListOf() }
+                    for ((timestamp, text) in textLog) {
+                        if (timestamp.length < 10) continue
+                        val parsed = OmdbService.parseTitle(text)
+                        if (parsed.title.isBlank()) continue
+                        if (parsed.minutes != null) continue  // already has a length
+                        list.add(PendingEntry(timestamp, timestamp.substring(0, 10), text, parsed))
+                        titleMap[parsed.cacheKey] = parsed
+                    }
+                }
+
+                val pendingCount = perHabit.values.sumOf { it.size }
+                if (pendingCount == 0) {
+                    _omdbStatus.value = "All movie entries already have lengths"
+                    return@launch
+                }
+
+                // Resolve runtimes: cache first, then OMDb within the daily limit.
+                // needRuntime=true re-fetches titles whose rating is cached but
+                // whose runtime was never stored (pre-runtime versions).
+                val runtimes = mutableMapOf<String, Int>()
+                val toFetch = mutableListOf<ParsedTitle>()
+                for (cacheKey in titleMap.keys) {
+                    val cached = imdbCache.getRuntime(cacheKey)
+                    if (cached != null) {
+                        runtimes[cacheKey] = cached
+                    } else if (!imdbCache.hasRuntime(cacheKey)) {
+                        toFetch.add(titleMap[cacheKey]!!)
+                    }
+                }
+
+                var fetched = 0
+                for (parsed in toFetch) {
+                    if (imdbCache.remainingCalls() <= 0) break
+                    fetchAndCacheImdbRating(parsed, needRuntime = true)
+                    fetched++
+                    imdbCache.getRuntime(parsed.cacheKey)?.let { runtimes[parsed.cacheKey] = it }
+                    if (fetched % 25 == 0) {
+                        val msg = "Lengths: resolved $fetched / ${toFetch.size} titles..."
+                        _omdbStatus.value = msg
+                        onProgress?.invoke(msg)
+                    }
+                }
+
+                // Split each title's runtime across its distinct dates, then
+                // across the entries within each date, and stage text updates.
+                var updated = 0
+                for ((habitName, entries) in perHabit) {
+                    val byTitle = entries.groupBy { it.parsed.cacheKey }
+                    val updates = mutableMapOf<String, String>()
+                    for ((cacheKey, titleEntries) in byTitle) {
+                        val runtime = runtimes[cacheKey] ?: continue
+                        val distinctDates = titleEntries.map { it.date }.distinct().sorted()
+                        val shareByDate = distinctDates
+                            .zip(OmdbService.splitEvenly(runtime, distinctDates.size))
+                            .toMap()
+                        val byDate = titleEntries.groupBy { it.date }
+                        for ((date, dayEntries) in byDate) {
+                            val share = shareByDate[date] ?: continue
+                            val sortedEntries = dayEntries.sortedBy { it.timestamp }
+                            val entryShares = OmdbService.splitEvenly(share, sortedEntries.size)
+                            sortedEntries.forEachIndexed { idx, entry ->
+                                val minutes = entryShares[idx]
+                                if (minutes > 0) {
+                                    updates[entry.timestamp] = "${entry.rawText} ($minutes min)"
+                                }
+                            }
+                        }
+                    }
+                    if (updates.isNotEmpty()) {
+                        val uriString = _settings.value.textInputFileUris[habitName]
+                        if (!uriString.isNullOrEmpty()) {
+                            try {
+                                textInputRepo.updateTextEntries(
+                                    Uri.parse(uriString), context, updates, habitName
+                                )
+                                updated += updates.size
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Minutes backfill write failed for '$habitName': ${e.message}")
+                            }
+                        }
+                    }
+                }
+
+                val deferred = pendingCount - updated
+                _omdbStatus.value = buildString {
+                    append("Backfilled lengths on $updated entries")
+                    if (toFetch.size - fetched > 0) {
+                        append(" (${toFetch.size - fetched} titles deferred — daily limit)")
+                    } else if (deferred > 0) {
+                        append(" ($deferred entries without a resolvable runtime)")
+                    }
+                }
+
+                rebuildHabitList()
+                // Refresh the graph text-entry cache so the runtime series
+                // reflects the newly-annotated lengths immediately
+                for (movieHabit in perHabit.keys) {
+                    loadTextEntriesForGraph(movieHabit)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Movie minutes backlog failed", e)
+                _omdbStatus.value = "Minutes backfill failed: ${e.message}"
             } finally {
                 _omdbBacklogRunning.value = false
             }

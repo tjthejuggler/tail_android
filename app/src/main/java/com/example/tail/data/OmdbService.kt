@@ -26,7 +26,9 @@ data class ParsedTitle(
     val title: String,
     val season: Int? = null,
     val episode: Int? = null,
-    val year: Int? = null
+    val year: Int? = null,
+    /** Watch-duration annotation parsed from a trailing "(N min)" suffix, if present. */
+    val minutes: Int? = null
 ) {
     /** True if this looks like a TV series episode. */
     val isEpisode: Boolean get() = season != null && episode != null
@@ -64,12 +66,17 @@ data class ParsedTitle(
  * one `i=` retry) for daily-limit tracking.
  */
 sealed class OmdbOutcome {
-    /** OMDb found the item. [rating] is null when it exists but has no rating ("N/A"). */
+    /**
+     * OMDb found the item. [rating] is null when it exists but has no rating
+     * ("N/A"). [runtimeMin] is the runtime from the same response ("142 min")
+     * — null when OMDb reports "N/A".
+     */
     data class Found(
         val rating: Int?,
         val imdbID: String?,
         /** IMDb ID resolved via fuzzy search (for the show/movie, not the episode). */
         val resolvedId: String? = null,
+        val runtimeMin: Int? = null,
         override val callsUsed: Int = 1
     ) : OmdbOutcome()
 
@@ -134,8 +141,8 @@ class OmdbService {
         /** Matches S##E## patterns (e.g. "S05E14", "s1e2"). */
         private val SEASON_EPISODE_RE = Regex("""[Ss](\d{1,2})\s*[Ee](\d{1,3})""")
 
-        /** Matches trailing duration annotations like " (148 min)". */
-        private val DURATION_SUFFIX_RE = Regex("""\s*\(\d+\s*min\)\s*$""")
+        /** Matches trailing duration annotations like " (148 min)". Group 1 = minutes. */
+        private val DURATION_SUFFIX_RE = Regex("""\s*\((\d+)\s*min\)\s*$""")
 
         /** Matches leading bracketed junk like "[Torrentcouch Com] ". */
         private val LEADING_BRACKET_RE = Regex("""^\[.*?\]\s*""")
@@ -157,6 +164,8 @@ class OmdbService {
          *   - "[Torrentcouch Com] Black Mirror S02E03" → ParsedTitle("Black Mirror", 2, 3)
          */
         fun parseTitle(rawText: String): ParsedTitle {
+            // Capture the trailing "(N min)" duration annotation before stripping it
+            val minutes = DURATION_SUFFIX_RE.find(rawText)?.groupValues?.get(1)?.toIntOrNull()
             // Strip trailing "(N min)" duration annotations
             var cleaned = DURATION_SUFFIX_RE.replace(rawText, "").trim()
 
@@ -184,7 +193,8 @@ class OmdbService {
                         title = if (title.isNotEmpty()) title else cleaned,
                         season = season,
                         episode = episode,
-                        year = year
+                        year = year,
+                        minutes = minutes
                     )
                 }
             }
@@ -201,7 +211,37 @@ class OmdbService {
                 .replace(Regex("\\s+"), " ")
                 .trim()
 
-            return ParsedTitle(title = cleaned, year = year)
+            return ParsedTitle(title = cleaned, year = year, minutes = minutes)
+        }
+
+        /**
+         * Parses an OMDb "Runtime" string ("142 min", "45 min", "N/A") into
+         * whole minutes, or null when absent/not numeric.
+         */
+        fun parseRuntime(raw: String): Int? =
+            raw.trim().removeSuffix("min").trim().toIntOrNull()?.takeIf { it > 0 }
+
+        /**
+         * Splits [total] into [parts] integer shares as evenly as possible.
+         * The remainder is distributed one minute at a time to the earlier
+         * shares, so the parts always sum back to [total]. Used by the movie
+         * minutes backlog to divide one runtime across the several days the
+         * same film/episode was logged on (so a re-watched title is not
+         * counted at full length on every day).
+         */
+        fun splitEvenly(total: Int, parts: Int): List<Int> {
+            if (parts <= 0) return emptyList()
+            if (total <= 0) return List(parts) { 0 }
+            val base = total / parts
+            var remainder = total % parts
+            return List(parts) {
+                if (remainder > 0) {
+                    remainder--
+                    base + 1
+                } else {
+                    base
+                }
+            }
         }
 
         // ── Fuzzy matching helpers (pure, unit-testable) ────────────────────
@@ -441,9 +481,10 @@ class OmdbService {
                 val ratingStr = json.optString("imdbRating", "")
                 val rating = ratingStr.toDoubleOrNull()?.let { Math.round(it * 10).toInt() }
                 val imdbID = json.optString("imdbID", "").takeIf { it.isNotBlank() }
+                val runtimeMin = parseRuntime(json.optString("Runtime", ""))
 
-                Log.d(TAG, "OMDb: $logLabel → rating=$ratingStr (×10=$rating) id=$imdbID")
-                OmdbOutcome.Found(rating = rating, imdbID = imdbID)
+                Log.d(TAG, "OMDb: $logLabel → rating=$ratingStr (×10=$rating) id=$imdbID runtime=$runtimeMin")
+                OmdbOutcome.Found(rating = rating, imdbID = imdbID, runtimeMin = runtimeMin)
             } catch (e: Exception) {
                 Log.w(TAG, "OMDb fetch failed for $logLabel: ${e.message}")
                 OmdbOutcome.Transient(e.message ?: "network error")

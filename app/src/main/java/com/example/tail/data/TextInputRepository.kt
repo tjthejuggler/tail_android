@@ -184,6 +184,28 @@ class TextInputRepository {
     }
 
     /**
+     * Updates multiple existing text entries in one atomic read-modify-write.
+     * Keys in [updates] that don't exist yet are added (same semantics as
+     * [updateTextEntry]). Used by the movie-minutes backlog, which rewrites
+     * many entries at once and must not perform one file write per entry.
+     * @param habitName If provided, also mirrors the updated log to internal storage.
+     * Returns the updated log map.
+     */
+    suspend fun updateTextEntries(
+        uri: Uri,
+        context: Context,
+        updates: Map<String, String>,
+        habitName: String? = null
+    ): Map<String, String> = withContext(Dispatchers.IO) {
+        if (updates.isEmpty()) return@withContext loadTextLog(uri, context)
+        val existing = loadTextLog(uri, context).toMutableMap()
+        existing.putAll(updates)
+        saveTextLog(uri, context, existing)
+        if (habitName != null) saveInternalBackup(context, habitName, existing)
+        existing
+    }
+
+    /**
      * Deletes an existing text entry from the log file.
      * [timestamp] is the exact key to remove.
      * @param habitName If provided, also mirrors the updated log to internal storage.

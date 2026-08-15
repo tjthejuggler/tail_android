@@ -144,7 +144,9 @@ private data class TextInputDialogState(
     /** Pre-filled text (e.g. from a movie bridge suggestion). Empty by default. */
     val suggestedText: String = "",
     /** Label shown above the text field when suggestedText is non-empty. */
-    val suggestionLabel: String = ""
+    val suggestionLabel: String = "",
+    /** Suggested watch-length in minutes (movie bridge); null = no length section. */
+    val suggestedMinutes: Int? = null
 )
 
 // Grid is 8 columns × 10 rows = 80 cells
@@ -684,7 +686,11 @@ fun HabitGridScreen(
                                         settings.bridgeEnabled
 
                                     // Helper: build and show the dialog state
-                                    fun showDialog(suggestedText: String = "", suggestionLabel: String = "") {
+                                    fun showDialog(
+                                        suggestedText: String = "",
+                                        suggestionLabel: String = "",
+                                        suggestedMinutes: Int? = null
+                                    ) {
                                         viewModel.loadTextEntriesWithTimestamps(habit.name, selectedDate) { todayEntries ->
                                             if (showOpts) {
                                                 viewModel.loadTextOptions(habit.name) { opts ->
@@ -694,7 +700,8 @@ fun HabitGridScreen(
                                                         options = opts,
                                                         todayEntries = todayEntries,
                                                         suggestedText = suggestedText,
-                                                        suggestionLabel = suggestionLabel
+                                                        suggestionLabel = suggestionLabel,
+                                                        suggestedMinutes = suggestedMinutes
                                                     )
                                                 }
                                             } else {
@@ -704,7 +711,8 @@ fun HabitGridScreen(
                                                     options = emptyList(),
                                                     todayEntries = todayEntries,
                                                     suggestedText = suggestedText,
-                                                    suggestionLabel = suggestionLabel
+                                                    suggestionLabel = suggestionLabel,
+                                                    suggestedMinutes = suggestedMinutes
                                                 )
                                             }
                                         }
@@ -723,16 +731,14 @@ fun HabitGridScreen(
                                                             append(" — watched ${movie.lastWatched.take(10)}")
                                                         }
                                                     }
-                                                    // Pre-fill the text with the movie title and the
-                                                    // file duration (from ffprobe) so the user can confirm
-                                                    // or edit it. The duration is editable — if wrong, the
-                                                    // user just changes the number before saving.
-                                                    val preFilledText = if (movie.totalWatchMin != null && movie.totalWatchMin > 0) {
-                                                        "${movie.title} (${movie.totalWatchMin} min)"
-                                                    } else {
-                                                        movie.title
-                                                    }
-                                                    showDialog(preFilledText, label)
+                                                    // Pre-fill the text with the movie title; the file
+                                                    // duration (from ffprobe) goes into the separate,
+                                                    // wheel-editable Length field of the dialog.
+                                                    showDialog(
+                                                        suggestedText = movie.title,
+                                                        suggestionLabel = label,
+                                                        suggestedMinutes = movie.totalWatchMin?.takeIf { it > 0 }
+                                                    )
                                                 } else {
                                                     // Bridge unreachable or no data — show normal dialog
                                                     showDialog()
@@ -1385,6 +1391,7 @@ fun HabitGridScreen(
             initialMinute = initMinute,
             initialText = state.suggestedText,
             suggestionLabel = state.suggestionLabel,
+            suggestedMinutes = state.suggestedMinutes,
             onConfirm = { entries, hour, minute ->
                 val entryTime = java.time.LocalTime.of(hour, minute)
                 // Only pass selectedDate if it's not today - for today, use current date

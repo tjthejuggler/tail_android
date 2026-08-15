@@ -1348,6 +1348,26 @@ private fun BridgeSettingsSection(
                     color = Color(0xFF666666)
                 )
 
+                // Minutes backfill: appends "(N min)" to old entries lacking a
+                // length, using OMDb runtimes split across duplicate days
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.fetchMovieMinutesBacklog() },
+                    enabled = !backlogRunning,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4E342E))
+                ) {
+                    Text(
+                        text = if (backlogRunning) "Working..." else "Backfill Movie Lengths",
+                        fontSize = 12.sp
+                    )
+                }
+                Text(
+                    text = "Fetches runtimes (same OMDb API) for old entries without a length. " +
+                           "A film logged on several days gets its runtime split evenly across those days.",
+                    fontSize = 9.sp,
+                    color = Color(0xFF666666)
+                )
+
                 // Retry button: clears cached "no rating" entries and refetches them
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(

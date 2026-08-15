@@ -28,6 +28,50 @@ class OmdbServiceTest {
     }
 
     @Test
+    fun parseTitle_extractsMinutesFromSuffix() {
+        assertEquals(148, OmdbService.parseTitle("Inception (148 min)").minutes)
+        assertEquals(105, OmdbService.parseTitle("A Different Man (2024) (105 min)").minutes)
+        assertEquals(47, OmdbService.parseTitle("Breaking Bad S05E14 (47 min)").minutes)
+        assertNull(OmdbService.parseTitle("Inception").minutes)
+    }
+
+    // ── parseRuntime ───────────────────────────────────────────────────────
+
+    @Test
+    fun parseRuntime_omdbFormats() {
+        assertEquals(142, OmdbService.parseRuntime("142 min"))
+        assertEquals(45, OmdbService.parseRuntime("45 min"))
+        assertNull(OmdbService.parseRuntime("N/A"))
+        assertNull(OmdbService.parseRuntime(""))
+    }
+
+    // ── splitEvenly ────────────────────────────────────────────────────────
+
+    @Test
+    fun splitEvenly_evenSplit() {
+        assertEquals(listOf(50, 50), OmdbService.splitEvenly(100, 2))
+        assertEquals(listOf(33, 33, 33), OmdbService.splitEvenly(99, 3))
+    }
+
+    @Test
+    fun splitEvenly_remainderGoesToEarlierParts() {
+        val parts = OmdbService.splitEvenly(142, 3)
+        assertEquals(3, parts.size)
+        assertEquals(142, parts.sum())
+        assertEquals(48, parts[0])
+        assertEquals(47, parts[1])
+        assertEquals(47, parts[2])
+    }
+
+    @Test
+    fun splitEvenly_sumsBackToTotal() {
+        assertEquals(97, OmdbService.splitEvenly(97, 4).sum())
+        assertEquals(1, OmdbService.splitEvenly(1, 5).sum())
+        assertEquals(0, OmdbService.splitEvenly(0, 3).sum())
+        assertTrue(OmdbService.splitEvenly(10, 0).isEmpty())
+    }
+
+    @Test
     fun parseTitle_extractsYearFromMovies() {
         val p = OmdbService.parseTitle("A Different Man (2024) (105 min)")
         assertEquals("A Different Man", p.title)

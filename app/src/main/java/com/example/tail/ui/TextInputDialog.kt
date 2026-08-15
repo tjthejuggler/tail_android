@@ -51,6 +51,10 @@ import androidx.compose.ui.window.Dialog
  *   more options before confirming.
  * - A time picker lets the user associate a specific time-of-day with the entries
  *   instead of defaulting to noon for past dates.
+ * - When [suggestedMinutes] is non-null (movie-bridge suggestion), a separate
+ *   "Length" row shows the suggested watch-length, editable with a wheel picker
+ *   exactly like the time. On OK the length is appended to the free-text entry
+ *   as " (N min)" — the format the rest of the app parses back out.
  * - OK saves all entries (selected options + free text if non-empty) with the
  *   chosen time; Cancel dismisses without saving.
  *
@@ -71,6 +75,7 @@ fun TextInputDialog(
     initialMinute: Int = java.time.LocalTime.now().minute,
     initialText: String = "",
     suggestionLabel: String = "",
+    suggestedMinutes: Int? = null,
     onConfirm: (List<String>, Int, Int) -> Unit,
     onDismiss: () -> Unit,
     onEdit: (String, String) -> Unit = { _, _ -> },
@@ -87,6 +92,11 @@ fun TextInputDialog(
     var selectedHour by remember { mutableIntStateOf(initialHour) }
     var selectedMinute by remember { mutableIntStateOf(initialMinute) }
     var showTimePicker by remember { mutableStateOf(false) }
+
+    // Length (minutes) state — wheel-based, only for movie-bridge suggestions
+    val hasLengthSuggestion = suggestedMinutes != null
+    var lengthMinutes by remember { mutableIntStateOf(suggestedMinutes ?: 0) }
+    var showLengthPicker by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -286,6 +296,59 @@ fun TextInputDialog(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
+                // ── Length picker (movie-bridge suggestions) ──────────────────
+                if (hasLengthSuggestion) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Length",
+                            color = Color(0xFF888888),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                        val lengthLabel = if (lengthMinutes >= 60) {
+                            "${lengthMinutes / 60} h ${lengthMinutes % 60} min"
+                        } else {
+                            "$lengthMinutes min"
+                        }
+                        TextButton(
+                            onClick = { showLengthPicker = !showLengthPicker },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                            )
+                        ) {
+                            Text(
+                                text = if (showLengthPicker) "Done" else lengthLabel,
+                                color = Color(0xFFFFAA00),
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+
+                    if (showLengthPicker) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF111111), RoundedCornerShape(6.dp))
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            DurationWheelPicker(
+                                totalMinutes = lengthMinutes,
+                                onDurationChange = { lengthMinutes = it },
+                                accent = Color(0xFFFFAA00)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                    } else {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+
                 // ── Entry input field ───────────────────────────────────────
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -437,9 +500,18 @@ fun TextInputDialog(
                             selectedOptions.filterValues { it }.keys.forEach { opt ->
                                 entries.add(opt)
                             }
-                            // Add free text if non-empty (avoid exact duplicates of selected options)
+                            // Add free text if non-empty (avoid exact duplicates of selected options).
+                            // For movie suggestions, append the wheel-edited length as
+                            // "(N min)" unless the text already carries a duration.
                             if (hasFreeText && trimmedInput !in entries) {
-                                entries.add(trimmedInput)
+                                val alreadyHasDuration = Regex("""\(\d+\s*min\)\s*$""")
+                                    .containsMatchIn(trimmedInput)
+                                val textWithLength = when {
+                                    !hasLengthSuggestion || alreadyHasDuration -> trimmedInput
+                                    lengthMinutes > 0 -> "$trimmedInput ($lengthMinutes min)"
+                                    else -> trimmedInput
+                                }
+                                entries.add(textWithLength)
                             }
                             if (entries.isNotEmpty()) {
                                 onConfirm(entries, selectedHour, selectedMinute)

@@ -141,6 +141,8 @@ fun GraphsPanel(
     // Collect settings so the graph recomputes when metric selection changes
     val settings by viewModel.settings.collectAsState()
     val metricSelection = settings.graphMetricSelection
+    // Text-entry cache — recomputes series once entries finish loading (movie runtimes)
+    val textEntriesCache by viewModel.textEntriesCache.collectAsState()
 
     var selectedDataPoint by remember { mutableStateOf<SelectedPoint?>(null) }
     var textEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -325,7 +327,7 @@ fun GraphsPanel(
 
             // Collect data for all selected habits × selected metrics.
             // Each (habit, metric) pair becomes a separate line on the chart.
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, textFilter, metricSelection) {
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, textFilter, metricSelection, textEntriesCache) {
                 val isSingleHabit = graphSelectedHabits.size == 1
                 var sequentialColorIdx = 0
                 graphSelectedHabits.toList().flatMap { habitName ->
@@ -429,6 +431,8 @@ fun GraphsPanel(
                                 String.format("%.2f", point.value / 100.0)
                             } else if (point.metric == com.example.tail.data.GRAPH_METRIC_IMDB && point.value > 0) {
                                 String.format("%.1f", point.value / 10.0)
+                            } else if (point.metric == com.example.tail.data.GRAPH_METRIC_RUNTIME && point.value > 0) {
+                                formatRuntimeMinutes(point.value)
                             } else {
                                 point.value.toString()
                             }
@@ -747,6 +751,7 @@ private fun displayValueForMetric(
     // primary value's history.
     com.example.tail.data.GRAPH_METRIC_VALUE2 -> dp.secondaryValue ?: 0
     com.example.tail.data.GRAPH_METRIC_IMDB -> dp.secondaryValue ?: 0
+    com.example.tail.data.GRAPH_METRIC_RUNTIME -> dp.movieRuntimeMinutes ?: 0
     com.example.tail.data.GRAPH_METRIC_CALORIES -> dp.mealCalories ?: 0
     com.example.tail.data.GRAPH_METRIC_PROTEIN -> dp.mealProtein ?: 0
     com.example.tail.data.GRAPH_METRIC_CARBS -> dp.mealCarbs ?: 0
@@ -763,10 +768,23 @@ private fun displayValueForMetric(
  * ratings (stored as rating x 10, displayed as a decimal like "8.8").
  */
 fun formatTooltipValue(value: Int, metric: String): String {
-    return if (metric == com.example.tail.data.GRAPH_METRIC_IMDB && value > 0) {
-        String.format("%.1f", value / 10.0)
-    } else {
-        value.toString()
+    return when {
+        metric == com.example.tail.data.GRAPH_METRIC_IMDB && value > 0 ->
+            String.format("%.1f", value / 10.0)
+        metric == com.example.tail.data.GRAPH_METRIC_RUNTIME && value > 0 ->
+            formatRuntimeMinutes(value)
+        else -> value.toString()
+    }
+}
+
+/** Formats a minute total compactly, e.g. 142 → "2h 22m", 45 → "45m". */
+private fun formatRuntimeMinutes(totalMinutes: Int): String {
+    val h = totalMinutes / 60
+    val m = totalMinutes % 60
+    return when {
+        h > 0 && m > 0 -> "${h}h ${m}m"
+        h > 0 -> "${h}h"
+        else -> "${m}m"
     }
 }
 
@@ -775,6 +793,7 @@ fun metricLabel(metric: String): String = when (metric) {
     com.example.tail.data.GRAPH_METRIC_VALUE1 -> "Value 1"
     com.example.tail.data.GRAPH_METRIC_VALUE2 -> "Value 2"
     com.example.tail.data.GRAPH_METRIC_IMDB -> "IMDb Avg"
+    com.example.tail.data.GRAPH_METRIC_RUNTIME -> "Runtime"
     com.example.tail.data.GRAPH_METRIC_CALORIES -> "Calories"
     com.example.tail.data.GRAPH_METRIC_PROTEIN -> "Protein"
     com.example.tail.data.GRAPH_METRIC_CARBS -> "Carbs"

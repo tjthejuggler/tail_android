@@ -340,3 +340,82 @@ fun TimeWheelPicker(
         )
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DurationWheelPicker — two-wheel length selector (Hours · Minutes)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Hour labels for the duration wheel (0–10 h covers movies, episodes and binges). */
+private val DURATION_HOUR_ITEMS = (0..10).map { it.toString() }
+
+/** Minute labels for the duration wheel. */
+private val DURATION_MINUTE_ITEMS = (0..59).map { String.format("%02d", it) }
+
+/**
+ * A two-wheel duration picker: scrollable Hours (0-10) and Minutes (00-59).
+ * Used for the suggested movie/episode watch-length in the text-input dialog,
+ * so the length is editable with the same wheel interaction as times.
+ *
+ * @param totalMinutes Current duration in total minutes (e.g. 92).
+ * @param onDurationChange Called with the new total minutes whenever a wheel settles.
+ */
+@Composable
+fun DurationWheelPicker(
+    totalMinutes: Int,
+    onDurationChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    accent: Color = Color(0xFF88DDFF),
+    itemHeight: Dp = 36.dp,
+    visibleItems: Int = 5
+) {
+    val hours = (totalMinutes / 60).coerceIn(0, 10)
+    val minutes = (totalMinutes % 60).coerceIn(0, 59)
+
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // ── Hours wheel ──
+        WheelPicker(
+            items = DURATION_HOUR_ITEMS,
+            selectedIndex = hours,
+            onSelectedChange = { h ->
+                onDurationChange(h * 60 + minutes)
+            },
+            itemHeight = itemHeight,
+            visibleItems = visibleItems,
+            accent = accent,
+            modifier = Modifier.width(52.dp)
+        )
+
+        Text(
+            text = "h",
+            color = Color(0xFF888888),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 3.dp)
+        )
+
+        // ── Minutes wheel ──
+        WheelPicker(
+            items = DURATION_MINUTE_ITEMS,
+            selectedIndex = minutes,
+            onSelectedChange = { m ->
+                onDurationChange(hours * 60 + m)
+            },
+            itemHeight = itemHeight,
+            visibleItems = visibleItems,
+            accent = accent,
+            modifier = Modifier.width(56.dp)
+        )
+
+        Text(
+            text = "m",
+            color = Color(0xFF888888),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 3.dp)
+        )
+    }
+}
