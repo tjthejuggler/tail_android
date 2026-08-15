@@ -156,6 +156,10 @@ private val KEY_MIGRATION_APNEA_SECONDARY_DONE = booleanPreferencesKey("migratio
 // Migration flag — set to true after the one-time resonance-breathing secondary-value data migration.
 private val KEY_MIGRATION_RESONANCE_SECONDARY_DONE = booleanPreferencesKey("migration_resonance_secondary_done")
 
+// Migration flag — set to true after the one-time import of the legacy external
+// subtype/timed per-habit SAF JSON files into the internal stores (2026-08-15).
+private val KEY_MIGRATION_SUBTYPE_TIMED_INTERNALIZED = booleanPreferencesKey("migration_subtype_timed_internalized")
+
 // ── Meal Habit Engine keys ────────────────────────────────────────────────
 private val KEY_MEAL_ENABLED = booleanPreferencesKey("meal_enabled")
 private val KEY_MEAL_BASE_URL = stringPreferencesKey("meal_base_url")
@@ -626,6 +630,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setResonanceSecondaryMigrationDone() {
         context.dataStore.edit { it[KEY_MIGRATION_RESONANCE_SECONDARY_DONE] = true }
+    }
+
+    suspend fun isSubtypeTimedInternalized(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_SUBTYPE_TIMED_INTERNALIZED] ?: false }.first()
+    }
+
+    suspend fun setSubtypeTimedInternalized() {
+        context.dataStore.edit { it[KEY_MIGRATION_SUBTYPE_TIMED_INTERNALIZED] = true }
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->

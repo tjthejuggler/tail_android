@@ -60,8 +60,8 @@ class MainActivity : ComponentActivity() {
         val habitsRepo = HabitsRepository()
         val settingsRepo = SettingsRepository(applicationContext)
         val textInputRepo = TextInputRepository()
-        val subtypeDataRepo = SubtypeDataRepository()
-        val timedDataRepo = TimedDataRepository()
+        val subtypeDataRepo = SubtypeDataRepository(applicationContext)
+        val timedDataRepo = TimedDataRepository(applicationContext)
 
         val backupManager = BackupManager(
             context = applicationContext,

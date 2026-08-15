@@ -26,6 +26,7 @@ import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.SubtypeDataRepository
+import com.example.tail.data.SubtypeTimedMigrator
 import com.example.tail.data.applyDivider
 import com.example.tail.data.buildTaskerStatsContent
 import com.example.tail.data.dateString
@@ -352,7 +353,10 @@ class VoiceHabitService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
                 val habitsRepo = HabitsRepository()
-                val subtypeDataRepo = SubtypeDataRepository()
+                val subtypeDataRepo = SubtypeDataRepository(applicationContext)
+                // Ensure legacy external subtype/timed data has been imported
+                // into the internal store (no-op after the first run).
+                SubtypeTimedMigrator.runIfNeeded(applicationContext, settings)
                 val fileUriString = settings.fileUri
                 if (fileUriString.isEmpty()) {
                     Log.w(TAG, "No habits file URI configured — cannot increment")
@@ -419,17 +423,14 @@ class VoiceHabitService : Service() {
 
                     // Save subtype breakdown if applicable
                     if (subtypeName != null) {
-                        val subtypeFileUri = settings.subtypeDataFileUris[habitName]
-                        if (subtypeFileUri != null) {
-                            try {
-                                subtypeDataRepo.addToDate(
-                                    Uri.parse(subtypeFileUri), applicationContext, todayStr,
-                                    mapOf(subtypeName to incrementAmount)
-                                )
-                                Log.i(TAG, "Saved subtype breakdown for '$habitName': $subtypeName → $incrementAmount")
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Failed to save subtype data for '$habitName': ${e.message}")
-                            }
+                        try {
+                            subtypeDataRepo.addToDate(
+                                habitName, todayStr,
+                                mapOf(subtypeName to incrementAmount)
+                            )
+                            Log.i(TAG, "Saved subtype breakdown for '$habitName': $subtypeName → $incrementAmount")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to save subtype data for '$habitName': ${e.message}")
                         }
                     }
 

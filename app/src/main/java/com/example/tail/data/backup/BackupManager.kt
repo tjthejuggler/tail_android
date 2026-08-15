@@ -378,32 +378,28 @@ class BackupManager(
             datedEntry[habit] = text
         }
 
-        // subtype data JSONs
+        // subtype data (internal store)
         val subtype = mutableMapOf<String, Map<String, Map<String, Int>>>()
-        for ((habit, uriStr) in settings.subtypeDataFileUris) {
-            if (uriStr.isBlank()) continue
-            try {
-                val data = subtypeDataRepo.loadSubtypeData(Uri.parse(uriStr), context)
+        try {
+            subtypeDataRepo.loadAll().forEach { (habit, data) ->
                 if (data.isNotEmpty()) subtype[habit] = data
-            } catch (e: Exception) {
-                Log.w(TAG, "subtype-data read failed for '$habit': ${e.message}")
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "subtype-data read failed: ${e.message}")
         }
 
-        // timed data JSONs
+        // timed data (internal store)
         val timed = mutableMapOf<String, Map<String, Map<String, Any?>>>()
-        for ((habit, uriStr) in settings.timedDataFileUris) {
-            if (uriStr.isBlank()) continue
-            try {
-                val raw = timedDataRepo.loadTimedData(Uri.parse(uriStr), context)
-                if (raw.isNotEmpty()) {
-                    timed[habit] = raw.mapValues { (_, entry) ->
+        try {
+            timedDataRepo.loadAll().forEach { (habit, entries) ->
+                if (entries.isNotEmpty()) {
+                    timed[habit] = entries.mapValues { (_, entry) ->
                         mapOf<String, Any?>("subtype" to entry.subtype, "count" to entry.count)
                     }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "timed-data read failed for '$habit': ${e.message}")
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "timed-data read failed: ${e.message}")
         }
 
         return PerHabitFilesSection(
@@ -638,28 +634,25 @@ class BackupManager(
                     applyHabitTimestamps(merged)
                 }
 
-                // 3-6. Per-habit external files (best-effort; only when a URI is set).
+                // 3-6. Per-habit data (internal stores for subtype/timed; external
+                // SAF best-effort for text logs and dated-entry sources).
                 bundle.perHabitFiles.subtypeData[habitName]?.let { data ->
-                    settings.subtypeDataFileUris[habitName]?.let { uriStr ->
-                        runCatching {
-                            subtypeDataRepo.saveSubtypeData(Uri.parse(uriStr), context, data)
-                        }.onFailure {
-                            Log.w(TAG, "subtype-data restore failed for '$habitName': ${it.message}")
-                        }
+                    runCatching {
+                        subtypeDataRepo.saveSubtypeData(habitName, data)
+                    }.onFailure {
+                        Log.w(TAG, "subtype-data restore failed for '$habitName': ${it.message}")
                     }
                 }
                 bundle.perHabitFiles.timedData[habitName]?.let { data ->
-                    settings.timedDataFileUris[habitName]?.let { uriStr ->
-                        runCatching {
-                            val typed = data.mapValues { (_, obj) ->
-                                val subtype = obj["subtype"]?.toString()?.takeIf { it != "null" }
-                                val count = (obj["count"] as? Number)?.toInt() ?: 0
-                                TimedEntry(subtype = subtype, count = count)
-                            }
-                            timedDataRepo.saveTimedData(Uri.parse(uriStr), context, typed)
-                        }.onFailure {
-                            Log.w(TAG, "timed-data restore failed for '$habitName': ${it.message}")
+                    runCatching {
+                        val typed = data.mapValues { (_, obj) ->
+                            val subtype = obj["subtype"]?.toString()?.takeIf { it != "null" }
+                            val count = (obj["count"] as? Number)?.toInt() ?: 0
+                            TimedEntry(subtype = subtype, count = count)
                         }
+                        timedDataRepo.saveTimedData(habitName, typed)
+                    }.onFailure {
+                        Log.w(TAG, "timed-data restore failed for '$habitName': ${it.message}")
                     }
                 }
                 bundle.perHabitFiles.textInput[habitName]?.let { log ->
@@ -1021,25 +1014,23 @@ class BackupManager(
             val uriStr = s.datedEntryFileUris[habit] ?: continue
             writeTextToSaf(uriStr, content)
         }
-        // subtype data
+        // subtype data (internal store)
         for ((habit, data) in p.subtypeData) {
-            val uriStr = s.subtypeDataFileUris[habit] ?: continue
             try {
-                subtypeDataRepo.saveSubtypeData(Uri.parse(uriStr), context, data)
+                subtypeDataRepo.saveSubtypeData(habit, data)
             } catch (e: Exception) {
                 Log.w(TAG, "subtype-data write failed for '$habit': ${e.message}")
             }
         }
-        // timed data
+        // timed data (internal store)
         for ((habit, data) in p.timedData) {
-            val uriStr = s.timedDataFileUris[habit] ?: continue
             try {
                 val typed = data.mapValues { (_, obj) ->
                     val subtype = obj["subtype"]?.toString()?.takeIf { it != "null" }
                     val count = (obj["count"] as? Number)?.toInt() ?: 0
                     TimedEntry(subtype = subtype, count = count)
                 }
-                timedDataRepo.saveTimedData(Uri.parse(uriStr), context, typed)
+                timedDataRepo.saveTimedData(habit, typed)
             } catch (e: Exception) {
                 Log.w(TAG, "timed-data write failed for '$habit': ${e.message}")
             }

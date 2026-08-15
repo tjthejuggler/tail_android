@@ -31,6 +31,7 @@ import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.LocationRepository
 import com.example.tail.data.SecondaryLocation
 import com.example.tail.data.SubtypeDataRepository
+import com.example.tail.data.SubtypeTimedMigrator
 import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
@@ -501,6 +502,16 @@ class HabitViewModel(
     init {
         // Load AI icons from disk on startup
         refreshAiIcons()
+
+        // One-time import of the legacy external subtype/timed per-habit files
+        // into the internal stores (no-op once the migration flag is set).
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                SubtypeTimedMigrator.runIfNeeded(context)
+            } catch (e: Exception) {
+                Log.w(TAG, "Subtype/timed internalization migration failed: ${e.message}")
+            }
+        }
 
         // Load cached Garmin data on startup so garminMonthlyData is populated
         viewModelScope.launch(Dispatchers.IO) {
@@ -1446,14 +1457,8 @@ class HabitViewModel(
         // record their timed entries in saveSubtypeIncrement instead), append a
         // timestamped session entry with subtype=null.
         if (habitName in _settings.value.timedHabits && habitName !in _settings.value.subtypedHabits) {
-            val timedUri = _settings.value.timedDataFileUris[habitName]
-            if (timedUri != null) {
-                viewModelScope.launch {
-                    timedDataRepo.appendEntries(
-                        Uri.parse(timedUri), context,
-                        mapOf(null to amount)
-                    )
-                }
+            viewModelScope.launch {
+                timedDataRepo.appendEntries(habitName, mapOf(null to amount))
             }
         }
 
@@ -1566,14 +1571,8 @@ class HabitViewModel(
 
         // Step 4: if this is a timed habit (and NOT subtyped)
         if (habitName in _settings.value.timedHabits && habitName !in _settings.value.subtypedHabits) {
-            val timedUri = _settings.value.timedDataFileUris[habitName]
-            if (timedUri != null) {
-                viewModelScope.launch {
-                    timedDataRepo.appendEntries(
-                        Uri.parse(timedUri), context,
-                        mapOf(null to amount)
-                    )
-                }
+            viewModelScope.launch {
+                timedDataRepo.appendEntries(habitName, mapOf(null to amount))
             }
         }
 
@@ -2515,36 +2514,20 @@ class HabitViewModel(
         }
     }
 
-    /** Sets the SAF URI for the subtype data file for [habitName]. */
-    fun setSubtypeDataFileUri(habitName: String, uri: Uri) {
-        viewModelScope.launch {
-            val uriString = uri.toString()
-            val current = _settings.value.subtypeDataFileUris.toMutableMap()
-            current[habitName] = uriString
-            settingsRepo.saveSubtypeDataFileUris(current)
-            _settings.value = _settings.value.copy(subtypeDataFileUris = current)
-        }
-    }
-
     /**
      * Loads today's subtype breakdown for [habitName], then calls [onLoaded] with the result.
-     * Returns empty map if no file is configured or no data exists for today.
+     * Returns empty map if no data exists for today.
      */
     fun loadSubtypeBreakdown(habitName: String, onLoaded: (Map<String, Int>) -> Unit) {
-        val uriString = _settings.value.subtypeDataFileUris[habitName] ?: run {
-            onLoaded(emptyMap()); return
-        }
         viewModelScope.launch {
             val dateStr = com.example.tail.data.dateString(_selectedDate.value)
-            val breakdown = subtypeDataRepo.getBreakdownForDate(
-                Uri.parse(uriString), context, dateStr
-            )
+            val breakdown = subtypeDataRepo.getBreakdownForDate(habitName, dateStr)
             onLoaded(breakdown)
         }
     }
 
     /**
-     * Saves a subtype increment: adds [increments] to the subtype data file for today,
+     * Saves a subtype increment: adds [increments] to the internal subtype store for today,
      * and increments the main habit count by the total.
      */
     fun saveSubtypeIncrement(habitName: String, increments: Map<String, Int>) {
@@ -2554,22 +2537,18 @@ class HabitViewModel(
         // Increment the main habit count
         incrementHabit(habitName, total)
 
-        // Save subtype breakdown
-        val uriString = _settings.value.subtypeDataFileUris[habitName] ?: return
+        // Save subtype breakdown (internal store)
         viewModelScope.launch {
             val dateStr = com.example.tail.data.dateString(_selectedDate.value)
-            subtypeDataRepo.addToDate(Uri.parse(uriString), context, dateStr, increments)
+            subtypeDataRepo.addToDate(habitName, dateStr, increments)
         }
 
         // If this is a timed habit, also record timestamped session entries
         if (habitName in _settings.value.timedHabits) {
-            val timedUri = _settings.value.timedDataFileUris[habitName] ?: return
             viewModelScope.launch {
                 // Each subtype increment becomes a separate timed entry
-                timedDataRepo.appendEntries(
-                    Uri.parse(timedUri), context,
-                    increments.mapKeys { (k, _) -> k }
-                )
+                // (key type widened to String? since plain timed entries have no subtype)
+                timedDataRepo.appendEntries(habitName, increments.mapKeys { (k, _) -> k as String? })
             }
         }
     }
@@ -2616,17 +2595,6 @@ class HabitViewModel(
                 settingsRepo.saveRollForwardHabits(current)
                 _settings.value = _settings.value.copy(rollForwardHabits = current)
             }
-        }
-    }
-
-    /** Sets the SAF URI for a timed habit's data file. */
-    fun setTimedDataFileUri(habitName: String, uri: Uri) {
-        viewModelScope.launch {
-            val uriString = uri.toString()
-            val current = _settings.value.timedDataFileUris.toMutableMap()
-            current[habitName] = uriString
-            settingsRepo.saveTimedDataFileUris(current)
-            _settings.value = _settings.value.copy(timedDataFileUris = current)
         }
     }
 
@@ -3721,6 +3689,11 @@ class HabitViewModel(
                 
                 // Rename in the internal timestamp file so historical timestamps survive
                 timestampRepo.renameHabit(oldName, newName)
+
+                // Rename in the internal subtype/timed stores so breakdowns and
+                // timed sessions survive the rename too
+                subtypeDataRepo.renameHabit(oldName, newName)
+                timedDataRepo.renameHabit(oldName, newName)
                 
                 _settings.value = newSettings
                 _habitOrder.value = newHabitOrder

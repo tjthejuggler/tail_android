@@ -347,23 +347,6 @@ fun HabitGridScreen(
         textInputPickerHabit = null
     }
 
-    // File picker for per-habit subtype data files
-    var subtypeDataPickerHabit by remember { mutableStateOf<String?>(null) }
-    val subtypeDataFilePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        val habitName = subtypeDataPickerHabit
-        if (uri != null && habitName != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            viewModel.setSubtypeDataFileUri(habitName, uri)
-        }
-        subtypeDataPickerHabit = null
-    }
-
     // File picker for per-habit dated-entry source files (read-only is sufficient)
     var datedEntryPickerHabit by remember { mutableStateOf<String?>(null) }
     val datedEntryFilePicker = rememberLauncherForActivityResult(
@@ -970,7 +953,6 @@ fun HabitGridScreen(
                         conditionalLinkedHabits = settings.conditionalLinkedHabits,
                         subtypedHabits = settings.subtypedHabits,
                         habitSubtypes = settings.habitSubtypes,
-                        subtypeDataFileUris = settings.subtypeDataFileUris,
                         allHabitNames = viewModel.getAllHabitNames(),
                         rollForwardHabits = settings.rollForwardHabits,
                         rollForwardManualDates = settings.rollForwardManualDates,
@@ -1017,10 +999,6 @@ fun HabitGridScreen(
                         onBackfillConditional = { name -> conditionalBackfillHabit = name },
                         onToggleSubtyped = { name -> viewModel.toggleSubtyped(name) },
                         onSetSubtypes = { name, types -> viewModel.setHabitSubtypes(name, types) },
-                        onPickSubtypeDataFile = { name ->
-                            subtypeDataPickerHabit = name
-                            subtypeDataFilePicker.launch(arrayOf("application/json", "*/*"))
-                        },
                         mealHabits = settings.mealHabits,
                         onToggleMeal = { name -> viewModel.toggleMealHabit(name) },
                         onOpenMealDetails = { name ->
@@ -3134,7 +3112,6 @@ private fun EditModeControlBar(
     conditionalLinkedHabits: Map<String, Set<String>>,
     subtypedHabits: Set<String>,
     habitSubtypes: Map<String, List<String>>,
-    subtypeDataFileUris: Map<String, String>,
     allHabitNames: List<String>,
     rollForwardHabits: Set<String> = emptySet(),
     rollForwardManualDates: Map<String, Set<String>> = emptyMap(),
@@ -3171,7 +3148,6 @@ private fun EditModeControlBar(
     onBackfillConditional: (String) -> Unit = {},
     onToggleSubtyped: (String) -> Unit,
     onSetSubtypes: (String, List<String>) -> Unit,
-    onPickSubtypeDataFile: (String) -> Unit,
     mealHabits: Set<String> = emptySet(),
     onToggleMeal: (String) -> Unit = {},
     onOpenMealDetails: (String) -> Unit = {},
@@ -4221,41 +4197,6 @@ private fun EditModeControlBar(
                         )
 
                         Spacer(modifier = Modifier.height(4.dp))
-
-                        // Subtype data file picker
-                        val hasSubtypeFile = subtypeDataFileUris.containsKey(selectedHabitName)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "  Data file", color = Color(0xFFAAAAAA), fontSize = 12.sp)
-                                Text(
-                                    text = if (hasSubtypeFile) "✓ File selected" else "⚠ No file selected",
-                                    color = if (hasSubtypeFile) Color(0xFF44DDAA) else Color(0xFFFF8844),
-                                    fontSize = 10.sp
-                                )
-                            }
-                            Button(
-                                onClick = { onPickSubtypeDataFile(selectedHabitName) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A3A2A)),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Folder,
-                                    contentDescription = "Pick subtype data file",
-                                    tint = Color(0xFF44DDAA),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    if (hasSubtypeFile) "Change" else "Select",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF44DDAA)
-                                )
-                            }
-                        }
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
