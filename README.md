@@ -530,10 +530,15 @@ One-time setup (any Google account, ~5 minutes):
    App name (`Tail`), user support email, developer contact email → Save.
    (Personal use: leave it in *Testing*; no scope verification needed for `drive.file`
    with only your own account.)
-4. **APIs & Services → Credentials → Create credentials → OAuth client ID → Android**:
+4. **Add yourself as a test user** — on the same OAuth consent screen page, under
+   **Test users** → **+ Add users** → add the exact Google account you sign in with
+   in the app. *Required:* while the app is in *Testing* status, Google blocks
+   everyone else with `Error 403: access_denied` ("app is currently being tested,
+   can only be accessed by developer-approved testers").
+5. **APIs & Services → Credentials → Create credentials → OAuth client ID → Android**:
    - Package name: `com.example.tail`
    - SHA-1 (debug keystore): `D3:3B:39:6C:CE:65:75:42:4C:44:99:37:5C:0F:E9:FF:54:04:CD:00`
-5. Wait ~5–10 minutes for propagation, then in the app: Settings → Backup & Restore
+6. Wait ~5–10 minutes for propagation, then in the app: Settings → Backup & Restore
    → **Sign in with Google**.
 
 Notes:
@@ -546,5 +551,11 @@ Notes:
   "Web application" flows. If you keep the JSON, keep it out of the repo.
 - A release build signed with a different keystore needs its own SHA-1 added as a
   second entry under the same OAuth client.
+- **Testing-mode token expiry:** while the consent screen is in *Testing*, Google
+  expires grants after ~7 days, so Drive may occasionally ask to re-consent. To
+  avoid this, publish the app (*OAuth consent screen → Publish app* → confirm).
+  With the non-restricted `drive.file` scope this works unverified for personal
+  use — the first sign-in shows an "unverified app" screen: tap
+  **Advanced → Go to Tail (unsafe)** and continue.
 - If a Drive operation ever fails with "Google needs you to approve Drive access",
   the app automatically opens the consent screen on the next tap — approve and retry.
