@@ -47,9 +47,20 @@ class VisionProcessingService {
      *
      * @param imageFile The captured image file to analyse.
      * @param config LLM endpoint configuration.
+     * @param memoryPrompt Optional formatted block of learned image→habit
+     *        associations (from [VisionMemoryRepository]) injected into the
+     *        system prompt so the LLM applies its "memory".
+     * @param habitPrompt Optional formatted list of valid habit / subtype
+     *        names. When provided, the LLM may propose a [HabitAction] for
+     *        non-food images — gated by a high confidence requirement.
      * @return The parsed [VisionResult], or null on failure.
      */
-    suspend fun processImage(imageFile: File, config: VisionConfig): VisionResult? =
+    suspend fun processImage(
+        imageFile: File,
+        config: VisionConfig,
+        memoryPrompt: String? = null,
+        habitPrompt: String? = null
+    ): VisionResult? =
         withContext(Dispatchers.IO) {
             if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
                 Log.w(TAG, "Cannot process: LLM config incomplete")
@@ -67,69 +78,138 @@ class VisionProcessingService {
                 }
 
             // 2. Build the request body (OpenAI chat completions format with vision)
-            val requestBody = buildRequestBody(base64Image, config)
+            val requestBody = buildRequestBody(base64Image, config, memoryPrompt, habitPrompt)
 
             // 3. Execute the HTTP call with retry on 429 / 5xx
-            val maxRetries = 3
-            var lastHttpResult: HttpResult = HttpResult.OtherError(0, "Not attempted")
+            when (val outcome = chatCompletion(fullUrl, requestBody, config)) {
+                is ChatOutcome.Content -> parseVisionResult(outcome.text)
+                is ChatOutcome.ErrorNote -> VisionResult(
+                    classification = VisionClassification.UNCERTAIN_OTHER,
+                    confidenceScore = 0.0,
+                    processingNotes = outcome.note
+                )
+                ChatOutcome.NetworkFailure -> null
+            }
+        }
 
-            for (attempt in 1..maxRetries) {
-                val result = executeHttpCall(fullUrl, requestBody, config)
-                when (result) {
-                    is HttpResult.Success -> {
-                        // 4. Extract the assistant message content
-                        val content = extractAssistantContent(result.content)
-                            ?: run {
-                                Log.e(TAG, "No content in response: ${result.content.take(300)}")
-                                return@withContext null
-                            }
-                        // 5. Parse the JSON from the content
-                        return@withContext parseVisionResult(content)
-                    }
-                    is HttpResult.RateLimited -> {
-                        lastHttpResult = result
-                        if (attempt < maxRetries) {
-                            val delayMs = 5_000L * attempt  // 5s, 10s
-                            Log.w(TAG, "Rate limited (429), retrying in ${delayMs}ms (attempt $attempt/$maxRetries)")
-                            delay(delayMs)
-                        }
-                    }
-                    is HttpResult.ServerError -> {
-                        lastHttpResult = result
-                        if (attempt < maxRetries) {
-                            val delayMs = 3_000L * attempt  // 3s, 6s
-                            Log.w(TAG, "Server error ${result.code}, retrying in ${delayMs}ms (attempt $attempt/$maxRetries)")
-                            delay(delayMs)
-                        }
-                    }
-                    is HttpResult.OtherError -> {
-                        // Non-retryable error (4xx other than 429), return immediately
-                        return@withContext VisionResult(
-                            classification = VisionClassification.UNCERTAIN_OTHER,
-                            confidenceScore = 0.0,
-                            processingNotes = "API error ${result.code}: ${result.message.take(200)}"
-                        )
-                    }
-                    is HttpResult.NetworkException -> {
-                        Log.e(TAG, "Vision processing failed", result.e)
-                        return@withContext null
-                    }
-                }
+    /**
+     * Tandem teaching call: the user held the capture button, took a photo,
+     * and spoke an instruction. The photo and transcript are sent to the LLM
+     * **together** so it can learn (and persist via [VisionMemoryRepository])
+     * what this kind of image should mean in the future.
+     *
+     * @param imageFile The example photo captured during the hold.
+     * @param transcript The user's spoken instruction (speech-to-text).
+     * @param config LLM endpoint configuration.
+     * @param habitPrompt Formatted list of valid habit / subtype names the
+     *        LLM may choose from.
+     * @return The parsed [TeachingResult], or null on network failure.
+     */
+    suspend fun processTeaching(
+        imageFile: File,
+        transcript: String,
+        config: VisionConfig,
+        habitPrompt: String
+    ): TeachingResult? =
+        withContext(Dispatchers.IO) {
+            if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
+                Log.w(TAG, "Cannot teach: LLM config incomplete")
+                return@withContext null
             }
 
-            // All retries exhausted
-            VisionResult(
-                classification = VisionClassification.UNCERTAIN_OTHER,
-                confidenceScore = 0.0,
-                processingNotes = when (lastHttpResult) {
-                    is HttpResult.RateLimited ->
-                        "Rate limited after $maxRetries attempts: ${lastHttpResult.message.take(200)}"
-                    is HttpResult.ServerError ->
-                        "Server error ${lastHttpResult.code} after $maxRetries attempts: ${lastHttpResult.message.take(200)}"
-                    else -> "Request failed after $maxRetries attempts"
+            val fullUrl = buildEndpointUrl(config.baseUrl)
+            Log.i(TAG, "Teaching image association via $fullUrl model=${config.model}")
+
+            val base64Image = compressAndEncode(imageFile)
+                ?: run {
+                    Log.e(TAG, "Failed to compress/encode teaching image")
+                    return@withContext null
                 }
-            )
+
+            val requestBody = buildTeachingRequestBody(base64Image, transcript, config, habitPrompt)
+
+            when (val outcome = chatCompletion(fullUrl, requestBody, config)) {
+                is ChatOutcome.Content -> parseTeachingResult(outcome.text)
+                is ChatOutcome.ErrorNote -> TeachingResult(understood = false, notes = outcome.note)
+                ChatOutcome.NetworkFailure -> null
+            }
         }
+
+    // ── Shared chat-completion retry loop ────────────────────────────────
+
+    /** Outcome of a full chat-completion exchange (with retries). */
+    private sealed class ChatOutcome {
+        /** Assistant message content extracted from a 2xx response. */
+        class Content(val text: String) : ChatOutcome()
+        /** Non-retryable API error or retries exhausted — note for processing_notes. */
+        class ErrorNote(val note: String) : ChatOutcome()
+        /** Network / I/O failure — caller should treat as "request failed". */
+        object NetworkFailure : ChatOutcome()
+    }
+
+    /**
+     * Executes the HTTP call with retry on 429 / 5xx (max 3 attempts) and
+     * extracts the assistant message content. Shared by [processImage]
+     * and [processTeaching].
+     */
+    private suspend fun chatCompletion(
+        fullUrl: String,
+        requestBody: JSONObject,
+        config: VisionConfig
+    ): ChatOutcome {
+        val maxRetries = 3
+        var lastHttpResult: HttpResult = HttpResult.OtherError(0, "Not attempted")
+
+        for (attempt in 1..maxRetries) {
+            val result = executeHttpCall(fullUrl, requestBody, config)
+            when (result) {
+                is HttpResult.Success -> {
+                    val content = extractAssistantContent(result.content)
+                        ?: return ChatOutcome.ErrorNote(
+                            "No content in LLM response: ${result.content.take(200)}"
+                        )
+                    return ChatOutcome.Content(content)
+                }
+                is HttpResult.RateLimited -> {
+                    lastHttpResult = result
+                    if (attempt < maxRetries) {
+                        val delayMs = 5_000L * attempt  // 5s, 10s
+                        Log.w(TAG, "Rate limited (429), retrying in ${delayMs}ms (attempt $attempt/$maxRetries)")
+                        delay(delayMs)
+                    }
+                }
+                is HttpResult.ServerError -> {
+                    lastHttpResult = result
+                    if (attempt < maxRetries) {
+                        val delayMs = 3_000L * attempt  // 3s, 6s
+                        Log.w(TAG, "Server error ${result.code}, retrying in ${delayMs}ms (attempt $attempt/$maxRetries)")
+                        delay(delayMs)
+                    }
+                }
+                is HttpResult.OtherError -> {
+                    // Non-retryable error (4xx other than 429), return immediately
+                    return ChatOutcome.ErrorNote(
+                        "API error ${result.code}: ${result.message.take(200)}"
+                    )
+                }
+                is HttpResult.NetworkException -> {
+                    Log.e(TAG, "Vision request failed", result.e)
+                    return ChatOutcome.NetworkFailure
+                }
+            }
+        }
+
+        // All retries exhausted
+        return ChatOutcome.ErrorNote(
+            when (lastHttpResult) {
+                is HttpResult.RateLimited ->
+                    "Rate limited after $maxRetries attempts: ${lastHttpResult.message.take(200)}"
+                is HttpResult.ServerError ->
+                    "Server error ${lastHttpResult.code} after $maxRetries attempts: ${lastHttpResult.message.take(200)}"
+                else -> "Request failed after $maxRetries attempts"
+            }
+        )
+    }
 
     // ── HTTP transport ──────────────────────────────────────────────────
 
@@ -264,8 +344,13 @@ class VisionProcessingService {
      * Builds the OpenAI-compatible chat completions request body with the
      * unified system prompt + image content.
      */
-    private fun buildRequestBody(base64Image: String, config: VisionConfig): JSONObject {
-        val systemPrompt = buildSystemPrompt(config.userSystemPrompt)
+    private fun buildRequestBody(
+        base64Image: String,
+        config: VisionConfig,
+        memoryPrompt: String? = null,
+        habitPrompt: String? = null
+    ): JSONObject {
+        val systemPrompt = buildSystemPrompt(config.userSystemPrompt, memoryPrompt, habitPrompt)
 
         val userContent = JSONArray().apply {
             // Text part: current datetime context
@@ -302,6 +387,108 @@ class VisionProcessingService {
         }
     }
 
+    // ── Teaching request (tandem voice+camera) ───────────────────────────
+
+    /**
+     * Builds the chat-completions request body for a tandem teaching call:
+     * the example photo and the user's spoken instruction are sent together
+     * so the LLM can extract the image→habit association to remember.
+     */
+    private fun buildTeachingRequestBody(
+        base64Image: String,
+        transcript: String,
+        config: VisionConfig,
+        habitPrompt: String
+    ): JSONObject {
+        val systemPrompt = buildString {
+            append("You are a habit-tracking assistant. The user just took a photo and spoke an ")
+            append("instruction that TEACHES you what this kind of photo should mean in the future.\n\n")
+            append("AVAILABLE HABITS (the only valid habit_name values):\n$habitPrompt\n\n")
+            append("Your tasks:\n")
+            append("1. Understand the spoken instruction and decide which habit the user wants ")
+            append("incremented whenever this kind of image is seen.\n")
+            append("2. If a subtype is mentioned or clearly implied, pick it from that habit's listed subtypes.\n")
+            append("3. Parse any increment amount (default 1).\n")
+            append("4. Write a generalized \"visual_description\" of the photo subject — describe WHAT TO ")
+            append("LOOK FOR in future photos (the subject/category), not this specific photo's incidental ")
+            append("details — so similar photos can be recognized later.\n")
+            append("5. Write a one-line summary of the learned association.\n")
+            append("If the instruction cannot be mapped to any listed habit, set understood=false and ")
+            append("explain why in notes.\n\n")
+            append("Respond ONLY with raw JSON (no markdown fences, no conversational text):\n")
+            append("{\n")
+            append("  \"understood\": boolean,\n")
+            append("  \"habit_name\": \"String or null\",\n")
+            append("  \"subtype_name\": \"String or null\",\n")
+            append("  \"amount\": number,\n")
+            append("  \"visual_description\": \"String\",\n")
+            append("  \"summary\": \"String\",\n")
+            append("  \"notes\": \"String\"\n")
+            append("}")
+        }
+
+        val userContent = JSONArray().apply {
+            // Text part: the spoken instruction
+            put(JSONObject().apply {
+                put("type", "text")
+                put(
+                    "text",
+                    "The user's spoken instruction: \"$transcript\"\n" +
+                    "Analyse the image below and learn the association."
+                )
+            })
+            // Image part: the example photo
+            put(JSONObject().apply {
+                put("type", "image_url")
+                put("image_url", JSONObject().apply {
+                    put("url", base64Image)
+                })
+            })
+        }
+
+        return JSONObject().apply {
+            put("model", config.model)
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "system")
+                    put("content", systemPrompt)
+                })
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", userContent)
+                })
+            })
+            put("temperature", 0.2)
+            put("max_tokens", 800)
+        }
+    }
+
+    /**
+     * Parses the LLM's JSON output from a teaching call into a
+     * [TeachingResult]. Handles markdown fences and malformed JSON gracefully.
+     */
+    fun parseTeachingResult(content: String): TeachingResult {
+        return try {
+            val json = JSONObject(stripCodeFences(content).trim())
+            TeachingResult(
+                understood = json.optBoolean("understood", false),
+                habitName = json.optString("habit_name").takeIf {
+                    it.isNotBlank() && it != "null"
+                },
+                subtypeName = json.optString("subtype_name").takeIf {
+                    it.isNotBlank() && it != "null"
+                },
+                amount = json.optInt("amount", 1).takeIf { it > 0 } ?: 1,
+                visualDescription = json.optString("visual_description", ""),
+                summary = json.optString("summary", ""),
+                notes = json.optString("notes", "")
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse teaching result JSON: ${content.take(200)}", e)
+            TeachingResult(understood = false, notes = "Parse error: ${e.message?.take(100)}")
+        }
+    }
+
     /**
      * Builds the unified system prompt from the spec's template, merged with
      * the user's custom dietary rules.
@@ -319,13 +506,17 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
    - "NON_FOOD_HABIT": The image depicts a non-food habit activity (e.g., book, gym equipment, task list).
    - "UNCERTAIN_OTHER": The image does not clearly depict a trackable habit or meal.
 
+   IMPORTANT: If the image contains ANY food, drink, snack, or meal — even partially visible, unusual, or unclear — ALWAYS classify it as "FOOD_MEAL" and fill food_data with your BEST-GUESS estimates. Never classify food as UNCERTAIN_OTHER, and never leave food_data empty because exact quantities are unknown: estimate. The confidence_score expresses certainty about a proposed habit_action (which non-food habit to increment) — it must NEVER be lowered or used to hedge on food classification or food_data quality.
+
 2. If the category is "FOOD_MEAL", perform a granular breakdown adhering strictly to any User Dietary Rules above:
    - Identify the meal/snack name.
    - Estimate ingredients and portion sizes.
    - Calculate estimated calories and primary macronutrients (Protein, Carbs, Fats).
    - Summarize the item in 1-2 concise sentences for a habit log entry.
 
-3. Format the response strictly as valid, raw JSON matching the JSON Schema provided below. Do not wrap in markdown code blocks, and do not add conversational text.
+3. If the category is "NON_FOOD_HABIT" or "UNCERTAIN_OTHER", begin processing_notes with a concise one-sentence visual description of what the image actually shows, formatted as "Description: <what the image depicts>". This description is shown directly to the user, so make it specific and useful.
+
+4. Format the response strictly as valid, raw JSON matching the JSON Schema provided below. Do not wrap in markdown code blocks, and do not add conversational text.
 
 ### JSON OUTPUT SCHEMA:
 {
@@ -348,18 +539,50 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
     "detected_activity": "String or null",
     "suggested_action": "String or null"
   },
+  "habit_action": {
+    "habit_name": "String or null (exact habit name, only when VERY certain)",
+    "subtype_name": "String or null",
+    "amount": number,
+    "reasoning": "String"
+  },
   "processing_notes": "String"
 }
 """.trimIndent()
 
+        /**
+         * Extra instructions appended to the system prompt when a habit list
+         * is provided — enables the smart auto-detection (habit_action)
+         * path with a strict certainty requirement.
+         */
+        private const val HABIT_ACTION_INSTRUCTIONS = """
+### HABIT ACTION INSTRUCTIONS:
+- If the image clearly matches one of the learned associations above, OR unambiguously depicts an activity or item tied to one of the available habits (e.g. a supplement bottle clearly labeled "Glutamine" → the Pills habit with subtype Glutamine), include a "habit_action" object in your JSON with the EXACT habit name (and the exact subtype name when one applies).
+- confidence_score expresses how certain you are about the habit_action choice. Only include "habit_action" when that certainty is at least 0.85. When unsure WHICH habit applies, omit "habit_action" entirely (null) — the app will ask the user directly, so no information is lost. Low habit certainty must never affect food classification or food_data estimates.
+- "habit_action.amount" defaults to 1; only use a larger number when the image clearly shows multiples (e.g. several pills taken at once).
+"""
+
         /** Builds the final system prompt by injecting user custom rules. */
-        fun buildSystemPrompt(userCustomPrompt: String): String {
+        fun buildSystemPrompt(
+            userCustomPrompt: String,
+            memoryPrompt: String? = null,
+            habitPrompt: String? = null
+        ): String {
             val rules = if (userCustomPrompt.isBlank()) {
                 "(No custom dietary rules specified. Use general nutritional knowledge.)"
             } else {
                 userCustomPrompt.trim()
             }
-            return SYSTEM_PROMPT_TEMPLATE.replace("{{USER_CUSTOM_SYSTEM_PROMPT}}", rules)
+            var prompt = SYSTEM_PROMPT_TEMPLATE.replace("{{USER_CUSTOM_SYSTEM_PROMPT}}", rules)
+            if (!habitPrompt.isNullOrBlank()) {
+                prompt += "\n### AVAILABLE HABITS (the ONLY valid values for habit_action.habit_name):\n$habitPrompt\n"
+            }
+            if (!memoryPrompt.isNullOrBlank()) {
+                prompt += "\n### LEARNED IMAGE → HABIT ASSOCIATIONS (user-taught memory):\n$memoryPrompt\n"
+            }
+            if (!habitPrompt.isNullOrBlank()) {
+                prompt += HABIT_ACTION_INSTRUCTIONS
+            }
+            return prompt
         }
     }
 
@@ -443,11 +666,24 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
                 )
             }
 
+            val habitAction = json.optJSONObject("habit_action")?.let { ha ->
+                val name = ha.optString("habit_name").takeIf { it.isNotBlank() && it != "null" }
+                if (name == null) null else HabitAction(
+                    habitName = name,
+                    subtypeName = ha.optString("subtype_name").takeIf {
+                        it.isNotBlank() && it != "null"
+                    },
+                    amount = ha.optInt("amount", 1).takeIf { it > 0 } ?: 1,
+                    reasoning = ha.optString("reasoning", "")
+                )
+            }
+
             VisionResult(
                 classification = classification,
                 confidenceScore = confidence,
                 foodData = foodData,
                 nonFoodData = nonFoodData,
+                habitAction = habitAction,
                 processingNotes = json.optString("processing_notes", "")
             )
         } catch (e: Exception) {

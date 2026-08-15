@@ -36,6 +36,7 @@ import com.example.tail.data.dateString
 import com.example.tail.ui.ACTION_HABIT_INCREMENTED
 import com.example.tail.ui.EXTRA_HABIT_NAME
 import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.ui.VoiceTranscriptBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -51,6 +52,7 @@ private const val TAG = "SmartVoiceService"
 private const val CHANNEL_ID = "smart_voice_channel"
 private const val NOTIFICATION_ID = 9003
 private const val LISTEN_TIMEOUT_MS = 30_000L // 30s — could be habits or a note
+private const val TANDEM_EXTRA_LISTEN_MS = 20_000L // extra window while tandem mode is armed
 
 /**
  * Foreground service that smartly routes voice input to either habit
@@ -135,14 +137,29 @@ class SmartVoiceService : Service() {
             }
         }
 
-        // Safety timeout
-        handler.postDelayed({
-            Log.i(TAG, "Listen timeout reached (${LISTEN_TIMEOUT_MS}ms) — stopping")
-            handler.post { Toast.makeText(applicationContext, "🧠 Timeout — no speech detected", Toast.LENGTH_SHORT).show() }
-            stopSelfCleanly()
-        }, LISTEN_TIMEOUT_MS)
+        // Safety timeout — extends itself while tandem (hold-to-capture)
+        // mode is armed, so the user has time to speak after taking the photo.
+        handler.postDelayed(tandemAwareTimeout, LISTEN_TIMEOUT_MS)
 
         return START_NOT_STICKY
+    }
+
+    /**
+     * Timeout runnable that is tandem-aware: when the capture activity has
+     * armed tandem mode (photo taken, waiting for the spoken instruction),
+     * the listening window is extended instead of stopping the service.
+     */
+    private val tandemAwareTimeout: Runnable = object : Runnable {
+        override fun run() {
+            if (VoiceTranscriptBus.tandemArmed) {
+                Log.i(TAG, "Tandem mode armed — extending listen window by ${TANDEM_EXTRA_LISTEN_MS}ms")
+                handler.postDelayed(this, TANDEM_EXTRA_LISTEN_MS)
+            } else {
+                Log.i(TAG, "Listen timeout reached (${LISTEN_TIMEOUT_MS}ms) — stopping")
+                handler.post { Toast.makeText(applicationContext, "🧠 Timeout — no speech detected", Toast.LENGTH_SHORT).show() }
+                stopSelfCleanly()
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -205,6 +222,16 @@ class SmartVoiceService : Service() {
                     else -> "UNKNOWN($error)"
                 }
                 Log.w(TAG, "Speech recognition error: $errorName")
+
+                // Tandem (hold-to-capture) mode: hand the failure to the
+                // capture activity instead of just stopping.
+                if (VoiceTranscriptBus.tandemArmed) {
+                    Log.i(TAG, "Tandem armed — delivering recognition error '$errorName' to capture flow")
+                    VoiceTranscriptBus.emitError(errorName)
+                    stopSelfCleanly()
+                    return
+                }
+
                 handler.post { Toast.makeText(applicationContext, "🧠 Error: $errorName", Toast.LENGTH_SHORT).show() }
                 stopSelfCleanly()
             }
@@ -213,12 +240,32 @@ class SmartVoiceService : Service() {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (matches.isNullOrEmpty()) {
                     Log.i(TAG, "No speech results — stopping")
+
+                    // Tandem mode: an empty result is still a failure signal
+                    // for the capture flow waiting on the transcript.
+                    if (VoiceTranscriptBus.tandemArmed) {
+                        VoiceTranscriptBus.emitError("No speech detected")
+                        stopSelfCleanly()
+                        return
+                    }
+
                     handler.post { Toast.makeText(applicationContext, "🧠 No speech detected", Toast.LENGTH_SHORT).show() }
                     stopSelfCleanly()
                     return
                 }
 
                 Log.i(TAG, "Speech results: $matches")
+
+                // Tandem (hold-to-capture) mode: deliver the transcript to
+                // the capture activity (paired with its photo) instead of
+                // routing it as a habit/note command.
+                if (VoiceTranscriptBus.tandemArmed) {
+                    Log.i(TAG, "Tandem armed — delivering transcript to capture flow: \"${matches.first()}\"")
+                    VoiceTranscriptBus.emitTranscript(matches.first())
+                    stopSelfCleanly()
+                    return
+                }
+
                 // Use the best match for routing
                 routeText(matches.first(), wordToHabits, settings, capturedSpotifyTrack)
             }

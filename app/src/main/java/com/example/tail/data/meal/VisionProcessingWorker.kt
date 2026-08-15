@@ -18,6 +18,8 @@ import java.time.LocalDate
 
 private const val TAG = "VisionWorker"
 private const val UNIQUE_WORK_NAME = "vision_processing"
+/** Minimum confidence for executing an LLM-proposed habit action (see MediaCaptureActivity). */
+private const val HABIT_ACTION_CONFIDENCE_THRESHOLD = 0.85
 
 /**
  * Background [CoroutineWorker] that drains the [VisionQueueRepository] by
@@ -40,6 +42,7 @@ class VisionProcessingWorker(
         val settingsRepo = SettingsRepository(appContext)
         val queueRepo = VisionQueueRepository(appContext)
         val mealLogRepo = MealLogRepository(appContext)
+        val memoryRepo = VisionMemoryRepository(appContext)
         val habitsRepo = HabitsRepository()
         val visionService = VisionProcessingService()
 
@@ -92,12 +95,48 @@ class VisionProcessingWorker(
                     continue
                 }
 
-                // Run the vision pipeline
-                val result = visionService.processImage(imageFile, config)
+                // Run the vision pipeline — with the learned memory and the
+                // valid habit list injected so smart auto-detection works
+                // in the background queue too.
+                val memoryPrompt = memoryRepo.buildMemoryPrompt().ifBlank { null }
+                val habitPrompt = VisionHabitExecutor.buildHabitPrompt(settings).ifBlank { null }
+                val result = visionService.processImage(imageFile, config, memoryPrompt, habitPrompt)
                 if (result == null) {
                     val willRetry = queueRepo.markFailedOrRetry(item.id, "Vision service returned null")
                     failed++
                     Log.w(TAG, "Item ${item.id} failed (willRetry=$willRetry)")
+                    continue
+                }
+
+                // Smart auto-detection: execute a proposed habit action when
+                // the LLM is certain enough and the habit really exists.
+                if (result.classification != VisionClassification.FOOD_MEAL &&
+                    result.habitAction != null &&
+                    result.confidenceScore >= HABIT_ACTION_CONFIDENCE_THRESHOLD
+                ) {
+                    val action = result.habitAction!!
+                    val resolved = VisionHabitExecutor.resolveHabitAction(
+                        settings, action.habitName, action.subtypeName
+                    )
+                    if (resolved == null) {
+                        Log.w(TAG, "Item ${item.id}: proposed habit '${action.habitName}' not found — no action")
+                        queueRepo.markCompleted(item.id, "none")
+                        processed++
+                    } else {
+                        val (realHabit, realSubtype) = resolved
+                        val err = VisionHabitExecutor.execute(
+                            appContext, settings, realHabit, realSubtype, action.amount
+                        )
+                        if (err == null) {
+                            Log.i(TAG, "Item ${item.id}: auto-detected → $realHabit" +
+                                (realSubtype?.let { "/$it" } ?: "") + " ×${action.amount}")
+                            queueRepo.markCompleted(item.id, "habit:$realHabit")
+                            processed++
+                        } else {
+                            val willRetry = queueRepo.markFailedOrRetry(item.id, err)
+                            failed++
+                        }
+                    }
                     continue
                 }
 

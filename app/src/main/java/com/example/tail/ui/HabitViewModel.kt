@@ -159,6 +159,13 @@ class HabitViewModel(
     val mealLogRepo = com.example.tail.data.meal.MealLogRepository(context)
     /** Repository for the offline vision-processing queue (internal storage). */
     val visionQueueRepo = com.example.tail.data.meal.VisionQueueRepository(context)
+    /** Repository for the LLM vision memory (user-taught image→habit associations). */
+    val visionMemoryRepo = com.example.tail.data.meal.VisionMemoryRepository(context)
+
+    /** Learned vision memory entries (newest-first), for the Settings screen. */
+    private val _visionMemoryEntries = MutableStateFlow<List<com.example.tail.data.meal.VisionMemoryEntry>>(emptyList())
+    val visionMemoryEntries: StateFlow<List<com.example.tail.data.meal.VisionMemoryEntry>> =
+        _visionMemoryEntries.asStateFlow()
 
     /** Meal logs for the currently-opened meal habit (newest-first). */
     private val _mealLogsForHabit = MutableStateFlow<List<com.example.tail.data.meal.MealLog>>(emptyList())
@@ -7946,6 +7953,31 @@ class HabitViewModel(
             }
             settingsRepo.saveMealHabits(current)
             _settings.value = _settings.value.copy(mealHabits = current)
+        }
+    }
+
+    // ── Vision Memory (LLM's learned image→habit associations) ──────────
+
+    /** Reloads the vision memory entries from internal storage (newest-first). */
+    fun refreshVisionMemory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _visionMemoryEntries.value = visionMemoryRepo.loadEntries().sortedByDescending { it.timestamp }
+        }
+    }
+
+    /** Updates an edited vision memory entry in place. */
+    fun updateVisionMemoryEntry(entry: com.example.tail.data.meal.VisionMemoryEntry) {
+        viewModelScope.launch(Dispatchers.IO) {
+            visionMemoryRepo.updateEntry(entry)
+            _visionMemoryEntries.value = visionMemoryRepo.loadEntries().sortedByDescending { it.timestamp }
+        }
+    }
+
+    /** Deletes a vision memory entry by id (also removes its example image). */
+    fun deleteVisionMemoryEntry(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            visionMemoryRepo.deleteEntry(id)
+            _visionMemoryEntries.value = visionMemoryRepo.loadEntries().sortedByDescending { it.timestamp }
         }
     }
 

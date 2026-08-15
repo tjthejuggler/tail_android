@@ -147,6 +147,45 @@ data class NonFoodData(
 )
 
 /**
+ * A habit-increment action proposed by the LLM for a non-food image —
+ * either matched against a learned [VisionMemoryEntry] or unambiguously
+ * derived from the image content (e.g. a labeled pill bottle → "Pills"
+ * habit with a "Glutamine" subtype).
+ *
+ * The app **validates** the proposed names against the real habit /
+ * subtype configuration before executing anything — the LLM never
+ * increments directly.
+ */
+data class HabitAction(
+    val habitName: String,
+    val subtypeName: String? = null,
+    val amount: Int = 1,
+    val reasoning: String = ""
+)
+
+/**
+ * Parsed result of a tandem (photo + spoken instruction) teaching call.
+ * The LLM extracts which habit the user wants associated with this kind
+ * of image, plus a generalized visual description for future matching.
+ */
+data class TeachingResult(
+    /** True when the LLM understood the instruction and resolved a habit. */
+    val understood: Boolean = false,
+    /** The habit the user wants incremented (must be validated by the app). */
+    val habitName: String? = null,
+    /** Optional subtype within the habit. */
+    val subtypeName: String? = null,
+    /** Increment amount parsed from the instruction (default 1). */
+    val amount: Int = 1,
+    /** Generalized description of the photo subject for future recognition. */
+    val visualDescription: String = "",
+    /** One-line human-readable summary of the learned association. */
+    val summary: String = "",
+    /** Free-form notes / clarifications from the LLM. */
+    val notes: String = ""
+)
+
+/**
  * The fully parsed result of a vision-processing LLM call.
  * Maps 1:1 to the JSON schema in the system prompt.
  */
@@ -155,6 +194,8 @@ data class VisionResult(
     val confidenceScore: Double = 0.0,
     val foodData: FoodData? = null,
     val nonFoodData: NonFoodData? = null,
+    /** Habit-increment action proposed by the LLM (validated before execution). */
+    val habitAction: HabitAction? = null,
     val processingNotes: String = ""
 ) {
     /**

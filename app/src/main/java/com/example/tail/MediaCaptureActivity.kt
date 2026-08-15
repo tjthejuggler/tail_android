@@ -1,16 +1,22 @@
 package com.example.tail
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -19,36 +25,50 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -60,15 +80,20 @@ import androidx.lifecycle.lifecycleScope
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.SpotifyDetector
+import com.example.tail.data.meal.Macronutrients
+import com.example.tail.data.meal.MealLog
 import com.example.tail.data.meal.MealLogRepository
 import com.example.tail.data.meal.VisionClassification
 import com.example.tail.data.meal.VisionConfig
+import com.example.tail.data.meal.VisionHabitExecutor
+import com.example.tail.data.meal.VisionMemoryRepository
 import com.example.tail.data.meal.VisionProcessingService
 import com.example.tail.data.meal.VisionProcessingWorker
 import com.example.tail.data.meal.VisionQueueRepository
 import com.example.tail.data.meal.VisionResult
 import com.example.tail.ipc.SmartVoiceService
 import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.ui.VoiceTranscriptBus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -77,6 +102,13 @@ import java.util.concurrent.Executors
 
 private const val TAG = "MediaCapture"
 private const val AUTO_FINISH_TIMEOUT_MS = 35_000L
+/** Extra auto-finish window while the user speaks a tandem teaching instruction. */
+private const val TANDEM_SPEAK_WINDOW_MS = 30_000L
+/**
+ * Minimum confidence for the LLM's proposed habit_action to be executed on a
+ * plain photo capture. Below this, no action is taken ("when in doubt, do nothing").
+ */
+private const val HABIT_ACTION_CONFIDENCE_THRESHOLD = 0.85
 
 /**
  * UI state for [MediaCaptureActivity].
@@ -84,14 +116,51 @@ private const val AUTO_FINISH_TIMEOUT_MS = 35_000L
 sealed class CaptureState {
     /**
      * Camera preview is shown full-screen while voice listens in the
-     * background. The user can talk (voice handles it) or tap the capture
-     * button to take a photo.
+     * background. The user can talk (voice handles it), tap the capture
+     * button to take a photo, or **hold** the capture button for tandem
+     * mode (photo + spoken teaching instruction).
      */
     object CameraWithVoice : CaptureState()
+    /**
+     * Tandem mode: the photo was taken on long-press and we're waiting for
+     * the spoken instruction that teaches the LLM what the photo means.
+     */
+    data class AwaitingVoice(val imagePath: String) : CaptureState()
     /** Image captured, LLM processing in progress. */
     object Processing : CaptureState()
     /** LLM result ready for the user to read and dismiss. */
-    data class Result(val displayText: String, val isSuccess: Boolean) : CaptureState()
+    data class Result(
+        val displayText: String,
+        val isSuccess: Boolean,
+        val title: String? = null
+    ) : CaptureState()
+    /**
+     * A food photo was logged automatically with the LLM's best-guess
+     * specifics — editable review screen so the user can fine-tune the
+     * numbers before finishing (the habit was already incremented).
+     */
+    data class MealEdit(
+        val log: MealLog,
+        val note: String? = null
+    ) : CaptureState()
+    /**
+     * The photo couldn't be acted on with certainty. NEVER a dead end:
+     * the user tells the app what the photo means (text and/or a voice
+     * follow-up plus the habit selector); the answer is persisted to the
+     * LLM's vision memory and the habit is incremented right away.
+     */
+    data class Correcting(
+        val imagePath: String,
+        /** What the LLM said it saw (shown for context). */
+        val llmDescription: String,
+        /** Editable description that will go into memory. */
+        val description: String,
+        val selectedHabit: String? = null,
+        val selectedSubtype: String? = null,
+        val amount: Int = 1,
+        val listening: Boolean = false,
+        val voiceError: String? = null
+    ) : CaptureState()
 }
 
 /**
@@ -109,6 +178,14 @@ sealed class CaptureState {
  *  - **Tap capture** → the voice service is stopped, the photo is processed
  *    inline through the vision pipeline (same code path as the Settings test
  *    button), and the result is shown for the user to read and dismiss.
+ *    If the photo clearly matches a learned association (or an obvious habit
+ *    item like a labeled pill bottle), the proposed habit is incremented —
+ *    but only when the LLM is very certain; otherwise nothing happens.
+ *  - **Hold capture** → tandem teaching mode: the photo is taken while voice
+ *    keeps listening. The next spoken utterance is paired with the photo and
+ *    both are sent to the LLM together, permanently updating its vision
+ *    memory (editable in Settings → Vision Memory). The habit is also
+ *    incremented immediately.
  *
  * Works on the lock screen (`showWhenLocked` + `turnScreenOn`).
  *
@@ -129,12 +206,20 @@ class MediaCaptureActivity : ComponentActivity() {
     private var voiceServiceStarted = false
     private var captureInProgress = false
 
+    /**
+     * True while a tandem (hold-to-capture) flow is in progress. Guards the
+     * HabitIncrementBus collector: increments triggered by our own teaching
+     * flow must not auto-finish the activity before the result is shown.
+     */
+    private var tandemInProgress by mutableStateOf(false)
+
     private var captureState by mutableStateOf<CaptureState>(CaptureState.CameraWithVoice)
     private val handler = Handler(Looper.getMainLooper())
 
     /** Auto-finish after the voice service timeout (no capture, no speech). */
     private val autoFinishTimeout = Runnable {
         Log.d(TAG, "Auto-finish timeout — stopping voice and finishing")
+        VoiceTranscriptBus.disarmTandem()
         stopVoiceService()
         finish()
     }
@@ -150,6 +235,68 @@ class MediaCaptureActivity : ComponentActivity() {
             // No camera permission — voice still works, but no camera preview.
             // Keep the activity alive for voice only.
             Toast.makeText(this, "Camera permission denied — voice only", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Gallery pick mode: true = teach with a voice note after picking. */
+    private var galleryTeachMode = false
+
+    /** Habit list + subtypes available in the correction screen. */
+    private var correctableHabits: List<String> = emptyList()
+    private var correctableSubtypes: Map<String, List<String>> = emptyMap()
+
+    /**
+     * Gallery import (photo picker). Tap on the gallery button = analyse a
+     * picked photo like a plain capture; hold = tandem teaching with a
+     * spoken instruction, exactly like holding the shutter button.
+     */
+    private val galleryPicker = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri == null) {
+            // Picker cancelled — resume the auto-finish countdown
+            handler.postDelayed(autoFinishTimeout, AUTO_FINISH_TIMEOUT_MS)
+            return@registerForActivityResult
+        }
+        handler.removeCallbacks(autoFinishTimeout)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Could not read the selected image")
+                val relativePath =
+                    MealLogRepository(this@MediaCaptureActivity).saveImageBytes(bytes)
+                val teach = galleryTeachMode
+                runOnUiThread {
+                    if (teach) {
+                        // Same as hold-to-capture, but with the gallery photo
+                        tandemInProgress = true
+                        handler.postDelayed(
+                            autoFinishTimeout,
+                            AUTO_FINISH_TIMEOUT_MS + TANDEM_SPEAK_WINDOW_MS
+                        )
+                        if (!voiceServiceStarted) startVoiceMode()
+                        VoiceTranscriptBus.armTandem()
+                        vibrateTandemReady()
+                        captureState = CaptureState.AwaitingVoice(relativePath)
+                    } else {
+                        stopVoiceService()
+                        captureState = CaptureState.Processing
+                        val mealLogRepo = MealLogRepository(this@MediaCaptureActivity)
+                        val queueRepo = VisionQueueRepository(this@MediaCaptureActivity)
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            processCaptureInline(relativePath, targetHabit, mealLogRepo, queueRepo)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to import gallery image", e)
+                runOnUiThread {
+                    captureState = CaptureState.Result(
+                        "❌ Gallery import failed: ${e.message?.take(200)}",
+                        isSuccess = false
+                    )
+                }
+            }
         }
     }
 
@@ -177,13 +324,83 @@ class MediaCaptureActivity : ComponentActivity() {
             startVoiceMode()
         }
 
-        // Listen for habit increments from the voice service → auto-finish
+        // Listen for habit increments from the voice service → auto-finish.
+        // Ignored while a tandem flow is in progress (our own executor emits
+        // there too, and the result screen must be allowed to appear).
         lifecycleScope.launch {
             HabitIncrementBus.events.collect { habitName ->
+                if (tandemInProgress || captureState !is CaptureState.CameraWithVoice) {
+                    Log.d(TAG, "Habit incremented '$habitName' outside camera idle — staying for result")
+                    return@collect
+                }
                 Log.d(TAG, "Habit incremented via voice: $habitName — finishing")
                 handler.removeCallbacks(autoFinishTimeout)
                 stopVoiceService()
                 finish()
+            }
+        }
+
+        // Tandem mode: receive the spoken teaching instruction paired with
+        // the photo taken on long-press (or the gallery hold). In the
+        // correction screen the transcript is appended to the description.
+        lifecycleScope.launch {
+            VoiceTranscriptBus.transcripts.collect { event ->
+                when (val st = captureState) {
+                    is CaptureState.AwaitingVoice -> {
+                        Log.d(TAG, "Tandem transcript received: \"${event.transcript}\"")
+                        VoiceTranscriptBus.disarmTandem()
+                        stopVoiceService()
+                        captureState = CaptureState.Processing
+                        val mealLogRepo = MealLogRepository(this@MediaCaptureActivity)
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            processTeachingInline(st.imagePath, event.transcript, mealLogRepo)
+                        }
+                    }
+                    is CaptureState.Correcting -> {
+                        Log.d(TAG, "Correction voice follow-up: \"${event.transcript}\"")
+                        VoiceTranscriptBus.disarmTandem()
+                        stopVoiceService()
+                        captureState = st.copy(
+                            description = (st.description + " " + event.transcript).trim(),
+                            listening = false,
+                            voiceError = null
+                        )
+                    }
+                    else -> Unit
+                }
+            }
+        }
+
+        // Tandem mode: recognition failed / no speech — fall back to plain
+        // photo analysis (smart detection) with a notice. In the correction
+        // screen a voice failure just stops the mic and reports the reason.
+        lifecycleScope.launch {
+            VoiceTranscriptBus.errors.collect { event ->
+                when (val st = captureState) {
+                    is CaptureState.AwaitingVoice -> {
+                        Log.d(TAG, "Tandem voice error: ${event.reason}")
+                        VoiceTranscriptBus.disarmTandem()
+                        stopVoiceService()
+                        captureState = CaptureState.Processing
+                        val mealLogRepo = MealLogRepository(this@MediaCaptureActivity)
+                        val queueRepo = VisionQueueRepository(this@MediaCaptureActivity)
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            processCaptureInline(
+                                st.imagePath,
+                                targetHabit,
+                                mealLogRepo,
+                                queueRepo,
+                                voiceErrorNote = "🎤 No speech heard (${event.reason}) — photo analysed without teaching."
+                            )
+                        }
+                    }
+                    is CaptureState.Correcting -> {
+                        VoiceTranscriptBus.disarmTandem()
+                        stopVoiceService()
+                        captureState = st.copy(listening = false, voiceError = event.reason)
+                    }
+                    else -> Unit
+                }
             }
         }
 
@@ -197,16 +414,58 @@ class MediaCaptureActivity : ComponentActivity() {
                         targetHabit = targetHabit,
                         voiceActive = !directCamera && voiceServiceStarted,
                         onCapture = { capturePhoto(targetHabit) },
+                        onHoldCapture = { startTandemCapture(targetHabit) },
+                        onPickGallery = { launchGalleryPicker(teach = false) },
+                        onHoldPickGallery = { launchGalleryPicker(teach = true) },
                         onCancel = {
                             stopVoiceService()
                             finish()
+                        }
+                    )
+                    is CaptureState.AwaitingVoice -> AwaitingVoiceScreen(
+                        onCancel = {
+                            VoiceTranscriptBus.disarmTandem()
+                            tandemInProgress = false
+                            stopVoiceService()
+                            // Remove the orphaned teaching photo
+                            MealLogRepository(this).deleteImage(state.imagePath)
+                            finish()
+                        },
+                        onAnalyseWithoutVoice = {
+                            VoiceTranscriptBus.disarmTandem()
+                            stopVoiceService()
+                            captureState = CaptureState.Processing
+                            val mealLogRepo = MealLogRepository(this)
+                            val queueRepo = VisionQueueRepository(this)
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                processCaptureInline(
+                                    state.imagePath, targetHabit, mealLogRepo, queueRepo,
+                                    voiceErrorNote = "🎤 Analysed without a teaching instruction."
+                                )
+                            }
                         }
                     )
                     is CaptureState.Processing -> ProcessingScreen(onCancel = { finish() })
                     is CaptureState.Result -> ResultScreen(
                         displayText = state.displayText,
                         isSuccess = state.isSuccess,
+                        title = state.title,
                         onDismiss = { finish() }
+                    )
+                    is CaptureState.MealEdit -> MealEditScreen(
+                        log = state.log,
+                        note = state.note,
+                        onSave = { updated -> saveMealEdit(updated) },
+                        onDiscard = { discardMealEdit(state.log) }
+                    )
+                    is CaptureState.Correcting -> CorrectionScreen(
+                        state = state,
+                        habits = correctableHabits,
+                        subtypes = correctableSubtypes,
+                        onUpdate = { captureState = it },
+                        onMicToggle = { start -> if (start) startCorrectionListening() else stopCorrectionListening() },
+                        onSave = { saveCorrection() },
+                        onDiscard = { discardCorrection(state) }
                     )
                 }
             }
@@ -216,6 +475,7 @@ class MediaCaptureActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(autoFinishTimeout)
+        VoiceTranscriptBus.disarmTandem()
         cameraExecutor.shutdown()
     }
 
@@ -248,7 +508,7 @@ class MediaCaptureActivity : ComponentActivity() {
         }
     }
 
-    // ── Camera mode ─────────────────────────────────────────────────────
+    // ── Camera mode (tap) ───────────────────────────────────────────────
 
     /**
      * Captures a photo, stops voice, then processes the image **inline**
@@ -319,15 +579,228 @@ class MediaCaptureActivity : ComponentActivity() {
         )
     }
 
+    // ── Camera mode (hold → tandem teaching) ────────────────────────────
+
+    /**
+     * Long-press on the capture button: takes the photo **without stopping
+     * voice**, arms tandem mode so the next spoken utterance is delivered
+     * here instead of being routed, and waits for the teaching instruction.
+     */
+    private fun startTandemCapture(targetHabit: String?) {
+        if (captureInProgress) return
+        captureInProgress = true
+        tandemInProgress = true
+
+        val capture = imageCapture ?: run {
+            Toast.makeText(this, "Camera not ready", Toast.LENGTH_SHORT).show()
+            captureInProgress = false
+            tandemInProgress = false
+            return
+        }
+
+        // Extend the auto-finish window so the user has time to speak
+        handler.removeCallbacks(autoFinishTimeout)
+        handler.postDelayed(autoFinishTimeout, AUTO_FINISH_TIMEOUT_MS + TANDEM_SPEAK_WINDOW_MS)
+
+        // Make sure a recognizer is listening (direct-camera mode starts none)
+        if (!voiceServiceStarted) {
+            startVoiceMode()
+        }
+
+        // Arm tandem BEFORE taking the photo so any speech result arriving
+        // during the capture is delivered to us rather than routed.
+        VoiceTranscriptBus.armTandem()
+        vibrateTandemReady()
+
+        val mealLogRepo = MealLogRepository(this)
+        val tempFile = File(cacheDir, "tandem_${System.currentTimeMillis()}.jpg")
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(tempFile).build()
+
+        capture.takePicture(
+            outputOptions,
+            cameraExecutor,
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    try {
+                        val bytes = tempFile.readBytes()
+                        tempFile.delete()
+                        val relativePath = mealLogRepo.saveImageBytes(bytes)
+                        Log.i(TAG, "Tandem photo saved: $relativePath — waiting for speech")
+
+                        runOnUiThread {
+                            captureInProgress = false
+                            captureState = CaptureState.AwaitingVoice(relativePath)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to save tandem image", e)
+                        runOnUiThread {
+                            tandemInProgress = false
+                            VoiceTranscriptBus.disarmTandem()
+                            captureState = CaptureState.Result(
+                                "❌ Capture failed: ${e.message?.take(200)}",
+                                isSuccess = false
+                            )
+                        }
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    Log.e(TAG, "Tandem camera capture error", exception)
+                    runOnUiThread {
+                        tandemInProgress = false
+                        VoiceTranscriptBus.disarmTandem()
+                        captureState = CaptureState.Result(
+                            "❌ Capture error: ${exception.message?.take(200)}",
+                            isSuccess = false
+                        )
+                    }
+                }
+            }
+        )
+    }
+
+    /**
+     * Tandem teaching: sends the photo and the spoken instruction to the LLM
+     * **together**, persists the learned association in the vision memory,
+     * and increments the habit right away.
+     */
+    private suspend fun processTeachingInline(
+        relativePath: String,
+        transcript: String,
+        mealLogRepo: MealLogRepository
+    ) {
+        val settingsRepo = SettingsRepository(this@MediaCaptureActivity)
+        val settings = try {
+            settingsRepo.settingsFlow.first()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load settings", e)
+            tandemInProgress = false
+            showResult("❌ Failed to load settings: ${e.message?.take(200)}", false)
+            return
+        }
+
+        if (!settings.mealEnabled || settings.mealApiKey.isBlank() ||
+            settings.mealBaseUrl.isBlank() || settings.mealModel.isBlank()
+        ) {
+            Log.w(TAG, "Meal engine not configured — cannot teach")
+            val queueRepo = VisionQueueRepository(this@MediaCaptureActivity)
+            queueRepo.enqueue(relativePath, targetHabit)
+            VisionProcessingWorker.enqueue(this@MediaCaptureActivity)
+            tandemInProgress = false
+            showResult(
+                "📋 Meal engine not configured — teaching needs the LLM endpoint.\n" +
+                "Photo queued for background processing.\n" +
+                "Configure the LLM endpoint in Settings → Meal Engine.",
+                isSuccess = false
+            )
+            return
+        }
+
+        val habitPrompt = VisionHabitExecutor.buildHabitPrompt(settings)
+        if (habitPrompt.isBlank()) {
+            tandemInProgress = false
+            showResult("❌ No habits configured — nothing to teach.", isSuccess = false)
+            return
+        }
+
+        val config = VisionConfig(
+            baseUrl = settings.mealBaseUrl,
+            apiKey = settings.mealApiKey,
+            model = settings.mealModel,
+            userSystemPrompt = settings.mealSystemPrompt
+        )
+
+        val imageFile = File(filesDir, relativePath)
+        val service = VisionProcessingService()
+        val teaching = service.processTeaching(imageFile, transcript, config, habitPrompt)
+
+        tandemInProgress = false
+
+        if (teaching == null) {
+            showResult(
+                "❌ Teaching request failed — check your URL, key, and model.\n" +
+                "See logcat (tag: VisionProcessing) for details.",
+                isSuccess = false
+            )
+            return
+        }
+
+        if (!teaching.understood || teaching.habitName == null) {
+            showResult(
+                buildString {
+                    append("🤔 Couldn't learn from that instruction.\n\n")
+                    append("You said: \"$transcript\"\n\n")
+                    if (teaching.notes.isNotBlank()) append(teaching.notes.take(300))
+                },
+                isSuccess = false
+            )
+            return
+        }
+
+        // Validate the LLM's proposal against the real habit configuration
+        val resolved = VisionHabitExecutor.resolveHabitAction(
+            settings, teaching.habitName, teaching.subtypeName
+        )
+        if (resolved == null) {
+            showResult(
+                "❌ The LLM proposed habit \"${teaching.habitName}\", which doesn't match " +
+                "any configured habit.\n\nYou said: \"$transcript\"",
+                isSuccess = false
+            )
+            return
+        }
+        val (realHabit, realSubtype) = resolved
+
+        // Persist the learned association — this is the LLM's "memory"
+        val memoryRepo = VisionMemoryRepository(this@MediaCaptureActivity)
+        val entry = VisionMemoryRepository.newEntry(
+            timestamp = System.currentTimeMillis(),
+            voiceNote = transcript,
+            visualDescription = teaching.visualDescription.ifBlank { "photo associated with $realHabit" },
+            habitName = realHabit,
+            subtypeName = realSubtype,
+            incrementAmount = teaching.amount
+        )
+        memoryRepo.addEntry(entry)
+
+        // The user is doing the activity right now — increment immediately
+        val incError = VisionHabitExecutor.execute(
+            this@MediaCaptureActivity, settings, realHabit, realSubtype, teaching.amount
+        )
+
+        val display = buildString {
+            append("🧠 Learned! ${teaching.summary.ifBlank { "Photos like this → $realHabit" }}\n\n")
+            append("Description: ${entry.visualDescription}\n\n")
+            append("You said: \"$transcript\"\n\n")
+            append(
+                "→ $realHabit" + (realSubtype?.let { " / $it" } ?: "") +
+                " ×${teaching.amount}\n\n"
+            )
+            if (incError == null) {
+                append("✅ Incremented $realHabit now, too.")
+            } else {
+                append("⚠️ Saved to memory, but the increment failed: $incError")
+            }
+            append("\n\nManage memories in Settings → Vision Memory.")
+        }
+        showResult(display, incError == null, title = "Learned")
+    }
+
+    // ── Inline vision processing ────────────────────────────────────────
+
     /**
      * Processes a captured image through the vision pipeline inline.
-     * Same code path as [HabitViewModel.testVisionEndpoint].
+     * Same code path as [HabitViewModel.testVisionEndpoint], extended with:
+     *  - the learned vision memory + habit list injected into the prompt
+     *  - execution of a proposed [com.example.tail.data.meal.HabitAction]
+     *    when the LLM is certain enough (smart auto-detection)
      */
     private suspend fun processCaptureInline(
         relativePath: String,
         targetHabit: String?,
         mealLogRepo: MealLogRepository,
-        queueRepo: VisionQueueRepository
+        queueRepo: VisionQueueRepository,
+        voiceErrorNote: String? = null
     ) {
         val settingsRepo = SettingsRepository(this@MediaCaptureActivity)
         val settings = try {
@@ -360,9 +833,14 @@ class MediaCaptureActivity : ComponentActivity() {
             userSystemPrompt = settings.mealSystemPrompt
         )
 
+        // Inject the LLM's learned memory + the valid habit list
+        val memoryPrompt = VisionMemoryRepository(this@MediaCaptureActivity)
+            .buildMemoryPrompt().ifBlank { null }
+        val habitPrompt = VisionHabitExecutor.buildHabitPrompt(settings).ifBlank { null }
+
         val imageFile = File(filesDir, relativePath)
         val service = VisionProcessingService()
-        val result = service.processImage(imageFile, config)
+        val result = service.processImage(imageFile, config, memoryPrompt, habitPrompt)
 
         if (result == null) {
             showResult(
@@ -375,6 +853,10 @@ class MediaCaptureActivity : ComponentActivity() {
 
         val targetHabitName = targetHabit ?: autoRouteHabit(result, settings.mealHabits)
 
+        // ── FOOD: always log it with the LLM's best-guess specifics and
+        // increment the meal habit, then let the user fine-tune the numbers
+        // in the editable review screen. Food is NEVER rejected for low
+        // confidence — confidence only gates the habit choice.
         if (result.classification == VisionClassification.FOOD_MEAL &&
             result.foodData != null && targetHabitName != null
         ) {
@@ -401,13 +883,80 @@ class MediaCaptureActivity : ComponentActivity() {
                         Log.e(TAG, "Failed to increment habit '$targetHabitName'", e)
                     }
                 }
+
+                val note = listOfNotNull(
+                    voiceErrorNote,
+                    "Best guess below — adjust anything before saving. " +
+                        "Confidence: ${(result.confidenceScore * 100).toInt()}%"
+                ).joinToString("\n\n")
+                runOnUiThread { captureState = CaptureState.MealEdit(mealLog, note) }
+                return
             }
         }
 
-        val displayText = formatResultText(result, targetHabitName)
-        val isSuccess = result.classification == VisionClassification.FOOD_MEAL &&
-                        result.foodData != null
-        showResult(displayText, isSuccess)
+        // ── Smart auto-detection (non-food): execute the proposed habit
+        // action when the LLM is certain enough and the habit really exists.
+        if (result.classification != VisionClassification.FOOD_MEAL &&
+            result.habitAction != null &&
+            result.confidenceScore >= HABIT_ACTION_CONFIDENCE_THRESHOLD
+        ) {
+            val action = result.habitAction!!
+            val resolved = VisionHabitExecutor.resolveHabitAction(
+                settings, action.habitName, action.subtypeName
+            )
+            if (resolved == null) {
+                Log.w(TAG, "LLM proposed unknown habit '${action.habitName}' — correcting")
+            } else {
+                val (realHabit, realSubtype) = resolved
+                val err = VisionHabitExecutor.execute(
+                    this@MediaCaptureActivity, settings, realHabit, realSubtype, action.amount
+                )
+                if (err == null) {
+                    val display = buildString {
+                        voiceErrorNote?.let { append(it); append("\n\n") }
+                        append("✅ Incremented $realHabit")
+                        append(realSubtype?.let { " ($it)" } ?: "")
+                        append(" ×${action.amount}")
+                        action.reasoning.takeIf { it.isNotBlank() }?.let { append("\n\nWhy: $it") }
+                        append("\n\nConfidence: ${(result.confidenceScore * 100).toInt()}%")
+                    }
+                    showResult(display, isSuccess = true, title = "Habit Incremented")
+                    return
+                }
+                showResult("⚠️ Wanted to increment $realHabit but failed: $err", isSuccess = false)
+                return
+            }
+        }
+
+        // ── API-level failures (rate limit / server) — nothing correctable.
+        val notes = result.processingNotes
+        val isApiError = notes.contains("Rate limited", ignoreCase = true) ||
+                         notes.contains("Server error", ignoreCase = true) ||
+                         notes.contains("API error", ignoreCase = true)
+        if (isApiError) {
+            showResult("❌ ${notes.take(300)}", isSuccess = false)
+            return
+        }
+
+        // ── Everything else: NEVER a dead end. Open the correction screen
+        // so the user can say (by text or voice) what the photo means and
+        // pick the habit — the answer goes into the LLM's memory.
+        correctableHabits = (settings.habitScreens.flatMap { it.habitNames } + settings.habitOrder)
+            .filter { it.isNotBlank() && !it.startsWith("app_link:") }
+            .distinct()
+        correctableSubtypes = settings.habitSubtypes
+        val rawSeen = result.nonFoodData?.detectedActivity
+            ?: notes.removePrefix("Description:").trim().ifBlank { notes }
+        val seenLine = rawSeen.take(200)
+        val contextText = listOfNotNull(voiceErrorNote, seenLine.ifBlank { null })
+            .joinToString("\n")
+        runOnUiThread {
+            captureState = CaptureState.Correcting(
+                imagePath = relativePath,
+                llmDescription = contextText,
+                description = seenLine.removePrefix("Detected: ").trim()
+            )
+        }
     }
 
     private fun autoRouteHabit(result: VisionResult, mealHabits: Set<String>): String? {
@@ -415,50 +964,147 @@ class MediaCaptureActivity : ComponentActivity() {
         return mealHabits.firstOrNull()
     }
 
-    private fun formatResultText(result: VisionResult, targetHabit: String?): String {
-        return when (result.classification) {
-            VisionClassification.FOOD_MEAL -> {
-                val fd = result.foodData ?: return "⚠️ Food detected but no data extracted."
-                buildString {
-                    append("✅ Detected: ${fd.title}\n\n")
-                    append("Calories: ${fd.estimatedCalories} kcal\n")
-                    append("Protein: ${fd.macronutrients.proteinGrams}g, ")
-                    append("Carbs: ${fd.macronutrients.carbsGrams}g, ")
-                    append("Fat: ${fd.macronutrients.fatGrams}g\n")
-                    if (fd.summary.isNotBlank()) {
-                        append("\n${fd.summary}\n")
-                    }
-                    if (fd.ingredientsDetected.isNotEmpty()) {
-                        append("\nIngredients: ${fd.ingredientsDetected.joinToString(", ")}\n")
-                    }
-                    fd.healthNotes?.let { append("\n$it\n") }
-                    if (targetHabit != null) {
-                        append("\n→ Logged to: $targetHabit")
-                    }
-                    append("\n\nConfidence: ${(result.confidenceScore * 100).toInt()}%")
-                }
-            }
-            VisionClassification.NON_FOOD_HABIT -> {
-                val activity = result.nonFoodData?.detectedActivity ?: "unknown"
-                "⚠️ Non-food detected: $activity\n\n${result.processingNotes}"
-            }
-            VisionClassification.UNCERTAIN_OTHER -> {
-                val notes = result.processingNotes
-                val isError = notes.contains("Rate limited", ignoreCase = true) ||
-                              notes.contains("Server error", ignoreCase = true) ||
-                              notes.contains("API error", ignoreCase = true)
-                if (isError) {
-                    "❌ ${notes.take(300)}"
-                } else {
-                    "⚠️ Uncertain classification.\nNotes: $notes"
-                }
-            }
+
+    private fun showResult(text: String, isSuccess: Boolean, title: String? = null) {
+        runOnUiThread {
+            captureState = CaptureState.Result(text, isSuccess, title)
         }
     }
 
-    private fun showResult(text: String, isSuccess: Boolean) {
-        runOnUiThread {
-            captureState = CaptureState.Result(text, isSuccess)
+    // ── Meal review (editable) ───────────────────────────────────────────
+
+    private fun saveMealEdit(updated: MealLog) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                MealLogRepository(this@MediaCaptureActivity).updateLog(updated)
+                Log.i(TAG, "Meal log updated after review: ${updated.title}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update meal log", e)
+            }
+            finish()
+        }
+    }
+
+    private fun discardMealEdit(log: MealLog) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val repo = MealLogRepository(this@MediaCaptureActivity)
+            try { repo.deleteLog(log.habitId, log.id) } catch (e: Exception) {
+                Log.e(TAG, "Failed to delete meal log", e)
+            }
+            try { repo.deleteImage(log.imageUri) } catch (e: Exception) {
+                Log.e(TAG, "Failed to delete meal image", e)
+            }
+            // Undo the automatic increment that came with the log
+            try {
+                val settings = SettingsRepository(this@MediaCaptureActivity).settingsFlow.first()
+                if (settings.fileUri.isNotEmpty()) {
+                    HabitsRepository().incrementHabit(
+                        Uri.parse(settings.fileUri), this@MediaCaptureActivity, log.habitId, -1
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to undo meal increment", e)
+            }
+            finish()
+        }
+    }
+
+    // ── Correction (teach what the photo means) ─────────────────────────
+
+    private fun launchGalleryPicker(teach: Boolean) {
+        galleryTeachMode = teach
+        handler.removeCallbacks(autoFinishTimeout)
+        galleryPicker.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
+    }
+
+    private fun startCorrectionListening() {
+        handler.removeCallbacks(autoFinishTimeout)
+        handler.postDelayed(autoFinishTimeout, AUTO_FINISH_TIMEOUT_MS + TANDEM_SPEAK_WINDOW_MS)
+        if (!voiceServiceStarted) startVoiceMode()
+        VoiceTranscriptBus.armTandem()
+        vibrateTandemReady()
+    }
+
+    private fun stopCorrectionListening() {
+        VoiceTranscriptBus.disarmTandem()
+    }
+
+    private fun saveCorrection() {
+        val st = captureState as? CaptureState.Correcting ?: return
+        val habit = st.selectedHabit
+        if (habit.isNullOrBlank()) {
+            Toast.makeText(this, "Pick a habit first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        VoiceTranscriptBus.disarmTandem()
+        stopVoiceService()
+        captureState = CaptureState.Processing
+        lifecycleScope.launch(Dispatchers.IO) {
+            val settings = try {
+                SettingsRepository(this@MediaCaptureActivity).settingsFlow.first()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load settings for correction", e)
+                showResult("❌ Failed to load settings: ${e.message?.take(200)}", false)
+                return@launch
+            }
+            val resolved = VisionHabitExecutor.resolveHabitAction(
+                settings, habit, st.selectedSubtype
+            )
+            val realHabit = resolved?.first ?: habit
+            val realSubtype = resolved?.second
+            val description = st.description.ifBlank { "photo associated with $realHabit" }
+
+            // Persist the corrected association — text-only memory
+            VisionMemoryRepository(this@MediaCaptureActivity).addEntry(
+                VisionMemoryRepository.newEntry(
+                    timestamp = System.currentTimeMillis(),
+                    voiceNote = "",
+                    visualDescription = description,
+                    habitName = realHabit,
+                    subtypeName = realSubtype,
+                    incrementAmount = st.amount
+                )
+            )
+            val incError = VisionHabitExecutor.execute(
+                this@MediaCaptureActivity, settings, realHabit, realSubtype, st.amount
+            )
+            val display = buildString {
+                append("🧠 Learned! \"$description\"\n\n")
+                append("→ $realHabit" + (realSubtype?.let { " / $it" } ?: "") + " ×${st.amount}\n\n")
+                append(
+                    if (incError == null) "✅ Incremented now, too."
+                    else "⚠️ Saved to memory, but the increment failed: $incError"
+                )
+                append("\n\nFuture photos like this will be recognised automatically.")
+            }
+            showResult(display, incError == null, title = "Learned")
+        }
+    }
+
+    private fun discardCorrection(st: CaptureState.Correcting) {
+        VoiceTranscriptBus.disarmTandem()
+        stopVoiceService()
+        MealLogRepository(this).deleteImage(st.imagePath)
+        finish()
+    }
+
+    /** Distinct double-buzz so the user knows tandem (teach) mode armed. */
+    private fun vibrateTandemReady() {
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val mgr = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                mgr.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            vibrator.vibrate(
+                VibrationEffect.createWaveform(longArrayOf(0, 80, 60, 80), -1)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Tandem vibration failed: ${e.message}")
         }
     }
 }
@@ -471,12 +1117,19 @@ class MediaCaptureActivity : ComponentActivity() {
  * Full-screen camera preview with a capture button. When [voiceActive] is
  * true, a "🎤 Listening…" indicator is shown so the user knows voice is
  * also active and they can talk at any time.
+ *
+ * The capture button supports two gestures:
+ *  - **Tap** → plain photo capture (existing behaviour)
+ *  - **Hold** → tandem teaching: photo + spoken instruction together
  */
 @Composable
 private fun CameraWithVoiceScreen(
     targetHabit: String?,
     voiceActive: Boolean,
     onCapture: () -> Unit,
+    onHoldCapture: () -> Unit,
+    onPickGallery: () -> Unit,
+    onHoldPickGallery: () -> Unit,
     onCancel: () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -540,21 +1193,111 @@ private fun CameraWithVoiceScreen(
                 )
             }
 
-            // Capture button (bottom-center) — the ONLY button the user needs to press
-            IconButton(
-                onClick = onCapture,
+            // Hold hint (above capture button)
+            Text(
+                text = "tap = photo · hold = photo + teach · 🖼 gallery same",
+                color = Color.White.copy(alpha = 0.75f),
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 116.dp)
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+            )
+
+            // Capture button (bottom-center) — tap for a plain photo,
+            // hold to pair the photo with a spoken teaching instruction.
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 32.dp)
                     .size(72.dp)
                     .background(Color.White, CircleShape)
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { onCapture() },
+                            onLongPress = { onHoldCapture() }
+                        )
+                    },
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
                     Icons.Default.Camera,
-                    contentDescription = "Capture",
+                    contentDescription = "Capture (hold to teach)",
                     tint = Color.Black,
                     modifier = Modifier.size(36.dp)
                 )
+            }
+
+            // Gallery button (bottom-left) — tap to analyse a picked photo,
+            // hold to teach it with a spoken instruction (same as shutter).
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 24.dp, bottom = 38.dp)
+                    .size(56.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { onPickGallery() },
+                            onLongPress = { onHoldPickGallery() }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.PhotoLibrary,
+                    contentDescription = "Gallery (hold to teach)",
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        }
+    }
+}
+/**
+ * Tandem teaching screen: the photo is already taken; the camera preview
+ * stays visible while we wait for the spoken instruction.
+ */
+@Composable
+private fun AwaitingVoiceScreen(
+    onCancel: () -> Unit,
+    onAnalyseWithoutVoice: () -> Unit
+) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f))) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("📸 Photo taken", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "🎤 Now say what it means…\n\ne.g. \"this is my garden —\nincrement gardening\"",
+                color = Color.White,
+                fontSize = 15.sp,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+            CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp)
+            Spacer(modifier = Modifier.height(28.dp))
+            OutlinedButton(
+                onClick = onAnalyseWithoutVoice,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Analyse photo without teaching", color = Color.White)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = onCancel,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFB00020)
+                )
+            ) {
+                Text("Discard")
             }
         }
     }
@@ -593,6 +1336,7 @@ private fun ProcessingScreen(onCancel: () -> Unit) {
 private fun ResultScreen(
     displayText: String,
     isSuccess: Boolean,
+    title: String?,
     onDismiss: () -> Unit
 ) {
     Box(
@@ -614,7 +1358,7 @@ private fun ResultScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = if (isSuccess) "Meal Logged" else "Result",
+                    text = title ?: if (isSuccess) "Meal Logged" else "Result",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (isSuccess) MaterialTheme.colorScheme.primary
@@ -648,6 +1392,335 @@ private fun ResultScreen(
             }
         }
     }
+}
+
+/**
+ * Editable review of an automatically logged meal. The habit was already
+ * incremented; this screen lets the user correct the LLM's best-guess
+ * specifics (title, calories, macros, summary) before finishing.
+ */
+@Composable
+private fun MealEditScreen(
+    log: MealLog,
+    note: String?,
+    onSave: (MealLog) -> Unit,
+    onDiscard: (MealLog) -> Unit
+) {
+    var title by remember { mutableStateOf(log.title) }
+    var calories by remember { mutableStateOf(log.calories.toString()) }
+    var protein by remember { mutableStateOf(formatNum(log.macronutrients.proteinGrams)) }
+    var carbs by remember { mutableStateOf(formatNum(log.macronutrients.carbsGrams)) }
+    var fat by remember { mutableStateOf(formatNum(log.macronutrients.fatGrams)) }
+    var summary by remember { mutableStateOf(log.summary ?: "") }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.85f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "🍽 Meal Logged — Review",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "Logged to: ${log.habitId}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                note?.let {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        it,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Meal") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = calories,
+                    onValueChange = { calories = it },
+                    label = { Text("Calories (kcal)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = protein,
+                        onValueChange = { protein = it },
+                        label = { Text("Protein g") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    OutlinedTextField(
+                        value = carbs,
+                        onValueChange = { carbs = it },
+                        label = { Text("Carbs g") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    OutlinedTextField(
+                        value = fat,
+                        onValueChange = { fat = it },
+                        label = { Text("Fat g") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = summary,
+                    onValueChange = { summary = it },
+                    label = { Text("Summary") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        onSave(
+                            log.copy(
+                                title = title.ifBlank { "Meal" },
+                                calories = calories.toIntOrNull() ?: 0,
+                                macronutrients = Macronutrients(
+                                    proteinGrams = protein.toDoubleOrNull() ?: 0.0,
+                                    carbsGrams = carbs.toDoubleOrNull() ?: 0.0,
+                                    fatGrams = fat.toDoubleOrNull() ?: 0.0
+                                ),
+                                summary = summary.ifBlank { null }
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Save") }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { onDiscard(log) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Discard log", color = MaterialTheme.colorScheme.error) }
+            }
+        }
+    }
+}
+
+/** Formats a macro value for a text field (no trailing ".0"). */
+private fun formatNum(d: Double): String =
+    if (d % 1.0 == 0.0) d.toInt().toString() else d.toString()
+
+/**
+ * Correction screen — shown when the LLM couldn't act on a photo with
+ * certainty. NEVER a dead end: the user describes what the photo means
+ * (typing and/or a voice follow-up), picks the habit (+ subtype, amount),
+ * and the answer is saved to the LLM's vision memory.
+ */
+@Composable
+private fun CorrectionScreen(
+    state: CaptureState.Correcting,
+    habits: List<String>,
+    subtypes: Map<String, List<String>>,
+    onUpdate: (CaptureState.Correcting) -> Unit,
+    onMicToggle: (Boolean) -> Unit,
+    onSave: () -> Unit,
+    onDiscard: () -> Unit
+) {
+    var habitPickerOpen by remember { mutableStateOf(false) }
+    var subtypePickerOpen by remember { mutableStateOf(false) }
+    val habitSubtypes = state.selectedHabit?.let { subtypes[it].orEmpty() } ?: emptyList()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.85f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "🧠 Teach the AI",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "This photo wasn't recognised with certainty. Say what it means — " +
+                        "your answer goes into the AI's memory for next time.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                if (state.llmDescription.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "It saw: ${state.llmDescription}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = state.description,
+                    onValueChange = { onUpdate(state.copy(description = it)) },
+                    label = { Text("Description (goes into memory)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { habitPickerOpen = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(state.selectedHabit ?: "Choose habit…") }
+                if (habitSubtypes.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { subtypePickerOpen = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(state.selectedSubtype ?: "Subtype (optional)…") }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { if (state.amount > 1) onUpdate(state.copy(amount = state.amount - 1)) }
+                    ) { Icon(Icons.Default.Remove, contentDescription = "Less") }
+                    Text(
+                        "×${state.amount}",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                    IconButton(
+                        onClick = { onUpdate(state.copy(amount = state.amount + 1)) }
+                    ) { Icon(Icons.Default.Add, contentDescription = "More") }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val start = !state.listening
+                        onUpdate(state.copy(listening = start, voiceError = null))
+                        onMicToggle(start)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (state.listening) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.secondary
+                    )
+                ) {
+                    Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (state.listening) "Listening… tap to stop" else "🎤 Add voice note")
+                }
+                state.voiceError?.let {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "🎤 $it",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = onSave,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.selectedHabit.isNullOrBlank()
+                ) { Text("Save & increment") }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onDiscard,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Discard photo") }
+            }
+        }
+    }
+
+    if (habitPickerOpen) {
+        HabitPickerDialog(
+            title = "Choose habit",
+            options = habits,
+            selected = state.selectedHabit,
+            onDismiss = { habitPickerOpen = false },
+            onSelect = { habit ->
+                onUpdate(state.copy(selectedHabit = habit, selectedSubtype = null))
+                habitPickerOpen = false
+            }
+        )
+    }
+    if (subtypePickerOpen && habitSubtypes.isNotEmpty()) {
+        HabitPickerDialog(
+            title = "Subtype",
+            options = habitSubtypes,
+            selected = state.selectedSubtype,
+            onDismiss = { subtypePickerOpen = false },
+            onSelect = { sub ->
+                onUpdate(state.copy(selectedSubtype = sub))
+                subtypePickerOpen = false
+            }
+        )
+    }
+}
+
+/** Simple scrollable single-choice picker dialog. */
+@Composable
+private fun HabitPickerDialog(
+    title: String,
+    options: List<String>,
+    selected: String?,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                options.forEach { option ->
+                    Text(
+                        text = option + (if (option == selected) "  ✓" else ""),
+                        fontSize = 15.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(option) }
+                            .padding(vertical = 10.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -347,12 +347,14 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Habit Features",
-                    summary = "AI icons · meal engine · advice banner",
+                    summary = "AI icons · meal engine · vision memory · advice banner",
                     icon = Icons.Filled.AutoAwesome
                 ) {
                     AiIconSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     MealSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    VisionMemorySection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     AdviceBannerSection(adviceViewModel = adviceViewModel)
                 }
