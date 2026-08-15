@@ -1,6 +1,7 @@
 package com.example.tail.widget
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -41,8 +42,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.GarminRepository
 import com.example.tail.data.GarminType
+import com.example.tail.data.HabitTimestampRepository
+import com.example.tail.data.HabitsRepository
+import com.example.tail.data.SettingsRepository
+import com.example.tail.ui.HabitIncrementBus
 import com.example.tail.ui.theme.TailTheme
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
@@ -87,6 +95,39 @@ class ChessReadinessActivity : ComponentActivity() {
             TailTheme(darkTheme = true) {
                 ChessReadinessScreen(onClose = { finish() })
             }
+        }
+    }
+
+    /**
+     * Credits +1 to [habitName] (if linked in Settings) for puzzle/rush
+     * activity completed during the readiness test. Fire-and-forget on IO;
+     * mirrors the IPC increment path (respects the max-1/day cap, emits the
+     * increment bus so open UIs refresh, records a timestamp).
+     */
+    private fun creditHabit(habitName: String) {
+        if (habitName.isBlank()) return
+        val appContext = applicationContext
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val habitsRepo = HabitsRepository()
+                val settings = SettingsRepository(appContext).settingsFlow.first()
+                val uriStr = settings.fileUri
+                if (uriStr.isEmpty()) return@launch
+                val uri = Uri.parse(uriStr)
+
+                // Respect the "max 1 per day" cap some habits have
+                if (habitName in settings.maxOneHabits) {
+                    val db = habitsRepo.loadDatabase(uri, appContext)
+                    val today = LocalDate.now().toString()
+                    if ((db[habitName]?.get(today) ?: 0) >= 1) return@launch
+                }
+
+                habitsRepo.incrementHabit(uri, appContext, habitName, 1)
+                HabitIncrementBus.emit(habitName)
+                try {
+                    HabitTimestampRepository(appContext).addTimestamp(habitName)
+                } catch (_: Exception) { /* timestamp optional */ }
+            } catch (_: Exception) { /* credit is best-effort */ }
         }
     }
 
@@ -292,6 +333,12 @@ class ChessReadinessActivity : ComponentActivity() {
                                     ChessReadinessEngine.PUZZLE_FAIL_TIME_SEC
                                 else puzzleTimeText.toIntOrNull() ?: 0
                                 puzzleTimes = puzzleTimes + effective
+                                // Credit the linked habit for this puzzle
+                                creditHabit(
+                                    ChessReadinessStore.linkedPuzzleHabit(
+                                        this@ChessReadinessActivity
+                                    )
+                                )
                                 puzzleTimeText = ""
                                 puzzleSolved = null
                                 if (puzzleIndex + 1 < ChessReadinessEngine.RATED_PUZZLE_COUNT) {
@@ -349,6 +396,12 @@ class ChessReadinessActivity : ComponentActivity() {
                                             this@ChessReadinessActivity,
                                             ChessReadinessEngine.ReadinessTest(
                                                 r.timestamp, r.ccrs, r.state.name
+                                            )
+                                        )
+                                        // Credit the linked habit for the rush run
+                                        creditHabit(
+                                            ChessReadinessStore.linkedRushHabit(
+                                                this@ChessReadinessActivity
                                             )
                                         )
                                         // Auto-update the stored all-time high

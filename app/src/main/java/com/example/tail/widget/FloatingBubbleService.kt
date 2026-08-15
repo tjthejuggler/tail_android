@@ -754,8 +754,8 @@ class FloatingBubbleService : Service() {
             setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
         }
 
-        // Chess Readiness entry (shown when the bubble is over the
-        // Chess Readiness app). Listed FIRST so it stays prominent.
+        // Chess Readiness entries (shown when the bubble is over the
+        // Chess Readiness app). Listed FIRST so they stay prominent.
         if (chessReadinessActive) {
             // Show a "resume" hint when a step-by-step test is in progress
             val resuming = ChessReadinessStore.loadSession(this) != null
@@ -781,6 +781,36 @@ class FloatingBubbleService : Service() {
             ).apply {
                 bottomMargin = 6.dp()
             })
+
+            // Phase 2 post-game audit — the user reports the telemetry of
+            // the rated game they just finished (Game Review screen). Only
+            // offered while rated play is authorized: the last Phase 1 test
+            // was GREEN and is inside its 60-minute window, and no Yellow/Red
+            // Phase 2 audit has been filed since (early revocation).
+            if (ChessPhase2Store.ratedPlayAuthorized(this)) {
+                val phase2Item = TextView(this).apply {
+                    text = "♟ Report rated game"
+                    textSize = 14f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+                    background = GradientDrawable().apply {
+                        setColor(0xFF1A2A3A.toInt())
+                        cornerRadius = 8f * density
+                        setStroke(1, 0xFF5588AA.toInt())
+                    }
+                    setOnClickListener {
+                        hideHabitPickerMenu()
+                        openChessPhase2()
+                    }
+                }
+                menu.addView(phase2Item, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = 6.dp()
+                })
+            }
         }
 
         habits.forEachIndexed { index, habit ->
@@ -863,6 +893,15 @@ class FloatingBubbleService : Service() {
     /** Launches the Chess Readiness diagnostic activity from the overlay. */
     private fun openChessReadiness() {
         val intent = Intent(this, ChessReadinessActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(intent)
+        } catch (e: Exception) { /* activity unavailable */ }
+    }
+
+    /** Launches the Phase 2 post-game audit activity from the overlay. */
+    private fun openChessPhase2() {
+        val intent = Intent(this, ChessPhase2Activity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
             startActivity(intent)

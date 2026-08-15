@@ -49,6 +49,8 @@ object ChessReadinessStore {
     private const val KEY_HISTORY = "test_history"
     private const val KEY_LAST_RUSH_ATH = "last_rush_all_time_high"
     private const val KEY_SESSION = "session_json"
+    private const val KEY_PUZZLE_HABIT = "linked_puzzle_habit"
+    private const val KEY_RUSH_HABIT = "linked_rush_habit"
 
     /** Only the most recent tests are kept — enough for any 24 h check. */
     private const val MAX_HISTORY = 50
@@ -104,6 +106,31 @@ object ChessReadinessStore {
 
     fun saveRushAllTimeHigh(context: Context, value: Int) {
         prefs(context).edit().putInt(KEY_LAST_RUSH_ATH, value).apply()
+    }
+
+    // ── Linked habits (puzzle / rush credit) ───────────────────────────────
+
+    /**
+     * Habit credited +1 for each rated puzzle completed during the Phase 1
+     * test ("" = no habit linked). Chosen in Settings from the full habit
+     * list.
+     */
+    fun linkedPuzzleHabit(context: Context): String =
+        prefs(context).getString(KEY_PUZZLE_HABIT, "") ?: ""
+
+    fun saveLinkedPuzzleHabit(context: Context, name: String) {
+        prefs(context).edit().putString(KEY_PUZZLE_HABIT, name.trim()).apply()
+    }
+
+    /**
+     * Habit credited +1 when the 3-minute Puzzle Rush run is reported during
+     * the Phase 1 test ("" = no habit linked).
+     */
+    fun linkedRushHabit(context: Context): String =
+        prefs(context).getString(KEY_RUSH_HABIT, "") ?: ""
+
+    fun saveLinkedRushHabit(context: Context, name: String) {
+        prefs(context).edit().putString(KEY_RUSH_HABIT, name.trim()).apply()
     }
 
     // ── In-progress session (widget resume support) ────────────────────────

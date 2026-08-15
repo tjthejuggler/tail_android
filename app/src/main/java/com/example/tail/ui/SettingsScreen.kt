@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,10 +24,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -1656,6 +1659,8 @@ private fun ChessReadinessSettingsSection(
     val enabled = settings.chessReadinessEnabled
     val chessPkg = settings.chessReadinessApp
     var showAppPicker by remember { mutableStateOf(false) }
+    var showPuzzleHabitPicker by remember { mutableStateOf(false) }
+    var showRushHabitPicker by remember { mutableStateOf(false) }
     var rushHighText by remember {
         mutableStateOf(
             ChessReadinessStore.lastRushAllTimeHigh(context)
@@ -1778,6 +1783,30 @@ private fun ChessReadinessSettingsSection(
                     color = MaterialTheme.colorScheme.primary
                 )
             }
+
+            // Linked habits — puzzle/rush activity in the readiness test
+            // also credits these habits (+1 each).
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Habit Links", fontSize = 14.sp)
+            Text(
+                "Get habit credit for the puzzle steps of the readiness test: " +
+                    "Rated Puzzles +1 per puzzle solved/attempted, Puzzle Rush " +
+                    "+1 per run reported.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            HabitLinkRow(
+                label = "Rated Puzzles habit",
+                habit = ChessReadinessStore.linkedPuzzleHabit(context),
+                onPick = { showPuzzleHabitPicker = true }
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            HabitLinkRow(
+                label = "Puzzle Rush habit",
+                habit = ChessReadinessStore.linkedRushHabit(context),
+                onPick = { showRushHabitPicker = true }
+            )
         }
     }
 
@@ -1791,6 +1820,102 @@ private fun ChessReadinessSettingsSection(
             onDismiss = { showAppPicker = false }
         )
     }
+
+    if (showPuzzleHabitPicker) {
+        HabitPickerDialog(
+            title = "Rated Puzzles habit",
+            habits = viewModel.getAllHabitNames(),
+            onPick = {
+                ChessReadinessStore.saveLinkedPuzzleHabit(context, it)
+                showPuzzleHabitPicker = false
+            },
+            onDismiss = { showPuzzleHabitPicker = false }
+        )
+    }
+
+    if (showRushHabitPicker) {
+        HabitPickerDialog(
+            title = "Puzzle Rush habit",
+            habits = viewModel.getAllHabitNames(),
+            onPick = {
+                ChessReadinessStore.saveLinkedRushHabit(context, it)
+                showRushHabitPicker = false
+            },
+            onDismiss = { showRushHabitPicker = false }
+        )
+    }
+}
+
+/**
+ * One linked-habit row in the Chess Readiness settings: label, current
+ * habit (or "None"), and a pick/change button.
+ */
+@Composable
+private fun HabitLinkRow(label: String, habit: String, onPick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, fontSize = 13.sp)
+            Text(
+                if (habit.isBlank()) "None" else habit,
+                fontSize = 11.sp,
+                color = if (habit.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant
+                       else MaterialTheme.colorScheme.primary
+            )
+        }
+        Button(onClick = onPick) {
+            Text(if (habit.isBlank()) "Link" else "Change", fontSize = 12.sp)
+        }
+    }
+}
+
+/**
+ * Dialog listing EVERY habit (from [com.example.tail.ui.HabitViewModel.getAllHabitNames])
+ * plus a "None" option; tapping one selects it immediately.
+ */
+@Composable
+private fun HabitPickerDialog(
+    title: String,
+    habits: List<String>,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                item {
+                    Text(
+                        "None (no habit)",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick("") }
+                            .padding(vertical = 10.dp)
+                    )
+                    HorizontalDivider()
+                }
+                itemsIndexed(habits) { i, name ->
+                    Text(
+                        name,
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(name) }
+                            .padding(vertical = 10.dp)
+                    )
+                    if (i < habits.lastIndex) HorizontalDivider()
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 // ── Debug Mode card ──────────────────────────────────────────────────────────
