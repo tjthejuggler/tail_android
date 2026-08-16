@@ -270,6 +270,8 @@ fun HabitGridScreen(
     var appAssociationPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the widget-trigger app picker is open (null = none)
     var widgetTriggerPickerHabit by remember { mutableStateOf<String?>(null) }
+    // Habit name for which the podcast app picker is open (null = none)
+    var podcastAppPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the long-press URL app picker is open (null = none)
     var longPressUrlAppPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the multi-app launcher dialog is open (null = none)
@@ -1240,6 +1242,12 @@ fun HabitGridScreen(
                         onSetTimerPrimaryValue = { name, minutesPrimary ->
                             viewModel.setWidgetTimerPrimaryValue(name, minutesPrimary)
                         },
+                        podcastHabits = settings.podcastHabits,
+                        podcastApps = settings.podcastApps,
+                        onTogglePodcast = { name -> viewModel.togglePodcastHabit(name) },
+                        onSetPodcastApp = { name -> podcastAppPickerHabit = name },
+                        hasNotificationAccess = viewModel.hasNotificationListenerAccess(),
+                        onRequestNotificationAccess = { viewModel.openNotificationListenerSettings() },
                         onInvertHabit = { name -> viewModel.invertHabit(name) },
                         onGetInvertPreview = { name -> viewModel.getInvertPreview(name) }
                     )
@@ -1642,6 +1650,20 @@ fun HabitGridScreen(
                 widgetTriggerPickerHabit = null
             },
             onDismiss = { widgetTriggerPickerHabit = null }
+        )
+    }
+
+    // Podcast app picker — triggered when user taps "Select App" in the
+    // Podcast section of edit mode for a selected habit
+    if (podcastAppPickerHabit != null) {
+        val habitName = podcastAppPickerHabit!!
+        AppPickerDialog(
+            context = context,
+            onConfirm = { packageName, _ ->
+                viewModel.setPodcastApp(habitName, packageName)
+                podcastAppPickerHabit = null
+            },
+            onDismiss = { podcastAppPickerHabit = null }
         )
     }
 
@@ -2398,6 +2420,135 @@ private fun WidgetTriggerSection(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PodcastSection(
+    habitName: String,
+    podcastHabits: Set<String>,
+    podcastApps: Map<String, String>,
+    onTogglePodcast: (String) -> Unit,
+    onSetPodcastApp: (String) -> Unit,
+    hasNotificationAccess: Boolean,
+    onRequestNotificationAccess: () -> Unit
+) {
+    val context = LocalContext.current
+    val isEnabled = habitName in podcastHabits
+    val podcastPkg = podcastApps[habitName]
+
+    // Resolve the podcast app's display label
+    val appLabel = remember(podcastPkg) {
+        podcastPkg?.let { pkg ->
+            try {
+                val pm = context.packageManager
+                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+            } catch (e: Exception) { pkg }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Main toggle row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "🎙 Podcast", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(
+                    text = if (isEnabled) {
+                        if (appLabel != null) "Auto-records listening time in $appLabel"
+                        else "Select a podcast app below"
+                    } else {
+                        "Track listening time automatically"
+                    },
+                    color = if (isEnabled) Color(0xFF66BB6A) else Color(0xFF888888),
+                    fontSize = 10.sp
+                )
+            }
+            Switch(
+                checked = isEnabled,
+                onCheckedChange = { onTogglePodcast(habitName) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF44BBFF),
+                    checkedTrackColor = Color(0xFF003355),
+                    uncheckedThumbColor = Color(0xFF888888),
+                    uncheckedTrackColor = Color(0xFF333333)
+                )
+            )
+        }
+
+        // Notification-access warning + grant button (needed to see media
+        // sessions of other apps; same toggle as Spotify detection)
+        if (isEnabled && !hasNotificationAccess) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "⚠️ Notification access needed",
+                    color = Color(0xFFFFAA33),
+                    fontSize = 10.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = onRequestNotificationAccess,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("Grant", fontSize = 10.sp, color = Color(0xFFFFCC66))
+                }
+            }
+        }
+
+        // Podcast app selection row (only when enabled)
+        if (isEnabled) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Podcast App", color = Color(0xFFAAAAAA), fontSize = 11.sp)
+                    Text(
+                        text = appLabel ?: "Not set",
+                        color = if (appLabel != null) Color(0xFF66CCFF) else Color(0xFF888888),
+                        fontSize = 10.sp
+                    )
+                }
+                Button(
+                    onClick = { onSetPodcastApp(habitName) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("🎙", fontSize = 11.sp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        if (podcastPkg == null) "Select App" else "Change",
+                        fontSize = 11.sp,
+                        color = Color(0xFF66CCFF)
+                    )
+                }
+            }
+
+            // How the values work, once an app is chosen
+            if (podcastPkg != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Minutes listened while the app plays are added automatically " +
+                        "(primary value for points). Your tapped count stays as the points " +
+                        "fallback on days with no listening. The bubble timer still works " +
+                        "over the app as a manual fallback. Episode titles are auto-added " +
+                        "to the text log when text entry is set up.",
+                    color = Color(0xFF999999),
+                    fontSize = 9.sp,
+                    lineHeight = 12.sp
+                )
             }
         }
     }
@@ -3297,6 +3448,19 @@ private fun EditModeControlBar(
     widgetTimerMinutesPrimary: Set<String> = emptySet(),
     /** Called when the user changes which value is primary (true = minutes). */
     onSetTimerPrimaryValue: (String, Boolean) -> Unit = { _, _ -> },
+    // ── Podcast type parameters ───────────────────────────────────────────
+    /** Habits that have the "Podcast" type enabled. */
+    podcastHabits: Set<String> = emptySet(),
+    /** Maps habit name → podcast app package name. */
+    podcastApps: Map<String, String> = emptyMap(),
+    /** Called when the user toggles the "Podcast" type for a habit. */
+    onTogglePodcast: (String) -> Unit = {},
+    /** Called when the user taps to select/change the podcast app. */
+    onSetPodcastApp: (String) -> Unit = {},
+    /** Whether notification-listener access is granted (needed for auto-detection). */
+    hasNotificationAccess: Boolean = false,
+    /** Called when the user taps to grant notification access. */
+    onRequestNotificationAccess: () -> Unit = {},
     /** Called when the user confirms the invert operation for a habit. */
     onInvertHabit: (String) -> Unit = {},
     /** Returns invert preview stats for a habit, or null if it has no data. */
@@ -4673,6 +4837,21 @@ private fun EditModeControlBar(
                         onRequestUsageAccess = onRequestUsageAccess,
                         widgetTimerMinutesPrimary = widgetTimerMinutesPrimary,
                         onSetTimerPrimaryValue = onSetTimerPrimaryValue
+                    )
+
+                    // ── Podcast (auto listening-time tracking) ────────────────
+                    // While the chosen podcast app is actually PLAYING audio,
+                    // elapsed minutes are recorded automatically. The bubble
+                    // timer (above) remains the manual fallback.
+                    Spacer(modifier = Modifier.height(6.dp))
+                    PodcastSection(
+                        habitName = selectedHabitName,
+                        podcastHabits = podcastHabits,
+                        podcastApps = podcastApps,
+                        onTogglePodcast = onTogglePodcast,
+                        onSetPodcastApp = onSetPodcastApp,
+                        hasNotificationAccess = hasNotificationAccess,
+                        onRequestNotificationAccess = onRequestNotificationAccess
                     )
 
                     // ── Garmin link toggle ────────────────────────────────────

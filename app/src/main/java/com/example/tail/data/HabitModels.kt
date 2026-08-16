@@ -988,6 +988,33 @@ data class AppSettings(
      */
     val widgetTimerMinutesPrimary: Set<String> = emptySet(),
 
+    // ── Podcast habit settings ────────────────────────────────────────────
+    /**
+     * Habits that have the "Podcast" type enabled.
+     *
+     * A podcast habit automatically tracks LISTENING TIME: while the
+     * configured podcast app (see [podcastApps]) is actively playing audio
+     * (detected via its media session), elapsed minutes are accumulated in
+     * the habit's minutes secondary-value slot (`secondary_value:<habitName>`)
+     * — the same slot the bubble timer writes to. With the habit in
+     * [widgetTimerMinutesPrimary], those minutes are the PRIMARY value for
+     * points/display, and the habit's raw count (podcasts finished, tapped
+     * manually) is the fallback used only on days with zero minutes.
+     *
+     * Requires notification-listener access (the same
+     * `MusicNotificationListenerService` toggle used for Spotify detection).
+     * Without it, auto-detection silently does nothing and the user can fall
+     * back to the normal widget timer feature (the bubble appears over the
+     * podcast app like for any other trigger habit).
+     */
+    val podcastHabits: Set<String> = emptySet(),
+
+    /**
+     * Maps habit name → package name of the app to watch for podcast
+     * playback. Only meaningful for habits in [podcastHabits].
+     */
+    val podcastApps: Map<String, String> = emptyMap(),
+
     // ── Google Drive backup settings ─────────────────────────────────────
     /** Whether the automatic daily Google Drive backup is enabled. */
     val gdriveAutoEnabled: Boolean = false,

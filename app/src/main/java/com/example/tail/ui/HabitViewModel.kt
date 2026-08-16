@@ -3518,7 +3518,7 @@ class HabitViewModel(
                 widgetTriggerApps = newApps
             )
 
-            updateWidgetTriggerService(newApps)
+            updateWidgetTriggerService()
         }
     }
 
@@ -3560,7 +3560,7 @@ class HabitViewModel(
                 rebuildHabitList()
             }
 
-            updateWidgetTriggerService(apps)
+            updateWidgetTriggerService()
         }
     }
 
@@ -3578,6 +3578,119 @@ class HabitViewModel(
             _settings.value = _settings.value.copy(widgetTimerMinutesPrimary = updated)
             rebuildHabitList()
         }
+    }
+
+    // ── Podcast habit methods ─────────────────────────────────────────────
+
+    /**
+     * Enables or disables the "Podcast" type for [habitName].
+     *
+     * Disabling removes the habit's podcast app configuration; any listening
+     * block in flight is flushed (recorded) by the tracker on its next tick.
+     * The underlying minutes data and the widget-trigger settings are left
+     * untouched.
+     */
+    fun togglePodcastHabit(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.podcastHabits
+            val newHabits: Set<String>
+            val newApps: Map<String, String>
+            if (habitName in current) {
+                newHabits = current - habitName
+                newApps = _settings.value.podcastApps - habitName
+            } else {
+                newHabits = current + habitName
+                newApps = _settings.value.podcastApps
+            }
+            settingsRepo.savePodcastHabits(newHabits)
+            settingsRepo.savePodcastApps(newApps)
+            _settings.value = _settings.value.copy(
+                podcastHabits = newHabits,
+                podcastApps = newApps
+            )
+            updateWidgetTriggerService()
+        }
+    }
+
+    /**
+     * Sets the podcast app [packageName] for [habitName] (the app whose media
+     * session is watched for playback). The habit should already be in
+     * [com.example.tail.data.AppSettings.podcastHabits].
+     *
+     * First-time setup mirrors the widget-timer feature: the habit gets a
+     * "minutes" secondary value (where both auto-detected listening AND the
+     * bubble timer write), the points fallback, and minutes as the PRIMARY
+     * value — the raw count (podcasts finished, tapped manually) becomes the
+     * fallback used only on days with zero minutes. The bubble widget is
+     * also auto-enabled over the podcast app so the manual timer fallback is
+     * available exactly like in other apps.
+     */
+    fun setPodcastApp(habitName: String, packageName: String) {
+        viewModelScope.launch {
+            val settings = _settings.value
+            val apps = settings.podcastApps.toMutableMap()
+            apps[habitName] = packageName
+            settingsRepo.savePodcastApps(apps)
+            _settings.value = _settings.value.copy(podcastApps = apps)
+
+            // First-time setup for the minutes slot + primary/fallback roles.
+            if (packageName.isNotBlank() && settings.podcastApps[habitName].isNullOrBlank()) {
+                val secVal = settings.secondaryValueHabits + habitName
+                val fallback = settings.secondaryValueFallbackHabits + habitName
+                val minutesPrimary = settings.widgetTimerMinutesPrimary + habitName
+                val labels = settings.valueDisplayLabels.toMutableMap()
+                labels[habitName] = mapOf(
+                    com.example.tail.data.GRAPH_METRIC_VALUE1 to "Podcasts",
+                    com.example.tail.data.GRAPH_METRIC_VALUE2 to "Minutes"
+                )
+                settingsRepo.saveSecondaryValueHabits(secVal)
+                settingsRepo.saveSecondaryValueFallbackHabits(fallback)
+                settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
+                settingsRepo.saveValueDisplayLabels(labels)
+                _settings.value = _settings.value.copy(
+                    secondaryValueHabits = secVal,
+                    secondaryValueFallbackHabits = fallback,
+                    widgetTimerMinutesPrimary = minutesPrimary,
+                    valueDisplayLabels = labels
+                )
+            }
+
+            // Auto-enable the bubble over the podcast app so the manual
+            // widget timer fallback works out of the box (same as other
+            // apps). An existing, different trigger app is respected.
+            if (packageName.isNotBlank() &&
+                _settings.value.widgetTriggerApps[habitName].isNullOrBlank()
+            ) {
+                val trigHabits = _settings.value.widgetTriggerHabits + habitName
+                val trigApps = _settings.value.widgetTriggerApps.toMutableMap()
+                trigApps[habitName] = packageName
+                settingsRepo.saveWidgetTriggerHabits(trigHabits)
+                settingsRepo.saveWidgetTriggerApps(trigApps)
+                _settings.value = _settings.value.copy(
+                    widgetTriggerHabits = trigHabits,
+                    widgetTriggerApps = trigApps
+                )
+            }
+
+            rebuildHabitList()
+            updateWidgetTriggerService()
+        }
+    }
+
+    /**
+     * Returns whether the user has granted notification-listener access
+     * (enabled MusicNotificationListenerService), required for automatic
+     * podcast playback detection.
+     */
+    fun hasNotificationListenerAccess(): Boolean =
+        com.example.tail.data.SpotifyDetector.isNotificationListenerEnabled(context)
+
+    /**
+     * Opens the system notification-access settings screen so the user can
+     * grant access for automatic podcast playback detection.
+     */
+    fun openNotificationListenerSettings() {
+        com.example.tail.data.SpotifyDetector.openNotificationListenerSettings(context)
     }
 
     /**
@@ -3599,13 +3712,15 @@ class HabitViewModel(
     }
 
     /**
-     * Starts or stops [WidgetTriggerService] based on whether any trigger
-     * apps are configured (habit trigger apps OR the Chess Readiness app).
-     * Called after every widget-trigger / chess-readiness setting change.
+     * Starts or stops [WidgetTriggerService] based on whether anything needs
+     * monitoring: habit trigger apps, podcast apps (automatic listening-time
+     * tracking) OR the Chess Readiness app. Called after every widget-trigger
+     * / podcast / chess-readiness setting change.
      */
-    private fun updateWidgetTriggerService(apps: Map<String, String>) {
+    private fun updateWidgetTriggerService() {
         val s = _settings.value
-        val validCount = apps.values.count { it.isNotBlank() } +
+        val validCount = s.widgetTriggerApps.values.count { it.isNotBlank() } +
+            s.podcastApps.entries.count { it.value.isNotBlank() && it.key in s.podcastHabits } +
             if (s.chessReadinessEnabled && s.chessReadinessApp.isNotBlank()) 1 else 0
         com.example.tail.widget.WidgetTriggerService.updateServiceState(context, validCount)
     }
@@ -3621,7 +3736,7 @@ class HabitViewModel(
         viewModelScope.launch {
             settingsRepo.saveChessReadinessEnabled(enabled)
             _settings.value = _settings.value.copy(chessReadinessEnabled = enabled)
-            updateWidgetTriggerService(_settings.value.widgetTriggerApps)
+            updateWidgetTriggerService()
         }
     }
 
@@ -3634,7 +3749,7 @@ class HabitViewModel(
         viewModelScope.launch {
             settingsRepo.saveChessReadinessApp(packageName)
             _settings.value = _settings.value.copy(chessReadinessApp = packageName)
-            updateWidgetTriggerService(_settings.value.widgetTriggerApps)
+            updateWidgetTriggerService()
         }
     }
 

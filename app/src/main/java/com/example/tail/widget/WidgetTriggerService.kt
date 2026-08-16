@@ -24,7 +24,9 @@ import kotlinx.coroutines.launch
 /**
  * Foreground service that monitors the foreground app and automatically
  * shows/hides the [FloatingBubbleService] based on per-habit "Use Widget"
- * trigger settings.
+ * trigger settings. It ALSO polls media sessions every tick to drive
+ * automatic podcast listening-time tracking ([PodcastPlaybackTracker]) for
+ * habits with the "Podcast" type enabled.
  *
  * The service polls [UsageStatsManager.queryEvents] every [POLL_INTERVAL_MS]
  * ms to detect which app is currently in the foreground (the package of the
@@ -32,6 +34,10 @@ import kotlinx.coroutines.launch
  * habit has configured as its widget trigger app) comes to the foreground,
  * the floating bubble is started. When it leaves, the bubble is stopped and
  * any still-running habit timer is stopped and recorded.
+ *
+ * Podcast tracking is independent of the bubble: it runs whenever any habit
+ * has a podcast app configured, and requires notification-listener access
+ * (see [PodcastPlaybackTracker]) rather than usage access.
  *
  * Requires the user to grant "Usage access" permission
  * ([Settings.ACTION_USAGE_ACCESS_SETTINGS]). Without the permission the
@@ -150,6 +156,17 @@ class WidgetTriggerService : Service() {
     /** Package of the Chess Readiness app (null when feature is off/unset). */
     private var chessReadinessPackage: String? = null
 
+    /**
+     * Reverse of the podcast-app setting: package → podcast habit names.
+     * Habits here get AUTOMATIC listening-time tracking via
+     * [PodcastPlaybackTracker] (media-session playback detection), which is
+     * polled alongside the foreground-app check. Independent of the bubble:
+     * the bubble only appears over an app when it is a widget TRIGGER app,
+     * but podcast minute tracking runs whenever a podcast app is configured.
+     */
+    @Volatile
+    private var podcastHabitsByPackage: Map<String, List<String>> = emptyMap()
+
     /** The package that is currently in the foreground (or null). */
     private var currentForegroundPackage: String? = null
 
@@ -219,13 +236,25 @@ class WidgetTriggerService : Service() {
             ) settings.chessReadinessApp else null
             val newPackages = newByPackage.keys + listOfNotNull(newChessPkg)
 
+            // Podcast habits: package → habits for automatic listening-time
+            // tracking. Only entries whose habit still has the podcast type
+            // enabled are honored (stale app entries are ignored).
+            val newPodcastByPackage = settings.podcastApps.entries
+                .filter { it.value.isNotBlank() && it.key in settings.podcastHabits }
+                .groupBy({ it.value }, { it.key })
+
             watchedPackages = newPackages
             habitsByPackage = newByPackage
             chessReadinessPackage = newChessPkg
-            Log.d(TAG, "Watched packages loaded: $newPackages (chess readiness: $newChessPkg)")
+            podcastHabitsByPackage = newPodcastByPackage
+            Log.d(
+                TAG,
+                "Watched packages loaded: $newPackages (chess readiness: $newChessPkg, " +
+                    "podcast apps: ${newPodcastByPackage.keys})"
+            )
 
-            if (newPackages.isEmpty()) {
-                // No trigger apps configured — stop everything
+            if (newPackages.isEmpty() && newPodcastByPackage.isEmpty()) {
+                // No trigger apps and no podcast apps configured — stop everything
                 stopBubble()
                 stopPolling()
             } else {
@@ -244,6 +273,19 @@ class WidgetTriggerService : Service() {
                 checkForegroundApp()
             } catch (e: Exception) {
                 Log.e(TAG, "Poll error", e)
+            }
+            // Automatic podcast listening-time tracking runs on the same tick
+            // as the foreground check (off the main thread — it does file I/O
+            // when a listening block finishes).
+            val podcastMap = podcastHabitsByPackage
+            if (podcastMap.isNotEmpty()) {
+                serviceScope.launch {
+                    try {
+                        PodcastPlaybackTracker.update(applicationContext, podcastMap)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Podcast playback tracking error", e)
+                    }
+                }
             }
             if (isPolling) {
                 handler.postDelayed(this, POLL_INTERVAL_MS)

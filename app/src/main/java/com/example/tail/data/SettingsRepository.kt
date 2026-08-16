@@ -186,6 +186,10 @@ private val KEY_WIDGET_TRIGGER_HABITS = stringSetPreferencesKey("widget_trigger_
 private val KEY_WIDGET_TRIGGER_APPS = stringPreferencesKey("widget_trigger_apps")
 // Widget-timer habits where minutes (not sessions) is the primary value
 private val KEY_WIDGET_TIMER_MINUTES_PRIMARY = stringSetPreferencesKey("widget_timer_minutes_primary")
+// Podcast habit feature keys
+private val KEY_PODCAST_HABITS = stringSetPreferencesKey("podcast_habits")
+// Stored as "habitName\x00packageName|||habitName\x00packageName" pairs
+private val KEY_PODCAST_APPS = stringPreferencesKey("podcast_apps")
 
 // ── Google Drive backup settings ──────────────────────────────────────
 // Whether the automatic daily Google Drive backup is enabled.
@@ -807,6 +811,8 @@ class SettingsRepository(private val context: Context) {
             widgetTriggerHabits = prefs[KEY_WIDGET_TRIGGER_HABITS] ?: emptySet(),
             widgetTriggerApps = decodeFileUriMap(prefs[KEY_WIDGET_TRIGGER_APPS] ?: ""),
             widgetTimerMinutesPrimary = prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] ?: emptySet(),
+            podcastHabits = prefs[KEY_PODCAST_HABITS] ?: emptySet(),
+            podcastApps = decodeFileUriMap(prefs[KEY_PODCAST_APPS] ?: ""),
             chessReadinessEnabled = prefs[KEY_CHESS_READINESS_ENABLED] ?: false,
             chessReadinessApp = prefs[KEY_CHESS_READINESS_APP] ?: "",
             gdriveAutoEnabled = prefs[KEY_GDRIVE_AUTO_ENABLED] ?: false,
@@ -1389,6 +1395,16 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of widget-timer habits where minutes is the primary value. */
     suspend fun saveWidgetTimerMinutesPrimary(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] = habits }
+    }
+
+    /** Saves the set of habits that have the "Podcast" type enabled. */
+    suspend fun savePodcastHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_PODCAST_HABITS] = habits }
+    }
+
+    /** Saves the map of habit name → podcast app package name. */
+    suspend fun savePodcastApps(apps: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_PODCAST_APPS] = encodeFileUriMap(apps) }
     }
 
     /** Saves the Chess Readiness global toggle. */
