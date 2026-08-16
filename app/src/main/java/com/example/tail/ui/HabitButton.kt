@@ -60,6 +60,8 @@ import com.example.tail.data.GarminType
 import com.example.tail.data.Habit
 import com.example.tail.data.appLinkPackageName
 import com.example.tail.data.appPackageNameOf
+import com.example.tail.data.renderTextIconBitmap
+import com.example.tail.data.textIconCharOf
 
 // Shared style that strips the extra font padding Compose adds above/below text glyphs
 private val tightTextStyle = TextStyle(
@@ -159,6 +161,11 @@ fun HabitButton(
         } catch (e: Exception) {
             null
         }
+    }
+    // Check if this habit uses a user-typed letter/emoji icon (name starts with "text:")
+    val textIconChar = textIconCharOf(customIconOverrides[habit.name])
+    val textIconBitmap: Bitmap? = remember(textIconChar) {
+        if (textIconChar != null) renderTextIconBitmap(textIconChar, 96) else null
     }
     val streakText = if (habit.currentStreak >= 0) "+${habit.currentStreak}" else "${habit.currentStreak}"
     
@@ -370,7 +377,8 @@ fun HabitButton(
             }
         }
 
-        // Center: icon — app icon takes priority over AI icon, then drawable resource
+        // Center: icon — app icon takes priority over AI icon, then text/emoji
+        // icon, then drawable resource
         if (appIconBitmap != null) {
             Image(
                 bitmap = appIconBitmap.asImageBitmap(),
@@ -382,6 +390,14 @@ fun HabitButton(
         } else if (aiIconBitmap != null) {
             Image(
                 bitmap = aiIconBitmap.asImageBitmap(),
+                contentDescription = habit.name,
+                modifier = Modifier
+                    .size(20.dp)
+                    .align(Alignment.Center)
+            )
+        } else if (textIconBitmap != null) {
+            Image(
+                bitmap = textIconBitmap.asImageBitmap(),
                 contentDescription = habit.name,
                 modifier = Modifier
                     .size(20.dp)

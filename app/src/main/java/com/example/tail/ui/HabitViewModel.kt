@@ -3,6 +3,7 @@ package com.example.tail.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -2723,6 +2724,11 @@ class HabitViewModel(
         } else {
             // Deactivate graph mode when edit mode is activated
             _graphMode.value = false
+            // Carry the graph-mode selection into edit mode: the first selected
+            // habit (in grid order) becomes the selected cell.
+            _selectedEditIndex.value = _habits.value.indexOfFirst {
+                it.name.isNotEmpty() && it.name in _graphSelectedHabits.value
+            }
         }
     }
 
@@ -4189,6 +4195,49 @@ class HabitViewModel(
     }
 
     /**
+     * Creates a new empty text-log file named after [habitName] inside the SAF
+     * directory [treeUri], then associates it as the habit's text-log file.
+     *
+     * The caller must already hold (and persist) read+write permission on the
+     * tree URI; the created document lives under that tree so the grant covers it.
+     * The file is initialised with an empty JSON object ("{}"). If the directory
+     * already contains a file with the same name the provider auto-renames the
+     * new file (e.g. "habit (1).json").
+     */
+    fun createTextInputFileInDir(habitName: String, treeUri: Uri) {
+        viewModelScope.launch {
+            val fileUri = withContext(Dispatchers.IO) {
+                try {
+                    val cr = context.contentResolver
+                    val dirUri = DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        DocumentsContract.getTreeDocumentId(treeUri)
+                    )
+                    val displayName = sanitizeFileDisplayName(habitName) + ".json"
+                    val created = DocumentsContract.createDocument(
+                        cr, dirUri, "application/json", displayName
+                    ) ?: return@withContext null
+                    // Initialise with an empty JSON object so the file is a valid log
+                    cr.openOutputStream(created, "wt")?.use { stream ->
+                        stream.bufferedWriter().use { it.write("{}") }
+                    }
+                    created
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to create text log file for $habitName: ${e.message}")
+                    null
+                }
+            }
+            if (fileUri != null) setTextInputFileUri(habitName, fileUri)
+        }
+    }
+
+    /** Replaces characters that are problematic in file names with underscores. */
+    private fun sanitizeFileDisplayName(name: String): String {
+        val sanitized = name.trim().replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_")
+        return sanitized.ifEmpty { "habit_log" }
+    }
+
+    /**
      * Saves a text entry for [habitName] to its associated log file,
      * then also increments the habit count by 1 (so the habit is marked done for today).
      *
@@ -4395,8 +4444,12 @@ class HabitViewModel(
         if (turningOn) {
             // Deactivate other modes
             _editMode.value = false
+            // Carry the edit-mode selection into graph mode
+            val carriedName = _habits.value.getOrNull(_selectedEditIndex.value)
+                ?.name?.takeIf { it.isNotEmpty() }
             _selectedEditIndex.value = -1
             _movePendingSourceIndex.value = -1
+            _graphSelectedHabits.value = carriedName?.let { setOf(it) } ?: emptySet()
         } else {
             _graphSelectedHabits.value = emptySet()
         }

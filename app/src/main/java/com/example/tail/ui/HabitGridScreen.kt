@@ -120,6 +120,10 @@ import com.example.tail.data.AppIconInfo
 import com.example.tail.data.AppIconRepository
 import com.example.tail.data.appIconNameOf
 import com.example.tail.data.isAppIconName
+import com.example.tail.data.isTextIconName
+import com.example.tail.data.renderTextIconBitmap
+import com.example.tail.data.textIconCharOf
+import com.example.tail.data.textIconNameOf
 import com.example.tail.data.ChessComType
 import com.example.tail.data.GarminType
 import com.example.tail.data.GitHubMetric
@@ -352,6 +356,25 @@ fun HabitGridScreen(
             viewModel.setTextInputFileUri(habitName, uri)
         }
         textInputPickerHabit = null
+    }
+
+    // Directory picker for CREATING a new text log file for a habit that has
+    // none yet (used from EditModeControlBar). The app creates, names and
+    // associates the file inside the chosen directory.
+    var textInputCreateHabit by remember { mutableStateOf<String?>(null) }
+    val textInputCreateDirPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        val habitName = textInputCreateHabit
+        if (uri != null && habitName != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            viewModel.createTextInputFileInDir(habitName, uri)
+        }
+        textInputCreateHabit = null
     }
 
     // File picker for per-habit dated-entry source files (read-only is sufficient)
@@ -987,6 +1010,10 @@ fun HabitGridScreen(
                         onPickTextInputFile = { name ->
                             textInputPickerHabit = name
                             textInputFilePicker.launch(arrayOf("application/json", "*/*"))
+                        },
+                        onCreateTextInputFile = { name ->
+                            textInputCreateHabit = name
+                            textInputCreateDirPicker.launch(null)
                         },
                         onToggleDatedEntry = { name -> viewModel.toggleDatedEntry(name) },
                         onPickDatedEntryFile = { name ->
@@ -3146,6 +3173,8 @@ private fun EditModeControlBar(
     /** Called when the user toggles the "Sharable" sub-feature for a habit. */
     onToggleSharableText: (String) -> Unit = {},
     onPickTextInputFile: (String) -> Unit,
+    /** Called when the user wants to CREATE a new text log file in a picked directory. */
+    onCreateTextInputFile: (String) -> Unit = {},
     onToggleDatedEntry: (String) -> Unit,
     onPickDatedEntryFile: (String) -> Unit,
     onDeleteHabit: (String) -> Unit,
@@ -3824,7 +3853,8 @@ private fun EditModeControlBar(
                         onToggleTextInput = onToggleTextInput,
                         onToggleTextInputOptions = onToggleTextInputOptions,
                         onToggleSharableText = onToggleSharableText,
-                        onPickTextInputFile = onPickTextInputFile
+                        onPickTextInputFile = onPickTextInputFile,
+                        onCreateTextInputFile = onCreateTextInputFile
                     )
 
                     // ── Today's text entries (view/edit) ──────────────────────
@@ -4703,7 +4733,8 @@ private fun HabitInputModesSection(
     onToggleTextInput: (String) -> Unit,
     onToggleTextInputOptions: (String) -> Unit,
     onToggleSharableText: (String) -> Unit,
-    onPickTextInputFile: (String) -> Unit
+    onPickTextInputFile: (String) -> Unit,
+    onCreateTextInputFile: (String) -> Unit = {}
 ) {
     // ── Note section ───────────────────────────────────────────
     val currentNote = habitNotes[selectedHabitName] ?: ""
@@ -4925,23 +4956,43 @@ private fun HabitInputModesSection(
                     fontSize = 10.sp
                 )
             }
-            Button(
-                onClick = { onPickTextInputFile(selectedHabitName) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
-                modifier = Modifier.height(32.dp)
-            ) {
-                Icon(
-                    Icons.Default.Folder,
-                    contentDescription = "Pick text log file",
-                    tint = Color(0xFF88CCFF),
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    if (hasFile) "Change" else "Select",
-                    fontSize = 11.sp,
-                    color = Color(0xFF88CCFF)
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = { onPickTextInputFile(selectedHabitName) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = "Pick text log file",
+                        tint = Color(0xFF88CCFF),
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        if (hasFile) "Change" else "Select",
+                        fontSize = 11.sp,
+                        color = Color(0xFF88CCFF)
+                    )
+                }
+                if (!hasFile) {
+                    // Create a new empty log file in a user-picked directory;
+                    // the app names it after the habit and associates it.
+                    Button(
+                        onClick = { onCreateTextInputFile(selectedHabitName) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A4A2A)),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = "Create text log file",
+                            tint = Color(0xFF88FF88),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Create", fontSize = 11.sp, color = Color(0xFF88FF88))
+                    }
+                }
             }
         }
     }
@@ -7173,9 +7224,17 @@ private fun IconPickerDialog(
     var aiPrompt by remember { mutableStateOf("") }
     // AI icon pending delete confirmation (null = no confirmation pending)
     var deleteConfirmAiIcon by remember { mutableStateOf<AiIcon?>(null) }
-    // Mode: false = built-in + AI icons, true = installed-app icons.
-    // Opens on the Apps tab when the habit already uses an app icon.
-    var appPickerMode by remember { mutableStateOf(isAppIconName(currentIconName)) }
+    // Section: 0 = built-in + AI icons, 1 = installed-app icons, 2 = text/emoji icons.
+    // Opens on the section matching the habit's current icon type.
+    var pickerSection by remember {
+        mutableStateOf(
+            when {
+                isTextIconName(currentIconName) -> 2
+                isAppIconName(currentIconName) -> 1
+                else -> 0
+            }
+        )
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -7217,27 +7276,39 @@ private fun IconPickerDialog(
             HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Mode toggle: built-in/AI icons ↔ installed-app icons
+            // Section toggle: built-in/AI icons ↔ installed-app icons ↔ text/emoji
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 IconPickerModeTab(
                     label = "Icons",
-                    selected = !appPickerMode,
+                    selected = pickerSection == 0,
                     modifier = Modifier.weight(1f),
-                    onClick = { appPickerMode = false }
+                    onClick = { pickerSection = 0 }
                 )
                 IconPickerModeTab(
-                    label = "📱 App Icons",
-                    selected = appPickerMode,
+                    label = "📱 Apps",
+                    selected = pickerSection == 1,
                     modifier = Modifier.weight(1f),
-                    onClick = { appPickerMode = true }
+                    onClick = { pickerSection = 1 }
+                )
+                IconPickerModeTab(
+                    label = "🔤 Text",
+                    selected = pickerSection == 2,
+                    modifier = Modifier.weight(1f),
+                    onClick = { pickerSection = 2 }
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
 
-            if (appPickerMode) {
+            if (pickerSection == 2) {
+                // ── Text (letter/emoji) icons section ────────────────────────
+                TextIconPickerSection(
+                    currentIconName = currentIconName,
+                    onIconSelected = onIconSelected
+                )
+            } else if (pickerSection == 1) {
                 // ── Installed App Icons section ──────────────────────────────
                 AppIconPickerSection(
                     currentIconName = currentIconName,
@@ -7535,6 +7606,93 @@ private fun IconPickerModeTab(
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold
         )
+    }
+}
+
+/**
+ * The "Text" section of [IconPickerDialog]: lets the user type a single
+ * letter or emoji to use as the habit icon. Selecting it stores a
+ * "text:<character>" icon name, which renderers resolve to a greyscale
+ * bitmap of the character (see [renderTextIconBitmap]).
+ */
+@Composable
+private fun TextIconPickerSection(
+    currentIconName: String?,
+    onIconSelected: (String?) -> Unit
+) {
+    var input by remember { mutableStateOf(textIconCharOf(currentIconName) ?: "") }
+    val trimmed = input.trim()
+    val isSelected = isTextIconName(currentIconName) && textIconCharOf(currentIconName) == trimmed
+    // Preview uses the exact greyscale bitmap the habit grid will render
+    val previewBitmap = remember(trimmed) {
+        if (trimmed.isNotEmpty()) renderTextIconBitmap(trimmed, 160) else null
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "Enter a letter or emoji to use as the icon:",
+            color = Color(0xFF888888),
+            fontSize = 11.sp
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { if (it.codePointCount(0, it.length) <= 2) input = it },
+                placeholder = { Text("A, 🧘, ♟…", fontSize = 11.sp) },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                textStyle = TextStyle(fontSize = 16.sp, color = Color.White),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFF88FFFF),
+                    unfocusedBorderColor = Color(0xFF444444),
+                    cursorColor = Color(0xFF88FFFF)
+                )
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .then(
+                        if (isSelected) Modifier.border(1.dp, Color(0xFF88FFFF), RoundedCornerShape(8.dp))
+                        else Modifier
+                    )
+                    .background(Color(0xFF2A2A2A), RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (previewBitmap != null) {
+                    Image(
+                        bitmap = previewBitmap.asImageBitmap(),
+                        contentDescription = "Greyscale icon preview",
+                        modifier = Modifier.size(36.dp)
+                    )
+                } else {
+                    Text("?", color = Color(0xFF666666), fontSize = 12.sp)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = "Shown in the grid as a greyscale icon",
+            color = Color(0xFF666666),
+            fontSize = 9.sp
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Button(
+            onClick = { onIconSelected(textIconNameOf(trimmed)) },
+            enabled = trimmed.isNotEmpty(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF003A3A),
+                disabledContainerColor = Color(0xFF2A2A2A)
+            ),
+            modifier = Modifier.align(Alignment.End)
+        ) {
+            Text("Use icon", fontSize = 11.sp, color = Color(0xFF88FFFF))
+        }
     }
 }
 

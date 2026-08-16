@@ -15,6 +15,8 @@ import com.example.tail.data.AppSettings
 import com.example.tail.data.HABIT_ORDER
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.appPackageNameOf
+import com.example.tail.data.renderTextIconBitmap
+import com.example.tail.data.textIconCharOf
 import com.example.tail.ui.getHabitIconRes
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -89,11 +91,14 @@ private class HabitListFactory(
 
             val ordered = computeOrderedHabitList(settings, recent, max1Today)
             rows = ordered.map { name ->
-                // App icons are resolved via PackageManager; skip the resource
-                // lookup for them (getHabitIconRes would fall back to the
-                // habit's default icon otherwise).
+                // App icons are resolved via PackageManager; text icons are
+                // rendered to a greyscale bitmap; skip the resource lookup for
+                // both (getHabitIconRes would fall back to the habit's default
+                // icon otherwise).
                 val appPkg = appPackageNameOf(settings.habitIcons[name])
-                val iconRes = if (appPkg == null) getHabitIconRes(name, settings.habitIcons) else null
+                val textChar = textIconCharOf(settings.habitIcons[name])
+                val iconRes = if (appPkg == null && textChar == null)
+                    getHabitIconRes(name, settings.habitIcons) else null
                 val appBitmap = if (appPkg != null) {
                     try {
                         drawableToBitmap(context.packageManager.getApplicationIcon(appPkg))
@@ -102,10 +107,11 @@ private class HabitListFactory(
                         null
                     }
                 } else null
+                val textBitmap = if (textChar != null) renderTextIconBitmap(textChar, 96) else null
                 WidgetRow(
                     habitName = name,
                     iconResId = iconRes,
-                    iconBitmap = appBitmap,
+                    iconBitmap = appBitmap ?: textBitmap,
                     dimmed    = name in max1Today
                 )
             }
