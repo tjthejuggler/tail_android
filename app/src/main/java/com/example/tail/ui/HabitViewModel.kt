@@ -5098,10 +5098,14 @@ class HabitViewModel(
                     githubDeletions = ghMetrics?.deletions
                         ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_DELETIONS) filteredRaw else null,
                     movieRuntimeMinutes = runtimeByDate?.get(ds),
-                    jugcoachTime = jugcoachTimeEntries?.get(ds),
+                    // JugCoach time metrics are STORED in seconds but DISPLAYED
+                    // in minutes — convert here (round-to-nearest) so every
+                    // graph consumer (series, tooltips, interpolation) works
+                    // in minutes while the raw storage keeps full precision.
+                    jugcoachTime = jugcoachTimeEntries?.get(ds)?.let { (it + 30) / 60 },
                     jugcoachCatches = jugcoachSlotEntries?.get(2)?.get(ds),
-                    jugcoachTimeCatch = jugcoachSlotEntries?.get(3)?.get(ds),
-                    jugcoachTimeDrop = jugcoachSlotEntries?.get(4)?.get(ds),
+                    jugcoachTimeCatch = jugcoachSlotEntries?.get(3)?.get(ds)?.let { (it + 30) / 60 },
+                    jugcoachTimeDrop = jugcoachSlotEntries?.get(4)?.get(ds)?.let { (it + 30) / 60 },
                     jugcoachCatchesCatch = jugcoachSlotEntries?.get(5)?.get(ds),
                     jugcoachCatchesDrop = jugcoachSlotEntries?.get(6)?.get(ds)
                 )

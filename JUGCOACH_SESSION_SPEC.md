@@ -12,12 +12,17 @@ juggling metrics** to the same mapped habit:
 
 | Metric | Slot key | Graph metric id | Default label |
 |---|---|---|---|
-| Total seconds juggled | `secondary_value:<habit>` | `jugcoach_time` | Time (s) |
+| Total seconds juggled | `secondary_value:<habit>` | `jugcoach_time` | Time (min) |
 | Total catches | `secondary_value2:<habit>` | `jugcoach_catches` | Catches |
-| Seconds in catch-ended runs | `secondary_value3:<habit>` | `jugcoach_time_catch` | Time·Catch (s) |
-| Seconds in drop-ended runs | `secondary_value4:<habit>` | `jugcoach_time_drop` | Time·Drop (s) |
+| Seconds in catch-ended runs | `secondary_value3:<habit>` | `jugcoach_time_catch` | Time·Catch (min) |
+| Seconds in drop-ended runs | `secondary_value4:<habit>` | `jugcoach_time_drop` | Time·Drop (min) |
 | Catches in catch-ended runs | `secondary_value5:<habit>` | `jugcoach_catches_catch` | Catches·Catch |
 | Catches in drop-ended runs | `secondary_value6:<habit>` | `jugcoach_catches_drop` | Catches·Drop |
+
+Time metrics are **stored in seconds** (full precision, sub-minute runs never
+lost) but **displayed in minutes** — `getGraphData()` converts with
+round-to-nearest when building the graph points, so series, tooltips and
+zero-interpolation all operate in minutes.
 
 The habit's own (primary) count keeps its binary semantics: +1 per completed
 run, still respecting the **max-1** cap if the habit has it enabled. The six
