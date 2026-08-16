@@ -53,6 +53,9 @@ import kotlin.math.hypot
  *  - Tapped to start/stop the trigger habit's timer — while it runs, the live
  *    elapsed time is shown in a small pill right above the bubble
  *  - Long-pressed to stop a running timer (recording it) and open the Tail app
+ *  - Stopped automatically when the trigger app closes/leaves the foreground —
+ *    a still-running timer is stopped and recorded at that moment
+ *    (see [ACTION_TRIGGER_APP_LEFT])
  *
  * Requires [android.Manifest.permission.SYSTEM_ALERT_WINDOW] ("draw over other apps").
  */
@@ -61,6 +64,13 @@ class FloatingBubbleService : Service() {
     companion object {
         private const val CHANNEL_ID = "tail_floating_bubble"
         private const val NOTIFICATION_ID = 9911
+
+        /**
+         * How long to stay alive after the trigger app left while a timer was
+         * running: the increment flash shows for ~3 s and [onDestroy] would
+         * tear it down, so the actual stopSelf() waits out the flash.
+         */
+        private const val LINGER_STOP_DELAY_MS = 3500L
 
         /** dp → px helper */
         private fun Int.dp(resources: Resources): Int =
@@ -72,6 +82,13 @@ class FloatingBubbleService : Service() {
 
         /** Action to stop the bubble from anywhere (e.g. notification action). */
         const val ACTION_STOP_BUBBLE = "com.example.tail.widget.STOP_BUBBLE"
+
+        /**
+         * Action sent by [WidgetTriggerService] when the trigger app left the
+         * foreground (closed or switched away from): any still-running habit
+         * timer is stopped and recorded before the bubble hides itself.
+         */
+        const val ACTION_TRIGGER_APP_LEFT = "com.example.tail.widget.TRIGGER_APP_LEFT"
 
         /** Intent extra: name of the habit whose trigger app opened the bubble. */
         const val EXTRA_HABIT_NAME = "habit_name"
@@ -106,6 +123,11 @@ class FloatingBubbleService : Service() {
         stoppedByUser = true
     }
 
+    /** Clears the deliberate-stop flag — the bubble was (re)started on purpose. */
+    private fun noteRestarted() {
+        stoppedByUser = false
+    }
+
     private lateinit var windowManager: WindowManager
     private var bubbleView: View? = null
     private var bubbleRingView: View? = null
@@ -130,6 +152,17 @@ class FloatingBubbleService : Service() {
     private var flashView: LinearLayout? = null
     private val flashDismissRunnable = Runnable { hideIncrementFlash() }
     private val handler = Handler(Looper.getMainLooper())
+
+    // ── Delayed self-stop after the trigger app left ─────────────────────
+    // When the trigger app closes mid-timer the session is recorded and a
+    // confirmation flash shown; the service must outlive that flash because
+    // onDestroy removes it. The generation counter cancels the pending stop
+    // if the bubble is re-started (user re-entered the app) meanwhile.
+    private var startGeneration = 0
+    private var lingerStopGeneration = -1
+    private val delayedStopRunnable = Runnable {
+        if (lingerStopGeneration == startGeneration) stopSelf()
+    }
 
     // ── Long-press detection ──────────────────────────────────────────────
     private var longPressConsumed = false
@@ -164,7 +197,21 @@ class FloatingBubbleService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+            ACTION_TRIGGER_APP_LEFT -> {
+                // The trigger app closed/left the foreground — stop & record
+                // any running timer, then hide the bubble.
+                noteDeliberateStop()
+                handleTriggerAppLeft()
+                return START_NOT_STICKY
+            }
         }
+
+        // A (re)start cancels any pending linger-stop scheduled when the
+        // trigger app was last left (the user re-entered it during the flash
+        // linger) — the bubble is back in business.
+        handler.removeCallbacks(delayedStopRunnable)
+        startGeneration++
+        noteRestarted()
 
         // Remember which habits' trigger app opened the bubble (for the timer).
         // Several habits can share one trigger app; if so, the first tap shows
@@ -1112,6 +1159,38 @@ class FloatingBubbleService : Service() {
             ).show()
             onFinished?.invoke()
         }
+    }
+
+    /**
+     * The trigger app left the foreground (closed or switched away from).
+     * Any still-running timer of the bubble's trigger habits is stopped and
+     * recorded — exactly as if the user had tapped the bubble — and then the
+     * bubble hides itself. The self-stop is DELAYED past the increment flash:
+     * [onDestroy] tears the flash down, and stopping immediately would
+     * swallow the "session recorded" confirmation.
+     */
+    private fun handleTriggerAppLeft() {
+        val runningHabit = triggerHabitNames.firstOrNull {
+            WidgetTimerStore.isTimerRunning(this, it)
+        }
+        if (runningHabit == null) {
+            stopSelf()
+            return
+        }
+        // Record first, then stop the service once the write has landed —
+        // stopSelf() cancels serviceScope in onDestroy, killing an in-flight
+        // write (and with it the recorded minutes).
+        stopTimerAndRecord(runningHabit) { scheduleLingerStop() }
+    }
+
+    /**
+     * Stops the service once the increment flash has finished showing
+     * (skipped if the bubble was re-started in the meantime).
+     */
+    private fun scheduleLingerStop() {
+        lingerStopGeneration = startGeneration
+        handler.removeCallbacks(delayedStopRunnable)
+        handler.postDelayed(delayedStopRunnable, LINGER_STOP_DELAY_MS)
     }
 
     /**

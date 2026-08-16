@@ -30,7 +30,8 @@ import kotlinx.coroutines.launch
  * ms to detect which app is currently in the foreground (the package of the
  * most recent ACTIVITY_RESUMED event). When a watched package (one that a
  * habit has configured as its widget trigger app) comes to the foreground,
- * the floating bubble is started. When it leaves, the bubble is stopped.
+ * the floating bubble is started. When it leaves, the bubble is stopped and
+ * any still-running habit timer is stopped and recorded.
  *
  * Requires the user to grant "Usage access" permission
  * ([Settings.ACTION_USAGE_ACCESS_SETTINGS]). Without the permission the
@@ -296,7 +297,7 @@ class WidgetTriggerService : Service() {
         if (foregroundPkg == packageName) {
             if (bubbleActive) {
                 Log.d(TAG, "Tail is foreground — hiding bubble")
-                stopBubble()
+                stopBubble(stopRunningTimer = true)
             }
             currentForegroundPackage = null
             return
@@ -316,8 +317,8 @@ class WidgetTriggerService : Service() {
                 }
             } else {
                 if (bubbleActive) {
-                    Log.d(TAG, "Trigger app left — hiding bubble")
-                    stopBubble()
+                    Log.d(TAG, "Trigger app left — hiding bubble, stopping timer if running")
+                    stopBubble(stopRunningTimer = true)
                 }
             }
         }
@@ -379,10 +380,22 @@ class WidgetTriggerService : Service() {
         }
     }
 
-    private fun stopBubble() {
+    /**
+     * Tells the bubble service to hide itself. When [stopRunningTimer] is
+     * true (the trigger app left the foreground) a still-running habit timer
+     * is stopped and recorded first; false (monitor shutdown / trigger apps
+     * deconfigured) leaves any timer running so it can resume if the bubble
+     * comes back.
+     */
+    private fun stopBubble(stopRunningTimer: Boolean = false) {
         if (!bubbleActive) return
+        val stopAction = if (stopRunningTimer) {
+            FloatingBubbleService.ACTION_TRIGGER_APP_LEFT
+        } else {
+            FloatingBubbleService.ACTION_STOP_BUBBLE
+        }
         val intent = Intent(this, FloatingBubbleService::class.java)
-            .apply { action = FloatingBubbleService.ACTION_STOP_BUBBLE }
+            .apply { action = stopAction }
         try {
             startService(intent)
         } catch (e: Exception) {

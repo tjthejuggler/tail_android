@@ -8,9 +8,11 @@ import android.content.SharedPreferences
  *
  * The timer is intentionally just a persisted START TIMESTAMP per habit — no
  * ticking process is needed. Elapsed time is computed on demand
- * ([elapsedMillis]), so the timer survives the bubble being hidden (trigger
- * app left), the Tail app being killed, and device reboots are the only case
- * where an in-flight timer is lost (timestamps are wall-clock based).
+ * ([elapsedMillis]), so the timer survives the bubble being dismissed
+ * manually and the Tail app being killed. When the trigger app leaves the
+ * foreground, FloatingBubbleService stops the timer and records the session.
+ * Device reboots are the only case where an in-flight timer is lost
+ * (timestamps are wall-clock based).
  *
  * Stored in plain [SharedPreferences] (not DataStore) because the bubble
  * service reads/writes it synchronously from the UI thread when rendering
