@@ -455,7 +455,7 @@ class MediaCaptureActivity : ComponentActivity() {
                     is CaptureState.MealEdit -> MealEditScreen(
                         log = state.log,
                         note = state.note,
-                        onSave = { updated -> saveMealEdit(updated) },
+                        onSave = { updated -> saveMealEdit(updated, state.log.timestamp) },
                         onDiscard = { discardMealEdit(state.log) }
                     )
                     is CaptureState.Correcting -> CorrectionScreen(
@@ -860,36 +860,57 @@ class MediaCaptureActivity : ComponentActivity() {
         if (result.classification == VisionClassification.FOOD_MEAL &&
             result.foodData != null && targetHabitName != null
         ) {
-            val mealLog = result.toMealLog(
-                habitId = targetHabitName,
-                timestamp = System.currentTimeMillis(),
-                imageUri = relativePath,
-                rawJson = result.toString()
-            )
-            if (mealLog != null) {
-                mealLogRepo.addLog(mealLog)
+            val now = System.currentTimeMillis()
+            val active = mealLogRepo.findActiveGroup(targetHabitName, now)
+            var reviewedLog: MealLog? = null
+            if (active != null) {
+                // Second course within the group window — merge into the
+                // existing meal: one card, one increment.
+                reviewedLog = active.mergedWith(
+                    foodData = result.foodData,
+                    extraImageUri = relativePath,
+                    newTimestamp = now
+                )
+                mealLogRepo.updateLog(reviewedLog)
+            } else {
+                val created = result.toMealLog(
+                    habitId = targetHabitName,
+                    timestamp = now,
+                    imageUri = relativePath,
+                    rawJson = result.toString()
+                )
+                if (created != null) {
+                    reviewedLog = created
+                    mealLogRepo.addLog(created)
 
-                if (settings.fileUri.isNotEmpty()) {
-                    try {
-                        val habitsRepo = HabitsRepository()
-                        habitsRepo.incrementHabit(
-                            Uri.parse(settings.fileUri),
-                            this@MediaCaptureActivity,
-                            targetHabitName,
-                            1
-                        )
-                        Log.i(TAG, "Incremented habit '$targetHabitName' for meal: ${mealLog.title}")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to increment habit '$targetHabitName'", e)
+                    if (settings.fileUri.isNotEmpty()) {
+                        try {
+                            val habitsRepo = HabitsRepository()
+                            habitsRepo.incrementHabit(
+                                Uri.parse(settings.fileUri),
+                                this@MediaCaptureActivity,
+                                targetHabitName,
+                                1
+                            )
+                            // Record the increment timestamp so captured meals
+                            // are timestamped like every other increment path
+                            com.example.tail.data.HabitTimestampRepository(this@MediaCaptureActivity)
+                                .addTimestamp(habitName = targetHabitName)
+                            Log.i(TAG, "Incremented habit '$targetHabitName' for meal: ${created.title}")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to increment habit '$targetHabitName'", e)
+                        }
                     }
                 }
+            }
 
+            if (reviewedLog != null) {
                 val note = listOfNotNull(
                     voiceErrorNote,
                     "Best guess below — adjust anything before saving. " +
                         "Confidence: ${(result.confidenceScore * 100).toInt()}%"
                 ).joinToString("\n\n")
-                runOnUiThread { captureState = CaptureState.MealEdit(mealLog, note) }
+                runOnUiThread { captureState = CaptureState.MealEdit(reviewedLog, note) }
                 return
             }
         }
@@ -973,10 +994,25 @@ class MediaCaptureActivity : ComponentActivity() {
 
     // ── Meal review (editable) ───────────────────────────────────────────
 
-    private fun saveMealEdit(updated: MealLog) {
+    private fun saveMealEdit(updated: MealLog, oldTimestamp: Long) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 MealLogRepository(this@MediaCaptureActivity).updateLog(updated)
+                // Keep the recorded increment timestamp in sync with time edits
+                if (updated.countedIncrement && updated.timestamp != oldTimestamp) {
+                    val tsRepo = com.example.tail.data.HabitTimestampRepository(this@MediaCaptureActivity)
+                    val fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+                    val oldZdt = java.time.Instant.ofEpochMilli(oldTimestamp)
+                        .atZone(java.time.ZoneId.systemDefault())
+                    val newZdt = java.time.Instant.ofEpochMilli(updated.timestamp)
+                        .atZone(java.time.ZoneId.systemDefault())
+                    val day = tsRepo.getTimestampsForDay(updated.habitId, oldZdt.toLocalDate())
+                    val idx = day.indexOf(oldZdt.toLocalTime().format(fmt))
+                    if (idx >= 0) {
+                        tsRepo.deleteTimestamp(updated.habitId, oldZdt.toLocalDate(), idx)
+                    }
+                    tsRepo.addTimestamp(updated.habitId, newZdt.toLocalDate(), newZdt.toLocalTime().format(fmt))
+                }
                 Log.i(TAG, "Meal log updated after review: ${updated.title}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update meal log", e)
@@ -991,19 +1027,36 @@ class MediaCaptureActivity : ComponentActivity() {
             try { repo.deleteLog(log.habitId, log.id) } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete meal log", e)
             }
-            try { repo.deleteImage(log.imageUri) } catch (e: Exception) {
-                Log.e(TAG, "Failed to delete meal image", e)
-            }
-            // Undo the automatic increment that came with the log
-            try {
-                val settings = SettingsRepository(this@MediaCaptureActivity).settingsFlow.first()
-                if (settings.fileUri.isNotEmpty()) {
-                    HabitsRepository().incrementHabit(
-                        Uri.parse(settings.fileUri), this@MediaCaptureActivity, log.habitId, -1
-                    )
+            log.imageList().forEach { path ->
+                try { repo.deleteImage(path) } catch (e: Exception) {
+                    Log.e(TAG, "Failed to delete meal image", e)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to undo meal increment", e)
+            }
+            // Undo the automatic increment (count + timestamp) that came with the log
+            if (log.countedIncrement) {
+                try {
+                    val settings = SettingsRepository(this@MediaCaptureActivity).settingsFlow.first()
+                    if (settings.fileUri.isNotEmpty()) {
+                        HabitsRepository().incrementHabit(
+                            Uri.parse(settings.fileUri), this@MediaCaptureActivity, log.habitId, -1
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to undo meal increment", e)
+                }
+                try {
+                    val tsRepo = com.example.tail.data.HabitTimestampRepository(this@MediaCaptureActivity)
+                    val zdt = java.time.Instant.ofEpochMilli(log.timestamp)
+                        .atZone(java.time.ZoneId.systemDefault())
+                    val fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+                    val day = tsRepo.getTimestampsForDay(log.habitId, zdt.toLocalDate())
+                    val idx = day.indexOf(zdt.toLocalTime().format(fmt))
+                    if (idx >= 0) {
+                        tsRepo.deleteTimestamp(log.habitId, zdt.toLocalDate(), idx)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to undo meal timestamp", e)
+                }
             }
             finish()
         }
@@ -1406,13 +1459,7 @@ private fun MealEditScreen(
     onSave: (MealLog) -> Unit,
     onDiscard: (MealLog) -> Unit
 ) {
-    var title by remember { mutableStateOf(log.title) }
-    var calories by remember { mutableStateOf(log.calories.toString()) }
-    var protein by remember { mutableStateOf(formatNum(log.macronutrients.proteinGrams)) }
-    var carbs by remember { mutableStateOf(formatNum(log.macronutrients.carbsGrams)) }
-    var fat by remember { mutableStateOf(formatNum(log.macronutrients.fatGrams)) }
-    var summary by remember { mutableStateOf(log.summary ?: "") }
-
+    val context = androidx.compose.ui.platform.LocalContext.current
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1443,94 +1490,21 @@ private fun MealEditScreen(
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
-                note?.let {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        it,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                    )
-                }
                 Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Meal") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                // Shared full editor — same controls as the meal screen's
+                // card editor (time, macros, ratings, tags, transcript…)
+                com.example.tail.ui.MealEditorContent(
+                    log = log,
+                    note = note,
+                    filesDir = context.filesDir,
+                    allowTimeEdit = true,
+                    onSave = onSave,
+                    onDelete = onDiscard
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = calories,
-                    onValueChange = { calories = it },
-                    label = { Text("Calories (kcal)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = protein,
-                        onValueChange = { protein = it },
-                        label = { Text("Protein g") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    OutlinedTextField(
-                        value = carbs,
-                        onValueChange = { carbs = it },
-                        label = { Text("Carbs g") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    OutlinedTextField(
-                        value = fat,
-                        onValueChange = { fat = it },
-                        label = { Text("Fat g") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = summary,
-                    onValueChange = { summary = it },
-                    label = { Text("Summary") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(
-                    onClick = {
-                        onSave(
-                            log.copy(
-                                title = title.ifBlank { "Meal" },
-                                calories = calories.toIntOrNull() ?: 0,
-                                macronutrients = Macronutrients(
-                                    proteinGrams = protein.toDoubleOrNull() ?: 0.0,
-                                    carbsGrams = carbs.toDoubleOrNull() ?: 0.0,
-                                    fatGrams = fat.toDoubleOrNull() ?: 0.0
-                                ),
-                                summary = summary.ifBlank { null }
-                            )
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Save") }
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { onDiscard(log) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Discard log", color = MaterialTheme.colorScheme.error) }
             }
         }
     }
 }
-
-/** Formats a macro value for a text field (no trailing ".0"). */
-private fun formatNum(d: Double): String =
-    if (d % 1.0 == 0.0) d.toInt().toString() else d.toString()
 
 /**
  * Correction screen — shown when the LLM couldn't act on a photo with

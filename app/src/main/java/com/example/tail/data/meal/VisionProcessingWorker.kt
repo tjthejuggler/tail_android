@@ -10,11 +10,14 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import kotlinx.coroutines.flow.first
 import java.io.File
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 
 private const val TAG = "VisionWorker"
 private const val UNIQUE_WORK_NAME = "vision_processing"
@@ -44,6 +47,7 @@ class VisionProcessingWorker(
         val mealLogRepo = MealLogRepository(appContext)
         val memoryRepo = VisionMemoryRepository(appContext)
         val habitsRepo = HabitsRepository()
+        val timestampRepo = HabitTimestampRepository(appContext)
         val visionService = VisionProcessingService()
 
         // Load current settings
@@ -143,6 +147,27 @@ class VisionProcessingWorker(
                 // Determine target habit
                 val targetHabit = item.habitId ?: autoRouteHabit(result, settings.mealHabits)
 
+                // ── Attach path: the image was already attached to an existing
+                // meal (close-succession grouping / gallery attach). Merge the
+                // LLM's analysis into that meal — no new log, no increment.
+                if (result.classification == VisionClassification.FOOD_MEAL &&
+                    result.foodData != null &&
+                    item.attachToMealLogId != null && targetHabit != null
+                ) {
+                    val existing = mealLogRepo.loadLogs(targetHabit)
+                        .find { it.id == item.attachToMealLogId }
+                    if (existing != null) {
+                        mealLogRepo.updateLog(existing.mergedWith(foodData = result.foodData))
+                        queueRepo.markCompleted(item.id, existing.id)
+                        processed++
+                        Log.i(TAG, "Attached analysis to meal ${existing.id}: ${existing.title}")
+                        continue
+                    }
+                    // Target log vanished (deleted meanwhile) — fall through to
+                    // the normal create path so the capture isn't lost.
+                    Log.w(TAG, "Attach target ${item.attachToMealLogId} not found — creating new log")
+                }
+
                 if (result.classification == VisionClassification.FOOD_MEAL &&
                     result.foodData != null && targetHabit != null
                 ) {
@@ -157,14 +182,36 @@ class VisionProcessingWorker(
                     if (mealLog != null) {
                         mealLogRepo.addLog(mealLog)
 
-                        // Increment the habit count for today
+                        // Increment the habit count for the meal's day
                         if (settings.fileUri.isNotEmpty()) {
                             try {
-                                habitsRepo.incrementHabit(
-                                    Uri.parse(settings.fileUri),
-                                    appContext,
-                                    targetHabit,
-                                    1
+                                val mealDate = Instant.ofEpochMilli(mealLog.timestamp)
+                                    .atZone(ZoneId.systemDefault()).toLocalDate()
+                                if (mealDate == LocalDate.now()) {
+                                    habitsRepo.incrementHabit(
+                                        Uri.parse(settings.fileUri),
+                                        appContext,
+                                        targetHabit,
+                                        1
+                                    )
+                                } else {
+                                    habitsRepo.incrementHabitForDate(
+                                        Uri.parse(settings.fileUri),
+                                        appContext,
+                                        targetHabit,
+                                        1,
+                                        mealDate
+                                    )
+                                }
+                                // Record the increment timestamp so manually
+                                // captured meals are timestamped too
+                                timestampRepo.addTimestamp(
+                                    habitName = targetHabit,
+                                    date = mealDate,
+                                    time = java.time.LocalTime.ofInstant(
+                                        Instant.ofEpochMilli(mealLog.timestamp),
+                                        ZoneId.systemDefault()
+                                    ).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
                                 )
                                 Log.i(TAG, "Incremented habit '$targetHabit' for meal: ${mealLog.title}")
                             } catch (e: Exception) {

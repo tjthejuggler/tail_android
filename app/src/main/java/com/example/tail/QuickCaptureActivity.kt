@@ -141,8 +141,17 @@ class QuickCaptureActivity : ComponentActivity() {
                         tempFile.delete()
                         val relativePath = mealLogRepo.saveImageBytes(bytes)
 
-                        // Enqueue for vision processing
-                        queueRepo.enqueue(relativePath, targetHabit)
+                        // Enqueue for vision processing — attaching to the
+                        // active meal group when one exists (close-succession
+                        // captures merge into one meal / one increment)
+                        val activeGroup = targetHabit?.let {
+                            mealLogRepo.findActiveGroup(it, System.currentTimeMillis())
+                        }
+                        queueRepo.enqueue(
+                            imagePath = relativePath,
+                            habitId = targetHabit,
+                            attachToMealLogId = activeGroup?.id
+                        )
 
                         // Trigger the background worker
                         VisionProcessingWorker.enqueue(this@QuickCaptureActivity)

@@ -14,6 +14,12 @@ import java.util.UUID
 private const val TAG = "MealLogRepo"
 
 /**
+ * Captures (photos/taps/voice) within this window of a meal group's FIRST
+ * entry merge into that meal — one meal, one habit increment.
+ */
+const val MEAL_GROUP_WINDOW_MS: Long = 60 * 60 * 1000L
+
+/**
  * Manages meal log entries and their associated images in the app's internal storage.
  *
  * Layout:
@@ -92,6 +98,14 @@ class MealLogRepository(private val context: Context) {
 
     // ── MealLog CRUD ────────────────────────────────────────────────────
 
+    /**
+     * Normalises a log loaded from JSON: migrates the legacy single
+     * [MealLog.imageUri] into [MealLog.imageUris] (Gson leaves fields that
+     * are missing in old files at null).
+     */
+    private fun MealLog.normalized(): MealLog =
+        if (imageUris == null) copy(imageUris = listOfNotNull(imageUri)) else this
+
     /** Returns all meal logs for the given habit, sorted newest-first. */
     fun loadLogs(habitId: String): List<MealLog> {
         return try {
@@ -99,11 +113,41 @@ class MealLogRepository(private val context: Context) {
             if (!file.exists()) return emptyList()
             val json = file.readText()
             val list: List<MealLog> = gson.fromJson(json, listType) ?: emptyList()
-            list.sortedByDescending { it.timestamp }
+            list.map { it.normalized() }.sortedByDescending { it.timestamp }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load meal logs for $habitId", e)
             emptyList()
         }
+    }
+
+    /**
+     * Returns the meal group that is still "active" at [at] (default: now) —
+     * i.e. the newest log whose capture-group anchor is within
+     * [MEAL_GROUP_WINDOW_MS]. Captures that land in this window merge into
+     * that meal instead of creating a new one (single meal increment).
+     */
+    fun findActiveGroup(
+        habitId: String,
+        at: Long = System.currentTimeMillis(),
+        windowMs: Long = MEAL_GROUP_WINDOW_MS
+    ): MealLog? {
+        val recent = loadLogs(habitId).firstOrNull() ?: return null
+        return if (at - recent.anchorTime() <= windowMs) recent else null
+    }
+
+    /**
+     * Index of every ingredient tag used by this habit's meals, mapped to the
+     * number of meals carrying it. Powers the tag filter chips and future
+     * graphing/search over ingredients.
+     */
+    fun allIngredientTags(habitId: String): Map<String, Int> {
+        return loadLogs(habitId)
+            .flatMap { it.ingredientsDetected }
+            .groupingBy { it }
+            .eachCount()
+            .toList()
+            .sortedByDescending { it.second }
+            .toMap()
     }
 
     /** Adds a new meal log entry and persists it. */

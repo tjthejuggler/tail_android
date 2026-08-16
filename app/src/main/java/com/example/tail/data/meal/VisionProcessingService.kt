@@ -93,6 +93,74 @@ class VisionProcessingService {
         }
 
     /**
+     * Text-only meal analysis: the user described a meal by voice (or text)
+     * without taking a photo. The transcript is sent to the LLM, which
+     * extracts the same structured [FoodData] the vision pipeline produces
+     * (title, calories, macros, ingredient tags, macro ratings).
+     *
+     * @return The parsed [FoodData], or null on network failure.
+     */
+    suspend fun processMealText(
+        transcript: String,
+        config: VisionConfig
+    ): FoodData? =
+        withContext(Dispatchers.IO) {
+            if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
+                Log.w(TAG, "Cannot process meal text: LLM config incomplete")
+                return@withContext null
+            }
+            if (transcript.isBlank()) return@withContext null
+
+            val fullUrl = buildEndpointUrl(config.baseUrl)
+            Log.i(TAG, "Processing meal description text via $fullUrl model=${config.model}")
+
+            val systemPrompt = buildString {
+                append("You are a nutritional analysis assistant. The user briefly described ")
+                append("a meal they ate, in their own words. Extract structured nutrition data ")
+                append("with your BEST-GUESS estimates for portion sizes. Honour any dietary ")
+                append("rules the user mentions.\n\n")
+                append("Respond ONLY with raw JSON (no markdown fences, no conversational text):\n")
+                append("{\n")
+                append("  \"title\": \"Short meal name\",\n")
+                append("  \"summary\": \"1-2 sentence description\",\n")
+                append("  \"is_vegan_verified\": boolean,\n")
+                append("  \"estimated_calories\": number,\n")
+                append("  \"macronutrients\": { \"protein_grams\": number, \"carbs_grams\": number, \"fat_grams\": number },\n")
+                append("  \"ingredients_detected\": [\"ingredient tag\", ...],\n")
+                append("  \"health_notes\": \"String or null\",\n")
+                append("  \"macro_ratings\": { \"protein\": 1-3, \"carbs\": 1-3, \"fat\": 1-3 }\n")
+                append("}\n\n")
+                append("macro_ratings: 1 = low, 2 = moderate, 3 = high, relative to the meal's size.\n")
+                append("ingredients_detected: individual searchable TAGS (lowercase, singular where natural).")
+            }
+
+            val requestBody = JSONObject().apply {
+                put("model", config.model)
+                put("messages", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("role", "system")
+                        put("content", systemPrompt)
+                    })
+                    put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", "Meal description: \"$transcript\"")
+                    })
+                })
+                put("temperature", 0.2)
+                put("max_tokens", 700)
+            }
+
+            when (val outcome = chatCompletion(fullUrl, requestBody, config)) {
+                is ChatOutcome.Content -> parseFoodDataResponse(outcome.text)
+                is ChatOutcome.ErrorNote -> {
+                    Log.w(TAG, "Meal text analysis failed: ${outcome.note}")
+                    null
+                }
+                ChatOutcome.NetworkFailure -> null
+            }
+        }
+
+    /**
      * Tandem teaching call: the user held the capture button, took a photo,
      * and spoke an instruction. The photo and transcript are sent to the LLM
      * **together** so it can learn (and persist via [VisionMemoryRepository])
@@ -512,6 +580,7 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
    - Identify the meal/snack name.
    - Estimate ingredients and portion sizes.
    - Calculate estimated calories and primary macronutrients (Protein, Carbs, Fats).
+   - Also fill "macro_ratings": a simple 1-3 rating per macro (1 = low, 2 = moderate, 3 = high, relative to the meal's size) so meals can be compared at a glance.
    - Summarize the item in 1-2 concise sentences for a habit log entry.
 
 3. If the category is "NON_FOOD_HABIT" or "UNCERTAIN_OTHER", begin processing_notes with a concise one-sentence visual description of what the image actually shows, formatted as "Description: <what the image depicts>". This description is shown directly to the user, so make it specific and useful.
@@ -533,7 +602,12 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
       "fat_grams": number
     },
     "ingredients_detected": ["String"],
-    "health_notes": "String or null"
+    "health_notes": "String or null",
+    "macro_ratings": {
+      "protein": 1,
+      "carbs": 2,
+      "fat": 3
+    }
   },
   "non_food_data": {
     "detected_activity": "String or null",
@@ -634,26 +708,7 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
             )
             val confidence = json.optDouble("confidence_score", 0.0)
 
-            val foodData = json.optJSONObject("food_data")?.let { fd ->
-                val macros = fd.optJSONObject("macronutrients")
-                FoodData(
-                    title = fd.optString("title", ""),
-                    summary = fd.optString("summary", ""),
-                    isVeganVerified = fd.optBoolean("is_vegan_verified", false),
-                    estimatedCalories = fd.optInt("estimated_calories", 0),
-                    macronutrients = Macronutrients(
-                        proteinGrams = macros?.optDouble("protein_grams", 0.0) ?: 0.0,
-                        carbsGrams = macros?.optDouble("carbs_grams", 0.0) ?: 0.0,
-                        fatGrams = macros?.optDouble("fat_grams", 0.0) ?: 0.0
-                    ),
-                    ingredientsDetected = fd.optJSONArray("ingredients_detected")?.let { arr ->
-                        (0 until arr.length()).mapNotNull { arr.opt(it) as? String }
-                    } ?: emptyList(),
-                    healthNotes = fd.optString("health_notes").takeIf {
-                        it.isNotBlank() && it != "null"
-                    }
-                )
-            }
+            val foodData = json.optJSONObject("food_data")?.let { parseFoodData(it) }
 
             val nonFoodData = json.optJSONObject("non_food_data")?.let { nfd ->
                 NonFoodData(
@@ -692,6 +747,47 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
                 classification = VisionClassification.UNCERTAIN_OTHER,
                 processingNotes = "Parse error: ${e.message?.take(100)}"
             )
+        }
+    }
+
+    /**
+     * Parses a food_data JSON object (shared by the vision and text-only
+     * pipelines) into a [FoodData].
+     */
+    fun parseFoodData(fd: JSONObject): FoodData {
+        val macros = fd.optJSONObject("macronutrients")
+        return FoodData(
+            title = fd.optString("title", ""),
+            summary = fd.optString("summary", ""),
+            isVeganVerified = fd.optBoolean("is_vegan_verified", false),
+            estimatedCalories = fd.optInt("estimated_calories", 0),
+            macronutrients = Macronutrients(
+                proteinGrams = macros?.optDouble("protein_grams", 0.0) ?: 0.0,
+                carbsGrams = macros?.optDouble("carbs_grams", 0.0) ?: 0.0,
+                fatGrams = macros?.optDouble("fat_grams", 0.0) ?: 0.0
+            ),
+            ingredientsDetected = fd.optJSONArray("ingredients_detected")?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.opt(it) as? String }
+            } ?: emptyList(),
+            healthNotes = fd.optString("health_notes").takeIf {
+                it.isNotBlank() && it != "null"
+            },
+            macroRatings = MacroRatings.fromJsonObj(fd.optJSONObject("macro_ratings"))
+        )
+    }
+
+    /**
+     * Parses the LLM's JSON output from a text-only meal description call.
+     * Accepts both a bare food_data object and one wrapped in "food_data".
+     */
+    fun parseFoodDataResponse(content: String): FoodData? {
+        return try {
+            val json = JSONObject(stripCodeFences(content).trim())
+            val fd = json.optJSONObject("food_data") ?: json
+            parseFoodData(fd)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse food data JSON: ${content.take(200)}", e)
+            null
         }
     }
 

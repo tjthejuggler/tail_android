@@ -57,21 +57,29 @@ class VisionQueueRepository(private val context: Context) {
      * Enqueues a new capture for processing.
      * @param imagePath Relative path to the cached image (within filesDir).
      * @param habitId Target habit name, or null for LLM auto-routing.
+     * @param attachToMealLogId When set, the LLM result is merged into this
+     *        existing meal log (close-succession grouping) instead of
+     *        creating a new one — and no extra increment happens.
      * @return The created [VisionQueueItem].
      */
     @Synchronized
-    fun enqueue(imagePath: String, habitId: String?): VisionQueueItem {
+    fun enqueue(
+        imagePath: String,
+        habitId: String?,
+        attachToMealLogId: String? = null
+    ): VisionQueueItem {
         val item = VisionQueueItem(
             id = UUID.randomUUID().toString(),
             timestamp = System.currentTimeMillis(),
             imagePath = imagePath,
             status = VisionQueueStatus.PENDING,
-            habitId = habitId
+            habitId = habitId,
+            attachToMealLogId = attachToMealLogId
         )
         val items = loadAll()
         items.add(item)
         saveAll(items)
-        Log.i(TAG, "Enqueued vision item ${item.id} for habit=$habitId")
+        Log.i(TAG, "Enqueued vision item ${item.id} for habit=$habitId attach=$attachToMealLogId")
         return item
     }
 

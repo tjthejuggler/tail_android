@@ -185,6 +185,10 @@ class HabitViewModel(
     private val _mealPendingCount = MutableStateFlow(0)
     val mealPendingCount: StateFlow<Int> = _mealPendingCount.asStateFlow()
 
+    /** Status of the last voice-meal parse / photo queue action (null = idle). */
+    private val _mealVoiceStatus = MutableStateFlow<String?>(null)
+    val mealVoiceStatus: StateFlow<String?> = _mealVoiceStatus.asStateFlow()
+
     /** Vision endpoint test result (null = not tested, empty = testing, non-empty = result). */
     data class MealTestState(
         val isTesting: Boolean = false,
@@ -8690,7 +8694,44 @@ class HabitViewModel(
         }
     }
 
-    /** Adds a manual meal log entry (no photo, no LLM call). */
+    /** "HH:mm:ss" formatter used when recording meal increment timestamps. */
+    private val mealTimeFmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+
+    /**
+     * A tap on a meal habit card: merge-or-increment. When no meal group is
+     * active (nothing logged within the group window), a placeholder card is
+     * created and the habit incremented (with timestamp) — so EVERY tap
+     * yields a card. An active group simply reopens the meal screen.
+     */
+    fun recordMealTap(habitName: String, date: LocalDate = LocalDate.now()) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val at = if (date == LocalDate.now()) now
+            else date.atTime(java.time.LocalTime.now())
+                .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            if (mealLogRepo.findActiveGroup(habitName, at) == null) {
+                val log = com.example.tail.data.meal.MealLog(
+                    id = UUID.randomUUID().toString(),
+                    habitId = habitName,
+                    timestamp = at,
+                    title = "Meal",
+                    isManual = true,
+                    countedIncrement = true,
+                    groupStartTimestamp = at
+                )
+                mealLogRepo.addLog(log)
+                recordMealIncrement(habitName, at)
+            }
+            refreshMealFlows(habitName)
+        }
+    }
+
+    /**
+     * Adds a manual meal log entry (no photo, no LLM call). Records the
+     * habit increment timestamp so manually logged meals are timestamped
+     * like every other increment path. Fills in the active meal group's
+     * placeholder card when one exists (1-hour grouping).
+     */
     fun addManualMealLog(
         habitName: String,
         title: String,
@@ -8698,59 +8739,245 @@ class HabitViewModel(
         skipIncrement: Boolean = false
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            val log = com.example.tail.data.meal.MealLog(
-                id = UUID.randomUUID().toString(),
-                habitId = habitName,
-                timestamp = System.currentTimeMillis(),
-                title = title,
-                calories = calories,
-                isManual = true
-            )
-            mealLogRepo.addLog(log)
+            val now = System.currentTimeMillis()
+            val active = mealLogRepo.findActiveGroup(habitName, now)
+            if (active != null && active.needsDetails()) {
+                // Same meal-group still open without specifics — fill its card
+                mealLogRepo.updateLog(
+                    active.copy(
+                        title = title,
+                        calories = calories,
+                        isManual = true,
+                        timestamp = now,
+                        groupStartTimestamp = active.anchorTime()
+                    )
+                )
+            } else {
+                val log = com.example.tail.data.meal.MealLog(
+                    id = UUID.randomUUID().toString(),
+                    habitId = habitName,
+                    timestamp = now,
+                    title = title,
+                    calories = calories,
+                    isManual = true,
+                    countedIncrement = !skipIncrement,
+                    groupStartTimestamp = now
+                )
+                mealLogRepo.addLog(log)
+                if (!skipIncrement) recordMealIncrement(habitName, now)
+            }
+            refreshMealFlows(habitName)
+        }
+    }
 
-            // Refresh the StateFlows
-            val logs = mealLogRepo.loadLogs(habitName)
-            _mealLogsForHabit.value = logs
-            val today = LocalDate.now().toString()
-            _mealTodayCalories.value = logs.filter {
-                java.time.Instant.ofEpochMilli(it.timestamp)
-                    .atZone(java.time.ZoneId.systemDefault())
-                    .toLocalDate().toString() == today
-            }.sumOf { it.calories }
-
-            // Also increment the habit count (unless caller already did via tap)
-            if (!skipIncrement) {
-                val uriString = _settings.value.fileUri
-                if (uriString.isNotEmpty()) {
-                    try {
-                        habitsRepo.incrementHabit(
-                            android.net.Uri.parse(uriString),
-                            context,
-                            habitName,
-                            1
-                        )
-                        rebuildHabitList()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to increment meal habit '$habitName'", e)
+    /**
+     * Saves an edited meal log. When the log's creation counted as a habit
+     * increment and the time was changed, the recorded habit timestamp is
+     * moved to the new date/time so counts stay consistent.
+     */
+    fun updateMealLog(
+        habitName: String,
+        updated: com.example.tail.data.meal.MealLog,
+        oldTimestamp: Long
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            mealLogRepo.updateLog(updated)
+            if (updated.countedIncrement && updated.timestamp != oldTimestamp) {
+                try {
+                    val oldZdt = java.time.Instant.ofEpochMilli(oldTimestamp)
+                        .atZone(java.time.ZoneId.systemDefault())
+                    val newZdt = java.time.Instant.ofEpochMilli(updated.timestamp)
+                        .atZone(java.time.ZoneId.systemDefault())
+                    val day = timestampRepo.getTimestampsForDay(habitName, oldZdt.toLocalDate())
+                    val idx = day.indexOf(oldZdt.toLocalTime().format(mealTimeFmt))
+                    if (idx >= 0) {
+                        timestampRepo.deleteTimestamp(habitName, oldZdt.toLocalDate(), idx)
                     }
+                    timestampRepo.addTimestamp(
+                        habitName, newZdt.toLocalDate(), newZdt.toLocalTime().format(mealTimeFmt)
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to sync meal timestamp for '$habitName'", e)
                 }
+            }
+            refreshMealFlows(habitName)
+        }
+    }
+
+    /**
+     * Deletes a meal log. When the log's creation incremented the habit
+     * (countedIncrement), the increment and its timestamp are rolled back.
+     */
+    fun deleteMealLog(habitName: String, logId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val log = mealLogRepo.loadLogs(habitName).find { it.id == logId }
+            mealLogRepo.deleteLog(habitName, logId)
+            if (log != null && log.countedIncrement) {
+                rollbackMealIncrement(habitName, log.timestamp)
+            }
+            refreshMealFlows(habitName)
+        }
+    }
+
+    /**
+     * Voice-only meal: the spoken description is parsed by the LLM into
+     * title/calories/macros/tags/ratings — no photo needed. Merges into the
+     * active meal group when one exists (no extra increment).
+     */
+    fun processVoiceMeal(habitName: String, transcript: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _mealVoiceStatus.value = "🎤 Parsing \"${transcript.take(60)}\"…"
+            val s = _settings.value
+            var fd: com.example.tail.data.meal.FoodData? = null
+            if (s.mealEnabled && s.mealApiKey.isNotBlank() &&
+                s.mealBaseUrl.isNotBlank() && s.mealModel.isNotBlank()
+            ) {
+                try {
+                    val config = com.example.tail.data.meal.VisionConfig(
+                        baseUrl = s.mealBaseUrl,
+                        apiKey = s.mealApiKey,
+                        model = s.mealModel,
+                        userSystemPrompt = s.mealSystemPrompt
+                    )
+                    fd = com.example.tail.data.meal.VisionProcessingService()
+                        .processMealText(transcript, config)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Voice meal parse failed", e)
+                }
+            }
+
+            val now = System.currentTimeMillis()
+            val active = mealLogRepo.findActiveGroup(habitName, now)
+            if (active != null) {
+                mealLogRepo.updateLog(
+                    active.mergedWith(foodData = fd, transcript = transcript, newTimestamp = now)
+                )
+                _mealVoiceStatus.value = "Merged into \"${active.title}\""
+            } else {
+                val log = com.example.tail.data.meal.MealLog(
+                    id = UUID.randomUUID().toString(),
+                    habitId = habitName,
+                    timestamp = now,
+                    title = fd?.title?.takeIf { it.isNotBlank() } ?: transcript.take(40),
+                    summary = fd?.summary?.takeIf { it.isNotBlank() },
+                    calories = fd?.estimatedCalories ?: 0,
+                    macronutrients = fd?.macronutrients
+                        ?: com.example.tail.data.meal.Macronutrients(),
+                    ingredientsDetected = fd?.ingredientsDetected ?: emptyList(),
+                    isVeganVerified = fd?.isVeganVerified ?: false,
+                    voiceTranscript = transcript,
+                    macroRatings = fd?.macroRatings,
+                    countedIncrement = true,
+                    groupStartTimestamp = now
+                )
+                mealLogRepo.addLog(log)
+                recordMealIncrement(habitName, now)
+                _mealVoiceStatus.value =
+                    if (fd != null) "Added \"${log.title}\""
+                    else "Added card — tap it to add details"
+            }
+            refreshMealFlows(habitName)
+        }
+    }
+
+    /**
+     * Gallery photo: copies the picked image into internal storage and queues
+     * it for the vision pipeline, attaching to the active meal group when one
+     * exists (close-succession grouping → single increment).
+     */
+    fun addMealPhotoFromUri(habitName: String, uri: android.net.Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _mealVoiceStatus.value = "🖼️ Adding photo…"
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes == null || bytes.isEmpty()) {
+                    _mealVoiceStatus.value = "Could not read the selected photo"
+                    return@launch
+                }
+                val relPath = mealLogRepo.saveImageBytes(bytes)
+                val active = mealLogRepo.findActiveGroup(habitName, System.currentTimeMillis())
+                visionQueueRepo.enqueue(
+                    imagePath = relPath,
+                    habitId = habitName,
+                    attachToMealLogId = active?.id
+                )
+                com.example.tail.data.meal.VisionProcessingWorker.enqueue(context)
+                _mealPendingCount.value = visionQueueRepo.pendingCount()
+                _mealVoiceStatus.value =
+                    if (active != null) "Photo queued — merging into \"${active.title}\""
+                    else "Photo queued for AI…"
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to add gallery meal photo", e)
+                _mealVoiceStatus.value = "Failed to add photo"
             }
         }
     }
 
-    /** Deletes a meal log entry and refreshes the StateFlow. */
-    fun deleteMealLog(habitName: String, logId: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            mealLogRepo.deleteLog(habitName, logId)
-            val logs = mealLogRepo.loadLogs(habitName)
-            _mealLogsForHabit.value = logs
-            val today = LocalDate.now().toString()
-            _mealTodayCalories.value = logs.filter {
-                java.time.Instant.ofEpochMilli(it.timestamp)
-                    .atZone(java.time.ZoneId.systemDefault())
-                    .toLocalDate().toString() == today
-            }.sumOf { it.calories }
+    /** Clears the voice/queue status line shown on the meal screen. */
+    fun clearMealVoiceStatus() {
+        _mealVoiceStatus.value = null
+    }
+
+    /**
+     * Increments the habit for the meal's date and records the increment
+     * timestamp — the shared "a meal happened" bookkeeping used by every
+     * meal-creation path (manual, voice, worker).
+     */
+    private suspend fun recordMealIncrement(habitName: String, atMillis: Long) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) return
+        try {
+            val zdt = java.time.Instant.ofEpochMilli(atMillis)
+                .atZone(java.time.ZoneId.systemDefault())
+            val date = zdt.toLocalDate()
+            if (date == LocalDate.now()) {
+                habitsRepo.incrementHabit(
+                    android.net.Uri.parse(uriString), context, habitName, 1
+                )
+            } else {
+                habitsRepo.incrementHabitForDate(
+                    android.net.Uri.parse(uriString), context, habitName, 1, date
+                )
+            }
+            timestampRepo.addTimestamp(habitName, date, zdt.toLocalTime().format(mealTimeFmt))
+            rebuildHabitList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to increment meal habit '$habitName'", e)
         }
+    }
+
+    /** Rolls back a counted meal increment (habit count + timestamp). */
+    private suspend fun rollbackMealIncrement(habitName: String, atMillis: Long) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) return
+        try {
+            val zdt = java.time.Instant.ofEpochMilli(atMillis)
+                .atZone(java.time.ZoneId.systemDefault())
+            habitsRepo.incrementHabitForDate(
+                android.net.Uri.parse(uriString), context, habitName, -1, zdt.toLocalDate()
+            )
+            val day = timestampRepo.getTimestampsForDay(habitName, zdt.toLocalDate())
+            val idx = day.indexOf(zdt.toLocalTime().format(mealTimeFmt))
+            if (idx >= 0) {
+                timestampRepo.deleteTimestamp(habitName, zdt.toLocalDate(), idx)
+            }
+            rebuildHabitList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to roll back meal increment for '$habitName'", e)
+        }
+    }
+
+    /** Reloads the meal StateFlows (logs, today's calories, queue count). */
+    private suspend fun refreshMealFlows(habitName: String) {
+        val logs = mealLogRepo.loadLogs(habitName)
+        _mealLogsForHabit.value = logs
+        val today = LocalDate.now().toString()
+        _mealTodayCalories.value = logs.filter {
+            java.time.Instant.ofEpochMilli(it.timestamp)
+                .atZone(java.time.ZoneId.systemDefault())
+                .toLocalDate().toString() == today
+        }.sumOf { it.calories }
+        _mealPendingCount.value = visionQueueRepo.pendingCount()
     }
 
     /** Triggers the vision processing worker to drain the queue (called after capture). */

@@ -684,21 +684,13 @@ fun HabitGridScreen(
                                 graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
                                 editMode -> viewModel.selectEditHabit(index)
                                 habit.name in settings.mealHabits -> {
-                                    viewModel.incrementHabit(habit.name, recordTimestamp = isToday)
+                                    // Meal tap = merge-or-increment: ALWAYS yields a
+                                    // card (placeholder until details are added) and
+                                    // opens the meal screen. No increment toast —
+                                    // the time is edited on the meal card itself.
+                                    viewModel.recordMealTap(habit.name, selectedDate)
                                     mealDialogFromTap = true
                                     mealDialogHabit = habit.name
-                                    // Show increment toast with edit-time option
-                                    incrementToastVersion++
-                                    incrementToastHabit = habit.name
-                                    incrementToastIsTimeless = !isToday
-                                    incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
-                                    val currentVersion = incrementToastVersion
-                                    toastScope.launch {
-                                        delay(3500)
-                                        if (incrementToastVersion == currentVersion) {
-                                            incrementToastHabit = null
-                                        }
-                                    }
                                 }
                                 habit.name in settings.subtypedHabits -> {
                                     viewModel.loadSubtypeBreakdown(habit.name) { breakdown ->
@@ -2786,7 +2778,7 @@ private fun MealToggleSection(
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                "Meal Details & History",
+                "Meal Detail",
                 fontSize = 12.sp,
                 color = Color(0xFFFF9800)
             )
@@ -3919,6 +3911,17 @@ private fun EditModeControlBar(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 if (selectedHabitName != null) {
+                    // ── Meal toggle (top of settings — the meal screen is a
+                    // meal habit's primary interface) ────────────────────────
+                    MealToggleSection(
+                        habitName = selectedHabitName,
+                        isMeal = selectedHabitName in mealHabits,
+                        onToggleMeal = onToggleMeal,
+                        onOpenMealDetails = onOpenMealDetails
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
                     // ── Divider toggle ────────────────────────────────────────
                     val currentDivisor = habitDividers[selectedHabitName] ?: 1
                     val isDivider = currentDivisor > 1
@@ -4422,14 +4425,6 @@ private fun EditModeControlBar(
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
-
-                    // ── Meal toggle ──────────────────────────────────────────
-                    MealToggleSection(
-                        habitName = selectedHabitName,
-                        isMeal = selectedHabitName in mealHabits,
-                        onToggleMeal = onToggleMeal,
-                        onOpenMealDetails = onOpenMealDetails
-                    )
 
                     // ── Long-press action selector ────────────────────────────
                     LongPressActionSection(
