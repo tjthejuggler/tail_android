@@ -3807,6 +3807,7 @@ class HabitViewModel(
                     customPointRanges = settings.customPointRanges.replaceKey(oldName, newName),
                     graphValueModeHabits = settings.graphValueModeHabits.replaceKey(oldName, newName),
                     graphMetricSelection = settings.graphMetricSelection.replaceKey(oldName, newName),
+                    graphInterpolateZeroMetrics = settings.graphInterpolateZeroMetrics.replaceKey(oldName, newName),
                     habitNotes = settings.habitNotes.replaceKey(oldName, newName),
                     valueDisplayLabels = settings.valueDisplayLabels.replaceKey(oldName, newName),
                     maxOneHabits = settings.maxOneHabits.replaceElement(oldName, newName),
@@ -3864,6 +3865,7 @@ class HabitViewModel(
                 settingsRepo.saveCustomPointRanges(newSettings.customPointRanges)
                 settingsRepo.saveGraphValueModeHabits(newSettings.graphValueModeHabits)
                 settingsRepo.saveGraphMetricSelection(newSettings.graphMetricSelection)
+                settingsRepo.saveGraphInterpolateZeroMetrics(newSettings.graphInterpolateZeroMetrics)
                 settingsRepo.saveHabitNotes(newSettings.habitNotes)
                 settingsRepo.saveValueDisplayLabels(newSettings.valueDisplayLabels)
                 settingsRepo.saveMaxOneHabits(newSettings.maxOneHabits)
@@ -4682,6 +4684,26 @@ class HabitViewModel(
         }
     }
 
+    /** Returns whether "interpolate zeros" is enabled for [habitName]'s [metric]. */
+    fun isGraphInterpolateZeroEnabled(habitName: String, metric: String): Boolean {
+        return metric in (_settings.value.graphInterpolateZeroMetrics[habitName] ?: emptySet())
+    }
+
+    /**
+     * Sets "interpolate zeros" for [habitName]'s [metric]. When enabled, days
+     * with a 0 value on that metric are plotted with a linear interpolation
+     * between the nearest non-zero values before and after them (for habits
+     * like weight where a missing day is not really 0).
+     */
+    fun setGraphInterpolateZero(habitName: String, metric: String, enabled: Boolean) {
+        val current = _settings.value.graphInterpolateZeroMetrics.toMutableMap()
+        val metrics = current[habitName]?.toMutableSet() ?: mutableSetOf()
+        if (enabled) metrics.add(metric) else metrics.remove(metric)
+        if (metrics.isEmpty()) current.remove(habitName) else current[habitName] = metrics
+        _settings.value = _settings.value.copy(graphInterpolateZeroMetrics = current)
+        viewModelScope.launch { settingsRepo.saveGraphInterpolateZeroMetrics(current) }
+    }
+
     /**
      * Returns the macro/nutrition totals for [habitName] on [date], or null if
      * the habit is not a meal habit. Used by the graph day-details popup.
@@ -4840,6 +4862,7 @@ class HabitViewModel(
                     filteredRaw = 0
                 }
             }
+
             
             // Get Garmin value if this is a Garmin-linked habit
             val garminVal = if (garminType != null) {
@@ -4911,7 +4934,109 @@ class HabitViewModel(
             )
             cursor = cursor.plusDays(1)
         }
+
+        // ── Per-metric "interpolate zeros" ──────────────────────────────────
+        // For each metric the user enabled it for, replace 0-valued days with
+        // a linear interpolation between the nearest non-zero values.
+        val interpMetrics = _settings.value.graphInterpolateZeroMetrics[habitName]
+        if (!interpMetrics.isNullOrEmpty()) {
+            for (metric in interpMetrics) {
+                interpolateMetricZeros(result, metric)
+            }
+        }
         return result
+    }
+
+    /**
+     * Returns the value of [metric] for [dp] — the same mapping the graph
+     * uses for display (see GraphsScreen.displayValueForMetric).
+     */
+    private fun metricValueOf(dp: GraphDataPoint, metric: String): Int = when (metric) {
+        GRAPH_METRIC_VALUE1 -> dp.garminValue ?: dp.rawValue
+        GRAPH_METRIC_VALUE2 -> dp.secondaryValue ?: 0
+        GRAPH_METRIC_VALUE3 -> dp.tertiaryValue ?: 0
+        GRAPH_METRIC_IMDB -> dp.secondaryValue ?: 0
+        GRAPH_METRIC_RUNTIME -> dp.movieRuntimeMinutes ?: 0
+        GRAPH_METRIC_CALORIES -> dp.mealCalories ?: 0
+        GRAPH_METRIC_PROTEIN -> dp.mealProtein ?: 0
+        GRAPH_METRIC_CARBS -> dp.mealCarbs ?: 0
+        GRAPH_METRIC_FAT -> dp.mealFat ?: 0
+        GRAPH_METRIC_GITHUB_LINES -> dp.githubLinesChanged ?: 0
+        GRAPH_METRIC_GITHUB_COMMITS -> dp.githubCommits ?: 0
+        GRAPH_METRIC_GITHUB_ADDITIONS -> dp.githubAdditions ?: 0
+        GRAPH_METRIC_GITHUB_DELETIONS -> dp.githubDeletions ?: 0
+        else -> dp.pointsValue
+    }
+
+    /**
+     * Returns a copy of [dp] with [metric]'s underlying field set to [value].
+     * For Value 1 the Garmin value is overwritten when present, since it
+     * takes precedence over the raw value on display.
+     */
+    private fun withMetricValue(dp: GraphDataPoint, metric: String, value: Int): GraphDataPoint = when (metric) {
+        GRAPH_METRIC_VALUE1 -> if (dp.garminValue != null) dp.copy(garminValue = value) else dp.copy(rawValue = value)
+        GRAPH_METRIC_VALUE2 -> dp.copy(secondaryValue = value)
+        GRAPH_METRIC_VALUE3 -> dp.copy(tertiaryValue = value)
+        GRAPH_METRIC_IMDB -> dp.copy(secondaryValue = value)
+        GRAPH_METRIC_RUNTIME -> dp.copy(movieRuntimeMinutes = value)
+        GRAPH_METRIC_CALORIES -> dp.copy(mealCalories = value)
+        GRAPH_METRIC_PROTEIN -> dp.copy(mealProtein = value)
+        GRAPH_METRIC_CARBS -> dp.copy(mealCarbs = value)
+        GRAPH_METRIC_FAT -> dp.copy(mealFat = value)
+        GRAPH_METRIC_GITHUB_LINES -> dp.copy(githubLinesChanged = value)
+        GRAPH_METRIC_GITHUB_COMMITS -> dp.copy(githubCommits = value)
+        GRAPH_METRIC_GITHUB_ADDITIONS -> dp.copy(githubAdditions = value)
+        GRAPH_METRIC_GITHUB_DELETIONS -> dp.copy(githubDeletions = value)
+        else -> dp.copy(pointsValue = value)
+    }
+
+    /**
+     * Replaces 0-valued days of [metric] in [points] (a contiguous daily
+     * series) with a linear interpolation between the nearest non-zero values
+     * before and after them. Days before the first non-zero value extend it
+     * backwards; days after the last one extend it forwards. Modifies the
+     * list in place; each metric only touches its own field.
+     *
+     * A stored 1 is treated as zero-like as well: decimal entry strips the
+     * separator, so "0.01" is stored as 1 in hundredths-style habits.
+     */
+    private fun interpolateMetricZeros(points: MutableList<GraphDataPoint>, metric: String) {
+        // 0 and 0.01 (stored as 1) both mean "no real measurement"
+        fun isZeroLike(v: Int) = v == 0 || v == 1
+        // Indices of days with a real (non-zero-like) value for this metric
+        val realIdx = ArrayList<Int>()
+        for (i in points.indices) {
+            if (!isZeroLike(metricValueOf(points[i], metric))) realIdx.add(i)
+        }
+        if (realIdx.isEmpty()) return
+        for (i in points.indices) {
+            if (!isZeroLike(metricValueOf(points[i], metric))) continue
+            // Insertion point of i among the real indices: realIdx[ins-1] is
+            // the nearest real day before it, realIdx[ins] the next after it
+            val ins = realIdx.binarySearch(i).let { if (it >= 0) it else -it - 1 }
+            val prevPos = ins - 1
+            val nextPos = ins
+            val newValue = when {
+                prevPos >= 0 && nextPos < realIdx.size -> {
+                    val prev = realIdx[prevPos]
+                    val next = realIdx[nextPos]
+                    val vPrev = metricValueOf(points[prev], metric)
+                    val vNext = metricValueOf(points[next], metric)
+                    val span = next - prev
+                    if (span <= 0) {
+                        vPrev
+                    } else {
+                        val fraction = (i - prev).toDouble() / span
+                        (vPrev + (vNext - vPrev) * fraction).roundToInt()
+                    }
+                }
+                // after the last real value: hold forward
+                prevPos >= 0 -> metricValueOf(points[realIdx[prevPos]], metric)
+                // before the first real value: hold backward
+                else -> metricValueOf(points[realIdx[nextPos]], metric)
+            }
+            points[i] = withMetricValue(points[i], metric, newValue)
+        }
     }
 
     /**

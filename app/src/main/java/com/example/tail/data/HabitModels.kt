@@ -824,6 +824,20 @@ data class AppSettings(
      */
     val graphMetricSelection: Map<String, Set<String>> = emptyMap(),
 
+    /**
+     * Per-metric "interpolate zeros" selection for the graph.
+     *
+     * Maps habit name → set of metric keys (see [GRAPH_METRIC_POINTS] etc.)
+     * for which days with a 0 (or 0.01, stored as 1) value are plotted with
+     * an interpolated value
+     * instead: a linear interpolation between the most recent non-zero value
+     * before the day and the next non-zero value after it. Days before the
+     * first non-zero value extend it backwards; days after the last one
+     * extend it forwards. Intended for habits like weight where a missing day
+     * is not really 0.
+     */
+    val graphInterpolateZeroMetrics: Map<String, Set<String>> = emptyMap(),
+
     // ── Map Settings ────────────────────────────────────────────────────────
     /**
      * The habit name that determines map dot coloring. When set, the dots on the map

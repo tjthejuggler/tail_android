@@ -163,6 +163,7 @@ data class SettingsSection(
     val customPointRanges: Map<String, List<PointRangeBackup>> = emptyMap(),
     val graphValueModeHabits: Map<String, Int> = emptyMap(),
     val graphMetricSelection: Map<String, List<String>> = emptyMap(),
+    val graphInterpolateZeroMetrics: Map<String, List<String>> = emptyMap(),
     val habitNotes: Map<String, String> = emptyMap(),
     val rollForwardHabits: List<String> = emptyList(),
     val rollForwardManualDates: Map<String, List<String>> = emptyMap(),

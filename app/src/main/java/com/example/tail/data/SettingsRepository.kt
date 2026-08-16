@@ -126,6 +126,8 @@ private val KEY_CHESS_READINESS_APP = stringPreferencesKey("chess_readiness_app"
 private val KEY_GRAPH_VALUE_MODE_HABITS = stringPreferencesKey("graph_value_mode_habits")
 // Multi-select graph metrics: "habitName\x00metric1,metric2|||habitName\x00metric1"
 private val KEY_GRAPH_METRIC_SELECTION = stringPreferencesKey("graph_metric_selection")
+// Per-metric "interpolate zeros": "habitName\x00metric1,metric2|||habitName\x00metric1"
+private val KEY_GRAPH_INTERPOLATE_ZERO_METRICS = stringPreferencesKey("graph_interpolate_zero_metrics")
 // Secondary value habits (set of habit names that have a second value per day)
 private val KEY_SECONDARY_VALUE_HABITS = stringSetPreferencesKey("secondary_value_habits")
 
@@ -787,6 +789,7 @@ class SettingsRepository(private val context: Context) {
             customPointRanges = decodePointRangesMap(customPointRangesRaw),
             graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw),
             graphMetricSelection = decodeStringSetMap(graphMetricSelectionRaw),
+            graphInterpolateZeroMetrics = decodeStringSetMap(prefs[KEY_GRAPH_INTERPOLATE_ZERO_METRICS] ?: ""),
             habitNotes = decodeHabitNotesMap(habitNotesRaw),
             rollForwardHabits = prefs[KEY_ROLL_FORWARD_HABITS] ?: emptySet(),
             rollForwardManualDates = decodeRollForwardManualDates(prefs[KEY_ROLL_FORWARD_MANUAL_DATES] ?: ""),
@@ -1289,6 +1292,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveGraphMetricSelection(selection: Map<String, Set<String>>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_GRAPH_METRIC_SELECTION] = encodeStringSetMap(selection)
+        }
+    }
+
+    /** Saves the per-habit map of metric keys with "interpolate zeros" enabled. */
+    suspend fun saveGraphInterpolateZeroMetrics(selection: Map<String, Set<String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GRAPH_INTERPOLATE_ZERO_METRICS] = encodeStringSetMap(selection)
         }
     }
 

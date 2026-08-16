@@ -803,6 +803,7 @@ class BackupManager(
         )
         settingsRepo.saveGraphValueModeHabits(s.graphValueModeHabits)
         settingsRepo.saveGraphMetricSelection(s.graphMetricSelection.mapValues { it.value.toSet() })
+        settingsRepo.saveGraphInterpolateZeroMetrics(s.graphInterpolateZeroMetrics.mapValues { it.value.toSet() })
         settingsRepo.saveHabitNotes(s.habitNotes)
         settingsRepo.saveRollForwardHabits(s.rollForwardHabits.toSet())
         settingsRepo.saveRollForwardManualDates(s.rollForwardManualDates.mapValues { it.value.toSet() })
@@ -1170,6 +1171,7 @@ class BackupManager(
         },
         graphValueModeHabits = s.graphValueModeHabits,
         graphMetricSelection = s.graphMetricSelection.mapValues { it.value.toList() },
+        graphInterpolateZeroMetrics = s.graphInterpolateZeroMetrics.mapValues { it.value.toList() },
         habitNotes = s.habitNotes,
         rollForwardHabits = s.rollForwardHabits.toList(),
         rollForwardManualDates = s.rollForwardManualDates.mapValues { it.value.toList() },

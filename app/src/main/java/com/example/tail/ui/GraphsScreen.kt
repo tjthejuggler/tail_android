@@ -1,9 +1,11 @@
 package com.example.tail.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +63,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
@@ -126,6 +131,7 @@ private fun formatFullDate(date: LocalDate): String {
  *
  * Habit selection is done by tapping the habit icons in the grid above — no extra chips here.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GraphsPanel(
     viewModel: HabitViewModel,
@@ -141,6 +147,8 @@ fun GraphsPanel(
     // Collect settings so the graph recomputes when metric selection changes
     val settings by viewModel.settings.collectAsState()
     val metricSelection = settings.graphMetricSelection
+    // Per-metric "interpolate zeros" — recomputes series when toggled
+    val interpolateZeroMetrics = settings.graphInterpolateZeroMetrics
     // Text-entry cache — recomputes series once entries finish loading (movie runtimes)
     val textEntriesCache by viewModel.textEntriesCache.collectAsState()
 
@@ -277,6 +285,8 @@ fun GraphsPanel(
             val selectedHabit = graphSelectedHabits.first()
             val availableMetrics = viewModel.getAvailableMetrics(selectedHabit)
             val selectedMetrics = viewModel.getSelectedMetrics(selectedHabit)
+            // Long-pressed metric awaiting the "Interp 0s" popup
+            var interpMenuMetric by remember { mutableStateOf<String?>(null) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -289,25 +299,80 @@ fun GraphsPanel(
                     val isActive = option.key in selectedMetrics
                     // Match the line color: use the metric's position in availableMetrics
                     val metricColor = GRAPH_COLORS[index % GRAPH_COLORS.size]
-                    Text(
-                        text = option.label,
-                        color = if (isActive) Color(0xFF000000) else Color(0xFF88AA88),
-                        fontSize = 11.sp,
-                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                        textAlign = TextAlign.Center,
+                    val interpActive = viewModel.isGraphInterpolateZeroEnabled(selectedHabit, option.key)
+                    Box(
                         modifier = Modifier
                             .background(
                                 if (isActive) metricColor else Color(0xFF1A2E1A),
                                 RoundedCornerShape(8.dp)
                             )
-                            .clickable(
+                            .combinedClickable(
+                                onClick = { viewModel.toggleGraphMetric(selectedHabit, option.key) },
+                                onLongClick = { interpMenuMetric = option.key },
                                 indication = null,
                                 interactionSource = remember { MutableInteractionSource() }
-                            ) {
-                                viewModel.toggleGraphMetric(selectedHabit, option.key)
-                            }
+                            )
                             .padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
+                    ) {
+                        Text(
+                            text = option.label,
+                            color = if (isActive) Color(0xFF000000) else Color(0xFF88AA88),
+                            fontSize = 11.sp,
+                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                            textAlign = TextAlign.Center
+                        )
+                        // Struck-through 0 badge: zeros are interpolated for this metric
+                        if (interpActive) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 6.dp, y = (-6).dp)
+                                    .size(13.dp)
+                                    .background(Color(0xFF0D1A0D), CircleShape)
+                                    .border(1.dp, Color(0xFF66DD66), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "0",
+                                    textDecoration = TextDecoration.LineThrough,
+                                    color = Color(0xFF66DD66),
+                                    fontSize = 9.sp,
+                                    lineHeight = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Long-press popup: per-metric "Interp 0s" toggle
+            interpMenuMetric?.let { metricKey ->
+                Popup(
+                    alignment = Alignment.TopCenter,
+                    properties = PopupProperties(focusable = true, dismissOnClickOutside = true),
+                    onDismissRequest = { interpMenuMetric = null }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .background(Color(0xFF0D1A0D), RoundedCornerShape(8.dp))
+                            .border(1.dp, Color(0xFF3A5A3A), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = viewModel.isGraphInterpolateZeroEnabled(selectedHabit, metricKey),
+                            onCheckedChange = { enabled ->
+                                viewModel.setGraphInterpolateZero(selectedHabit, metricKey, enabled)
+                            }
+                        )
+                        Text(
+                            text = "Interp 0s",
+                            color = Color(0xFFCCEECC),
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                    }
                 }
             }
         }
@@ -327,7 +392,7 @@ fun GraphsPanel(
 
             // Collect data for all selected habits × selected metrics.
             // Each (habit, metric) pair becomes a separate line on the chart.
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, textFilter, metricSelection, textEntriesCache) {
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, textFilter, metricSelection, interpolateZeroMetrics, textEntriesCache) {
                 val isSingleHabit = graphSelectedHabits.size == 1
                 var sequentialColorIdx = 0
                 graphSelectedHabits.toList().flatMap { habitName ->
