@@ -604,6 +604,46 @@ class HabitsRepository {
     }
 
     /**
+     * Atomically increments MULTIPLE storage keys for today in a single
+     * read-modify-write cycle: +[amount] for each entry of [increments]
+     * (storage key → amount). Keys with an amount ≤ 0 are skipped.
+     *
+     * Used by the JugCoach integration receiver, which feeds the habit's own
+     * count plus its six secondary-value slots (juggling time / catches totals
+     * and their catch-ended / drop-ended breakdowns) from ONE broadcast. Doing
+     * this as one atomic write instead of seven back-to-back [incrementHabit]
+     * calls prevents concurrent readers/writers from interleaving between the
+     * writes, loading half-updated state and later persisting it — silently
+     * losing some of the increments (same rationale as
+     * [incrementHabitWithMinutes]).
+     */
+    suspend fun incrementHabitSlots(
+        uri: Uri,
+        context: Context,
+        increments: Map<String, Int>
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        val positive = increments.filterValues { it > 0 }
+        if (positive.isEmpty()) return@withContext loadDatabase(uri, context)
+
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "incrementHabitSlots: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+        val dateStr = dateString(LocalDate.now())
+
+        for ((key, amount) in positive) {
+            val entries = db[key]?.toMutableMap() ?: mutableMapOf()
+            entries[dateStr] = (entries[dateStr] ?: 0) + amount
+            db[key] = entries.toSortedMap()
+        }
+
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
      * **Protocol v2** — SETS (replaces) the stored value for a habit on [date]
      * to [value], then saves. Unlike [incrementHabitForDate] which adds, this
      * method overwrites whatever value was previously stored for that date.
@@ -671,6 +711,40 @@ class HabitsRepository {
             habitEntries[dateString(date)] = value  // SET, not add
         }
         db[habitName] = habitEntries.toSortedMap()
+
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
+     * **SET (not increment)** absolute values for multiple keys at once, each
+     * key carrying its own date→value map, in ONE atomic read-modify-write.
+     * Used by the JugCoach history backfill so re-running it is idempotent.
+     *
+     * Keys with an empty date map are ignored.
+     *
+     * SAFETY: If the load fails, throws [HabitsLoadFailedException] WITHOUT writing.
+     */
+    suspend fun setHabitSlotsForDates(
+        uri: Uri,
+        context: Context,
+        slotValues: Map<String, Map<LocalDate, Int>>
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "setHabitSlotsForDates: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+
+        for ((key, dateValues) in slotValues) {
+            if (dateValues.isEmpty()) continue
+            val entries = db[key]?.toMutableMap() ?: mutableMapOf()
+            for ((date, value) in dateValues) {
+                entries[dateString(date)] = value  // SET, not add
+            }
+            db[key] = entries.toSortedMap()
+        }
 
         saveDatabase(uri, context, db)
         db
@@ -780,18 +854,14 @@ class HabitsRepository {
         // Remove old name
         db.remove(oldName)
 
-        // Also rename secondary-value entries if they exist (both slots)
-        val oldSecKey = secondaryValueKey(oldName)
-        val newSecKey = secondaryValueKey(newName)
-        if (db.containsKey(oldSecKey)) {
-            db[newSecKey] = db[oldSecKey]!!
-            db.remove(oldSecKey)
-        }
-        val oldSec2Key = secondaryValue2Key(oldName)
-        val newSec2Key = secondaryValue2Key(newName)
-        if (db.containsKey(oldSec2Key)) {
-            db[newSec2Key] = db[oldSec2Key]!!
-            db.remove(oldSec2Key)
+        // Also rename secondary-value entries if they exist (all slots,
+        // including the JugCoach-fed numbered slots 3–6)
+        for (prefix in SECONDARY_VALUE_SLOT_PREFIXES) {
+            val oldKey = prefix + oldName
+            if (db.containsKey(oldKey)) {
+                db[prefix + newName] = db[oldKey]!!
+                db.remove(oldKey)
+            }
         }
 
         saveDatabase(uri, context, db)

@@ -47,6 +47,7 @@ import com.example.tail.data.isAppLink
 import com.example.tail.data.isSecondaryValueKey
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.secondaryValue2Key
+import com.example.tail.data.secondaryValueSlotKey
 import com.example.tail.data.conditionalLinkStorageKey
 import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.DailyStatsMap
@@ -64,6 +65,12 @@ import com.example.tail.data.GRAPH_METRIC_GITHUB_LINES
 import com.example.tail.data.GRAPH_METRIC_GITHUB_COMMITS
 import com.example.tail.data.GRAPH_METRIC_GITHUB_ADDITIONS
 import com.example.tail.data.GRAPH_METRIC_GITHUB_DELETIONS
+import com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME
+import com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES
+import com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_CATCH
+import com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_DROP
+import com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_CATCH
+import com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_DROP
 import com.example.tail.data.GraphMetricOption
 import com.example.tail.data.OmdbService
 import com.example.tail.data.OmdbOutcome
@@ -4734,6 +4741,16 @@ class HabitViewModel(
             metrics.add(GraphMetricOption(GRAPH_METRIC_GITHUB_ADDITIONS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_GITHUB_ADDITIONS, labels)))
             metrics.add(GraphMetricOption(GRAPH_METRIC_GITHUB_DELETIONS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_GITHUB_DELETIONS, labels)))
         }
+        // JugCoach juggling metrics — available once JugCoach has written
+        // session data (key-presence detection, see isJugcoachHabit)
+        if (isJugcoachHabit(habitName)) {
+            metrics.add(GraphMetricOption(GRAPH_METRIC_JUGCOACH_TIME, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_JUGCOACH_TIME, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_JUGCOACH_CATCHES, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_JUGCOACH_CATCHES, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_JUGCOACH_TIME_CATCH, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_JUGCOACH_TIME_CATCH, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_JUGCOACH_TIME_DROP, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_JUGCOACH_TIME_DROP, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_JUGCOACH_CATCHES_CATCH, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_JUGCOACH_CATCHES_CATCH, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_JUGCOACH_CATCHES_DROP, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_JUGCOACH_CATCHES_DROP, labels)))
+        }
         return metrics
     }
 
@@ -4844,6 +4861,16 @@ class HabitViewModel(
     /**
      * Data point for a single day on the graph.
      */
+    /**
+     * True when JugCoach integration data exists for [habitName]: any of the
+     * numbered secondary-value slots 2–6 (`secondary_value2:` … `secondary_value6:`)
+     * is present in the cached DB. Only the JugCoach integration writes slots
+     * 3–6 (chess.com writes slot 2 only for chess-linked habits, which are
+     * never JugCoach-mapped), so key presence is a reliable detector.
+     */
+    fun isJugcoachHabit(habitName: String): Boolean =
+        (2..6).any { cachedPhoneDb.containsKey(secondaryValueSlotKey(habitName, it)) }
+
     data class GraphDataPoint(
         val date: LocalDate,
         val dateStr: String,
@@ -4865,7 +4892,20 @@ class HabitViewModel(
         val githubDeletions: Int? = null,
         // ── Movie-bridge habit data ──
         /** Total watch-minutes for the day (sum of "(N min)" entry annotations). */
-        val movieRuntimeMinutes: Int? = null
+        val movieRuntimeMinutes: Int? = null,
+        // ── JugCoach habit data (populated only for JugCoach-fed habits) ──
+        /** Total seconds spent juggling this day (`secondary_value:`). */
+        val jugcoachTime: Int? = null,
+        /** Total catches this day (`secondary_value2:`). */
+        val jugcoachCatches: Int? = null,
+        /** Seconds in runs that ended in a catch (`secondary_value3:`). */
+        val jugcoachTimeCatch: Int? = null,
+        /** Seconds in runs that ended in a drop (`secondary_value4:`). */
+        val jugcoachTimeDrop: Int? = null,
+        /** Catches in runs that ended in a catch (`secondary_value5:`). */
+        val jugcoachCatchesCatch: Int? = null,
+        /** Catches in runs that ended in a drop (`secondary_value6:`). */
+        val jugcoachCatchesDrop: Int? = null
     )
 
     /**
@@ -4920,6 +4960,15 @@ class HabitViewModel(
         val tertiaryEntries = if (habitName in _settings.value.chessComHabitLinks) {
             cachedPhoneDb[secondaryValue2Key(habitName)]
         } else null
+        // JugCoach juggling metrics (numbered slots 2–6; the seconds total lives
+        // in the generic secondary_value: slot). Detected purely by key presence
+        // so the graph buttons appear automatically once JugCoach has sent
+        // session data — no settings toggle required.
+        val isJugcoach = isJugcoachHabit(habitName)
+        val jugcoachSlotEntries = if (isJugcoach) {
+            (2..6).associate { slot -> slot to cachedPhoneDb[secondaryValueSlotKey(habitName, slot)] }
+        } else null
+        val jugcoachTimeEntries = if (isJugcoach) cachedPhoneDb[secondaryValueKey(habitName)] else null
         val useSecondaryFallback = habitName in _settings.value.secondaryValueFallbackHabits
         val startStr = dateString(startDate)
         val endStr = dateString(endDate)
@@ -5048,7 +5097,13 @@ class HabitViewModel(
                         ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_ADDITIONS) filteredRaw else null,
                     githubDeletions = ghMetrics?.deletions
                         ?: if (ghPrimaryKey == GRAPH_METRIC_GITHUB_DELETIONS) filteredRaw else null,
-                    movieRuntimeMinutes = runtimeByDate?.get(ds)
+                    movieRuntimeMinutes = runtimeByDate?.get(ds),
+                    jugcoachTime = jugcoachTimeEntries?.get(ds),
+                    jugcoachCatches = jugcoachSlotEntries?.get(2)?.get(ds),
+                    jugcoachTimeCatch = jugcoachSlotEntries?.get(3)?.get(ds),
+                    jugcoachTimeDrop = jugcoachSlotEntries?.get(4)?.get(ds),
+                    jugcoachCatchesCatch = jugcoachSlotEntries?.get(5)?.get(ds),
+                    jugcoachCatchesDrop = jugcoachSlotEntries?.get(6)?.get(ds)
                 )
             )
             cursor = cursor.plusDays(1)
@@ -5084,6 +5139,12 @@ class HabitViewModel(
         GRAPH_METRIC_GITHUB_COMMITS -> dp.githubCommits ?: 0
         GRAPH_METRIC_GITHUB_ADDITIONS -> dp.githubAdditions ?: 0
         GRAPH_METRIC_GITHUB_DELETIONS -> dp.githubDeletions ?: 0
+        GRAPH_METRIC_JUGCOACH_TIME -> dp.jugcoachTime ?: 0
+        GRAPH_METRIC_JUGCOACH_CATCHES -> dp.jugcoachCatches ?: 0
+        GRAPH_METRIC_JUGCOACH_TIME_CATCH -> dp.jugcoachTimeCatch ?: 0
+        GRAPH_METRIC_JUGCOACH_TIME_DROP -> dp.jugcoachTimeDrop ?: 0
+        GRAPH_METRIC_JUGCOACH_CATCHES_CATCH -> dp.jugcoachCatchesCatch ?: 0
+        GRAPH_METRIC_JUGCOACH_CATCHES_DROP -> dp.jugcoachCatchesDrop ?: 0
         else -> dp.pointsValue
     }
 
@@ -5106,6 +5167,12 @@ class HabitViewModel(
         GRAPH_METRIC_GITHUB_COMMITS -> dp.copy(githubCommits = value)
         GRAPH_METRIC_GITHUB_ADDITIONS -> dp.copy(githubAdditions = value)
         GRAPH_METRIC_GITHUB_DELETIONS -> dp.copy(githubDeletions = value)
+        GRAPH_METRIC_JUGCOACH_TIME -> dp.copy(jugcoachTime = value)
+        GRAPH_METRIC_JUGCOACH_CATCHES -> dp.copy(jugcoachCatches = value)
+        GRAPH_METRIC_JUGCOACH_TIME_CATCH -> dp.copy(jugcoachTimeCatch = value)
+        GRAPH_METRIC_JUGCOACH_TIME_DROP -> dp.copy(jugcoachTimeDrop = value)
+        GRAPH_METRIC_JUGCOACH_CATCHES_CATCH -> dp.copy(jugcoachCatchesCatch = value)
+        GRAPH_METRIC_JUGCOACH_CATCHES_DROP -> dp.copy(jugcoachCatchesDrop = value)
         else -> dp.copy(pointsValue = value)
     }
 

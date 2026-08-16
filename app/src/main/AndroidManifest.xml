@@ -202,6 +202,24 @@
         </receiver>
 
         <!--
+            BroadcastReceiver (Protocol v3, JugCoach): listens for
+            ACTION_JUGCOACH_SESSION from the JugCoach app. One broadcast per
+            completed juggling run atomically increments the mapped habit's
+            binary "used" count plus six secondary-value slots: total seconds,
+            total catches, seconds/catches in catch-ended runs and seconds/
+            catches in drop-ended runs (secondary_value … secondary_value6).
+        -->
+        <receiver
+            android:name=".ipc.JugCoachSessionReceiver"
+            android:exported="true"
+            android:permission="com.example.tail.permission.TAIL_INTEGRATION">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_JUGCOACH_SESSION" />
+                <action android:name="com.example.tail.ACTION_JUGCOACH_BACKFILL" />
+            </intent-filter>
+        </receiver>
+
+        <!--
             VoiceHabitReceiver: listens for ACTION_VOICE_HABIT from Samsung Routines
             (or any external automation). Exported without permission restriction
             because Samsung Routines is not signed with our keystore.

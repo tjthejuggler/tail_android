@@ -180,11 +180,37 @@ const val SECONDARY_VALUE_PREFIX = "secondary_value:"
 const val SECONDARY_VALUE2_PREFIX = "secondary_value2:"
 
 /**
+ * Prefixes for the numbered secondary-value slots 3–6 (`"secondary_value3:Habit"` …
+ * `"secondary_value6:Habit"`), written by the JugCoach integration:
+ * total juggling seconds → `secondary_value:`, total catches → `secondary_value2:`,
+ * seconds in catch-ended runs → `secondary_value3:`, seconds in drop-ended runs →
+ * `secondary_value4:`, catches in catch-ended runs → `secondary_value5:`,
+ * catches in drop-ended runs → `secondary_value6:`.
+ */
+const val SECONDARY_VALUE3_PREFIX = "secondary_value3:"
+const val SECONDARY_VALUE4_PREFIX = "secondary_value4:"
+const val SECONDARY_VALUE5_PREFIX = "secondary_value5:"
+const val SECONDARY_VALUE6_PREFIX = "secondary_value6:"
+
+/**
+ * All secondary-value slot prefixes, in slot order (Value2 … Value7).
+ * Used for iteration (rename, key detection) and centralised filtering.
+ */
+val SECONDARY_VALUE_SLOT_PREFIXES: List<String> = listOf(
+    SECONDARY_VALUE_PREFIX,
+    SECONDARY_VALUE2_PREFIX,
+    SECONDARY_VALUE3_PREFIX,
+    SECONDARY_VALUE4_PREFIX,
+    SECONDARY_VALUE5_PREFIX,
+    SECONDARY_VALUE6_PREFIX
+)
+
+/**
  * Returns true if [name] is any secondary-value storage key
- * (either [SECONDARY_VALUE_PREFIX] or [SECONDARY_VALUE2_PREFIX]).
+ * (any of the [SECONDARY_VALUE_SLOT_PREFIXES] slots).
  */
 fun isSecondaryValueKey(name: String): Boolean =
-    name.startsWith(SECONDARY_VALUE_PREFIX) || name.startsWith(SECONDARY_VALUE2_PREFIX)
+    SECONDARY_VALUE_SLOT_PREFIXES.any { name.startsWith(it) }
 
 /** Returns true if [name] is a second-slot secondary-value storage key. */
 fun isSecondaryValue2Key(name: String): Boolean = name.startsWith(SECONDARY_VALUE2_PREFIX)
@@ -195,11 +221,16 @@ fun secondaryValueKey(habitName: String): String = "$SECONDARY_VALUE_PREFIX$habi
 /** Builds the storage key for the second-slot secondary values of [habitName]. */
 fun secondaryValue2Key(habitName: String): String = "$SECONDARY_VALUE2_PREFIX$habitName"
 
+/**
+ * Builds the storage key for the numbered secondary-value slot [slot] (2–6)
+ * of [habitName]: slot 2 → `secondary_value2:`, … slot 6 → `secondary_value6:`.
+ */
+fun secondaryValueSlotKey(habitName: String, slot: Int): String = "secondary_value$slot:$habitName"
+
 /** Extracts the habit name from a secondary-value key, or null if [name] is not one. */
-fun secondaryValueHabitName(name: String): String? = when {
-    name.startsWith(SECONDARY_VALUE_PREFIX) -> name.removePrefix(SECONDARY_VALUE_PREFIX)
-    name.startsWith(SECONDARY_VALUE2_PREFIX) -> name.removePrefix(SECONDARY_VALUE2_PREFIX)
-    else -> null
+fun secondaryValueHabitName(name: String): String? {
+    val prefix = SECONDARY_VALUE_SLOT_PREFIXES.firstOrNull { name.startsWith(it) } ?: return null
+    return name.removePrefix(prefix)
 }
 
 // ── Conditional link feed-value helpers ───────────────────────────────────────
@@ -267,6 +298,12 @@ fun defaultLabelForValueKey(valueKey: String): String = when (valueKey) {
     GRAPH_METRIC_VALUE1 -> "Value 1"
     GRAPH_METRIC_VALUE2 -> "Value 2"
     GRAPH_METRIC_VALUE3 -> "Value 3"
+    GRAPH_METRIC_JUGCOACH_TIME -> "Time (s)"
+    GRAPH_METRIC_JUGCOACH_CATCHES -> "Catches"
+    GRAPH_METRIC_JUGCOACH_TIME_CATCH -> "Time·Catch (s)"
+    GRAPH_METRIC_JUGCOACH_TIME_DROP -> "Time·Drop (s)"
+    GRAPH_METRIC_JUGCOACH_CATCHES_CATCH -> "Catches·Catch"
+    GRAPH_METRIC_JUGCOACH_CATCHES_DROP -> "Catches·Drop"
     GRAPH_METRIC_CALORIES -> "Calories"
     GRAPH_METRIC_PROTEIN -> "Protein"
     GRAPH_METRIC_CARBS -> "Carbs"
@@ -316,6 +353,24 @@ const val GRAPH_METRIC_VALUE2 = "value2"
  * Currently written by the chess.com integration (daily win percentage, 0-100).
  */
 const val GRAPH_METRIC_VALUE3 = "value3"
+/**
+ * JugCoach juggling metrics — fed by the JugCoach integration via
+ * `ACTION_JUGCOACH_SESSION` (one broadcast per completed run). The six
+ * metrics map onto the secondary-value slots as follows:
+ *
+ * - `jugcoach_time`          → `secondary_value:`   (total seconds juggling)
+ * - `jugcoach_catches`       → `secondary_value2:`  (total catches)
+ * - `jugcoach_time_catch`    → `secondary_value3:`  (seconds in catch-ended runs)
+ * - `jugcoach_time_drop`     → `secondary_value4:`  (seconds in drop-ended runs)
+ * - `jugcoach_catches_catch` → `secondary_value5:`  (catches in catch-ended runs)
+ * - `jugcoach_catches_drop`  → `secondary_value6:`  (catches in drop-ended runs)
+ */
+const val GRAPH_METRIC_JUGCOACH_TIME = "jugcoach_time"
+const val GRAPH_METRIC_JUGCOACH_CATCHES = "jugcoach_catches"
+const val GRAPH_METRIC_JUGCOACH_TIME_CATCH = "jugcoach_time_catch"
+const val GRAPH_METRIC_JUGCOACH_TIME_DROP = "jugcoach_time_drop"
+const val GRAPH_METRIC_JUGCOACH_CATCHES_CATCH = "jugcoach_catches_catch"
+const val GRAPH_METRIC_JUGCOACH_CATCHES_DROP = "jugcoach_catches_drop"
 /** Calories — sum of meal calories for the day (meal habits only). */
 const val GRAPH_METRIC_CALORIES = "calories"
 /** Protein in grams (meal habits only). */

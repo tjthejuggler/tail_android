@@ -826,6 +826,12 @@ private fun displayValueForMetric(
     com.example.tail.data.GRAPH_METRIC_GITHUB_COMMITS -> dp.githubCommits ?: 0
     com.example.tail.data.GRAPH_METRIC_GITHUB_ADDITIONS -> dp.githubAdditions ?: 0
     com.example.tail.data.GRAPH_METRIC_GITHUB_DELETIONS -> dp.githubDeletions ?: 0
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME -> dp.jugcoachTime ?: 0
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES -> dp.jugcoachCatches ?: 0
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_CATCH -> dp.jugcoachTimeCatch ?: 0
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_DROP -> dp.jugcoachTimeDrop ?: 0
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_CATCH -> dp.jugcoachCatchesCatch ?: 0
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_DROP -> dp.jugcoachCatchesDrop ?: 0
     else -> dp.pointsValue
 }
 
@@ -869,6 +875,12 @@ fun metricLabel(metric: String): String = when (metric) {
     com.example.tail.data.GRAPH_METRIC_GITHUB_COMMITS -> "Commits"
     com.example.tail.data.GRAPH_METRIC_GITHUB_ADDITIONS -> "Additions"
     com.example.tail.data.GRAPH_METRIC_GITHUB_DELETIONS -> "Deletions"
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME -> "Time (s)"
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES -> "Catches"
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_CATCH -> "Time·Catch (s)"
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_DROP -> "Time·Drop (s)"
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_CATCH -> "Catches·Catch"
+    com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_DROP -> "Catches·Drop"
     else -> "Points"
 }
 
