@@ -68,8 +68,6 @@ private val KEY_AI_ICONS_QUALITY = stringPreferencesKey("ai_icons_quality")
 // Chess.com integration settings
 private val KEY_CHESS_COM_ENABLED = booleanPreferencesKey("chess_com_enabled")
 private val KEY_CHESS_COM_USERNAME = stringPreferencesKey("chess_com_username")
-// Stored as "TYPE\x00minutes|||TYPE\x00minutes" pairs
-private val KEY_CHESS_COM_MINUTES_PER_INCREMENT = stringPreferencesKey("chess_com_minutes_per_increment")
 // Stored as "habitName\x00TYPE|||habitName\x00TYPE" pairs
 private val KEY_CHESS_COM_HABIT_LINKS = stringPreferencesKey("chess_com_habit_links")
 // Garmin integration settings
@@ -659,7 +657,6 @@ class SettingsRepository(private val context: Context) {
         val habitSubtypesRaw = prefs[KEY_HABIT_SUBTYPES] ?: ""
         val subtypeDataFileUrisRaw = prefs[KEY_SUBTYPE_DATA_FILE_URIS] ?: ""
         val timedDataFileUrisRaw = prefs[KEY_TIMED_DATA_FILE_URIS] ?: ""
-        val chessComMinutesRaw = prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] ?: ""
         val chessComHabitLinksRaw = prefs[KEY_CHESS_COM_HABIT_LINKS] ?: ""
         val voiceTriggerIncrementsRaw = prefs[KEY_VOICE_TRIGGER_INCREMENTS] ?: ""
         val customInputAmountsRaw = prefs[KEY_CUSTOM_INPUT_AMOUNTS] ?: ""
@@ -711,7 +708,6 @@ class SettingsRepository(private val context: Context) {
             aiIconsQuality = prefs[KEY_AI_ICONS_QUALITY] ?: "",
             chessComEnabled = prefs[KEY_CHESS_COM_ENABLED] ?: false,
             chessComUsername = prefs[KEY_CHESS_COM_USERNAME] ?: "",
-            chessComMinutesPerIncrement = decodeIntMap(chessComMinutesRaw),
             chessComHabitLinks = decodeFileUriMap(chessComHabitLinksRaw),
             voiceTriggerEnabled = prefs[KEY_VOICE_TRIGGER_ENABLED] ?: false,
             voiceTriggerHabits = prefs[KEY_VOICE_TRIGGER_HABITS] ?: emptySet(),
@@ -1024,13 +1020,6 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_CHESS_COM_USERNAME] = username }
     }
 
-    /** Saves the minutes-per-increment map for chess.com types. */
-    suspend fun saveChessComMinutesPerIncrement(minutes: Map<String, Int>) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] = encodeIntMap(minutes)
-        }
-    }
-
     /** Saves the map of habit name → chess.com type link. */
     suspend fun saveChessComHabitLinks(links: Map<String, String>) {
         context.dataStore.edit { prefs ->
@@ -1041,13 +1030,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves all chess.com settings at once. */
     suspend fun saveChessComSettings(
         enabled: Boolean,
-        username: String,
-        minutesPerIncrement: Map<String, Int>
+        username: String
     ) {
         context.dataStore.edit { prefs ->
             prefs[KEY_CHESS_COM_ENABLED] = enabled
             prefs[KEY_CHESS_COM_USERNAME] = username
-            prefs[KEY_CHESS_COM_MINUTES_PER_INCREMENT] = encodeIntMap(minutesPerIncrement)
         }
     }
 

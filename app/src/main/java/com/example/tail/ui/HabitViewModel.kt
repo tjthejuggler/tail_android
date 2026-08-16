@@ -45,9 +45,12 @@ import com.example.tail.data.appLinkPackageName
 import com.example.tail.data.isAppLink
 import com.example.tail.data.isSecondaryValueKey
 import com.example.tail.data.secondaryValueKey
+import com.example.tail.data.secondaryValue2Key
+import com.example.tail.data.DailyStatsMap
 import com.example.tail.data.GRAPH_METRIC_POINTS
 import com.example.tail.data.GRAPH_METRIC_VALUE1
 import com.example.tail.data.GRAPH_METRIC_VALUE2
+import com.example.tail.data.GRAPH_METRIC_VALUE3
 import com.example.tail.data.GRAPH_METRIC_CALORIES
 import com.example.tail.data.GRAPH_METRIC_PROTEIN
 import com.example.tail.data.GRAPH_METRIC_CARBS
@@ -3624,7 +3627,6 @@ class HabitViewModel(
                     habitNotes = settings.habitNotes.replaceKey(oldName, newName),
                     valueDisplayLabels = settings.valueDisplayLabels.replaceKey(oldName, newName),
                     maxOneHabits = settings.maxOneHabits.replaceElement(oldName, newName),
-                    chessComMinutesPerIncrement = settings.chessComMinutesPerIncrement.replaceKey(oldName, newName),
                     bridgeMovieHabits = settings.bridgeMovieHabits.replaceElement(oldName, newName),
                     rollForwardHabits = settings.rollForwardHabits.replaceElement(oldName, newName),
                     rollForwardManualDates = settings.rollForwardManualDates.replaceKey(oldName, newName),
@@ -3681,7 +3683,6 @@ class HabitViewModel(
                 settingsRepo.saveHabitNotes(newSettings.habitNotes)
                 settingsRepo.saveValueDisplayLabels(newSettings.valueDisplayLabels)
                 settingsRepo.saveMaxOneHabits(newSettings.maxOneHabits)
-                settingsRepo.saveChessComMinutesPerIncrement(newSettings.chessComMinutesPerIncrement)
                 settingsRepo.saveBridgeMovieHabits(newSettings.bridgeMovieHabits)
                 settingsRepo.saveRollForwardHabits(newSettings.rollForwardHabits)
                 settingsRepo.saveRollForwardManualDates(newSettings.rollForwardManualDates)
@@ -4342,7 +4343,8 @@ class HabitViewModel(
         if (!isGithubHabit(habitName)) {
             val v1 = GraphMetricOption(GRAPH_METRIC_VALUE1, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE1, labels))
             val v2 = GraphMetricOption(GRAPH_METRIC_VALUE2, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE2, labels))
-            val hasV2 = hasSecondaryValue(habitName)
+            val hasV2 = hasSecondaryValue(habitName) ||
+                habitName in _settings.value.chessComHabitLinks
             if (hasV2 && habitName in _settings.value.widgetTimerMinutesPrimary) {
                 // Minutes-primary habit: the primary value (Value2 slot) comes
                 // right after Points, then the secondary (Value1 slot).
@@ -4352,6 +4354,11 @@ class HabitViewModel(
                 metrics.add(v1)
                 if (hasV2) metrics.add(v2)
             }
+        }
+        // Value3 (second-slot secondary value, `secondary_value2:`) — written by
+        // the chess.com integration (daily win percentage)
+        if (habitName in _settings.value.chessComHabitLinks) {
+            metrics.add(GraphMetricOption(GRAPH_METRIC_VALUE3, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE3, labels)))
         }
         // IMDb average rating metric — available for movie-bridge habits with an OMDb API key
         if (hasImdbRatings(habitName)) {
@@ -4473,6 +4480,7 @@ class HabitViewModel(
         val textEntry: String? = null,  // for text-input habits
         val garminValue: Int? = null,   // for Garmin-linked habits (actual metric value)
         val secondaryValue: Int? = null, // for habits with secondary values enabled
+        val tertiaryValue: Int? = null, // second-slot secondary value (secondary_value2:)
         // ── Meal habit data (populated only for meal-type habits) ──
         val mealCalories: Int? = null,
         val mealProtein: Int? = null,   // rounded grams
@@ -4533,8 +4541,13 @@ class HabitViewModel(
         // Secondary values (stored under "secondary_value:<habitName>" in the DB)
         // Also loaded for movie-bridge habits (IMDb average ratings stored there)
         val hasSecondary = habitName in _settings.value.secondaryValueHabits ||
-            hasImdbRatings(habitName)
+            hasImdbRatings(habitName) || habitName in _settings.value.chessComHabitLinks
         val secondaryEntries = if (hasSecondary) cachedPhoneDb[secondaryValueKey(habitName)] else null
+        // Second-slot secondary values (stored under "secondary_value2:<habitName>"),
+        // written by the chess.com integration (daily win percentage)
+        val tertiaryEntries = if (habitName in _settings.value.chessComHabitLinks) {
+            cachedPhoneDb[secondaryValue2Key(habitName)]
+        } else null
         val useSecondaryFallback = habitName in _settings.value.secondaryValueFallbackHabits
         val startStr = dateString(startDate)
         val endStr = dateString(endDate)
@@ -4649,6 +4662,7 @@ class HabitViewModel(
                     },
                     garminValue = garminVal,
                     secondaryValue = secVal,
+                    tertiaryValue = tertiaryEntries?.get(ds),
                     mealCalories = mealDay?.calories,
                     mealProtein = mealDay?.proteinGrams?.roundToInt(),
                     mealCarbs = mealDay?.carbsGrams?.roundToInt(),
@@ -5341,14 +5355,13 @@ class HabitViewModel(
     }
     // ── Chess.com Integration Methods ─────────────────────────────────────────
 
-    /** Saves chess.com settings (enabled, username, minutes-per-increment). */
-    fun saveChessComSettings(enabled: Boolean, username: String, minutesPerIncrement: Map<String, Int>) {
+    /** Saves chess.com settings (enabled, username). */
+    fun saveChessComSettings(enabled: Boolean, username: String) {
         viewModelScope.launch {
-            settingsRepo.saveChessComSettings(enabled, username, minutesPerIncrement)
+            settingsRepo.saveChessComSettings(enabled, username)
             _settings.value = _settings.value.copy(
                 chessComEnabled = enabled,
-                chessComUsername = username,
-                chessComMinutesPerIncrement = minutesPerIncrement
+                chessComUsername = username
             )
             // Start or stop polling based on enabled state
             if (enabled && username.isNotEmpty() && lastLoadedUri.isNotEmpty()) {
@@ -5370,7 +5383,84 @@ class HabitViewModel(
             }
             settingsRepo.saveChessComHabitLinks(links)
             _settings.value = _settings.value.copy(chessComHabitLinks = links)
+            if (chessComType != null) {
+                ensureChessComValueLabels(_settings.value)?.let { _settings.value = it }
+            } else {
+                removeChessComValueLabels(habitName)
+            }
         }
+    }
+
+    /**
+     * Auto-set display labels for the three chess.com value slots:
+     * Value1 = Minutes (primary), Value2 = Games, Value3 = Result (win %).
+     */
+    private val chessComValueLabels = mapOf(
+        GRAPH_METRIC_VALUE1 to "Minutes",
+        GRAPH_METRIC_VALUE2 to "Games",
+        GRAPH_METRIC_VALUE3 to "Result"
+    )
+
+    /**
+     * Labels set by an earlier auto-label scheme (Value1 = Games,
+     * Value2 = Minutes). Still migrated to the current labels on sync so the
+     * re-mapped slots are named correctly.
+     */
+    private val legacyChessComValueLabels = mapOf(
+        GRAPH_METRIC_VALUE1 to "Games",
+        GRAPH_METRIC_VALUE2 to "Minutes",
+        GRAPH_METRIC_VALUE3 to "Result"
+    )
+
+    /**
+     * Ensures every chess.com-linked habit carries display labels for its three
+     * value slots (Minutes / Games / Result). Fills in missing labels and
+     * migrates labels set by an earlier auto-label scheme — genuinely custom
+     * user labels are preserved. Returns the updated settings, or null when
+     * nothing changed.
+     */
+    private suspend fun ensureChessComValueLabels(s: AppSettings): AppSettings? {
+        if (s.chessComHabitLinks.isEmpty()) return null
+        val current = s.valueDisplayLabels.toMutableMap()
+        var changed = false
+        for (habitName in s.chessComHabitLinks.keys) {
+            val inner = current[habitName]?.toMutableMap() ?: mutableMapOf()
+            for ((key, label) in chessComValueLabels) {
+                val existing = inner[key]
+                val isAutoLabel = existing.isNullOrBlank() ||
+                    existing == legacyChessComValueLabels[key]
+                if (isAutoLabel && existing != label) {
+                    inner[key] = label
+                    changed = true
+                }
+            }
+            current[habitName] = inner
+        }
+        if (!changed) return null
+        settingsRepo.saveValueDisplayLabels(current)
+        return s.copy(valueDisplayLabels = current)
+    }
+
+    /**
+     * Removes the auto-set chess.com value labels when a habit is unlinked.
+     * Only labels still equal to an auto-set value (current or legacy) are
+     * removed — custom user labels survive.
+     */
+    private fun removeChessComValueLabels(habitName: String) {
+        val current = _settings.value.valueDisplayLabels.toMutableMap()
+        val inner = current[habitName]?.toMutableMap() ?: return
+        var changed = false
+        for ((key, label) in chessComValueLabels) {
+            val existing = inner[key]
+            if (existing == label || existing == legacyChessComValueLabels[key]) {
+                inner.remove(key)
+                changed = true
+            }
+        }
+        if (!changed) return
+        if (inner.isEmpty()) current.remove(habitName) else current[habitName] = inner
+        _settings.value = _settings.value.copy(valueDisplayLabels = current)
+        viewModelScope.launch { settingsRepo.saveValueDisplayLabels(current) }
     }
 
     /** Starts the periodic chess.com polling loop. */
@@ -5484,11 +5574,14 @@ class HabitViewModel(
         var changed = false
 
         for ((habitName, _) in s.chessComHabitLinks) {
-            val entries = mutableDb[habitName] ?: continue
-            val resetEntries = entries.mapValues { 0 }.toSortedMap()
-            if (resetEntries != entries) {
-                mutableDb[habitName] = resetEntries
-                changed = true
+            // Reset the primary count and both secondary-value slots
+            for (key in listOf(habitName, secondaryValueKey(habitName), secondaryValue2Key(habitName))) {
+                val entries = mutableDb[key] ?: continue
+                val resetEntries = entries.mapValues { 0 }.toSortedMap()
+                if (resetEntries != entries) {
+                    mutableDb[key] = resetEntries
+                    changed = true
+                }
             }
         }
 
@@ -5503,18 +5596,27 @@ class HabitViewModel(
     }
 
     /**
-     * Applies chess.com daily minutes data to linked habits in the database.
-     * For each linked habit, computes increments from minutes and sets the daily count.
+     * Applies chess.com daily stats (minutes, games, wins) to linked habits.
+     * For each linked habit, writes three raw values per day:
+     *  - minutes → the habit's primary count (rounded, min 1 on days with
+     *    games); points are derived from minutes via the habit's divider
+     *  - games   → the `secondary_value:` slot (Value2)
+     *  - result  → the `secondary_value2:` slot — win percentage (0-100,
+     *    rounded; 0 on days with no games)
      * Chess.com data is authoritative — values are always overwritten (not max'd).
      *
-     * Also propagates to conditional linked habits: if a chess-linked habit is configured
-     * as a conditional habit, any date where its count goes from 0 → non-zero will also
-     * set each conditional linked habit to at least 1 for that date.
+     * Also propagates to conditional linked habits: if a chess-linked habit is
+     * configured as a conditional habit, any date where its minutes increase
+     * also increments each conditional linked habit.
      */
     private suspend fun applyChessComData(
-        data: Map<ChessComType, Map<String, Double>>,
+        data: Map<ChessComType, DailyStatsMap>,
         s: AppSettings
     ) {
+        // Auto-label the three value slots (Minutes / Games / Result) — also
+        // covers habits linked before this labeling existed.
+        ensureChessComValueLabels(s)?.let { _settings.value = it }
+
         if (data.isEmpty() || s.chessComHabitLinks.isEmpty()) return
 
         val phoneUriStr = s.fileUri
@@ -5535,28 +5637,47 @@ class HabitViewModel(
 
         for ((habitName, typeKey) in s.chessComHabitLinks) {
             val type = ChessComType.fromKey(typeKey) ?: continue
-            val dailyMinutes = data[type] ?: continue
-            val minutesPerIncrement = s.chessComMinutesPerIncrement[typeKey] ?: continue
-            if (minutesPerIncrement <= 0) continue
+            val dailyStats = data[type] ?: continue
 
-            val increments = chessComRepo.computeIncrements(dailyMinutes, minutesPerIncrement)
-            if (increments.isEmpty()) continue
-
-            val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap()
-            // Track per-date deltas for conditional propagation
+            val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap() // minutes (primary)
+            val gamesEntries = (mutableDb[secondaryValueKey(habitName)] ?: emptyMap()).toMutableMap()
+            val resultEntries = (mutableDb[secondaryValue2Key(habitName)] ?: emptyMap()).toMutableMap()
+            // Track per-date primary (minutes) deltas for conditional propagation
             // (any date where count increased, not just 0→non-zero)
             val dateDeltas = mutableMapOf<String, Int>()
 
-            for ((dateStr, count) in increments) {
-                val existing = habitEntries[dateStr] ?: 0
-                if (count != existing) {
-                    val delta = count - existing
+            for ((dateStr, stats) in dailyStats) {
+                val games = stats.games
+                // Any day with at least one game records at least 1 minute
+                val minutes = if (games > 0) {
+                    maxOf(Math.round(stats.minutes).toInt(), 1)
+                } else 0
+                // Win percentage of games played (0-100); 0 on days with no games
+                val winPct = if (games > 0) {
+                    Math.round(stats.wins * 100.0 / games).toInt()
+                } else 0
+
+                val existingMinutes = habitEntries[dateStr] ?: 0
+                if (minutes != existingMinutes) {
+                    val delta = minutes - existingMinutes
                     if (delta > 0) dateDeltas[dateStr] = delta
-                    habitEntries[dateStr] = count
+                    habitEntries[dateStr] = minutes
+                    dbChanged = true
+                }
+                val existingGames = gamesEntries[dateStr]
+                if (existingGames != games) {
+                    gamesEntries[dateStr] = games
+                    dbChanged = true
+                }
+                val existingResult = resultEntries[dateStr]
+                if (existingResult != winPct) {
+                    resultEntries[dateStr] = winPct
                     dbChanged = true
                 }
             }
             mutableDb[habitName] = habitEntries.toSortedMap()
+            mutableDb[secondaryValueKey(habitName)] = gamesEntries.toSortedMap()
+            mutableDb[secondaryValue2Key(habitName)] = resultEntries.toSortedMap()
 
             // Track today's delta for timestamp recording
             val todayDelta = dateDeltas[todayStr]

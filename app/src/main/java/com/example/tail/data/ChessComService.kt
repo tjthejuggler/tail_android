@@ -25,8 +25,15 @@ data class ChessComGame(
     /** The username of the white player */
     val whiteUsername: String,
     /** The username of the black player */
-    val blackUsername: String
+    val blackUsername: String,
+    /** Result string for the white player, e.g. "win", "checkmated", "agreed" */
+    val whiteResult: String = "",
+    /** Result string for the black player, e.g. "win", "checkmated", "agreed" */
+    val blackResult: String = ""
 )
+
+/** chess.com result string for a won game (any other value is a loss or draw). */
+const val CHESS_COM_RESULT_WIN = "win"
 
 /**
  * Puzzle stats from chess.com /player/{username}/stats endpoint.
@@ -132,6 +139,8 @@ class ChessComService {
                 val black = g.optJSONObject("black")
                 val whiteUsername = white?.optString("username", "") ?: ""
                 val blackUsername = black?.optString("username", "") ?: ""
+                val whiteResult = white?.optString("result", "") ?: ""
+                val blackResult = black?.optString("result", "") ?: ""
 
                 if (timeClass.isNotEmpty() && endTime > 0) {
                     games.add(
@@ -140,7 +149,9 @@ class ChessComService {
                             timeControl = timeControl,
                             endTime = endTime,
                             whiteUsername = whiteUsername,
-                            blackUsername = blackUsername
+                            blackUsername = blackUsername,
+                            whiteResult = whiteResult,
+                            blackResult = blackResult
                         )
                     )
                 }

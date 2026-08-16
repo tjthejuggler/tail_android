@@ -902,47 +902,16 @@ private fun ChessComSettingsSection(
     var enabled by remember(settings.chessComEnabled) { mutableStateOf(settings.chessComEnabled) }
     var username by remember(settings.chessComUsername) { mutableStateOf(settings.chessComUsername) }
 
-    // Minutes per increment for each type — individual mutableStateOf for recomposition
-    val types = ChessComType.entries
-    var bulletMin by remember(settings.chessComMinutesPerIncrement) {
-        mutableStateOf((settings.chessComMinutesPerIncrement["BULLET"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var blitzMin by remember(settings.chessComMinutesPerIncrement) {
-        mutableStateOf((settings.chessComMinutesPerIncrement["BLITZ"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-    var rapidMin by remember(settings.chessComMinutesPerIncrement) {
-        mutableStateOf((settings.chessComMinutesPerIncrement["RAPID"] ?: 0).let { if (it == 0) "" else it.toString() })
-    }
-
-    fun getMinFor(type: ChessComType): String = when (type) {
-        ChessComType.BULLET -> bulletMin
-        ChessComType.BLITZ -> blitzMin
-        ChessComType.RAPID -> rapidMin
-    }
-
-    fun setMinFor(type: ChessComType, value: String) {
-        val filtered = value.filter { it.isDigit() }
-        when (type) {
-            ChessComType.BULLET -> bulletMin = filtered
-            ChessComType.BLITZ -> blitzMin = filtered
-            ChessComType.RAPID -> rapidMin = filtered
-        }
-    }
-
     fun save() {
-        val minutesMap = mutableMapOf<String, Int>()
-        types.forEach { type ->
-            val value = getMinFor(type).toIntOrNull() ?: 0
-            if (value > 0) minutesMap[type.name] = value
-        }
-        viewModel.saveChessComSettings(enabled, username, minutesMap)
+        viewModel.saveChessComSettings(enabled, username)
     }
 
     Column {
         Text("♟ Chess.com Integration", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Text(
-            text = "Link habits to your chess.com activity. Games and puzzles are " +
-                   "automatically tracked and converted to habit increments.",
+            text = "Link habits to your chess.com activity. Each linked habit stores three " +
+                   "raw values per day: games (count), minutes, and wins. Points are derived " +
+                   "from the game count via the habit's divider setting.",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -978,55 +947,6 @@ private fun ChessComSettingsSection(
             Spacer(modifier = Modifier.height(4.dp))
             Button(onClick = { save() }) {
                 Text("Save Username", fontSize = 12.sp)
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Minutes per increment for each type
-            Text(
-                "Minutes per Increment",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "Set how many minutes of each activity type equals one habit increment. " +
-                       "Leave blank or 0 to disable that type.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-
-            types.forEach { type ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp)
-                ) {
-                    Text(
-                        text = type.label,
-                        fontSize = 13.sp,
-                        modifier = Modifier.width(120.dp)
-                    )
-                    OutlinedTextField(
-                        value = getMinFor(type),
-                        onValueChange = { newVal -> setMinFor(type, newVal) },
-                        placeholder = { Text("0") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(56.dp),
-                        textStyle = TextStyle(fontSize = 13.sp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("min", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = { save() }) {
-                Text("Save Chess.com Settings", fontSize = 12.sp)
             }
 
             Spacer(modifier = Modifier.height(12.dp))

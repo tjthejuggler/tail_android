@@ -122,7 +122,6 @@ data class SettingsSection(
     val aiIconsQuality: String = "",
     val chessComEnabled: Boolean = false,
     val chessComUsername: String = "",
-    val chessComMinutesPerIncrement: Map<String, Int> = emptyMap(),
     val chessComHabitLinks: Map<String, String> = emptyMap(),
     val voiceTriggerEnabled: Boolean = false,
     val voiceTriggerHabits: List<String> = emptyList(),

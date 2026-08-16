@@ -172,15 +172,35 @@ fun appLinkPackageName(name: String): String? =
  */
 const val SECONDARY_VALUE_PREFIX = "secondary_value:"
 
-/** Returns true if [name] is a secondary-value storage key. */
-fun isSecondaryValueKey(name: String): Boolean = name.startsWith(SECONDARY_VALUE_PREFIX)
+/**
+ * Prefix for the SECONDARY value slot (`"secondary_value2:Habit"`), used by
+ * integrations that feed three values per day into one habit (e.g. chess.com:
+ * games → primary count, minutes → `secondary_value:`, wins → `secondary_value2:`).
+ */
+const val SECONDARY_VALUE2_PREFIX = "secondary_value2:"
+
+/**
+ * Returns true if [name] is any secondary-value storage key
+ * (either [SECONDARY_VALUE_PREFIX] or [SECONDARY_VALUE2_PREFIX]).
+ */
+fun isSecondaryValueKey(name: String): Boolean =
+    name.startsWith(SECONDARY_VALUE_PREFIX) || name.startsWith(SECONDARY_VALUE2_PREFIX)
+
+/** Returns true if [name] is a second-slot secondary-value storage key. */
+fun isSecondaryValue2Key(name: String): Boolean = name.startsWith(SECONDARY_VALUE2_PREFIX)
 
 /** Builds the storage key for the secondary values of [habitName]. */
 fun secondaryValueKey(habitName: String): String = "$SECONDARY_VALUE_PREFIX$habitName"
 
+/** Builds the storage key for the second-slot secondary values of [habitName]. */
+fun secondaryValue2Key(habitName: String): String = "$SECONDARY_VALUE2_PREFIX$habitName"
+
 /** Extracts the habit name from a secondary-value key, or null if [name] is not one. */
-fun secondaryValueHabitName(name: String): String? =
-    if (isSecondaryValueKey(name)) name.removePrefix(SECONDARY_VALUE_PREFIX) else null
+fun secondaryValueHabitName(name: String): String? = when {
+    name.startsWith(SECONDARY_VALUE_PREFIX) -> name.removePrefix(SECONDARY_VALUE_PREFIX)
+    name.startsWith(SECONDARY_VALUE2_PREFIX) -> name.removePrefix(SECONDARY_VALUE2_PREFIX)
+    else -> null
+}
 
 // ── Display-label helpers (UI-only overrides) ────────────────────────────────
 /**
@@ -196,6 +216,7 @@ fun defaultLabelForValueKey(valueKey: String): String = when (valueKey) {
     GRAPH_METRIC_POINTS -> "Points"
     GRAPH_METRIC_VALUE1 -> "Value 1"
     GRAPH_METRIC_VALUE2 -> "Value 2"
+    GRAPH_METRIC_VALUE3 -> "Value 3"
     GRAPH_METRIC_CALORIES -> "Calories"
     GRAPH_METRIC_PROTEIN -> "Protein"
     GRAPH_METRIC_CARBS -> "Carbs"
@@ -240,6 +261,11 @@ const val GRAPH_METRIC_POINTS = "points"
 const val GRAPH_METRIC_VALUE1 = "value1"
 /** Value2 — secondary value (only for habits in [AppSettings.secondaryValueHabits]). */
 const val GRAPH_METRIC_VALUE2 = "value2"
+/**
+ * Value3 — second-slot secondary value (`secondary_value2:` storage key).
+ * Currently written by the chess.com integration (daily win percentage, 0-100).
+ */
+const val GRAPH_METRIC_VALUE3 = "value3"
 /** Calories — sum of meal calories for the day (meal habits only). */
 const val GRAPH_METRIC_CALORIES = "calories"
 /** Protein in grams (meal habits only). */
@@ -534,15 +560,10 @@ data class AppSettings(
     /** The user's chess.com username. */
     val chessComUsername: String = "",
     /**
-     * Minutes per increment for each chess.com game type.
-     * Key is ChessComType.name (BULLET, BLITZ, RAPID).
-     * Value is the number of minutes of that activity that equals 1 habit increment.
-     * 0 means disabled for that type.
-     */
-    val chessComMinutesPerIncrement: Map<String, Int> = emptyMap(),
-    /**
      * Maps habit name → ChessComType.name for habits linked to chess.com data.
-     * When a habit is in this map, its daily count is auto-set from chess.com data.
+     * When a habit is in this map, its daily values are auto-set from chess.com data:
+     * games → primary count, minutes → `secondary_value:` slot, wins →
+     * `secondary_value2:` slot. Points are derived via the habit's divider setting.
      */
     val chessComHabitLinks: Map<String, String> = emptyMap(),
 

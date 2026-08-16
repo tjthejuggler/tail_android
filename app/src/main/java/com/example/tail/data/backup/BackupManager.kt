@@ -758,7 +758,6 @@ class BackupManager(
         )
         settingsRepo.saveChessComEnabled(s.chessComEnabled)
         settingsRepo.saveChessComUsername(s.chessComUsername)
-        settingsRepo.saveChessComMinutesPerIncrement(s.chessComMinutesPerIncrement)
         settingsRepo.saveChessComHabitLinks(s.chessComHabitLinks)
 
         settingsRepo.saveVoiceTriggerEnabled(s.voiceTriggerEnabled)
@@ -1127,7 +1126,6 @@ class BackupManager(
         aiIconsQuality = s.aiIconsQuality,
         chessComEnabled = s.chessComEnabled,
         chessComUsername = s.chessComUsername,
-        chessComMinutesPerIncrement = s.chessComMinutesPerIncrement,
         chessComHabitLinks = s.chessComHabitLinks,
         voiceTriggerEnabled = s.voiceTriggerEnabled,
         voiceTriggerHabits = s.voiceTriggerHabits.toList(),
