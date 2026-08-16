@@ -46,6 +46,9 @@ private val KEY_CONDITIONAL_LINKED_HABITS = stringPreferencesKey("conditional_li
 // Per-link feed-target value overrides (source habit → linked habit → value key),
 // stored with the nested-map codec (see [encodeNestedStringMap]).
 private val KEY_CONDITIONAL_LINK_VALUES = stringPreferencesKey("conditional_link_values")
+// Conditional habits whose Points feeds are capped at 1 per day (sub-setting
+// of the conditional type — only meaningful while the habit is conditional).
+private val KEY_CONDITIONAL_FEED_MAX_ONE_HABITS = stringSetPreferencesKey("conditional_feed_max_one_habits")
 // Subtyped habit type keys
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
@@ -748,6 +751,7 @@ class SettingsRepository(private val context: Context) {
             noPointsHabits = prefs[KEY_NO_POINTS_HABITS] ?: emptySet(),
             secondaryValueHabits = prefs[KEY_SECONDARY_VALUE_HABITS] ?: emptySet(),
             secondaryValueFallbackHabits = prefs[KEY_SECONDARY_VALUE_FALLBACK_HABITS] ?: emptySet(),
+            conditionalFeedMaxOneHabits = prefs[KEY_CONDITIONAL_FEED_MAX_ONE_HABITS] ?: emptySet(),
             conditionalLinkValues = decodeNestedStringMap(prefs[KEY_CONDITIONAL_LINK_VALUES] ?: ""),
             valueDisplayLabels = decodeNestedStringMap(prefs[KEY_VALUE_DISPLAY_LABELS] ?: ""),
             aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
@@ -1046,6 +1050,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveConditionalLinkValues(values: Map<String, Map<String, String>>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_CONDITIONAL_LINK_VALUES] = encodeNestedStringMap(values)
+        }
+    }
+
+    /** Saves the set of conditional habits whose point feeds are capped at 1 per day. */
+    suspend fun saveConditionalFeedMaxOneHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CONDITIONAL_FEED_MAX_ONE_HABITS] = habits
         }
     }
 

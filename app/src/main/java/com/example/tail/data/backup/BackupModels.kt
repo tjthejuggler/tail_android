@@ -106,6 +106,7 @@ data class SettingsSection(
     val conditionalHabits: List<String> = emptyList(),
     val conditionalLinkedHabits: Map<String, List<String>> = emptyMap(),
     val conditionalLinkValues: Map<String, Map<String, String>> = emptyMap(),
+    val conditionalFeedMaxOneHabits: List<String> = emptyList(),
     val subtypedHabits: List<String> = emptyList(),
     val habitSubtypes: Map<String, List<String>> = emptyMap(),
     val subtypeDataFileUris: Map<String, String> = emptyMap(),

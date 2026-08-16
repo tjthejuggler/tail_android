@@ -492,6 +492,16 @@ class SmartVoiceService : Service() {
                         }
                     }
 
+                    // "Feed max1" conditional sub-setting: capture the source's count
+                    // BEFORE incrementing so the cap can tell first-of-day increments
+                    // from repeat ones.
+                    val sourceCountBefore = if (
+                        habitName in settings.conditionalHabits &&
+                        habitName in settings.conditionalFeedMaxOneHabits
+                    ) {
+                        habitsRepo.loadDatabase(uri, applicationContext)[habitName]?.get(todayStr) ?: 0
+                    } else -1
+
                     habitsRepo.incrementHabit(uri, applicationContext, habitName, incrementAmount)
                     HabitIncrementBus.emit(habitName)
                     Log.i(TAG, "Incremented habit '$habitName' by $incrementAmount via smart voice")
@@ -526,6 +536,12 @@ class SmartVoiceService : Service() {
                                 settings.chessComHabitLinks, habitName, linkedName
                             )
                             val targetKey = com.example.tail.data.conditionalLinkStorageKey(linkedName, valueKey)
+                            // "Feed max1" cap: skip Points feeds when this source
+                            // already fed its 1 point today (primary/Points feeds only)
+                            if (targetKey == linkedName && sourceCountBefore > 0) {
+                                Log.i(TAG, "Skipping linked '$linkedName' — '$habitName' already fed max1 point today")
+                                continue
+                            }
                             if (targetKey == linkedName && linkedName in settings.maxOneHabits) {
                                 val db = habitsRepo.loadDatabase(uri, applicationContext)
                                 val cnt = db[linkedName]?.get(todayStr) ?: 0

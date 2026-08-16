@@ -48,6 +48,7 @@ import com.example.tail.data.isSecondaryValueKey
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.secondaryValue2Key
 import com.example.tail.data.secondaryValueSlotKey
+import com.example.tail.data.conditionalCappedFeedAmount
 import com.example.tail.data.conditionalLinkStorageKey
 import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.DailyStatsMap
@@ -1478,6 +1479,12 @@ class HabitViewModel(
             _settings.value.conditionalLinkedHabits[habitName] ?: emptySet()
         } else emptySet()
 
+        // "Feed max1" sub-setting: Points feeds from this habit are capped at
+        // 1 point per linked habit per day. currentStored is the source's count
+        // for the day BEFORE this increment, so only the first increment of the
+        // day feeds; secondary-slot feeds are not capped.
+        val feedMaxOne = habitName in _settings.value.conditionalFeedMaxOneHabits
+
         for (linkedName in linkedHabits) {
             // Resolve which value slot of the linked habit this feed targets:
             // Points (default) = its count; Value2/Value3 = its raw secondary slots.
@@ -1488,10 +1495,14 @@ class HabitViewModel(
                 habitName, linkedName
             )
             val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
+            val feedAmount = if (targetKey == linkedName && feedMaxOne) {
+                conditionalCappedFeedAmount(currentStored, amount)
+            } else amount
+            if (feedAmount == 0) continue
             if (targetKey != linkedName) {
                 // Raw secondary slot: no max-1 cap; skip the instant row update
                 // (the full rebuild below refreshes secondary displays from the DB).
-                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, targetKey, amount, _selectedDate.value)
+                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, targetKey, feedAmount, _selectedDate.value)
                 if (recordTimestamp) {
                     viewModelScope.launch {
                         timestampRepo.addTimestamp(linkedName, _selectedDate.value)
@@ -1500,10 +1511,10 @@ class HabitViewModel(
                 continue
             }
             val linkedEntries = updatedDb[linkedName] ?: emptyMap()
-            val linkedRaw = (linkedEntries[dateStr] ?: 0) + amount
+            val linkedRaw = (linkedEntries[dateStr] ?: 0) + feedAmount
             val linkedClamped = if (linkedName in _settings.value.maxOneHabits) linkedRaw.coerceAtMost(1) else linkedRaw
             if (linkedClamped != (linkedEntries[dateStr] ?: 0)) {
-                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, linkedName, amount, _selectedDate.value)
+                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, linkedName, feedAmount, _selectedDate.value)
                 val linkedDivider = _settings.value.habitDividers[linkedName] ?: 1
                 _habits.value = _habits.value.map { h ->
                     if (h.name == linkedName) h.copy(
@@ -2478,11 +2489,13 @@ class HabitViewModel(
             val current = _settings.value.conditionalHabits.toMutableSet()
             val links = _settings.value.conditionalLinkedHabits.toMutableMap()
             val values = _settings.value.conditionalLinkValues.toMutableMap()
+            val feedMaxOne = _settings.value.conditionalFeedMaxOneHabits.toMutableSet()
             var linksChanged = false
             if (habitName in current) {
                 current.remove(habitName)
                 if (links.remove(habitName) != null) linksChanged = true
                 if (values.remove(habitName) != null) linksChanged = true
+                if (feedMaxOne.remove(habitName)) linksChanged = true
             } else {
                 current.add(habitName)
             }
@@ -2490,10 +2503,12 @@ class HabitViewModel(
             if (linksChanged) {
                 settingsRepo.saveConditionalLinkedHabits(links)
                 settingsRepo.saveConditionalLinkValues(values)
+                settingsRepo.saveConditionalFeedMaxOneHabits(feedMaxOne)
                 _settings.value = _settings.value.copy(
                     conditionalHabits = current,
                     conditionalLinkedHabits = links,
-                    conditionalLinkValues = values
+                    conditionalLinkValues = values,
+                    conditionalFeedMaxOneHabits = feedMaxOne
                 )
             } else {
                 _settings.value = _settings.value.copy(conditionalHabits = current)
@@ -2552,6 +2567,21 @@ class HabitViewModel(
     }
 
     /**
+     * Toggles the "feed max1 point/day" sub-setting for a conditional habit.
+     * When enabled, the habit's Points feeds are capped: the first increment
+     * of a day feeds each linked habit at most 1 point; later increments that
+     * day feed nothing. Secondary-slot (Value2/Value3) feeds are not capped.
+     */
+    fun toggleConditionalFeedMaxOne(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.conditionalFeedMaxOneHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveConditionalFeedMaxOneHabits(current)
+            _settings.value = _settings.value.copy(conditionalFeedMaxOneHabits = current)
+        }
+    }
+
+    /**
      * Returns the list of conditional habits that have [habitName] in their linked set.
      * These are the "source" habits whose increments feed into [habitName] — i.e. every
      * habit that "has [habitName] set as a conditional" for it.
@@ -2595,6 +2625,7 @@ class HabitViewModel(
         val slots = conditionalBackfillSlots(habitName)
         if (slots.isEmpty()) return 0
         val isMaxOne = habitName in _settings.value.maxOneHabits
+        val feedMaxOneSources = _settings.value.conditionalFeedMaxOneHabits
         var total = 0
         for ((slotKey, slotSources) in slots) {
             val capped = slotKey == habitName && isMaxOne
@@ -2605,7 +2636,8 @@ class HabitViewModel(
             for (d in dates) {
                 var sum = 0
                 for (src in slotSources) {
-                    sum += cachedPhoneDb[src]?.get(d) ?: 0
+                    val c = cachedPhoneDb[src]?.get(d) ?: 0
+                    sum += if (slotKey == habitName && src in feedMaxOneSources) c.coerceAtMost(1) else c
                 }
                 total += if (capped) sum.coerceAtMost(1) else sum
             }
@@ -2650,7 +2682,10 @@ class HabitViewModel(
             for (d in dates.sorted()) {
                 var sum = 0
                 for (src in slotSources) {
-                    sum += cachedPhoneDb[src]?.get(d) ?: 0
+                    val c = cachedPhoneDb[src]?.get(d) ?: 0
+                    sum += if (slotKey == habitName && src in _settings.value.conditionalFeedMaxOneHabits) {
+                        c.coerceAtMost(1)
+                    } else c
                 }
                 val stored = if (capped) sum.coerceAtMost(1) else sum
                 if (stored > 0) {
@@ -3909,6 +3944,7 @@ class HabitViewModel(
                     conditionalHabits = settings.conditionalHabits.replaceElement(oldName, newName),
                     conditionalLinkedHabits = settings.conditionalLinkedHabits.replaceKeysAndValues(oldName, newName),
                     conditionalLinkValues = settings.conditionalLinkValues.replaceKeysAndInnerKeys(oldName, newName),
+                    conditionalFeedMaxOneHabits = settings.conditionalFeedMaxOneHabits.replaceElement(oldName, newName),
                     subtypedHabits = settings.subtypedHabits.replaceElement(oldName, newName),
                     habitSubtypes = settings.habitSubtypes.replaceKey(oldName, newName),
                     subtypeDataFileUris = settings.subtypeDataFileUris.replaceKey(oldName, newName),
@@ -6191,6 +6227,9 @@ class HabitViewModel(
             // Track per-date primary (minutes) deltas for conditional propagation
             // (any date where count increased, not just 0→non-zero)
             val dateDeltas = mutableMapOf<String, Int>()
+            // Pre-update primary counts per date — needed by the conditional
+            // "feed max1" cap to tell first-activity days from already-fed ones.
+            val preExistingCounts = mutableMapOf<String, Int>()
 
             for ((dateStr, stats) in dailyStats) {
                 val games = stats.games
@@ -6204,6 +6243,7 @@ class HabitViewModel(
                 } else 0
 
                 val existingMinutes = habitEntries[dateStr] ?: 0
+                preExistingCounts[dateStr] = existingMinutes
                 if (minutes != existingMinutes) {
                     val delta = minutes - existingMinutes
                     if (delta > 0) dateDeltas[dateStr] = delta
@@ -6246,11 +6286,19 @@ class HabitViewModel(
                     )
                     val linkedEntries = (mutableDb[targetKey] ?: emptyMap()).toMutableMap()
                     for ((dateStr, delta) in dateDeltas) {
+                        // "Feed max1" cap: a feed-max-one source contributes at most
+                        // 1 point per day to Points targets (first activity of the
+                        // day only); secondary-slot feeds stay uncapped.
+                        val feedDelta =
+                            if (targetKey == linkedName && habitName in s.conditionalFeedMaxOneHabits) {
+                                conditionalCappedFeedAmount(preExistingCounts[dateStr] ?: 0, delta)
+                            } else delta
+                        if (feedDelta == 0) continue
                         val existing = linkedEntries[dateStr] ?: 0
                         val newVal = if (targetKey == linkedName && linkedName in s.maxOneHabits) {
                             1
                         } else {
-                            existing + delta
+                            existing + feedDelta
                         }
                         if (newVal != existing) {
                             linkedEntries[dateStr] = newVal

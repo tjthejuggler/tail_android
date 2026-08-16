@@ -283,6 +283,21 @@ fun effectiveConditionalLinkValueKey(
     }
 }
 
+/**
+ * Computes the Points-feed amount for a conditional habit that has the
+ * "feed max1" cap enabled ([sourceStoredToday] = the source habit's stored
+ * count for that day BEFORE the increment being applied). The first positive
+ * increment of the day feeds at most 1 point to each linked habit; further
+ * positive increments the same day feed nothing. Non-positive amounts
+ * (undoes / decrements) pass through unchanged so a decrement still unwinds
+ * the linked habit.
+ */
+fun conditionalCappedFeedAmount(sourceStoredToday: Int, amount: Int): Int = when {
+    amount <= 0 -> amount
+    sourceStoredToday > 0 -> 0
+    else -> amount.coerceAtMost(1)
+}
+
 // ── Display-label helpers (UI-only overrides) ────────────────────────────────
 /**
  * Returns the **default** human-readable label for a value/metric key when no
@@ -554,6 +569,16 @@ data class AppSettings(
      * (`secondary_value:` / `secondary_value2:` storage keys).
      */
     val conditionalLinkValues: Map<String, Map<String, String>> = emptyMap(),
+
+    /**
+     * Conditional habits whose Points feeds are capped at 1 point per day
+     * (sub-setting of the conditional type): the first increment of a day
+     * feeds each linked habit at most 1 point, further increments that day
+     * feed nothing. Secondary-slot (Value2/Value3) feeds are not capped.
+     * Lets sparse "did it" habits aggregate into session-style linked
+     * habits without inflating their counts.
+     */
+    val conditionalFeedMaxOneHabits: Set<String> = emptySet(),
 
     /** Habits that have the "subtyped" feature enabled. */
     val subtypedHabits: Set<String> = emptySet(),

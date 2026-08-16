@@ -980,6 +980,7 @@ fun HabitGridScreen(
                         conditionalHabits = settings.conditionalHabits,
                         conditionalLinkedHabits = settings.conditionalLinkedHabits,
                         conditionalLinkValues = settings.conditionalLinkValues,
+                        conditionalFeedMaxOneHabits = settings.conditionalFeedMaxOneHabits,
                         subtypedHabits = settings.subtypedHabits,
                         habitSubtypes = settings.habitSubtypes,
                         allHabitNames = viewModel.getAllHabitNames(),
@@ -1028,6 +1029,7 @@ fun HabitGridScreen(
                         } ?: 0,
                         onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
                         onToggleConditional = { name -> viewModel.toggleConditional(name) },
+                        onToggleConditionalFeedMaxOne = { name -> viewModel.toggleConditionalFeedMaxOne(name) },
                         onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name },
                         onBackfillConditional = { name -> conditionalBackfillHabit = name },
                         onToggleSubtyped = { name -> viewModel.toggleSubtyped(name) },
@@ -3299,6 +3301,10 @@ private fun EditModeControlBar(
     conditionalLinkedHabits: Map<String, Set<String>>,
     /** Per-link conditional feed-value overrides (source → linked → value key). */
     conditionalLinkValues: Map<String, Map<String, String>> = emptyMap(),
+    /** Conditional habits whose Points feeds are capped at 1 point per day. */
+    conditionalFeedMaxOneHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the "feed max1 point/day" conditional sub-setting. */
+    onToggleConditionalFeedMaxOne: (String) -> Unit = {},
     subtypedHabits: Set<String>,
     habitSubtypes: Map<String, List<String>>,
     allHabitNames: List<String>,
@@ -4320,6 +4326,35 @@ private fun EditModeControlBar(
                     }
 
                     if (isConditional) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        // ── "Feed max1" sub-setting (only while conditional is on) ──
+                        val isFeedMaxOne = selectedHabitName in conditionalFeedMaxOneHabits
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "  Feed max1 point/day", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                                Text(
+                                    text = if (isFeedMaxOne) "Linked habits get at most 1 point per day"
+                                           else "Every increment feeds its linked habits",
+                                    color = if (isFeedMaxOne) Color(0xFF66BB6A) else Color(0xFF888888),
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Switch(
+                                checked = isFeedMaxOne,
+                                onCheckedChange = { onToggleConditionalFeedMaxOne(selectedHabitName) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color(0xFFFF88CC),
+                                    checkedTrackColor = Color(0xFF4A0030),
+                                    uncheckedThumbColor = Color(0xFF888888),
+                                    uncheckedTrackColor = Color(0xFF333333)
+                                )
+                            )
+                        }
+
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
