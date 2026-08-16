@@ -320,6 +320,49 @@ class HabitViewModel(
     private val _todayPoints = MutableStateFlow(0)
     val todayPoints: StateFlow<Int> = _todayPoints.asStateFlow()
 
+    /**
+     * Triple-metric stats (monthly avg, weekly avg, today's points) for "The
+     * Orrery" loading animation. Retained across loads — exactly like
+     * [todayPoints] — so the animation stays correct even mid-load.
+     * Updated together with [todayPoints] in [rebuildHabitList].
+     *
+     * The initial value is hydrated synchronously from a small
+     * SharedPreferences cache (see [readCachedLoadingMetrics]) so a cold
+     * start shows likely-correct tiers immediately, before the DB loads.
+     */
+    private val metricsPrefs = context.getSharedPreferences("loading_metrics_cache", Context.MODE_PRIVATE)
+
+    private val _loadingMetrics = MutableStateFlow(readCachedLoadingMetrics())
+    val loadingMetrics: StateFlow<LoadingMetrics> = _loadingMetrics.asStateFlow()
+
+    /**
+     * Last persisted metrics for the cold-start hydration. The averages move
+     * slowly (1/30th and 1/7th daily weight) so they stay valid across
+     * midnight; the daily total is only trusted when the cache was written
+     * today — otherwise the spark starts dormant rather than wrong.
+     */
+    private fun readCachedLoadingMetrics(): LoadingMetrics {
+        val month = metricsPrefs.getFloat("monthly_avg", 0f).toDouble()
+        val week = metricsPrefs.getFloat("weekly_avg", 0f).toDouble()
+        val day = metricsPrefs.getInt("today_points", 0)
+        val cachedDate = metricsPrefs.getString("date", null)
+        return if (cachedDate == LocalDate.now().toString()) {
+            LoadingMetrics(month, week, day)
+        } else {
+            LoadingMetrics(month, week, 0)
+        }
+    }
+
+    /** Persists metrics computed for [date] (only ever called for today). */
+    private fun cacheLoadingMetrics(m: LoadingMetrics, date: LocalDate) {
+        metricsPrefs.edit()
+            .putFloat("monthly_avg", m.monthlyAverage.toFloat())
+            .putFloat("weekly_avg", m.weeklyAverage.toFloat())
+            .putInt("today_points", m.todayPoints)
+            .putString("date", date.toString())
+            .apply()
+    }
+
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
 
@@ -674,6 +717,12 @@ class HabitViewModel(
                     loadTodayPointsFromTaskerFile()
                 }
                 _todayPoints.value = taskerPoints
+                // Keep the hydrated cache averages; refine the daily spark
+                // with the tasker file's live total when it has one.
+                val cachedMetrics = _loadingMetrics.value
+                _loadingMetrics.value =
+                    if (taskerPoints > 0) cachedMetrics.copy(todayPoints = taskerPoints)
+                    else cachedMetrics
 
                 if (!isSavingOrder && !isSavingScreenIndex) {
                     // Sync screens from persisted settings
@@ -1141,6 +1190,7 @@ class HabitViewModel(
         if (effectiveOrder.isEmpty() && _habitScreens.value.isNotEmpty()) {
             _habits.value = emptyList()
             _todayPoints.value = 0
+            _loadingMetrics.value = LoadingMetrics(0.0, 0.0, 0)
             screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = emptyList()
             return
         }
@@ -1155,6 +1205,13 @@ class HabitViewModel(
         }
         _habits.value = newList
         _todayPoints.value = newList.sumOf { it.todayCount }
+        val freshMetrics = getLoadingMetrics(_selectedDate.value)
+        _loadingMetrics.value = freshMetrics
+        // Persist only metrics computed for today so history browsing never
+        // poisons the cold-start cache.
+        if (_selectedDate.value == LocalDate.now()) {
+            cacheLoadingMetrics(freshMetrics, _selectedDate.value)
+        }
         screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = newList
     }
 
@@ -7979,6 +8036,41 @@ class HabitViewModel(
             monthlyAverage = monthlyAverage,
             streakDays = 0,
             antiStreakDays = 0
+        )
+    }
+
+    /**
+     * Triple-metric stats for "The Orrery" loading animation: today's total
+     * points, the 7-day weekly average and the 30-day monthly average, all
+     * ending on [date]. Computed in a single pass over the 30-day window.
+     *
+     * The monthly average drives the animation's primary form and colour,
+     * the weekly average its orbital halo, and today's points the central
+     * spark — see [HabitLoadingSpinner].
+     */
+    fun getLoadingMetrics(date: LocalDate): LoadingMetrics {
+        val db = cachedPhoneDb
+        val tracked = trackedHabitNames().ifEmpty { db.keys }
+
+        var dayTotal = 0
+        var weekSum = 0
+        var monthSum = 0
+        for (i in 0 until 30) {
+            val ds = dateString(date.minusDays(i.toLong()))
+            var daySum = 0
+            for (name in tracked) {
+                val raw = db[name]?.get(ds) ?: 0
+                val pts = effectivePointsForDate(name, raw, ds)
+                if (pts > 0) daySum += pts
+            }
+            if (i == 0) dayTotal = daySum
+            if (i < 7) weekSum += daySum
+            monthSum += daySum
+        }
+        return LoadingMetrics(
+            monthlyAverage = monthSum / 30.0,
+            weeklyAverage = weekSum / 7.0,
+            todayPoints = dayTotal
         )
     }
 

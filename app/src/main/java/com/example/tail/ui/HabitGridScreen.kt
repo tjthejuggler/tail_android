@@ -190,7 +190,7 @@ fun HabitGridScreen(
 ) {
     val habits by viewModel.habits.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
-    val todayPoints by viewModel.todayPoints.collectAsState()
+    val loadingMetrics by viewModel.loadingMetrics.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val selectedDate by viewModel.selectedDate.collectAsState()
@@ -584,12 +584,16 @@ fun HabitGridScreen(
             }
 
             if (isLoading) {
-                // Tiered spinner — colour & sophistication follow today's points.
-                // Read the retained todayPoints StateFlow (not the stale habits list)
-                // so the tier is correct even mid-load.
+                // "The Orrery" — triple-metric loading animation. The monthly
+                // average drives the core form & colour, the weekly average the
+                // orbital halo, today's points the central spark. Reads the
+                // retained loadingMetrics StateFlow (not the stale habits list)
+                // so the tiers are correct even mid-load.
                 Box(modifier = Modifier.fillMaxSize()) {
                     HabitLoadingSpinner(
-                        points = todayPoints,
+                        monthlyAverage = loadingMetrics.monthlyAverage,
+                        weeklyAverage = loadingMetrics.weeklyAverage,
+                        todayPoints = loadingMetrics.todayPoints,
                         modifier = Modifier.align(Alignment.Center)
                     )
                 }
