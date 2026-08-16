@@ -43,6 +43,9 @@ private val KEY_HABIT_DIVIDERS = stringPreferencesKey("habit_dividers")
 private val KEY_CONDITIONAL_HABITS = stringSetPreferencesKey("conditional_habits")
 // Stored as "habitName\x00link1,link2,link3|||habitName\x00link1" pairs
 private val KEY_CONDITIONAL_LINKED_HABITS = stringPreferencesKey("conditional_linked_habits")
+// Per-link feed-target value overrides (source habit → linked habit → value key),
+// stored with the nested-map codec (see [encodeNestedStringMap]).
+private val KEY_CONDITIONAL_LINK_VALUES = stringPreferencesKey("conditional_link_values")
 // Subtyped habit type keys
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
@@ -489,14 +492,15 @@ private fun decodeRollForwardManualDates(raw: String): Map<String, Set<String>> 
     }.toMap()
 }
 
-// Serialisation helpers for Map<String, Map<String, String>> (habit name → valueKey → display label).
+// Serialisation helpers for Map<String, Map<String, String>> (nested string maps:
+// value-display labels, conditional link feed-value overrides).
 // Outer format: "habitName\x00inner|||habitName2\x00inner" (same PAIR_SEP / KV_SEP as other maps).
 // Inner format: "key1\x02label1\x01key2\x02label2" — uses control chars \x01 / \x02 which cannot
 // appear in user-typed text, so no escaping is needed.
 private const val INNER_PAIR_SEP = "\u0001"
 private const val INNER_KV_SEP = "\u0002"
 
-private fun encodeValueLabelsMap(map: Map<String, Map<String, String>>): String =
+private fun encodeNestedStringMap(map: Map<String, Map<String, String>>): String =
     map.entries.joinToString(PAIR_SEP) { (habit, inner) ->
         val innerStr = inner.entries.joinToString(INNER_PAIR_SEP) { (k, v) ->
             "$k$INNER_KV_SEP$v"
@@ -504,7 +508,7 @@ private fun encodeValueLabelsMap(map: Map<String, Map<String, String>>): String 
         "$habit$KV_SEP$innerStr"
     }
 
-private fun decodeValueLabelsMap(raw: String): Map<String, Map<String, String>> {
+private fun decodeNestedStringMap(raw: String): Map<String, Map<String, String>> {
     if (raw.isBlank()) return emptyMap()
     return raw.split(PAIR_SEP).mapNotNull { pair ->
         val idx = pair.indexOf(KV_SEP)
@@ -614,6 +618,45 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Removes [KEY_CONDITIONAL_LINKED_HABITS] entries whose key is no longer marked
+     * as a conditional habit in [KEY_CONDITIONAL_HABITS]. Such orphaned entries can be
+     * left behind when a habit's conditional type is toggled off (e.g. after the user
+     * restructures their links), and they otherwise resurface as phantom "Fed by"
+     * sources on the habits they still reference. Idempotent: only writes when an
+     * entry was actually removed, so it is safe to call on every startup.
+     */
+    suspend fun pruneOrphanedConditionalLinks() {
+        context.dataStore.edit { prefs ->
+            val linkedRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: return@edit
+            if (linkedRaw.isBlank()) return@edit
+            val conditional = prefs[KEY_CONDITIONAL_HABITS] ?: emptySet()
+            val decoded = decodeLinkedHabitsMap(linkedRaw)
+            val pruned = decoded.filterKeys { it in conditional }
+            if (pruned.size != decoded.size) {
+                val removed = decoded.keys - pruned.keys
+                Log.i("SettingsRepo", "Pruning orphaned conditional links for: $removed")
+                prefs[KEY_CONDITIONAL_LINKED_HABITS] = encodeLinkedHabitsMap(pruned)
+            }
+
+            // Keep per-link feed-value overrides consistent with the link sets:
+            // drop sources that are no longer conditional, and inner entries
+            // whose linked habit is no longer in that source's link set.
+            val valuesRaw = prefs[KEY_CONDITIONAL_LINK_VALUES]
+            if (!valuesRaw.isNullOrBlank()) {
+                val values = decodeNestedStringMap(valuesRaw)
+                val prunedValues = values.mapNotNull { (src, inner) ->
+                    val kept = inner.filterKeys { it in (pruned[src] ?: emptySet()) }
+                    if (kept.isEmpty()) null else src to kept
+                }.toMap()
+                if (prunedValues != values) {
+                    Log.i("SettingsRepo", "Pruning orphaned conditional link values for: ${values.keys - prunedValues.keys}")
+                    prefs[KEY_CONDITIONAL_LINK_VALUES] = encodeNestedStringMap(prunedValues)
+                }
+            }
+        }
+    }
+
     suspend fun isApneaSecondaryMigrationDone(): Boolean {
         return context.dataStore.data.map { it[KEY_MIGRATION_APNEA_SECONDARY_DONE] ?: false }.first()
     }
@@ -699,7 +742,8 @@ class SettingsRepository(private val context: Context) {
             noPointsHabits = prefs[KEY_NO_POINTS_HABITS] ?: emptySet(),
             secondaryValueHabits = prefs[KEY_SECONDARY_VALUE_HABITS] ?: emptySet(),
             secondaryValueFallbackHabits = prefs[KEY_SECONDARY_VALUE_FALLBACK_HABITS] ?: emptySet(),
-            valueDisplayLabels = decodeValueLabelsMap(prefs[KEY_VALUE_DISPLAY_LABELS] ?: ""),
+            conditionalLinkValues = decodeNestedStringMap(prefs[KEY_CONDITIONAL_LINK_VALUES] ?: ""),
+            valueDisplayLabels = decodeNestedStringMap(prefs[KEY_VALUE_DISPLAY_LABELS] ?: ""),
             aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
             aiIconsApiKey = prefs[KEY_AI_ICONS_API_KEY] ?: "",
             aiIconsBaseUrl = prefs[KEY_AI_ICONS_BASE_URL] ?: "",
@@ -986,7 +1030,14 @@ class SettingsRepository(private val context: Context) {
 
     /** Saves the display-only value/subtype label overrides (habit name → valueKey → label). */
     suspend fun saveValueDisplayLabels(labels: Map<String, Map<String, String>>) {
-        context.dataStore.edit { prefs -> prefs[KEY_VALUE_DISPLAY_LABELS] = encodeValueLabelsMap(labels) }
+        context.dataStore.edit { prefs -> prefs[KEY_VALUE_DISPLAY_LABELS] = encodeNestedStringMap(labels) }
+    }
+
+    /** Persists per-link conditional feed-target value overrides (absent link = Points). */
+    suspend fun saveConditionalLinkValues(values: Map<String, Map<String, String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CONDITIONAL_LINK_VALUES] = encodeNestedStringMap(values)
+        }
     }
 
     /** Saves all AI icon generation settings at once. */

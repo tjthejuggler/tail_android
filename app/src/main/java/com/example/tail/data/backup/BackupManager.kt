@@ -735,6 +735,7 @@ class BackupManager(
         settingsRepo.saveConditionalLinkedHabits(
             s.conditionalLinkedHabits.mapValues { it.value.toSet() }
         )
+        settingsRepo.saveConditionalLinkValues(s.conditionalLinkValues)
 
         settingsRepo.saveSubtypedHabits(s.subtypedHabits.toSet())
         settingsRepo.saveHabitSubtypes(s.habitSubtypes)
@@ -1109,6 +1110,7 @@ class BackupManager(
         habitDividers = s.habitDividers,
         conditionalHabits = s.conditionalHabits.toList(),
         conditionalLinkedHabits = s.conditionalLinkedHabits.mapValues { it.value.toList() },
+        conditionalLinkValues = s.conditionalLinkValues,
         subtypedHabits = s.subtypedHabits.toList(),
         habitSubtypes = s.habitSubtypes,
         subtypeDataFileUris = s.subtypeDataFileUris,

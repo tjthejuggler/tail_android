@@ -142,13 +142,21 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                     Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
                 }
 
-                // Also increment any conditional linked habits (mirrors HabitViewModel logic)
+                // Also increment any conditional linked habits (mirrors HabitViewModel logic).
+                // Each link feeds the value configured for it: Points (the primary
+                // count) by default, or one of the linked habit's raw secondary
+                // slots when that habit actually has it available.
                 if (habitName in settings.conditionalHabits) {
                     val linkedHabits = settings.conditionalLinkedHabits[habitName] ?: emptySet()
                     val todayStr = java.time.LocalDate.now().toString()
                     for (linkedName in linkedHabits) {
-                        // Respect the "max 1" cap on linked habits
-                        if (linkedName in settings.maxOneHabits) {
+                        val valueKey = com.example.tail.data.effectiveConditionalLinkValueKey(
+                            settings.conditionalLinkValues, settings.secondaryValueHabits,
+                            settings.chessComHabitLinks, habitName, linkedName
+                        )
+                        val targetKey = com.example.tail.data.conditionalLinkStorageKey(linkedName, valueKey)
+                        // Respect the "max 1" cap on linked habits (primary/Points feeds only)
+                        if (targetKey == linkedName && linkedName in settings.maxOneHabits) {
                             val db = habitsRepo.loadDatabase(uri, appContext)
                             val currentCount = db[linkedName]?.get(todayStr) ?: 0
                             if (currentCount >= 1) {
@@ -156,9 +164,9 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                                 continue
                             }
                         }
-                        habitsRepo.incrementHabit(uri, appContext, linkedName, 1)
+                        habitsRepo.incrementHabitForDate(uri, appContext, targetKey, 1, java.time.LocalDate.now())
                         HabitIncrementBus.emit(linkedName)
-                        Log.i(TAG, "Incremented linked habit '$linkedName' (conditional on '$habitName')")
+                        Log.i(TAG, "Incremented linked habit '$linkedName' (conditional on '$habitName', feeds $valueKey)")
 
                         // Record timestamp for the linked habit too
                         try {

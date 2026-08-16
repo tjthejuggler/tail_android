@@ -126,6 +126,12 @@ import com.example.tail.data.GitHubMetric
 import com.example.tail.data.Habit
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.RollingHigh
+import com.example.tail.data.GRAPH_METRIC_POINTS
+import com.example.tail.data.GRAPH_METRIC_VALUE2
+import com.example.tail.data.GRAPH_METRIC_VALUE3
+import com.example.tail.data.defaultLabelForValueKey
+import com.example.tail.data.displayLabelForValue
+import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.appLinkPackageName
 import com.example.tail.data.isAppLink
 import kotlinx.coroutines.delay
@@ -952,6 +958,7 @@ fun HabitGridScreen(
                         habitDividers = settings.habitDividers,
                         conditionalHabits = settings.conditionalHabits,
                         conditionalLinkedHabits = settings.conditionalLinkedHabits,
+                        conditionalLinkValues = settings.conditionalLinkValues,
                         subtypedHabits = settings.subtypedHabits,
                         habitSubtypes = settings.habitSubtypes,
                         allHabitNames = viewModel.getAllHabitNames(),
@@ -1694,8 +1701,13 @@ fun HabitGridScreen(
             habitName = habitName,
             allHabitNames = viewModel.getAllHabitNames(),
             currentLinks = viewModel.getConditionalLinks(habitName),
-            onConfirm = { links ->
+            currentValues = viewModel.getConditionalLinkValues(habitName),
+            secondaryValueHabits = settings.secondaryValueHabits,
+            chessComHabitLinks = settings.chessComHabitLinks,
+            valueDisplayLabels = settings.valueDisplayLabels,
+            onConfirm = { links, values ->
                 viewModel.setConditionalLinks(habitName, links)
+                viewModel.setConditionalLinkValues(habitName, values)
                 conditionalLinksPickerHabit = null
             },
             onDismiss = { conditionalLinksPickerHabit = null }
@@ -3111,6 +3123,8 @@ private fun EditModeControlBar(
     habitDividers: Map<String, Int>,
     conditionalHabits: Set<String>,
     conditionalLinkedHabits: Map<String, Set<String>>,
+    /** Per-link conditional feed-value overrides (source → linked → value key). */
+    conditionalLinkValues: Map<String, Map<String, String>> = emptyMap(),
     subtypedHabits: Set<String>,
     habitSubtypes: Map<String, List<String>>,
     allHabitNames: List<String>,
@@ -4116,7 +4130,11 @@ private fun EditModeControlBar(
                                 val linkNames = conditionalLinkedHabits[selectedHabitName]
                                 Text(
                                     text = if (linkNames.isNullOrEmpty()) "⚠ None selected"
-                                           else "✓ ${linkNames.joinToString(", ")}",
+                                           else "✓ ${linkNames.joinToString(", ") { n ->
+                                               val vk = effectiveConditionalLinkValueKey(conditionalLinkValues, secondaryValueSettings.habits, chessComHabitLinks, selectedHabitName, n)
+                                               if (vk == GRAPH_METRIC_POINTS) n
+                                               else "$n (${displayLabelForValue(n, vk, valueDisplayLabels)})"
+                                           }}",
                                     color = if (linkNames.isNullOrEmpty()) Color(0xFFFF8844) else Color(0xFFFF88CC),
                                     fontSize = 10.sp
                                 )
@@ -4138,7 +4156,12 @@ private fun EditModeControlBar(
                     // ── Conditional Backfill (only for habits that other habits link to) ──
                     ConditionalBackfillSection(
                         habitName = selectedHabitName,
+                        conditionalHabits = conditionalHabits,
                         conditionalLinkedHabits = conditionalLinkedHabits,
+                        conditionalLinkValues = conditionalLinkValues,
+                        secondaryValueHabits = secondaryValueSettings.habits,
+                        chessComHabitLinks = chessComHabitLinks,
+                        valueDisplayLabels = valueDisplayLabels,
                         onBackfill = onBackfillConditional
                     )
 
@@ -5335,12 +5358,19 @@ private fun InvertConfirmDialog(
 @Composable
 private fun ConditionalBackfillSection(
     habitName: String,
+    conditionalHabits: Set<String>,
     conditionalLinkedHabits: Map<String, Set<String>>,
+    conditionalLinkValues: Map<String, Map<String, String>> = emptyMap(),
+    secondaryValueHabits: Set<String> = emptySet(),
+    chessComHabitLinks: Map<String, String> = emptyMap(),
+    valueDisplayLabels: Map<String, Map<String, String>> = emptyMap(),
     onBackfill: (String) -> Unit
 ) {
-    val conditionalSources = remember(conditionalLinkedHabits, habitName) {
+    // Only entries whose key is still an active conditional habit count as sources;
+    // orphaned link entries (habit no longer conditional) must be ignored.
+    val conditionalSources = remember(conditionalLinkedHabits, conditionalHabits, habitName) {
         conditionalLinkedHabits.entries
-            .filter { habitName in it.value }
+            .filter { it.key in conditionalHabits && habitName in it.value }
             .map { it.key }
             .sorted()
     }
@@ -5362,7 +5392,14 @@ private fun ConditionalBackfillSection(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Fed by ${conditionalSources.size} habit(s): ${conditionalSources.joinToString(", ")}",
+                    text = "Fed by ${conditionalSources.size} habit(s): ${conditionalSources.joinToString(", ") { src ->
+                        val vk = effectiveConditionalLinkValueKey(
+                            conditionalLinkValues, secondaryValueHabits,
+                            chessComHabitLinks, src, habitName
+                        )
+                        if (vk == GRAPH_METRIC_POINTS) src
+                        else "$src→${displayLabelForValue(habitName, vk, valueDisplayLabels)}"
+                    }}",
                     color = Color(0xFFAAAAAA),
                     fontSize = 10.sp
                 )
@@ -5454,13 +5491,19 @@ private fun ConditionalLinksPickerDialog(
     habitName: String,
     allHabitNames: List<String>,
     currentLinks: Set<String>,
-    onConfirm: (Set<String>) -> Unit,
+    currentValues: Map<String, String> = emptyMap(),
+    secondaryValueHabits: Set<String> = emptySet(),
+    chessComHabitLinks: Map<String, String> = emptyMap(),
+    valueDisplayLabels: Map<String, Map<String, String>> = emptyMap(),
+    onConfirm: (Set<String>, Map<String, String>) -> Unit,
     onDismiss: () -> Unit
 ) {
     val otherHabits = remember(allHabitNames, habitName) {
         allHabitNames.filter { it != habitName && it.isNotEmpty() }
     }
     var selected by remember(currentLinks) { mutableStateOf(currentLinks.toMutableSet()) }
+    // Linked habit name → feed-value key override (absent = Points, the default)
+    var valueChoices by remember(currentValues) { mutableStateOf(currentValues.toMutableMap()) }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -5476,7 +5519,7 @@ private fun ConditionalLinksPickerDialog(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Select habits to auto-increment when this habit is tapped:",
+                text = "Select habits to auto-increment when this habit is tapped. For each linked habit, pick which value it feeds:",
                 color = Color(0xFF888888),
                 fontSize = 11.sp
             )
@@ -5497,35 +5540,83 @@ private fun ConditionalLinksPickerDialog(
                 ) {
                     otherHabits.forEach { name ->
                         val isChecked = name in selected
-                        Row(
+                        // Feed-value options: Points always; Value2/Value3 only when
+                        // the linked habit actually has those raw slots available.
+                        val feedOptions = buildList {
+                            add(GRAPH_METRIC_POINTS)
+                            if (name in secondaryValueHabits) add(GRAPH_METRIC_VALUE2)
+                            if (name in chessComHabitLinks) add(GRAPH_METRIC_VALUE3)
+                        }
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(
-                                    indication = null,
-                                    interactionSource = remember { MutableInteractionSource() }
-                                ) {
-                                    val next = selected.toMutableSet()
-                                    if (isChecked) next.remove(name) else next.add(name)
-                                    selected = next
-                                }
                                 .background(
                                     if (isChecked) Color(0xFF2A0020) else Color.Transparent,
                                     RoundedCornerShape(4.dp)
                                 )
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
                         ) {
-                            Text(
-                                text = if (isChecked) "☑" else "☐",
-                                color = if (isChecked) Color(0xFFFF88CC) else Color(0xFF666666),
-                                fontSize = 16.sp
-                            )
-                            Text(
-                                text = name,
-                                color = if (isChecked) Color(0xFFFF88CC) else Color(0xFFCCCCCC),
-                                fontSize = 12.sp
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(
+                                        indication = null,
+                                        interactionSource = remember { MutableInteractionSource() }
+                                    ) {
+                                        val next = selected.toMutableSet()
+                                        if (isChecked) {
+                                            next.remove(name)
+                                            val vals = valueChoices.toMutableMap()
+                                            vals.remove(name)
+                                            valueChoices = vals
+                                        } else {
+                                            next.add(name)
+                                        }
+                                        selected = next
+                                    },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = if (isChecked) "☑" else "☐",
+                                    color = if (isChecked) Color(0xFFFF88CC) else Color(0xFF666666),
+                                    fontSize = 16.sp
+                                )
+                                Text(
+                                    text = name,
+                                    color = if (isChecked) Color(0xFFFF88CC) else Color(0xFFCCCCCC),
+                                    fontSize = 12.sp
+                                )
+                            }
+                            if (isChecked && feedOptions.size > 1) {
+                                Row(
+                                    modifier = Modifier.padding(start = 26.dp, top = 2.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    feedOptions.forEach { opt ->
+                                        val active = (valueChoices[name] ?: GRAPH_METRIC_POINTS) == opt
+                                        Text(
+                                            text = displayLabelForValue(name, opt, valueDisplayLabels),
+                                            color = if (active) Color(0xFFFF88CC) else Color(0xFF888888),
+                                            fontSize = 10.sp,
+                                            modifier = Modifier
+                                                .background(
+                                                    if (active) Color(0xFF4A0030) else Color(0xFF221018),
+                                                    RoundedCornerShape(8.dp)
+                                                )
+                                                .clickable(
+                                                    indication = null,
+                                                    interactionSource = remember { MutableInteractionSource() }
+                                                ) {
+                                                    val vals = valueChoices.toMutableMap()
+                                                    if (opt == GRAPH_METRIC_POINTS) vals.remove(name) else vals[name] = opt
+                                                    valueChoices = vals
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -5542,7 +5633,7 @@ private fun ConditionalLinksPickerDialog(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = { onConfirm(selected.toSet()) },
+                    onClick = { onConfirm(selected.toSet(), valueChoices.toMap()) },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A0030))
                 ) {
                     Text("Save (${selected.size})", color = Color(0xFFFF88CC))

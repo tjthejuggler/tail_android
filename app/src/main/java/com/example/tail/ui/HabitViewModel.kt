@@ -46,6 +46,8 @@ import com.example.tail.data.isAppLink
 import com.example.tail.data.isSecondaryValueKey
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.secondaryValue2Key
+import com.example.tail.data.conditionalLinkStorageKey
+import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.DailyStatsMap
 import com.example.tail.data.GRAPH_METRIC_POINTS
 import com.example.tail.data.GRAPH_METRIC_VALUE1
@@ -610,6 +612,10 @@ class HabitViewModel(
             // One-time migration: rename legacy "Launch … Widget" habit names
             // in persisted DataStore settings before collecting the flow.
             settingsRepo.migrateHabitNames()
+
+            // Drop orphaned conditional-link entries (key no longer marked conditional)
+            // so they don't surface as phantom "Fed by" sources in edit mode.
+            settingsRepo.pruneOrphanedConditionalLinks()
 
             var widgetTriggerServiceChecked = false
             settingsRepo.settingsFlow.collect { s ->
@@ -1404,6 +1410,26 @@ class HabitViewModel(
         } else emptySet()
 
         for (linkedName in linkedHabits) {
+            // Resolve which value slot of the linked habit this feed targets:
+            // Points (default) = its count; Value2/Value3 = its raw secondary slots.
+            val valueKey = effectiveConditionalLinkValueKey(
+                _settings.value.conditionalLinkValues,
+                _settings.value.secondaryValueHabits,
+                _settings.value.chessComHabitLinks,
+                habitName, linkedName
+            )
+            val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
+            if (targetKey != linkedName) {
+                // Raw secondary slot: no max-1 cap; skip the instant row update
+                // (the full rebuild below refreshes secondary displays from the DB).
+                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, targetKey, amount, _selectedDate.value)
+                if (recordTimestamp) {
+                    viewModelScope.launch {
+                        timestampRepo.addTimestamp(linkedName, _selectedDate.value)
+                    }
+                }
+                continue
+            }
             val linkedEntries = updatedDb[linkedName] ?: emptyMap()
             val linkedRaw = (linkedEntries[dateStr] ?: 0) + amount
             val linkedClamped = if (linkedName in _settings.value.maxOneHabits) linkedRaw.coerceAtMost(1) else linkedRaw
@@ -2375,13 +2401,34 @@ class HabitViewModel(
     /**
      * Toggles the "conditional" type on/off for [habitName].
      * When enabled, tapping this habit also auto-increments all habits in its linked set.
+     * When disabled, the linked set is removed as well — otherwise the orphaned entry
+     * keeps showing up as a phantom "Fed by" source on the habits it used to link to.
      */
     fun toggleConditional(habitName: String) {
         viewModelScope.launch {
             val current = _settings.value.conditionalHabits.toMutableSet()
-            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            val links = _settings.value.conditionalLinkedHabits.toMutableMap()
+            val values = _settings.value.conditionalLinkValues.toMutableMap()
+            var linksChanged = false
+            if (habitName in current) {
+                current.remove(habitName)
+                if (links.remove(habitName) != null) linksChanged = true
+                if (values.remove(habitName) != null) linksChanged = true
+            } else {
+                current.add(habitName)
+            }
             settingsRepo.saveConditionalHabits(current)
-            _settings.value = _settings.value.copy(conditionalHabits = current)
+            if (linksChanged) {
+                settingsRepo.saveConditionalLinkedHabits(links)
+                settingsRepo.saveConditionalLinkValues(values)
+                _settings.value = _settings.value.copy(
+                    conditionalHabits = current,
+                    conditionalLinkedHabits = links,
+                    conditionalLinkValues = values
+                )
+            } else {
+                _settings.value = _settings.value.copy(conditionalHabits = current)
+            }
         }
     }
 
@@ -2398,8 +2445,16 @@ class HabitViewModel(
             } else {
                 current[habitName] = linkedNames
             }
+            // Keep feed-value overrides limited to the (new) link set
+            val values = _settings.value.conditionalLinkValues.toMutableMap()
+            val trimmed = values[habitName]?.filterKeys { it in linkedNames }
+            if (trimmed.isNullOrEmpty()) values.remove(habitName) else values[habitName] = trimmed
             settingsRepo.saveConditionalLinkedHabits(current)
-            _settings.value = _settings.value.copy(conditionalLinkedHabits = current)
+            settingsRepo.saveConditionalLinkValues(values)
+            _settings.value = _settings.value.copy(
+                conditionalLinkedHabits = current,
+                conditionalLinkValues = values
+            )
         }
     }
 
@@ -2407,40 +2462,84 @@ class HabitViewModel(
     fun getConditionalLinks(habitName: String): Set<String> =
         _settings.value.conditionalLinkedHabits[habitName] ?: emptySet()
 
+    /** Returns the current per-link feed-value overrides for a conditional habit. */
+    fun getConditionalLinkValues(habitName: String): Map<String, String> =
+        _settings.value.conditionalLinkValues[habitName] ?: emptyMap()
+
+    /**
+     * Sets the per-link feed-value overrides for [habitName] (linked habit name →
+     * value key). Only non-default (non-Points) entries for currently linked
+     * habits are stored; everything else falls back to Points.
+     */
+    fun setConditionalLinkValues(habitName: String, values: Map<String, String>) {
+        viewModelScope.launch {
+            val links = _settings.value.conditionalLinkedHabits[habitName] ?: emptySet()
+            val cleaned = values.filterKeys { it in links && it != GRAPH_METRIC_POINTS }
+            val current = _settings.value.conditionalLinkValues.toMutableMap()
+            if (cleaned.isEmpty()) current.remove(habitName) else current[habitName] = cleaned
+            settingsRepo.saveConditionalLinkValues(current)
+            _settings.value = _settings.value.copy(conditionalLinkValues = current)
+        }
+    }
+
     /**
      * Returns the list of conditional habits that have [habitName] in their linked set.
      * These are the "source" habits whose increments feed into [habitName] — i.e. every
      * habit that "has [habitName] set as a conditional" for it.
+     * Only entries whose key is still an active conditional habit count; orphaned link
+     * entries (habit no longer marked conditional) are ignored.
      */
     fun getConditionalSources(habitName: String): List<String> =
         _settings.value.conditionalLinkedHabits.entries
-            .filter { habitName in it.value }
+            .filter { it.key in _settings.value.conditionalHabits && habitName in it.value }
             .map { it.key }
             .sorted()
 
     /**
+     * Groups the conditional sources of [habitName] by the storage slot they feed:
+     * the habit's own key for Points (the default), or its secondary-value slots
+     * for links configured to feed Value2 / Value3.
+     */
+    private fun conditionalBackfillSlots(habitName: String): Map<String, List<String>> {
+        val s = _settings.value
+        return getConditionalSources(habitName).groupBy { src ->
+            conditionalLinkStorageKey(
+                habitName,
+                effectiveConditionalLinkValueKey(
+                    s.conditionalLinkValues, s.secondaryValueHabits, s.chessComHabitLinks,
+                    src, habitName
+                )
+            )
+        }
+    }
+
+    /**
      * Computes the total number of increments that a conditional backfill would apply
      * to [habitName] across its entire history, by summing the per-day counts of every
-     * source habit (conditional habits that link to [habitName]).
+     * source habit (conditional habits that link to [habitName]) into the value slot
+     * each link is configured to feed.
      *
      * Respects the "1 max" cap per day when [habitName] is a max-one habit, matching the
      * live conditional-increment behaviour.
      */
     fun previewConditionalBackfillTotal(habitName: String): Int {
-        val sources = getConditionalSources(habitName)
-        if (sources.isEmpty()) return 0
+        val slots = conditionalBackfillSlots(habitName)
+        if (slots.isEmpty()) return 0
         val isMaxOne = habitName in _settings.value.maxOneHabits
-        val dates = mutableSetOf<String>()
-        for (src in sources) {
-            dates.addAll(cachedPhoneDb[src]?.keys ?: emptySet())
-        }
         var total = 0
-        for (d in dates) {
-            var sum = 0
-            for (src in sources) {
-                sum += cachedPhoneDb[src]?.get(d) ?: 0
+        for ((slotKey, slotSources) in slots) {
+            val capped = slotKey == habitName && isMaxOne
+            val dates = mutableSetOf<String>()
+            for (src in slotSources) {
+                dates.addAll(cachedPhoneDb[src]?.keys ?: emptySet())
             }
-            total += if (isMaxOne) sum.coerceAtMost(1) else sum
+            for (d in dates) {
+                var sum = 0
+                for (src in slotSources) {
+                    sum += cachedPhoneDb[src]?.get(d) ?: 0
+                }
+                total += if (capped) sum.coerceAtMost(1) else sum
+            }
         }
         return total
     }
@@ -2459,34 +2558,40 @@ class HabitViewModel(
             _errorMessage.value = "No file selected. Please pick a file in Settings."
             return
         }
-        val sources = getConditionalSources(habitName)
-        if (sources.isEmpty()) {
+        val slots = conditionalBackfillSlots(habitName)
+        if (slots.isEmpty()) {
             _errorMessage.value = "No habits feed into \"$habitName\"."
             return
         }
         val isMaxOne = habitName in _settings.value.maxOneHabits
 
-        // Compute per-day sums from all source habits.
-        val dates = mutableSetOf<String>()
-        for (src in sources) {
-            dates.addAll(cachedPhoneDb[src]?.keys ?: emptySet())
-        }
-        val newEntries = sortedMapOf<String, Int>()
-        var totalApplied = 0
-        for (d in dates.sorted()) {
-            var sum = 0
-            for (src in sources) {
-                sum += cachedPhoneDb[src]?.get(d) ?: 0
-            }
-            val stored = if (isMaxOne) sum.coerceAtMost(1) else sum
-            if (stored > 0) {
-                newEntries[d] = stored
-                totalApplied += stored
-            }
-        }
-
+        // Recompute each fed slot independently: for every day, the slot's stored
+        // value equals the sum of the counts of the source habits feeding it.
+        // (The max-1 cap only applies to the primary count slot.)
         val updatedDb = cachedPhoneDb.toMutableMap()
-        updatedDb[habitName] = newEntries
+        var totalApplied = 0
+        var daysTouched = 0
+        for ((slotKey, slotSources) in slots) {
+            val capped = slotKey == habitName && isMaxOne
+            val dates = mutableSetOf<String>()
+            for (src in slotSources) {
+                dates.addAll(cachedPhoneDb[src]?.keys ?: emptySet())
+            }
+            val newEntries = sortedMapOf<String, Int>()
+            for (d in dates.sorted()) {
+                var sum = 0
+                for (src in slotSources) {
+                    sum += cachedPhoneDb[src]?.get(d) ?: 0
+                }
+                val stored = if (capped) sum.coerceAtMost(1) else sum
+                if (stored > 0) {
+                    newEntries[d] = stored
+                    totalApplied += stored
+                }
+            }
+            daysTouched = maxOf(daysTouched, newEntries.size)
+            updatedDb[slotKey] = newEntries
+        }
         cachedPhoneDb = updatedDb
 
         viewModelScope.launch {
@@ -2495,7 +2600,7 @@ class HabitViewModel(
                 val uri = Uri.parse(uriString)
                 habitsRepo.persistDatabase(uri, context, updatedDb)
                 _errorMessage.value =
-                    "Backfilled \"$habitName\": $totalApplied increments across ${newEntries.size} day(s)."
+                    "Backfilled \"$habitName\": $totalApplied increments across $daysTouched day(s), ${slots.size} value slot(s)."
             } catch (e: Exception) {
                 _errorMessage.value = "Backfill save failed: ${e.message}"
             }
@@ -3584,6 +3689,20 @@ class HabitViewModel(
                         list.map { if (it == oldKey) newKey else it }
                     }
                 }
+
+                // Renames a habit both as map key AND inside the value sets — needed
+                // for conditionalLinkedHabits, whose keys are conditional habit names.
+                fun Map<String, Set<String>>.replaceKeysAndValues(oldName: String, newName: String): Map<String, Set<String>> {
+                    return mapKeys { (k, _) -> if (k == oldName) newName else k }
+                        .mapValues { (_, set) -> set.map { if (it == oldName) newName else it }.toSet() }
+                }
+
+                // Renames a habit as outer key and as inner key of a nested map —
+                // needed for conditionalLinkValues (source → linked → value key).
+                fun Map<String, Map<String, String>>.replaceKeysAndInnerKeys(oldName: String, newName: String): Map<String, Map<String, String>> {
+                    return mapKeys { (k, _) -> if (k == oldName) newName else k }
+                        .mapValues { (_, inner) -> inner.mapKeys { (k, _) -> if (k == oldName) newName else k } }
+                }
                 
                 val newSettings = settings.copy(
                     habitOrder = newHabitOrder,
@@ -3599,7 +3718,8 @@ class HabitViewModel(
                     datedEntryFileSizes = settings.datedEntryFileSizes.replaceKey(oldName, newName),
                     habitDividers = settings.habitDividers.replaceKey(oldName, newName),
                     conditionalHabits = settings.conditionalHabits.replaceElement(oldName, newName),
-                    conditionalLinkedHabits = settings.conditionalLinkedHabits.replaceInValueSets(oldName, newName),
+                    conditionalLinkedHabits = settings.conditionalLinkedHabits.replaceKeysAndValues(oldName, newName),
+                    conditionalLinkValues = settings.conditionalLinkValues.replaceKeysAndInnerKeys(oldName, newName),
                     subtypedHabits = settings.subtypedHabits.replaceElement(oldName, newName),
                     habitSubtypes = settings.habitSubtypes.replaceKey(oldName, newName),
                     subtypeDataFileUris = settings.subtypeDataFileUris.replaceKey(oldName, newName),
@@ -3656,6 +3776,7 @@ class HabitViewModel(
                 settingsRepo.saveHabitDividers(newSettings.habitDividers)
                 settingsRepo.saveConditionalHabits(newSettings.conditionalHabits)
                 settingsRepo.saveConditionalLinkedHabits(newSettings.conditionalLinkedHabits)
+                settingsRepo.saveConditionalLinkValues(newSettings.conditionalLinkValues)
                 settingsRepo.saveSubtypedHabits(newSettings.subtypedHabits)
                 settingsRepo.saveHabitSubtypes(newSettings.habitSubtypes)
                 settingsRepo.saveSubtypeDataFileUris(newSettings.subtypeDataFileUris)
@@ -5689,10 +5810,19 @@ class HabitViewModel(
             if (dateDeltas.isNotEmpty() && habitName in s.conditionalHabits) {
                 val linkedHabits = s.conditionalLinkedHabits[habitName] ?: emptySet()
                 for (linkedName in linkedHabits) {
-                    val linkedEntries = (mutableDb[linkedName] ?: emptyMap()).toMutableMap()
+                    // Feed the value slot this link is configured to target
+                    // (Points = the linked habit's count; Value2/Value3 = raw slots)
+                    val targetKey = conditionalLinkStorageKey(
+                        linkedName,
+                        effectiveConditionalLinkValueKey(
+                            s.conditionalLinkValues, s.secondaryValueHabits, s.chessComHabitLinks,
+                            habitName, linkedName
+                        )
+                    )
+                    val linkedEntries = (mutableDb[targetKey] ?: emptyMap()).toMutableMap()
                     for ((dateStr, delta) in dateDeltas) {
                         val existing = linkedEntries[dateStr] ?: 0
-                        val newVal = if (linkedName in s.maxOneHabits) {
+                        val newVal = if (targetKey == linkedName && linkedName in s.maxOneHabits) {
                             1
                         } else {
                             existing + delta
@@ -5702,7 +5832,7 @@ class HabitViewModel(
                             dbChanged = true
                         }
                     }
-                    mutableDb[linkedName] = linkedEntries.toSortedMap()
+                    mutableDb[targetKey] = linkedEntries.toSortedMap()
                 }
             }
         }

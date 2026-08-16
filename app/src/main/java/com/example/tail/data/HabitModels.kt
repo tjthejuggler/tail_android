@@ -202,6 +202,56 @@ fun secondaryValueHabitName(name: String): String? = when {
     else -> null
 }
 
+// ── Conditional link feed-value helpers ───────────────────────────────────────
+/**
+ * Returns the configured feed-target value key for a conditional link
+ * ([source] = conditional habit, [linked] = linked habit). Defaults to
+ * [GRAPH_METRIC_POINTS]: the linked habit's count is incremented, which is
+ * what feeds its points (the classic conditional behaviour).
+ */
+fun conditionalLinkValueKey(
+    values: Map<String, Map<String, String>>,
+    source: String,
+    linked: String
+): String = values[source]?.get(linked) ?: GRAPH_METRIC_POINTS
+
+/**
+ * Resolves the DB storage key that a conditional increment writes to for
+ * [linkedName] under [valueKey]: the habit's own key for Points (default),
+ * or its secondary-value slots for Value2 / Value3. Unknown keys fall back
+ * to the habit's primary key.
+ */
+fun conditionalLinkStorageKey(linkedName: String, valueKey: String): String = when (valueKey) {
+    GRAPH_METRIC_VALUE2 -> secondaryValueKey(linkedName)
+    GRAPH_METRIC_VALUE3 -> secondaryValue2Key(linkedName)
+    else -> linkedName
+}
+
+/** True when [valueKey] refers to a raw secondary slot rather than the primary count. */
+fun isSecondaryValueMetric(valueKey: String): Boolean =
+    valueKey == GRAPH_METRIC_VALUE2 || valueKey == GRAPH_METRIC_VALUE3
+
+/**
+ * Like [conditionalLinkValueKey] but also validates that the linked habit actually
+ * has the configured slot: Value2 requires membership in [secondaryHabits], Value3
+ * requires a chess.com link in [chessLinks]. Invalid/stale overrides fall back to
+ * [GRAPH_METRIC_POINTS] so increments never write to a slot the UI can't display.
+ */
+fun effectiveConditionalLinkValueKey(
+    values: Map<String, Map<String, String>>,
+    secondaryHabits: Set<String>,
+    chessLinks: Map<String, String>,
+    source: String,
+    linked: String
+): String {
+    val configured = conditionalLinkValueKey(values, source, linked)
+    return when {
+        configured == GRAPH_METRIC_VALUE2 && linked in secondaryHabits -> configured
+        configured == GRAPH_METRIC_VALUE3 && linked in chessLinks -> configured
+        else -> GRAPH_METRIC_POINTS
+    }
+}
+
 // ── Display-label helpers (UI-only overrides) ────────────────────────────────
 /**
  * Returns the **default** human-readable label for a value/metric key when no
@@ -439,6 +489,16 @@ data class AppSettings(
      * auto-incremented whenever the conditional habit is tapped.
      */
     val conditionalLinkedHabits: Map<String, Set<String>> = emptyMap(),
+
+    /**
+     * Per-link conditional feed-target overrides: conditional habit name →
+     * linked habit name → value key ([GRAPH_METRIC_POINTS], [GRAPH_METRIC_VALUE2],
+     * [GRAPH_METRIC_VALUE3]). An absent entry means [GRAPH_METRIC_POINTS]: the
+     * linked habit's count is incremented (classic behaviour, feeds its points).
+     * Value2/Value3 instead feed the linked habit's raw secondary slots
+     * (`secondary_value:` / `secondary_value2:` storage keys).
+     */
+    val conditionalLinkValues: Map<String, Map<String, String>> = emptyMap(),
 
     /** Habits that have the "subtyped" feature enabled. */
     val subtypedHabits: Set<String> = emptySet(),

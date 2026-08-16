@@ -442,11 +442,16 @@ class VoiceHabitService : Service() {
                         Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
                     }
 
-                    // Conditional habit propagation
+                    // Conditional habit propagation (each link feeds its configured value)
                     if (habitName in settings.conditionalHabits) {
                         val linked = settings.conditionalLinkedHabits[habitName] ?: emptySet()
                         for (linkedName in linked) {
-                            if (linkedName in settings.maxOneHabits) {
+                            val valueKey = com.example.tail.data.effectiveConditionalLinkValueKey(
+                                settings.conditionalLinkValues, settings.secondaryValueHabits,
+                                settings.chessComHabitLinks, habitName, linkedName
+                            )
+                            val targetKey = com.example.tail.data.conditionalLinkStorageKey(linkedName, valueKey)
+                            if (targetKey == linkedName && linkedName in settings.maxOneHabits) {
                                 val db = habitsRepo.loadDatabase(uri, applicationContext)
                                 val cnt = db[linkedName]?.get(todayStr) ?: 0
                                 if (cnt >= 1) {
@@ -454,9 +459,9 @@ class VoiceHabitService : Service() {
                                     continue
                                 }
                             }
-                            habitsRepo.incrementHabit(uri, applicationContext, linkedName, 1)
+                            habitsRepo.incrementHabitForDate(uri, applicationContext, targetKey, 1, java.time.LocalDate.now())
                             HabitIncrementBus.emit(linkedName)
-                            Log.i(TAG, "Incremented linked '$linkedName' (conditional on '$habitName')")
+                            Log.i(TAG, "Incremented linked '$linkedName' (conditional on '$habitName', feeds $valueKey)")
 
                             // Record timestamp for the linked habit too
                             try {
