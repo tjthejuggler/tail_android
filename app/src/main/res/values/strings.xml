@@ -2,6 +2,7 @@
     <string name="app_name">tail</string>
     <string name="permission_tail_integration_description">Allows same-keystore apps to read the habit list and trigger habit increments via IPC.</string>
     <string name="share_activity_label">tail</string>
+    <string name="chess_share_activity_label">♟ Chess Audit</string>
     <string name="shortcut_voice_trigger_short">Voice Trigger</string>
     <string name="shortcut_voice_trigger_long">Listen for voice habit trigger</string>
     <string name="shortcut_text_trigger_short">Text Trigger</string>

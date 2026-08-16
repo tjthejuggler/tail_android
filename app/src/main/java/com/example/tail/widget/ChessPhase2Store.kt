@@ -9,9 +9,7 @@ import org.json.JSONObject
  * Persistence for the Phase 2 Post-Game Performance Audit.
  *
  * Stores, in plain [SharedPreferences] (not DataStore) so the bubble service
- * and the audit activity can read/write synchronously:
- *  - `last_selected_time_control` — UI memory requirement (spec §2): the
- *    Phase 2 modal's time control selector defaults to the last used tier.
+ * and the share activity can read/write synchronously:
  *  - the per-time-control rolling accuracy windows (last
  *    [ChessPhase2Engine.ROLLING_WINDOW] games each) used as the baseline for
  *    the calibrated accuracy-drop check.
@@ -19,15 +17,17 @@ import org.json.JSONObject
  *    a session ends at a TERMINATE_SESSION output, or when the gap between
  *    consecutive audits exceeds [SESSION_GAP_MS] (the user clearly left the
  *    board and came back later).
- *  - the last entered "total elapsed playing time this session" so the form
- *    can be pre-filled and simply bumped up between games.
+ *
+ * Audits are filed automatically when the user shares a finished chess.com
+ * game link to Tail (see [com.example.tail.ChessGameShareActivity]); each
+ * audit records the game's chess.com ID (so re-shares are detected) and its
+ * estimated base-clock minutes (so the 60-minute capacity ceiling
+ * accumulates automatically).
  */
 object ChessPhase2Store {
 
     private const val PREFS_NAME = "tail_chess_phase2"
-    private const val KEY_LAST_TC = "last_selected_time_control"
     private const val KEY_AUDITS = "audit_history"
-    private const val KEY_LAST_SESSION_MINS = "last_session_elapsed_mins"
     private const val KEY_ACC_PREFIX = "acc_history_"
 
     /** Only the most recent audits are kept — plenty for session derivation. */
@@ -52,23 +52,16 @@ object ChessPhase2Store {
         val outputState: String,
         /** Elo delta of the audited game. */
         val deltaE: Double,
-        /** CAPS2 accuracy of the audited game (as entered). */
+        /** CAPS2 accuracy of the audited game (as reported by chess.com). */
         val caps2Accuracy: Double,
-        /** False when the accuracy was bypassed (short game) — such games
-         *  are excluded from the rolling mean. */
-        val accuracyCounted: Boolean
+        /** False when the accuracy was bypassed (short game or no Game
+         *  Review available) — such games are excluded from the rolling mean. */
+        val accuracyCounted: Boolean,
+        /** chess.com game ID ("" for audits filed before share ingestion). */
+        val gameId: String = "",
+        /** Estimated base-clock minutes the game contributed to the session. */
+        val estimatedMinutes: Double = 0.0
     )
-
-    // ── Time control memory (spec §2 UI persistence) ───────────────────────
-
-    fun lastTimeControl(context: Context): ChessPhase2Engine.TimeControl? =
-        prefs(context).getString(KEY_LAST_TC, null)
-            ?.let { ChessPhase2Engine.TimeControl.fromNameOrBlitz(it) }
-            ?.takeIf { it.name == prefs(context).getString(KEY_LAST_TC, null) }
-
-    fun saveTimeControl(context: Context, tc: ChessPhase2Engine.TimeControl) {
-        prefs(context).edit().putString(KEY_LAST_TC, tc.name).apply()
-    }
 
     // ── Rolling accuracy windows (per time control) ────────────────────────
 
@@ -116,7 +109,9 @@ object ChessPhase2Store {
                     outputState = o.optString("outputState", ""),
                     deltaE = o.optDouble("deltaE", 0.0),
                     caps2Accuracy = o.optDouble("caps2Accuracy", 0.0),
-                    accuracyCounted = o.optBoolean("accuracyCounted", true)
+                    accuracyCounted = o.optBoolean("accuracyCounted", true),
+                    gameId = o.optString("gameId", ""),
+                    estimatedMinutes = o.optDouble("estimatedMinutes", 0.0)
                 )
             }
         } catch (_: Exception) {
@@ -137,10 +132,16 @@ object ChessPhase2Store {
                 put("deltaE", it.deltaE)
                 put("caps2Accuracy", it.caps2Accuracy)
                 put("accuracyCounted", it.accuracyCounted)
+                put("gameId", it.gameId)
+                put("estimatedMinutes", it.estimatedMinutes)
             })
         }
         prefs(context).edit().putString(KEY_AUDITS, arr.toString()).apply()
     }
+
+    /** The most recent audit of a specific chess.com game, or null (re-share detection). */
+    fun findAuditByGameId(context: Context, gameId: Long): Phase2Audit? =
+        loadAudits(context).lastOrNull { it.gameId == gameId.toString() }
 
     // ── Session derivation ─────────────────────────────────────────────────
 
@@ -187,8 +188,9 @@ object ChessPhase2Store {
      *  - every Phase 2 audit filed since the authorization is CONTINUE_RATED
      *    (a Yellow/Red audit revokes rated play for the rest of the window).
      *
-     * The floating bubble uses this to decide whether its popup menu shows
-     * the "Report rated game" (Phase 2) entry.
+     * The floating bubble uses this to decide which SINGLE chess entry its
+     * popup menu shows: authorized → "Chess Status"; otherwise →
+     * "Chess Readiness". The share activity gates on it too.
      */
     fun ratedPlayAuthorized(
         context: Context,
@@ -203,12 +205,13 @@ object ChessPhase2Store {
         }
     }
 
-    // ── Session minutes pre-fill ───────────────────────────────────────────
-
-    fun lastSessionMins(context: Context): Int =
-        prefs(context).getInt(KEY_LAST_SESSION_MINS, 0)
-
-    fun saveLastSessionMins(context: Context, mins: Int) {
-        prefs(context).edit().putInt(KEY_LAST_SESSION_MINS, mins.coerceAtLeast(0)).apply()
-    }
+    /**
+     * Estimated base-clock minutes already audited in the CURRENT session —
+     * the running tally the 60-minute capacity ceiling is checked against.
+     */
+    fun sessionMinutesUsed(
+        context: Context,
+        now: Long = System.currentTimeMillis()
+    ): Double =
+        currentSessionAudits(context, now).sumOf { it.estimatedMinutes }
 }

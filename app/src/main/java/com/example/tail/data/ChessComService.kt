@@ -36,6 +36,43 @@ data class ChessComGame(
 const val CHESS_COM_RESULT_WIN = "win"
 
 /**
+ * A single chess.com game with the FULL detail needed by the Phase 2
+ * post-game audit — everything the monthly archive endpoint exposes for a
+ * game: ratings, per-side results, Game Review accuracies (when computed),
+ * the PGN and the rated/rules flags.
+ */
+data class ChessComGameDetail(
+    /** Numeric game ID parsed from the game URL (e.g. 173067813820). */
+    val gameId: Long,
+    /** Canonical game URL, e.g. "https://www.chess.com/game/live/173067813820". */
+    val url: String,
+    /** True for rated games (only rated games are audited). */
+    val rated: Boolean,
+    /** Rules variant ("chess", "chess960", …) — only "chess" is audited. */
+    val rules: String,
+    /** API time class: "bullet", "blitz", "rapid", "daily". */
+    val timeClass: String,
+    /** Raw time control, e.g. "600" or "180+2". */
+    val timeControl: String,
+    /** Unix timestamp (seconds) when the game ended. */
+    val endTime: Long,
+    val whiteUsername: String,
+    val whiteRating: Int,
+    /** Result string for the white player, e.g. "win", "checkmated", "agreed". */
+    val whiteResult: String,
+    val blackUsername: String,
+    val blackRating: Int,
+    /** Result string for the black player. */
+    val blackResult: String,
+    /** Game Review (CAPS2) accuracy for white, 0–100, or null when unavailable. */
+    val whiteAccuracy: Double?,
+    /** Game Review (CAPS2) accuracy for black, 0–100, or null when unavailable. */
+    val blackAccuracy: Double?,
+    /** Full PGN of the game ("" when absent). */
+    val pgn: String
+)
+
+/**
  * Puzzle stats from chess.com /player/{username}/stats endpoint.
  */
 data class ChessComPuzzleStats(
@@ -114,6 +151,45 @@ class ChessComService {
     }
 
     /**
+     * Finds a single game by its numeric ID (as extracted from a shared
+     * chess.com game link) in the player's monthly archives. Searches the
+     * current month first, then the previous month (to cover month
+     * boundaries). Returns null when the game is not in either archive —
+     * chess.com can take a minute or two to publish a just-finished game.
+     */
+    suspend fun findGameById(username: String, gameId: Long): ChessComGameDetail? =
+        withContext(Dispatchers.IO) {
+            val current = java.time.YearMonth.now()
+            val months = listOf(current, current.minusMonths(1))
+            for (m in months) {
+                try {
+                    val games = getGameDetailsForMonth(username, m.year, m.monthValue)
+                    val match = games.firstOrNull { it.gameId == gameId }
+                    if (match != null) return@withContext match
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to search ${m} for game $gameId: ${e.message}")
+                }
+            }
+            null
+        }
+
+    /**
+     * Fetches the full game details for a specific year/month for a player
+     * (ratings, accuracies, PGN included).
+     */
+    suspend fun getGameDetailsForMonth(
+        username: String,
+        year: Int,
+        month: Int
+    ): List<ChessComGameDetail> = withContext(Dispatchers.IO) {
+        val monthStr = month.toString().padStart(2, '0')
+        val url = "$BASE_URL/player/${username.lowercase()}/games/$year/$monthStr"
+        val json = httpGet(url)
+        val gamesArr = json.optJSONArray("games") ?: JSONArray()
+        parseGameDetails(gamesArr)
+    }
+
+    /**
      * Validates that a chess.com username exists by trying to fetch their profile.
      * Returns true if the user exists, false otherwise.
      */
@@ -125,6 +201,48 @@ class ChessComService {
         } catch (e: Exception) {
             false
         }
+    }
+
+    /** Parses the archive endpoint's game objects into [ChessComGameDetail]s. */
+    private fun parseGameDetails(gamesArr: JSONArray): List<ChessComGameDetail> {
+        val games = mutableListOf<ChessComGameDetail>()
+        for (i in 0 until gamesArr.length()) {
+            try {
+                val g = gamesArr.getJSONObject(i)
+                val url = g.optString("url", "")
+                val gameId = ChessGameAuditMapperIds.trailingGameId(url) ?: continue
+                val white = g.optJSONObject("white")
+                val black = g.optJSONObject("black")
+                val acc = g.optJSONObject("accuracies")
+                games.add(
+                    ChessComGameDetail(
+                        gameId = gameId,
+                        url = url,
+                        rated = g.optBoolean("rated", false),
+                        rules = g.optString("rules", "chess"),
+                        timeClass = g.optString("time_class", ""),
+                        timeControl = g.optString("time_control", ""),
+                        endTime = g.optLong("end_time", 0L),
+                        whiteUsername = white?.optString("username", "") ?: "",
+                        whiteRating = white?.optInt("rating", 0) ?: 0,
+                        whiteResult = white?.optString("result", "") ?: "",
+                        blackUsername = black?.optString("username", "") ?: "",
+                        blackRating = black?.optInt("rating", 0) ?: 0,
+                        blackResult = black?.optString("result", "") ?: "",
+                        whiteAccuracy = acc?.let {
+                            it.optDouble("white", Double.NaN).takeIf { v -> !v.isNaN() }
+                        },
+                        blackAccuracy = acc?.let {
+                            it.optDouble("black", Double.NaN).takeIf { v -> !v.isNaN() }
+                        },
+                        pgn = g.optString("pgn", "")
+                    )
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse game detail at index $i: ${e.message}")
+            }
+        }
+        return games
     }
 
     private fun parseGames(gamesArr: JSONArray): List<ChessComGame> {
@@ -192,3 +310,9 @@ class ChessComService {
 }
 
 class ChessComApiException(val statusCode: Int, message: String) : Exception(message)
+
+/** Tiny pure helper: the trailing numeric game ID of a chess.com game URL. */
+private object ChessGameAuditMapperIds {
+    fun trailingGameId(url: String): Long? =
+        url.trimEnd('/').substringAfterLast('/').toLongOrNull()
+}

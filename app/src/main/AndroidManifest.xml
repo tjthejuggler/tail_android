@@ -140,6 +140,29 @@
         </activity>
 
         <!--
+            ChessGameShareActivity: appears in the system share sheet as
+            "♟ Chess Audit". When the user shares a finished chess.com game
+            link to Tail, it extracts the game ID, verifies rated play is
+            authorized (Phase 1 green-light window), fetches the game from
+            the chess.com archive API and runs the Phase 2 post-game audit
+            automatically — no manual data entry.
+        -->
+        <activity
+            android:name=".ChessGameShareActivity"
+            android:exported="true"
+            android:label="@string/chess_share_activity_label"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Tail.Transparent">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!--
             ContentProvider: exposes the habit list (habit_id, habit_name) to same-keystore apps.
             android:readPermission restricts query() to callers holding TAIL_INTEGRATION.
             Write operations are not permitted (UnsupportedOperationException in code).

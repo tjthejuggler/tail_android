@@ -856,43 +856,19 @@ class FloatingBubbleService : Service() {
             setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
         }
 
-        // Chess Readiness entries (shown when the bubble is over the
-        // Chess Readiness app). Listed FIRST so they stay prominent.
+        // Chess entries (shown when the bubble is over the Chess Readiness
+        // app). Listed FIRST so they stay prominent. Exactly ONE of the two
+        // is ever offered:
+        //  - rated play authorized (Phase 1 green light inside its 60-minute
+        //    window, no Yellow/Red audit since) → "Chess Status" popup
+        //    (games are audited by sharing them to Tail, not via a form).
+        //  - otherwise → "Chess Readiness" (the Phase 1 test), shown again
+        //    once the window expired or rated play was revoked.
         if (chessReadinessActive) {
-            // Show a "resume" hint when a step-by-step test is in progress
-            val resuming = ChessReadinessStore.loadSession(this) != null
-            val chessItem = TextView(this).apply {
-                text = if (resuming) "♟ Chess Readiness ▸ resume" else "♟ Chess Readiness"
-                textSize = 15f
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
-                background = GradientDrawable().apply {
-                    setColor(0xFF2A1A3A.toInt())
-                    cornerRadius = 8f * density
-                    setStroke(1, 0xFF8866CC.toInt())
-                }
-                setOnClickListener {
-                    hideHabitPickerMenu()
-                    openChessReadiness()
-                }
-            }
-            menu.addView(chessItem, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = 6.dp()
-            })
-
-            // Phase 2 post-game audit — the user reports the telemetry of
-            // the rated game they just finished (Game Review screen). Only
-            // offered while rated play is authorized: the last Phase 1 test
-            // was GREEN and is inside its 60-minute window, and no Yellow/Red
-            // Phase 2 audit has been filed since (early revocation).
             if (ChessPhase2Store.ratedPlayAuthorized(this)) {
-                val phase2Item = TextView(this).apply {
-                    text = "♟ Report rated game"
-                    textSize = 14f
+                val statusItem = TextView(this).apply {
+                    text = "♟ Chess Status"
+                    textSize = 15f
                     setTextColor(Color.WHITE)
                     gravity = Gravity.CENTER
                     setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
@@ -903,10 +879,35 @@ class FloatingBubbleService : Service() {
                     }
                     setOnClickListener {
                         hideHabitPickerMenu()
-                        openChessPhase2()
+                        openChessStatus()
                     }
                 }
-                menu.addView(phase2Item, LinearLayout.LayoutParams(
+                menu.addView(statusItem, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = 6.dp()
+                })
+            } else {
+                // Show a "resume" hint when a step-by-step test is in progress
+                val resuming = ChessReadinessStore.loadSession(this) != null
+                val chessItem = TextView(this).apply {
+                    text = if (resuming) "♟ Chess Readiness ▸ resume" else "♟ Chess Readiness"
+                    textSize = 15f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+                    background = GradientDrawable().apply {
+                        setColor(0xFF2A1A3A.toInt())
+                        cornerRadius = 8f * density
+                        setStroke(1, 0xFF8866CC.toInt())
+                    }
+                    setOnClickListener {
+                        hideHabitPickerMenu()
+                        openChessReadiness()
+                    }
+                }
+                menu.addView(chessItem, LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
@@ -1000,34 +1001,34 @@ class FloatingBubbleService : Service() {
     // activity is started, so the chess app stays the focused, dominant app;
     // closing a dialog hands focus straight back to it.
     private var chessReadinessOverlay: ChessReadinessOverlay? = null
-    private var chessPhase2Overlay: ChessPhase2Overlay? = null
+    private var chessStatusOverlay: ChessStatusOverlay? = null
 
     /** Shows the Phase 1 readiness wizard as a floating overlay dialog. */
     private fun openChessReadiness() {
         try {
-            chessPhase2Overlay?.dismiss()
-            chessPhase2Overlay = null
+            chessStatusOverlay?.dismiss()
+            chessStatusOverlay = null
             chessReadinessOverlay?.dismiss()
             chessReadinessOverlay = ChessReadinessOverlay(this).also { it.show() }
         } catch (e: Exception) { /* never crash the bubble */ }
     }
 
-    /** Shows the Phase 2 post-game audit as a floating overlay dialog. */
-    private fun openChessPhase2() {
+    /** Shows the chess status popup as a floating overlay dialog. */
+    private fun openChessStatus() {
         try {
             chessReadinessOverlay?.dismiss()
             chessReadinessOverlay = null
-            chessPhase2Overlay?.dismiss()
-            chessPhase2Overlay = ChessPhase2Overlay(this).also { it.show() }
+            chessStatusOverlay?.dismiss()
+            chessStatusOverlay = ChessStatusOverlay(this).also { it.show() }
         } catch (e: Exception) { /* never crash the bubble */ }
     }
 
     /** Removes any open chess overlay dialog (e.g. when the service dies). */
     private fun dismissChessOverlays() {
         try { chessReadinessOverlay?.dismiss() } catch (_: Exception) {}
-        try { chessPhase2Overlay?.dismiss() } catch (_: Exception) {}
+        try { chessStatusOverlay?.dismiss() } catch (_: Exception) {}
         chessReadinessOverlay = null
-        chessPhase2Overlay = null
+        chessStatusOverlay = null
     }
 
     /** Starts the timer for [habit] and updates the bubble visuals. */

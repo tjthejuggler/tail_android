@@ -44,7 +44,9 @@ import kotlin.math.roundToLong
  *    (Bullet 70 %, Blitz 75 %, Rapid 80 %).
  *
  * The engine is PURE — no Android dependencies — so it is unit-testable.
- * Persistence lives in [ChessPhase2Store]; UI lives in [ChessPhase2Overlay].
+ * Persistence lives in [ChessPhase2Store]; the audit is triggered by sharing
+ * the finished game's chess.com link to Tail (see [ChessGameAuditMapper] and
+ * com.example.tail.ChessGameShareActivity).
  */
 object ChessPhase2Engine {
 
