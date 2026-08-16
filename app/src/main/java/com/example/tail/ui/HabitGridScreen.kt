@@ -270,8 +270,8 @@ fun HabitGridScreen(
     var appAssociationPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the widget-trigger app picker is open (null = none)
     var widgetTriggerPickerHabit by remember { mutableStateOf<String?>(null) }
-    // Habit name for which the podcast app picker is open (null = none)
-    var podcastAppPickerHabit by remember { mutableStateOf<String?>(null) }
+    // Habit name for which the media app picker is open (null = none)
+    var mediaAppPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the long-press URL app picker is open (null = none)
     var longPressUrlAppPickerHabit by remember { mutableStateOf<String?>(null) }
     // Habit name for which the multi-app launcher dialog is open (null = none)
@@ -1236,10 +1236,10 @@ fun HabitGridScreen(
                         onSetTimerPrimaryValue = { name, minutesPrimary ->
                             viewModel.setWidgetTimerPrimaryValue(name, minutesPrimary)
                         },
-                        podcastHabits = settings.podcastHabits,
-                        podcastApps = settings.podcastApps,
-                        onTogglePodcast = { name -> viewModel.togglePodcastHabit(name) },
-                        onSetPodcastApp = { name -> podcastAppPickerHabit = name },
+                        mediaHabits = settings.mediaHabits,
+                        mediaApps = settings.mediaApps,
+                        onToggleMedia = { name -> viewModel.toggleMediaHabit(name) },
+                        onSetMediaApp = { name -> mediaAppPickerHabit = name },
                         hasNotificationAccess = viewModel.hasNotificationListenerAccess(),
                         onRequestNotificationAccess = { viewModel.openNotificationListenerSettings() },
                         onInvertHabit = { name -> viewModel.invertHabit(name) },
@@ -1647,17 +1647,17 @@ fun HabitGridScreen(
         )
     }
 
-    // Podcast app picker — triggered when user taps "Select App" in the
-    // Podcast section of edit mode for a selected habit
-    if (podcastAppPickerHabit != null) {
-        val habitName = podcastAppPickerHabit!!
+    // Media app picker — triggered when user taps "Select App" in the
+    // Media section of edit mode for a selected habit
+    if (mediaAppPickerHabit != null) {
+        val habitName = mediaAppPickerHabit!!
         AppPickerDialog(
             context = context,
             onConfirm = { packageName, _ ->
-                viewModel.setPodcastApp(habitName, packageName)
-                podcastAppPickerHabit = null
+                viewModel.setMediaApp(habitName, packageName)
+                mediaAppPickerHabit = null
             },
-            onDismiss = { podcastAppPickerHabit = null }
+            onDismiss = { mediaAppPickerHabit = null }
         )
     }
 
@@ -2420,22 +2420,22 @@ private fun WidgetTriggerSection(
 }
 
 @Composable
-private fun PodcastSection(
+private fun MediaSection(
     habitName: String,
-    podcastHabits: Set<String>,
-    podcastApps: Map<String, String>,
-    onTogglePodcast: (String) -> Unit,
-    onSetPodcastApp: (String) -> Unit,
+    mediaHabits: Set<String>,
+    mediaApps: Map<String, String>,
+    onToggleMedia: (String) -> Unit,
+    onSetMediaApp: (String) -> Unit,
     hasNotificationAccess: Boolean,
     onRequestNotificationAccess: () -> Unit
 ) {
     val context = LocalContext.current
-    val isEnabled = habitName in podcastHabits
-    val podcastPkg = podcastApps[habitName]
+    val isEnabled = habitName in mediaHabits
+    val mediaPkg = mediaApps[habitName]
 
-    // Resolve the podcast app's display label
-    val appLabel = remember(podcastPkg) {
-        podcastPkg?.let { pkg ->
+    // Resolve the media app's display label
+    val appLabel = remember(mediaPkg) {
+        mediaPkg?.let { pkg ->
             try {
                 val pm = context.packageManager
                 pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
@@ -2451,13 +2451,13 @@ private fun PodcastSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(text = "🎙 Podcast", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(text = "🎧 Media", color = Color(0xFFCCCCCC), fontSize = 12.sp)
                 Text(
                     text = if (isEnabled) {
                         if (appLabel != null) "Auto-records listening time in $appLabel"
-                        else "Select a podcast app below"
+                        else "Select a media app below"
                     } else {
-                        "Track listening time automatically"
+                        "Auto-track podcast & music listening time"
                     },
                     color = if (isEnabled) Color(0xFF66BB6A) else Color(0xFF888888),
                     fontSize = 10.sp
@@ -2465,7 +2465,7 @@ private fun PodcastSection(
             }
             Switch(
                 checked = isEnabled,
-                onCheckedChange = { onTogglePodcast(habitName) },
+                onCheckedChange = { onToggleMedia(habitName) },
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = Color(0xFF44BBFF),
                     checkedTrackColor = Color(0xFF003355),
@@ -2499,7 +2499,7 @@ private fun PodcastSection(
             }
         }
 
-        // Podcast app selection row (only when enabled)
+        // Media app selection row (only when enabled)
         if (isEnabled) {
             Spacer(modifier = Modifier.height(4.dp))
             Row(
@@ -2508,7 +2508,7 @@ private fun PodcastSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "Podcast App", color = Color(0xFFAAAAAA), fontSize = 11.sp)
+                    Text(text = "Media App", color = Color(0xFFAAAAAA), fontSize = 11.sp)
                     Text(
                         text = appLabel ?: "Not set",
                         color = if (appLabel != null) Color(0xFF66CCFF) else Color(0xFF888888),
@@ -2516,14 +2516,14 @@ private fun PodcastSection(
                     )
                 }
                 Button(
-                    onClick = { onSetPodcastApp(habitName) },
+                    onClick = { onSetMediaApp(habitName) },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
                     modifier = Modifier.height(32.dp)
                 ) {
-                    Text("🎙", fontSize = 11.sp)
+                    Text("🎧", fontSize = 11.sp)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        if (podcastPkg == null) "Select App" else "Change",
+                        if (mediaPkg == null) "Select App" else "Change",
                         fontSize = 11.sp,
                         color = Color(0xFF66CCFF)
                     )
@@ -2531,14 +2531,14 @@ private fun PodcastSection(
             }
 
             // How the values work, once an app is chosen
-            if (podcastPkg != null) {
+            if (mediaPkg != null) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Minutes listened while the app plays are added automatically " +
                         "(primary value for points). Your tapped count stays as the points " +
                         "fallback on days with no listening. The bubble timer still works " +
-                        "over the app as a manual fallback. Episode titles are auto-added " +
-                        "to the text log when text entry is set up.",
+                        "over the app as a manual fallback. Track/episode titles are " +
+                        "auto-added to the text log when text entry is set up.",
                     color = Color(0xFF999999),
                     fontSize = 9.sp,
                     lineHeight = 12.sp
@@ -3446,15 +3446,15 @@ private fun EditModeControlBar(
     widgetTimerMinutesPrimary: Set<String> = emptySet(),
     /** Called when the user changes which value is primary (true = minutes). */
     onSetTimerPrimaryValue: (String, Boolean) -> Unit = { _, _ -> },
-    // ── Podcast type parameters ───────────────────────────────────────────
-    /** Habits that have the "Podcast" type enabled. */
-    podcastHabits: Set<String> = emptySet(),
-    /** Maps habit name → podcast app package name. */
-    podcastApps: Map<String, String> = emptyMap(),
-    /** Called when the user toggles the "Podcast" type for a habit. */
-    onTogglePodcast: (String) -> Unit = {},
-    /** Called when the user taps to select/change the podcast app. */
-    onSetPodcastApp: (String) -> Unit = {},
+    // ── Media type parameters ─────────────────────────────────────────────
+    /** Habits that have the "Media" type enabled. */
+    mediaHabits: Set<String> = emptySet(),
+    /** Maps habit name → media app package name. */
+    mediaApps: Map<String, String> = emptyMap(),
+    /** Called when the user toggles the "Media" type for a habit. */
+    onToggleMedia: (String) -> Unit = {},
+    /** Called when the user taps to select/change the media app. */
+    onSetMediaApp: (String) -> Unit = {},
     /** Whether notification-listener access is granted (needed for auto-detection). */
     hasNotificationAccess: Boolean = false,
     /** Called when the user taps to grant notification access. */
@@ -4869,17 +4869,18 @@ private fun EditModeControlBar(
                         onSetTimerPrimaryValue = onSetTimerPrimaryValue
                     )
 
-                    // ── Podcast (auto listening-time tracking) ────────────────
-                    // While the chosen podcast app is actually PLAYING audio,
-                    // elapsed minutes are recorded automatically. The bubble
-                    // timer (above) remains the manual fallback.
+                    // ── Media (auto listening-time tracking) ──────────────────
+                    // While the chosen media app (podcast app, Spotify, …) is
+                    // actually PLAYING audio, elapsed minutes are recorded
+                    // automatically. The bubble timer (above) remains the
+                    // manual fallback.
                     Spacer(modifier = Modifier.height(6.dp))
-                    PodcastSection(
+                    MediaSection(
                         habitName = selectedHabitName,
-                        podcastHabits = podcastHabits,
-                        podcastApps = podcastApps,
-                        onTogglePodcast = onTogglePodcast,
-                        onSetPodcastApp = onSetPodcastApp,
+                        mediaHabits = mediaHabits,
+                        mediaApps = mediaApps,
+                        onToggleMedia = onToggleMedia,
+                        onSetMediaApp = onSetMediaApp,
                         hasNotificationAccess = hasNotificationAccess,
                         onRequestNotificationAccess = onRequestNotificationAccess
                     )

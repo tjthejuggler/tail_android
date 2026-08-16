@@ -25,8 +25,8 @@ import kotlinx.coroutines.launch
  * Foreground service that monitors the foreground app and automatically
  * shows/hides the [FloatingBubbleService] based on per-habit "Use Widget"
  * trigger settings. It ALSO polls media sessions every tick to drive
- * automatic podcast listening-time tracking ([PodcastPlaybackTracker]) for
- * habits with the "Podcast" type enabled.
+ * automatic media listening-time tracking ([MediaPlaybackTracker]) for
+ * habits with the "Media" type enabled (podcasts, Spotify, any audio app).
  *
  * The service polls [UsageStatsManager.queryEvents] every [POLL_INTERVAL_MS]
  * ms to detect which app is currently in the foreground (the package of the
@@ -35,9 +35,9 @@ import kotlinx.coroutines.launch
  * the floating bubble is started. When it leaves, the bubble is stopped and
  * any still-running habit timer is stopped and recorded.
  *
- * Podcast tracking is independent of the bubble: it runs whenever any habit
- * has a podcast app configured, and requires notification-listener access
- * (see [PodcastPlaybackTracker]) rather than usage access.
+ * Media tracking is independent of the bubble: it runs whenever any habit
+ * has a media app configured, and requires notification-listener access
+ * (see [MediaPlaybackTracker]) rather than usage access.
  *
  * Requires the user to grant "Usage access" permission
  * ([Settings.ACTION_USAGE_ACCESS_SETTINGS]). Without the permission the
@@ -157,15 +157,15 @@ class WidgetTriggerService : Service() {
     private var chessReadinessPackage: String? = null
 
     /**
-     * Reverse of the podcast-app setting: package → podcast habit names.
+     * Reverse of the media-app setting: package → media habit names.
      * Habits here get AUTOMATIC listening-time tracking via
-     * [PodcastPlaybackTracker] (media-session playback detection), which is
+     * [MediaPlaybackTracker] (media-session playback detection), which is
      * polled alongside the foreground-app check. Independent of the bubble:
      * the bubble only appears over an app when it is a widget TRIGGER app,
-     * but podcast minute tracking runs whenever a podcast app is configured.
+     * but media minute tracking runs whenever a media app is configured.
      */
     @Volatile
-    private var podcastHabitsByPackage: Map<String, List<String>> = emptyMap()
+    private var mediaHabitsByPackage: Map<String, List<String>> = emptyMap()
 
     /** The package that is currently in the foreground (or null). */
     private var currentForegroundPackage: String? = null
@@ -236,25 +236,25 @@ class WidgetTriggerService : Service() {
             ) settings.chessReadinessApp else null
             val newPackages = newByPackage.keys + listOfNotNull(newChessPkg)
 
-            // Podcast habits: package → habits for automatic listening-time
-            // tracking. Only entries whose habit still has the podcast type
+            // Media habits: package → habits for automatic listening-time
+            // tracking. Only entries whose habit still has the media type
             // enabled are honored (stale app entries are ignored).
-            val newPodcastByPackage = settings.podcastApps.entries
-                .filter { it.value.isNotBlank() && it.key in settings.podcastHabits }
+            val newMediaByPackage = settings.mediaApps.entries
+                .filter { it.value.isNotBlank() && it.key in settings.mediaHabits }
                 .groupBy({ it.value }, { it.key })
 
             watchedPackages = newPackages
             habitsByPackage = newByPackage
             chessReadinessPackage = newChessPkg
-            podcastHabitsByPackage = newPodcastByPackage
+            mediaHabitsByPackage = newMediaByPackage
             Log.d(
                 TAG,
                 "Watched packages loaded: $newPackages (chess readiness: $newChessPkg, " +
-                    "podcast apps: ${newPodcastByPackage.keys})"
+                    "media apps: ${newMediaByPackage.keys})"
             )
 
-            if (newPackages.isEmpty() && newPodcastByPackage.isEmpty()) {
-                // No trigger apps and no podcast apps configured — stop everything
+            if (newPackages.isEmpty() && newMediaByPackage.isEmpty()) {
+                // No trigger apps and no media apps configured — stop everything
                 stopBubble()
                 stopPolling()
             } else {
@@ -274,16 +274,16 @@ class WidgetTriggerService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "Poll error", e)
             }
-            // Automatic podcast listening-time tracking runs on the same tick
+            // Automatic media listening-time tracking runs on the same tick
             // as the foreground check (off the main thread — it does file I/O
             // when a listening block finishes).
-            val podcastMap = podcastHabitsByPackage
-            if (podcastMap.isNotEmpty()) {
+            val mediaMap = mediaHabitsByPackage
+            if (mediaMap.isNotEmpty()) {
                 serviceScope.launch {
                     try {
-                        PodcastPlaybackTracker.update(applicationContext, podcastMap)
+                        MediaPlaybackTracker.update(applicationContext, mediaMap)
                     } catch (e: Exception) {
-                        Log.e(TAG, "Podcast playback tracking error", e)
+                        Log.e(TAG, "Media playback tracking error", e)
                     }
                 }
             }
