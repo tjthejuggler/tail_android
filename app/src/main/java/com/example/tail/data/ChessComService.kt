@@ -48,7 +48,7 @@ data class ChessComGameDetail(
     val url: String,
     /** True for rated games (only rated games are audited). */
     val rated: Boolean,
-    /** Rules variant ("chess", "chess960", …) — only "chess" is audited. */
+    /** Rules variant ("chess", "chess960", …) — "chess" and "chess960" are audited. */
     val rules: String,
     /** API time class: "bullet", "blitz", "rapid", "daily". */
     val timeClass: String,

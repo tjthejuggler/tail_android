@@ -220,9 +220,24 @@ class ChessGameAuditMapperTest {
     }
 
     @Test
-    fun `variant games are not auditable`() {
+    fun `chess960 games are auditable`() {
         val mapping = M.buildInput(detail(rules = "chess960"), "jugglah")
-        assertTrue(mapping is ChessGameAuditMapper.Mapping.NotAuditable)
+            as ChessGameAuditMapper.Mapping.Ready
+
+        // Chess960 is the user's main format: rated, reviewed, and audited
+        // exactly like standard chess.
+        assertEquals(ChessPhase2Engine.TimeControl.BLITZ, mapping.input.timeControl)
+        assertEquals(ChessPhase2Engine.GameResult.WIN, mapping.input.gameResult)
+        assertEquals(81.2, mapping.input.caps2Accuracy, 1e-9)
+        assertTrue(mapping.accuracyKnown)
+    }
+
+    @Test
+    fun `variant games are not auditable`() {
+        listOf("crazyhouse", "king-of-the-hill", "three-check", "antichess").forEach { rules ->
+            val mapping = M.buildInput(detail(rules = rules), "jugglah")
+            assertTrue(mapping is ChessGameAuditMapper.Mapping.NotAuditable)
+        }
     }
 
     @Test

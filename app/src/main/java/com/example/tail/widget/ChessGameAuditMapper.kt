@@ -54,6 +54,15 @@ object ChessGameAuditMapper {
         "agreed", "repetition", "stalemate", "insufficient", "50move", "timevsinsufficient"
     )
 
+    /**
+     * Rules variants that the audit covers. Chess960 is the user's MAIN format
+     * and is audit-identical to standard chess (rated, Game Review accuracies,
+     * normal time controls, same result strings). True variants (crazyhouse,
+     * three-check, king-of-the-hill, …) play by different rules and stay
+     * excluded.
+     */
+    private val AUDITED_RULES = setOf("chess", "chess960")
+
     /** Extracts the game ID from arbitrary shared text, or null when no chess.com game link is present. */
     fun parseSharedGameId(text: String): Long? =
         GAME_URL.find(text)?.groupValues?.get(1)?.toLongOrNull()
@@ -129,7 +138,7 @@ object ChessGameAuditMapper {
         if (!game.rated) return Mapping.NotAuditable(
             "Unrated game — casual play is not audited. Only rated games count."
         )
-        if (game.rules.isNotBlank() && game.rules != "chess") return Mapping.NotAuditable(
+        if (game.rules.isNotBlank() && game.rules !in AUDITED_RULES) return Mapping.NotAuditable(
             "Variant game (${game.rules}) — not part of the readiness system."
         )
         val tc = timeControlFor(game.timeControl) ?: return Mapping.NotAuditable(
