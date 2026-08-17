@@ -93,6 +93,7 @@ import com.example.tail.data.meal.VisionQueueRepository
 import com.example.tail.data.meal.VisionResult
 import com.example.tail.ipc.SmartVoiceService
 import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.ui.VoiceNoteBus
 import com.example.tail.ui.VoiceTranscriptBus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -327,6 +328,9 @@ class MediaCaptureActivity : ComponentActivity() {
         // Listen for habit increments from the voice service → auto-finish.
         // Ignored while a tandem flow is in progress (our own executor emits
         // there too, and the result screen must be allowed to appear).
+        // NOTE: the voice service is deliberately NOT stopped here — it still
+        // has to speak its TTS confirmation and stops itself afterwards
+        // (stopping it here was cutting off the spoken readback).
         lifecycleScope.launch {
             HabitIncrementBus.events.collect { habitName ->
                 if (tandemInProgress || captureState !is CaptureState.CameraWithVoice) {
@@ -335,7 +339,21 @@ class MediaCaptureActivity : ComponentActivity() {
                 }
                 Log.d(TAG, "Habit incremented via voice: $habitName — finishing")
                 handler.removeCallbacks(autoFinishTimeout)
-                stopVoiceService()
+                finish()
+            }
+        }
+
+        // A spoken note was saved by the voice service → the voice input is
+        // complete, so this screen has served its purpose and closes. Same as
+        // above: the service finishes its own confirmation (overlay, then
+        // self-stop) independently of this activity's lifecycle.
+        lifecycleScope.launch {
+            VoiceNoteBus.events.collect { noteText ->
+                if (tandemInProgress || captureState !is CaptureState.CameraWithVoice) {
+                    return@collect
+                }
+                Log.d(TAG, "Note saved via voice: \"${noteText.take(60)}\" — finishing")
+                handler.removeCallbacks(autoFinishTimeout)
                 finish()
             }
         }

@@ -36,6 +36,7 @@ import com.example.tail.data.dateString
 import com.example.tail.ui.ACTION_HABIT_INCREMENTED
 import com.example.tail.ui.EXTRA_HABIT_NAME
 import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.ui.VoiceNoteBus
 import com.example.tail.ui.VoiceTranscriptBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -652,6 +653,10 @@ class SmartVoiceService : Service() {
                 }
 
                 Log.i(TAG, "Note prepended to file: \"$text\"")
+
+                // Notify hosting screens (e.g. MediaCaptureActivity) that the
+                // voice input is complete so they can close themselves
+                VoiceNoteBus.emit(text)
 
                 // Show overlay confirmation with note text
                 handler.post { showNoteConfirmation(text) }
