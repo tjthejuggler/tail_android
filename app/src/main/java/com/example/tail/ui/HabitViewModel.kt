@@ -7555,6 +7555,161 @@ class HabitViewModel(
         _movieSuggestion.value = null
     }
 
+    // ── Movie confirmation flash (auto-prompt on app open) ────────────────────
+
+    /** Max age (ms) of a desktop-detected movie before we stop asking about it. */
+    private val moviePromptMaxAgeMs = 48 * 60 * 60 * 1000L
+
+    /**
+     * Stable marker identifying a prompted movie ("title@watchDate"). Keyed on
+     * the watch DAY (not lastWatched) because the desktop watcher can merge or
+     * extend sessions of the same play, which shifts lastWatched — the day
+     * never changes, so an answered movie is never re-asked.
+     */
+    private fun moviePromptMarker(movie: BridgeMovie): String {
+        val day = movie.date.ifBlank { movie.lastWatched.take(10) }
+        return "${movie.title.trim().lowercase()}@$day"
+    }
+
+    /** Case/whitespace-insensitive title match against logged entry texts. */
+    private fun titleLogged(title: String, entries: List<Pair<String, String>>): Boolean {
+        val needle = title.trim().lowercase()
+        return entries.any { it.second.trim().lowercase() == needle }
+    }
+
+    /** True when the movie's most recent session started within the prompt window. */
+    private fun isMoviePromptRecent(movie: BridgeMovie): Boolean {
+        val lastStartUnix = movie.sessions.maxOfOrNull { it.startUnix }?.takeIf { it > 0 }
+        if (lastStartUnix != null) {
+            val ageMs = System.currentTimeMillis() - lastStartUnix * 1000L
+            return ageMs in 0..moviePromptMaxAgeMs
+        }
+        val parsed = try {
+            java.time.LocalDateTime.parse(
+                movie.lastWatched,
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            )
+        } catch (e: Exception) { null }
+        return parsed?.let {
+            java.time.Duration.between(it, java.time.LocalDateTime.now()).toMillis()
+                .let { age -> age in 0..moviePromptMaxAgeMs }
+        } ?: true // unparseable → assume recent so the user still gets asked once
+    }
+
+    /**
+     * Looks for an unconfirmed recently-watched desktop movie to ask about in
+     * the bottom flash when the app opens. Skips titles already logged today
+     * for [habitName], prompts already handled (answered Yes/No or timed out)
+     * and watches older than the prompt window.
+     *
+     * @param onResult Called with the movie to ask about, or null when there
+     *                 is nothing to confirm. Runs on the main thread.
+     */
+    fun prepareMoviePrompt(
+        habitName: String,
+        date: LocalDate,
+        onResult: (BridgeMovie?) -> Unit
+    ) {
+        if (!_settings.value.bridgeEnabled) {
+            onResult(null)
+            return
+        }
+        loadTextEntriesWithTimestamps(habitName, date) { todayEntries ->
+            val excludeTitles = todayEntries.map { it.second }
+            fetchMovieSuggestion(excludeTitles) { movie ->
+                if (movie == null || titleLogged(movie.title, todayEntries)) {
+                    // Bridge unreachable / no data, or the suggest endpoint fell
+                    // back to a title that is already logged today — nothing to ask.
+                    onResult(null)
+                    return@fetchMovieSuggestion
+                }
+                // The suggestion may be for a movie played on an earlier day;
+                // skip it when that exact title was already logged on its own
+                // watch day (the day the flash is asking about).
+                val watchDate = com.example.tail.data.parseDate(movie.date)
+                if (watchDate != null && watchDate != date) {
+                    loadTextEntriesWithTimestamps(habitName, watchDate) { watchDayEntries ->
+                        if (titleLogged(movie.title, watchDayEntries)) {
+                            onResult(null)
+                        } else {
+                            finishMoviePromptCheck(movie, onResult)
+                        }
+                    }
+                } else {
+                    finishMoviePromptCheck(movie, onResult)
+                }
+            }
+        }
+    }
+
+    /** Final gate: already-handled marker and recency window. */
+    private fun finishMoviePromptCheck(movie: BridgeMovie, onResult: (BridgeMovie?) -> Unit) {
+        viewModelScope.launch {
+            val handled = try {
+                settingsRepo.getMoviePromptHandled()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to read movie prompt markers: ${e.message}")
+                emptySet()
+            }
+            if (moviePromptMarker(movie) in handled || !isMoviePromptRecent(movie)) {
+                onResult(null)
+            } else {
+                onResult(movie)
+            }
+        }
+    }
+
+    /**
+     * Logs [movie] as a watched entry for [habitName] — the flash's Yes action
+     * and the auto-confirm timeout. The entry is timestamped at the movie's
+     * last session start when that was today, otherwise at the current time.
+     * Marks the prompt as handled so it is never asked again.
+     *
+     * @param onLogged Called with the "HH:mm:ss" entry time used (main thread).
+     */
+    fun confirmMoviePrompt(
+        habitName: String,
+        movie: BridgeMovie,
+        onLogged: (String) -> Unit = {}
+    ) {
+        markMoviePromptHandled(movie)
+        val entryTime = moviePromptEntryTime(movie)
+        saveTextEntries(habitName, listOf(movie.title), null, entryTime)
+        onLogged(entryTime.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
+    }
+
+    /** Dismisses the movie prompt without logging anything (the No action). */
+    fun dismissMoviePrompt(movie: BridgeMovie) {
+        markMoviePromptHandled(movie)
+    }
+
+    /** Entry time for a confirmed movie: its last start time today, else now. */
+    private fun moviePromptEntryTime(movie: BridgeMovie): java.time.LocalTime {
+        val parsed = try {
+            java.time.LocalDateTime.parse(
+                movie.lastWatched,
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            )
+        } catch (e: Exception) { null }
+        return if (parsed != null && parsed.toLocalDate() == java.time.LocalDate.now()) {
+            parsed.toLocalTime()
+        } else {
+            java.time.LocalTime.now()
+        }
+    }
+
+    /** Persists the handled marker so the same movie is never re-asked. */
+    private fun markMoviePromptHandled(movie: BridgeMovie) {
+        viewModelScope.launch {
+            try {
+                val current = settingsRepo.getMoviePromptHandled()
+                settingsRepo.saveMoviePromptHandled(current + moviePromptMarker(movie))
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to save movie prompt marker: ${e.message}")
+            }
+        }
+    }
+
     /** Tests the bridge connection. */
     fun testBridgeConnection() {
         val conn = getBridgeConnection()

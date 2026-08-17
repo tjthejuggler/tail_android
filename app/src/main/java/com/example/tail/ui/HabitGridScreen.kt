@@ -343,6 +343,12 @@ fun HabitGridScreen(
     var quickEditWasTimeless by remember { mutableStateOf(false) }
     val toastScope = rememberCoroutineScope()
 
+    // Movie confirmation flash state — asks "did you watch X?" once per
+    // desktop-detected movie when the app is opened (movie bridge feature).
+    var movieConfirmMovie by remember { mutableStateOf<com.example.tail.data.BridgeMovie?>(null) }
+    var movieConfirmHabit by remember { mutableStateOf("") }
+    var moviePromptChecked by remember { mutableStateOf(false) }
+
     // File picker for per-habit text log files (used from EditModeControlBar)
     var textInputPickerHabit by remember { mutableStateOf<String?>(null) }
     val textInputFilePicker = rememberLauncherForActivityResult(
@@ -1282,6 +1288,58 @@ fun HabitGridScreen(
         }
     }
 
+    // Movie confirmation flash overlay at bottom of screen (movie bridge).
+    // Same style/position as the increment toast; doing nothing for the
+    // timeout auto-confirms the movie as watched.
+    movieConfirmMovie?.let { movie ->
+        val confirmWatched: () -> Unit = {
+            val habit = movieConfirmHabit
+            movieConfirmMovie = null
+            if (habit.isNotBlank()) {
+                viewModel.confirmMoviePrompt(habit, movie) { entryTime ->
+                    // Show the standard increment toast so the time can still
+                    // be edited / made timeless, exactly like a manual entry.
+                    incrementToastVersion++
+                    incrementToastHabit = habit
+                    incrementToastIsTimeless = false
+                    incrementToastOriginalTime = entryTime
+                    val currentVersion = incrementToastVersion
+                    toastScope.launch {
+                        delay(3500)
+                        if (incrementToastVersion == currentVersion) {
+                            incrementToastHabit = null
+                        }
+                    }
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 48.dp)
+        ) {
+            // Inactivity timeout — auto-confirm as watched
+            LaunchedEffect(movie.title, movie.lastWatched) {
+                delay(MOVIE_FLASH_AUTO_CONFIRM_SECONDS * 1000L)
+                if (movieConfirmMovie?.title == movie.title &&
+                    movieConfirmMovie?.lastWatched == movie.lastWatched
+                ) {
+                    confirmWatched()
+                }
+            }
+            MovieConfirmFlash(
+                title = movie.title,
+                durationLabel = movie.durationLabel,
+                visible = true,
+                onConfirm = confirmWatched,
+                onDismiss = {
+                    movieConfirmMovie = null
+                    viewModel.dismissMoviePrompt(movie)
+                }
+            )
+        }
+    }
+
     // ── Advice banner at bottom of screen (hidden in edit/graph modes) ──
     if (!editMode && !graphMode) {
         Box(
@@ -1293,6 +1351,23 @@ fun HabitGridScreen(
         }
     }
     } // end Box
+
+    // Movie-bridge flash: once per session, when the bridge is enabled and a
+    // linked movie habit exists, check for an unconfirmed recently-watched
+    // desktop movie and ask about it via the bottom flash.
+    LaunchedEffect(settings.bridgeEnabled, settings.bridgeMovieHabits, isLoading, moviePromptChecked) {
+        if (moviePromptChecked || isLoading || !settings.bridgeEnabled) return@LaunchedEffect
+        val habitName = settings.bridgeMovieHabits.firstOrNull {
+            it in settings.textInputHabits
+        } ?: return@LaunchedEffect
+        moviePromptChecked = true
+        viewModel.prepareMoviePrompt(habitName, today) { movie ->
+            if (movie != null && movieConfirmMovie == null) {
+                movieConfirmHabit = habitName
+                movieConfirmMovie = movie
+            }
+        }
+    }
 
     // Load timestamp count when selected edit habit changes (or the viewed day changes)
     LaunchedEffect(selectedEditIndex, editMode, habits, selectedDate) {

@@ -97,6 +97,8 @@ private val KEY_BRIDGE_ENABLED = booleanPreferencesKey("bridge_enabled")
 private val KEY_BRIDGE_URL = stringPreferencesKey("bridge_url")
 private val KEY_BRIDGE_TOKEN = stringPreferencesKey("bridge_token")
 private val KEY_BRIDGE_MOVIE_HABITS = stringSetPreferencesKey("bridge_movie_habits")
+// Movie confirmation flash: "title@lastWatched" markers of prompts already shown/handled
+private val KEY_MOVIE_PROMPT_HANDLED = stringSetPreferencesKey("movie_prompt_handled")
 // OMDb API key for IMDb ratings
 private val KEY_OMDB_API_KEY = stringPreferencesKey("omdb_api_key")
 // Voice trigger feature keys
@@ -1265,6 +1267,16 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits linked to the movie bridge. */
     suspend fun saveBridgeMovieHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_BRIDGE_MOVIE_HABITS] = habits }
+    }
+
+    /** Returns the "title@lastWatched" markers of movie prompts already handled. */
+    suspend fun getMoviePromptHandled(): Set<String> {
+        return context.dataStore.data.map { it[KEY_MOVIE_PROMPT_HANDLED] ?: emptySet() }.first()
+    }
+
+    /** Saves the set of handled movie prompt markers. */
+    suspend fun saveMoviePromptHandled(markers: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_MOVIE_PROMPT_HANDLED] = markers }
     }
 
     /** Saves the OMDb API key for IMDb rating lookups. */
