@@ -208,9 +208,15 @@ fun MapScreen(
     // enough to lock the frame). We do it in a LaunchedEffect via withContext.
     var coordsByDate by remember { mutableStateOf<Map<LocalDate, Pair<Double, Double>>>(emptyMap()) }
     var dataLoaded by remember { mutableStateOf(false) }
-    // Seeded from the ViewModel's cached metrics so the very first frame
-    // already shows likely-correct tiers (no red flash before data loads).
-    var loadingMetrics by remember { mutableStateOf(viewModel.loadingMetrics.value) }
+    // "The Orrery" reads the ViewModel's canonical loading-metrics StateFlow —
+    // the exact same source the habit grid collects (cache-seeded so the very
+    // first frame already shows likely-correct tiers, refined with the
+    // tasker file's live today-total, and refreshed whenever habits change).
+    // Recomputing independently here used to race the DB catch-up sync and
+    // could latch a stale, lower tier (a pink layer where the grid showed
+    // yellow); collecting the flow keeps both screens identical and
+    // self-correcting.
+    val loadingMetrics by viewModel.loadingMetrics.collectAsState()
     // Sorted (date, country) timeline → enables O(N) "countries up to date X"
     // scans without touching SharedPrefs on every slider tick. Re-loaded only
     // when the user adds/edits a location (locationDataVersion bumps).
@@ -222,13 +228,6 @@ fun MapScreen(
     var secondaryByDate by remember { mutableStateOf<Map<LocalDate, List<SecondaryLocation>>>(emptyMap()) }
     val locationVersion = viewModel.locationDataVersion
     LaunchedEffect(locationVersion, settings.mapMainHabit, settings.mapHideZeroDays) {
-        // Triple-metric stats for "The Orrery" loading animation (monthly avg
-        // → core form & colour, weekly avg → orbital halo, today's points →
-        // central spark). Computed off the composition thread.
-        withContext(Dispatchers.Default) {
-            loadingMetrics = viewModel.getLoadingMetrics(LocalDate.now())
-        }
-
         val (coords, countries, colors, secondaries) = withContext(Dispatchers.Default) {
             // Single SharedPrefs read + single JSON parse → O(N) instead of
             // O(N²) date-by-date lookups.

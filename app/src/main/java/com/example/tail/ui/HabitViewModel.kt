@@ -1230,7 +1230,21 @@ class HabitViewModel(
         }
         _habits.value = newList
         _todayPoints.value = newList.sumOf { it.todayCount }
-        val freshMetrics = getLoadingMetrics(_selectedDate.value)
+        var freshMetrics = getLoadingMetrics(_selectedDate.value)
+        // The daily spark must always match what the app-open spinner
+        // shows: the tasker stats file's live today total. The DB-derived
+        // dayTotal can lag the file (increments synced to the file before
+        // the DB catches up, or effective-points rounding differences),
+        // which made the spinner drop a tier (pink) after load while the
+        // cold-start animation was yellow. Mirror the startup refinement
+        // exactly so every spinner in the app — grid, map, reloads —
+        // renders the same tiers.
+        if (_selectedDate.value == LocalDate.now()) {
+            val taskerPoints = loadTodayPointsFromTaskerFile()
+            if (taskerPoints > 0) {
+                freshMetrics = freshMetrics.copy(todayPoints = taskerPoints)
+            }
+        }
         _loadingMetrics.value = freshMetrics
         // Persist only metrics computed for today so history browsing never
         // poisons the cold-start cache.
@@ -8917,7 +8931,16 @@ class HabitViewModel(
      */
     fun getLoadingMetrics(date: LocalDate): LoadingMetrics {
         val db = cachedPhoneDb
-        val tracked = trackedHabitNames().ifEmpty { db.keys }
+        // Habit set MUST mirror buildTaskerStatsContent (the tasker stats
+        // file's declared single source of truth for today/avg7/avg30):
+        // every DB habit except no-points habits and secondary-value
+        // storage keys. The previous screen/order-based set
+        // (trackedHabitNames) silently dropped habits that exist in the DB
+        // but not on any screen, yielding lower totals than the tasker
+        // file — so the spinner showed the tasker's yellow at startup and
+        // then dropped a tier (pink) once the DB load replaced the value.
+        val noPoints = _settings.value.noPointsHabits
+        val tracked = db.keys.filter { it !in noPoints && !isSecondaryValueKey(it) }
 
         var dayTotal = 0
         var weekSum = 0

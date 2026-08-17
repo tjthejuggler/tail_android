@@ -11,6 +11,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
@@ -19,7 +20,7 @@ import kotlin.math.roundToInt
 
 /**
  * ═══════════════════════════════════════════════════════════════════════
- *  HABIT LOADING ANIMATION — "THE ORRERY"
+ *  HABIT LOADING ANIMATION — "THE ORRERY II: PATRONAGE & GRANDEUR"
  * ═══════════════════════════════════════════════════════════════════════
  *
  * A generative loading animation whose form, colour and complexity are
@@ -36,13 +37,40 @@ import kotlin.math.roundToInt
  *  TODAY's points — MINOR. A central spark (dot → pulse → sparkle cross →
  *      micro-moons → ripples) in the daily tier colour.
  *
- * Every metric climbs the same 7 colour tiers used across the app
- * (see [habitPointsTier]); each tier-up visibly adds or transforms elements
- * in that metric's layer, so there is always something new to unlock.
- * 7 × 7 × 7 = 343 distinct combinations — plus a hidden "resonance"
- * flourish (expanding ripples) when all three tiers align.
+ * ── PATRONAGE — no metric animates alone ─────────────────────────────
  *
- * The renderers for each layer live in [HabitLoadingLayers.kt].
+ *  The quality of the OTHER two numbers upgrades each layer through
+ *  three patronage ranks, derived from the SUM of the supporting tiers
+ *  (0–12):  STRANGER (0–3) · ALLY (4–7) · PATRON (8–12).
+ *
+ *  A boosted layer is drawn brighter — its own colour is lerped toward
+ *  white — and grows extra embellishments (trails, sparkles, companion
+ *  bodies, halos) tinted with the SUPPORTERS' colours. An orange weekly
+ *  halo championed by a yellow month and a yellow day is a far richer
+ *  orange than one burning alone in an empty sky. A red ember with two
+ *  mighty patrons becomes a well-fed fire; alone, it is a sad flicker.
+ *
+ * ── GRANDEUR — the whole is more than the sum of its parts ──────────
+ *
+ *  The sum of all three tiers (0–18) drives the global spectacle. The
+ *  canvas itself GROWS with grandeur (72 dp → ~190 dp), and milestone
+ *  thresholds unlock cross-cutting flourishes behind/around the three
+ *  personal layers:
+ *
+ *      6+   nebula        — a deep-space glow blending all three colours
+ *      10+  starfield     — twinkling stars scattered across the void
+ *      13+  corona        — a slow rotating ring of arcs beyond the halo
+ *      16+  shooting stars— comets streak across the whole canvas
+ *      17+  spectrum crown— a full-spectrum ring circling everything
+ *      18   TOTALITY      — the perfect 6/6/6: white shockwave pulses
+ *
+ *  7 tiers × 3 patronage ranks = 21 variants per layer, 63 core
+ *  combinations of form — plus resonance ripples when all three tiers
+ *  align, plus the six grandeur flourishes. No two streaks are alike.
+ *
+ * The renderers live in [HabitLoadingLayers.kt] (shared primitives and
+ * global flourishes), [HabitLoadingMonthly.kt], [HabitLoadingWeekly.kt]
+ * and [HabitLoadingDaily.kt].
  */
 
 /**
@@ -81,17 +109,48 @@ internal fun tierAccent(tier: Int): Color = when (tier) {
 }
 
 /**
+ * Maps the combined tier sum of a layer's two supporters (0–12) to a
+ * patronage rank:
+ *
+ *   0 · STRANGER — the layer burns alone            (support sum 0–3)
+ *   1 · ALLY     — one strong companion lends aid   (support sum 4–7)
+ *   2 · PATRON   — championed by mighty neighbours  (support sum 8–12)
+ */
+fun patronageFrom(supportSum: Int): Int = when {
+    supportSum >= 8 -> 2
+    supportSum >= 4 -> 1
+    else            -> 0
+}
+
+/**
  * Per-metric tier triple resolved from [LoadingMetrics]. Averages are
  * rounded before tiering, matching the map's accent-colour behaviour.
+ *
+ * Derived properties encode the synergy system:
+ *  - [grandeur] — total spectacle (0–18), drives size + global flourishes.
+ *  - [monthPatronage] / [weekPatronage] / [dayPatronage] — how strongly
+ *    the other two metrics upgrade each layer's animation (0–2).
  */
 data class LoadingTiers(val monthly: Int, val weekly: Int, val daily: Int) {
-    /**
-     * True when all three metrics sit on the same non-zero tier — the
-     * animation then adds a slow "resonance" ripple as a reward for
-     * balanced, consistent performance.
-     */
+    /** True when all three metrics sit on the same non-zero tier. */
     val resonant: Boolean
         get() = monthly == weekly && weekly == daily && monthly > 0
+
+    /** Sum of all three tiers (0–18) — the global spectacle budget. */
+    val grandeur: Int
+        get() = monthly + weekly + daily
+
+    /** The weekly + daily tiers lend their strength to the monthly core. */
+    val monthPatronage: Int
+        get() = patronageFrom(weekly + daily)
+
+    /** The monthly + daily tiers lend their strength to the weekly halo. */
+    val weekPatronage: Int
+        get() = patronageFrom(monthly + daily)
+
+    /** The monthly + weekly tiers lend their strength to the daily spark. */
+    val dayPatronage: Int
+        get() = patronageFrom(monthly + weekly)
 }
 
 /** Resolves the tier triple for a [LoadingMetrics] bundle. */
@@ -101,13 +160,25 @@ fun loadingTiers(m: LoadingMetrics): LoadingTiers = LoadingTiers(
     daily = habitPointsTier(m.todayPoints)
 )
 
+/** Grandeur thresholds at which each global flourish unlocks. */
+internal object GrandeurThresholds {
+    const val NEBULA = 6
+    const val STARFIELD = 10
+    const val CORONA = 13
+    const val SHOOTING_STARS = 16
+    const val SPECTRUM_CROWN = 17
+    const val TOTALITY = 18
+}
+
 /**
- * The tiered loading animation ("The Orrery").
+ * The tiered loading animation ("The Orrery II").
  *
  * @param monthlyAverage 30-day average daily points — primary form & colour.
  * @param weeklyAverage  7-day average daily points — halo form & colour.
  * @param todayPoints    today's total points — central spark colour.
- * @param size           overall diameter of the animation.
+ * @param modifier       standard compose modifier.
+ * @param size           BASE diameter at zero grandeur; the animation grows
+ *                       beyond this (up to ~2.6×) as grandeur rises.
  */
 @Composable
 fun HabitLoadingSpinner(
@@ -118,9 +189,23 @@ fun HabitLoadingSpinner(
     size: Dp = 72.dp
 ) {
     val tiers = loadingTiers(LoadingMetrics(monthlyAverage, weeklyAverage, todayPoints))
+    // Diagnostic: log the resolved tiers whenever they change, so any
+    // mismatch between screens is traceable in logcat (tag "Orrery").
+    remember(tiers) {
+        android.util.Log.d(
+            "Orrery",
+            "tiers m=${tiers.monthly} w=${tiers.weekly} d=${tiers.daily} " +
+                "grandeur=${tiers.grandeur} raw(m=$monthlyAverage w=$weeklyAverage t=$todayPoints)"
+        )
+        tiers
+    }
     val monthColor = tierAccent(tiers.monthly)
     val weekColor = tierAccent(tiers.weekly)
     val dayColor = tierAccent(tiers.daily)
+
+    // The canvas itself swells with grandeur — a slow ease-in so mid
+    // tiers stay modest and the summit feels earned (72dp → ~190dp).
+    val growth = 1f + 1.65f * Math.pow((tiers.grandeur / 18f).toDouble(), 1.25).toFloat()
 
     val transition = rememberInfiniteTransition(label = "habitSpinner")
 
@@ -154,6 +239,16 @@ fun HabitLoadingSpinner(
         ),
         label = "phase3"
     )
+    // Fast shimmer for twinkles, flickers and stardust.
+    val phase4 by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "phase4"
+    )
     // Breathing 0→1→0 for pulses and glows.
     val breathe by transition.animateFloat(
         initialValue = 0f,
@@ -164,8 +259,18 @@ fun HabitLoadingSpinner(
         ),
         label = "breathe"
     )
+    // Slow, deep breath for the grandest glows and totality pulses.
+    val breathe2 by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2300, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breathe2"
+    )
 
-    Canvas(modifier = modifier.size(size)) {
+    Canvas(modifier = modifier.size(size * growth)) {
         val ctx = LoadingPaintContext(
             c = center,
             radius = this.size.minDimension / 2f,
@@ -176,23 +281,28 @@ fun HabitLoadingSpinner(
             phase = phase,
             phase2 = phase2,
             phase3 = phase3,
-            breathe = breathe
+            phase4 = phase4,
+            breathe = breathe,
+            breathe2 = breathe2
         )
+        val g = tiers.grandeur
 
-        // Deep-space backdrop glow — appears from monthly tier 4 upward and
-        // blends the monthly and weekly colours.
-        if (tiers.monthly >= 4) drawBackdropGlow(ctx)
+        // ── Global flourishes (behind) ─────────────────────────────────
+        if (g >= GrandeurThresholds.NEBULA) drawNebula(ctx)
+        if (g >= GrandeurThresholds.STARFIELD) drawStarfield(ctx)
+        if (g >= GrandeurThresholds.CORONA) drawCorona(ctx)
 
-        // Weekly halo — the outer orbital system, in the weekly colour.
-        drawWeeklyHalo(ctx)
+        // ── The three personal layers ──────────────────────────────────
+        drawWeeklyHalo(ctx)   // outer orbital system, in the weekly colour
+        drawMonthlyCore(ctx)  // the central archetype, in the monthly colour
+        drawDailySpark(ctx)   // the small central accent, in the daily colour
 
-        // Monthly core — the archetype, in the monthly colour.
-        drawMonthlyCore(ctx)
-
-        // Daily spark — the small central accent, in the daily colour.
-        drawDailySpark(ctx)
-
-        // Resonance flourish when all three tiers align.
+        // ── Rewards ────────────────────────────────────────────────────
         if (tiers.resonant) drawResonance(ctx)
+
+        // ── Global flourishes (in front) ───────────────────────────────
+        if (g >= GrandeurThresholds.SHOOTING_STARS) drawShootingStars(ctx)
+        if (g >= GrandeurThresholds.SPECTRUM_CROWN) drawSpectrumCrown(ctx)
+        if (g >= GrandeurThresholds.TOTALITY) drawTotality(ctx)
     }
 }
