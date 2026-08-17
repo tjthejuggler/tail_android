@@ -759,3 +759,51 @@ fun getHabitIconRes(habitName: String, customIconOverrides: Map<String, String> 
     }
     return HABIT_ICON[habitName]
 }
+
+/** Reverse of [ICON_NAME_TO_RES]: drawable resource ID → icon name. */
+private val RES_TO_ICON_NAME: Map<Int, String> =
+    ICON_NAME_TO_RES.entries.associate { (name, res) -> res to name }
+
+/**
+ * Returns the icon NAME that [getHabitIconRes] would resolve for [habitName]:
+ * the custom override when set, otherwise the [HABIT_ICON] default
+ * reverse-mapped to its drawable name. Null when the habit has no icon at all.
+ */
+fun getHabitIconName(habitName: String, customIconOverrides: Map<String, String> = emptyMap()): String? {
+    customIconOverrides[habitName]?.let { return it }
+    return RES_TO_ICON_NAME[HABIT_ICON[habitName]]
+}
+
+/**
+ * Produces the habitIcons override map for a habit renamed from [oldName] to
+ * [newName] so the icon fully follows the rename:
+ *
+ *  - An existing custom override is re-keyed to [newName].
+ *  - When the habit had NO override — its icon came from the hardcoded
+ *    [HABIT_ICON] defaults, which are keyed by the ORIGINAL habit name — the
+ *    currently-resolved default is materialised as an explicit override under
+ *    [newName]. Without this, the renamed habit falls back to "no icon"
+ *    because its new name no longer matches any hardcoded default.
+ *  - A habit that never had an icon stays icon-less: any stale orphaned
+ *    override left under [newName] (e.g. from a long-deleted habit) is
+ *    dropped so the renamed habit's icon state is exactly what it was.
+ *
+ * The habit's effective icon ALWAYS wins over any orphaned entry already
+ * sitting under [newName] — the DB-level rename refuses habit-name collisions,
+ * so such entries can only be leftovers, never a live habit's override.
+ */
+fun renamedHabitIcons(
+    oldName: String,
+    newName: String,
+    habitIcons: Map<String, String>
+): Map<String, String> {
+    val iconName = getHabitIconName(oldName, habitIcons)
+    val result = habitIcons.toMutableMap()
+    result.remove(oldName)
+    if (iconName != null) {
+        result[newName] = iconName
+    } else {
+        result.remove(newName)
+    }
+    return result
+}

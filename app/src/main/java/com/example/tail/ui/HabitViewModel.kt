@@ -4080,7 +4080,11 @@ class HabitViewModel(
                     textInputOptionsHabits = settings.textInputOptionsHabits.replaceElement(oldName, newName),
                     sharableTextHabits = settings.sharableTextHabits.replaceElement(oldName, newName),
                     textInputFileUris = settings.textInputFileUris.replaceKey(oldName, newName),
-                    habitIcons = settings.habitIcons.replaceKey(oldName, newName),
+                    // renamedHabitIcons re-keys an existing override AND materialises the
+                    // hardcoded HABIT_ICON default (keyed by the original name) as an
+                    // explicit override under the new name — otherwise a renamed habit
+                    // whose icon came from the defaults loses its icon entirely.
+                    habitIcons = renamedHabitIcons(oldName, newName, settings.habitIcons),
                     datedEntryHabits = settings.datedEntryHabits.replaceElement(oldName, newName),
                     datedEntryFileUris = settings.datedEntryFileUris.replaceKey(oldName, newName),
                     datedEntryFileSizes = settings.datedEntryFileSizes.replaceKey(oldName, newName),
@@ -4109,6 +4113,10 @@ class HabitViewModel(
                     mapStatsShowTextHabits = settings.mapStatsShowTextHabits.replaceElement(oldName, newName),
                     garminHabitLinks = settings.garminHabitLinks.replaceKey(oldName, newName),
                     chessComHabitLinks = settings.chessComHabitLinks.replaceKey(oldName, newName),
+                    githubRepoUrls = settings.githubRepoUrls.replaceKey(oldName, newName),
+                    githubMetrics = settings.githubMetrics.replaceKey(oldName, newName),
+                    mediaHabits = settings.mediaHabits.replaceElement(oldName, newName),
+                    mediaApps = settings.mediaApps.replaceKey(oldName, newName),
                     customPointRangesHabits = settings.customPointRangesHabits.replaceElement(oldName, newName),
                     customPointRanges = settings.customPointRanges.replaceKey(oldName, newName),
                     graphValueModeHabits = settings.graphValueModeHabits.replaceKey(oldName, newName),
@@ -4168,6 +4176,10 @@ class HabitViewModel(
                 settingsRepo.saveMapStatsShowTextHabits(newSettings.mapStatsShowTextHabits)
                 settingsRepo.saveGarminHabitLinks(newSettings.garminHabitLinks)
                 settingsRepo.saveChessComHabitLinks(newSettings.chessComHabitLinks)
+                settingsRepo.saveGithubRepoUrls(newSettings.githubRepoUrls)
+                settingsRepo.saveGithubMetrics(newSettings.githubMetrics)
+                settingsRepo.saveMediaHabits(newSettings.mediaHabits)
+                settingsRepo.saveMediaApps(newSettings.mediaApps)
                 settingsRepo.saveCustomPointRangesHabits(newSettings.customPointRangesHabits)
                 settingsRepo.saveCustomPointRanges(newSettings.customPointRanges)
                 settingsRepo.saveGraphValueModeHabits(newSettings.graphValueModeHabits)
