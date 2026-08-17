@@ -1716,12 +1716,15 @@ fun HabitGridScreen(
     deleteConfirmHabitName?.let { habitName ->
         val isLink = isAppLink(habitName)
         val displayName = if (isLink) settings.appLinks[habitName] ?: habitName else habitName
+        val dataDays = remember(habitName) { viewModel.getDeleteDataDayCount(habitName) }
         DeleteHabitConfirmDialog(
             habitName = displayName,
             isAppLink = isLink,
-            onConfirm = {
+            dataDayCount = dataDays,
+            onConfirm = { deleteData ->
                 val idx = habits.indexOfFirst { it.name == habitName }
                 if (idx >= 0) viewModel.deleteHabit(idx)
+                if (deleteData && !isLink) viewModel.deleteHabitData(habitName)
                 deleteConfirmHabitName = null
             },
             onDismiss = { deleteConfirmHabitName = null }
@@ -2537,8 +2540,8 @@ private fun MediaSection(
                     text = "Minutes listened while the app plays are added automatically " +
                         "(primary value for points). Your tapped count stays as the points " +
                         "fallback on days with no listening. The bubble timer still works " +
-                        "over the app as a manual fallback. Track/episode titles are " +
-                        "auto-added to the text log when text entry is set up.",
+                        "over the app as a manual fallback. Every song/episode played is " +
+                        "logged with its time to the text log when text entry is set up.",
                     color = Color(0xFF999999),
                     fontSize = 9.sp,
                     lineHeight = 12.sp
@@ -6713,9 +6716,15 @@ private fun HabitNoteDialog(
 private fun DeleteHabitConfirmDialog(
     habitName: String,
     isAppLink: Boolean = false,
-    onConfirm: () -> Unit,
+    /** Days of stored data found in the JSON (primary + secondary slots). */
+    dataDayCount: Int = 0,
+    /** Called with true when the user also opted to purge the JSON data. */
+    onConfirm: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // Opt-in purge toggle — defaults OFF so plain delete keeps history.
+    var alsoDeleteData by remember { mutableStateOf(false) }
+
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -6730,13 +6739,53 @@ private fun DeleteHabitConfirmDialog(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = if (isAppLink)
+                text = if (isAppLink) {
                     "Remove \"$habitName\" from the grid?"
-                else
-                    "Remove \"$habitName\" from the grid?\n\nThe habit data in your JSON files will NOT be deleted.",
+                } else if (dataDayCount > 0) {
+                    "Remove \"$habitName\" from the grid?\n\n" +
+                        "This habit has $dataDayCount day${if (dataDayCount == 1) "" else "s"} of data " +
+                        "in your JSON files."
+                } else {
+                    "Remove \"$habitName\" from the grid?\n\n" +
+                        "No data for this habit was found in your JSON files."
+                },
                 color = Color(0xFFCCCCCC),
                 fontSize = 13.sp
             )
+
+            // Optional data purge — only offered for real habits with data.
+            if (!isAppLink && dataDayCount > 0) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Also delete its data",
+                            color = Color(0xFFCCCCCC),
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = "Permanently removes $dataDayCount day" +
+                                "${if (dataDayCount == 1) "" else "s"} of history",
+                            color = Color(0xFFFF8888),
+                            fontSize = 10.sp
+                        )
+                    }
+                    Switch(
+                        checked = alsoDeleteData,
+                        onCheckedChange = { alsoDeleteData = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFFFF8888),
+                            checkedTrackColor = Color(0xFF3A0000),
+                            uncheckedThumbColor = Color(0xFF888888),
+                            uncheckedTrackColor = Color(0xFF333333)
+                        )
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -6748,10 +6797,15 @@ private fun DeleteHabitConfirmDialog(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = onConfirm,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A0000))
+                    onClick = { onConfirm(alsoDeleteData) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (alsoDeleteData) Color(0xFF550000) else Color(0xFF3A0000)
+                    )
                 ) {
-                    Text("Delete", color = Color(0xFFFF8888))
+                    Text(
+                        if (alsoDeleteData) "Delete All" else "Delete",
+                        color = Color(0xFFFF8888)
+                    )
                 }
             }
         }

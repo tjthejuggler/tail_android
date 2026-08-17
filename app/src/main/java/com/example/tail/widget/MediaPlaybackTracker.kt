@@ -8,12 +8,21 @@ import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.net.Uri
 import android.util.Log
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.ConcurrentLinkedQueue
 import com.example.tail.data.HabitsRepository
+import com.example.tail.data.ItunesMusicLookup
+import com.example.tail.data.MediaLibraryRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.ipc.MusicNotificationListenerService
 import com.example.tail.ui.HabitIncrementBus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -57,11 +66,27 @@ private const val TAG = "MediaPlaybackTracker"
  * a media URI — the full description is NOT available via media sessions).
  * Podcast apps put the episode title in TITLE and the show name in
  * ARTIST/ALBUM; music apps like Spotify put the track name in TITLE and the
- * artist in ARTIST — the same extraction works for both. The first time a
- * NEW item (deduplicated by title+artist/show, so pausing/resuming doesn't
- * duplicate) is seen playing, it is appended to the habit's text-entry log
- * (if one is configured) as `"Title — Artist/Show (NN min)"` — replacing
- * the manual copy-the-description workflow.
+ * artist in ARTIST — the same extraction works for both.
+ *
+ * EVERY play is appended to the habit's text-entry log (if one is
+ * configured) as `"HH:mm Title — Artist/Show (NN min)"`, so the log reads
+ * as a play-by-play list of what was listened to and when. Replays are
+ * detected via the session's playback POSITION: pausing/resuming keeps the
+ * position (no duplicate entry), while a repeat-one restart or replay jumps
+ * the position back to the start (logged again with the new time). The
+ * text-log file itself is a JSON map additionally keyed by the full
+ * `yyyy-MM-dd HH:mm:ss` timestamp of each write.
+ *
+ * SONG METADATA LIBRARY
+ * ─────────────────────
+ * Every logged play is also registered in a global lookup table
+ * (filesDir/media_library.json, see [MediaLibraryRepository]) keyed by
+ * normalized `title|artist`: canonical per-song facts — genre, release
+ * year, album, artwork URL — are stored ONCE per song with a play
+ * counter, never duplicated per play. Songs whose genre/year are still
+ * unknown are queued for a one-time free iTunes Search lookup (no API
+ * key, see [ItunesMusicLookup]); at most one lookup is drained per poll
+ * tick and runs off the poll mutex.
  */
 object MediaPlaybackTracker {
 
@@ -74,9 +99,20 @@ object MediaPlaybackTracker {
     private const val KEY_START_PREFIX = "listening_start_"
     private const val KEY_LAST_SEEN_PREFIX = "listening_last_seen_"
     private const val KEY_LAST_EPISODE_PREFIX = "last_episode_"
+    private const val KEY_LAST_POS_PREFIX = "last_media_pos_"
+    private val ENTRY_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
 
     /** Serialises [update] calls so poll ticks never interleave. */
     private val mutex = Mutex()
+
+    /** Runs song-enrichment network lookups OFF the poll mutex. */
+    private val enrichmentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Songs waiting for a genre/year lookup (drained one per poll tick). */
+    private val pendingLookups = ConcurrentLinkedQueue<LookupRequest>()
+
+    /** A song that needs its one-time metadata lookup. */
+    private data class LookupRequest(val key: String, val title: String, val artist: String?)
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -88,12 +124,17 @@ object MediaPlaybackTracker {
     /**
      * Identifying metadata for the item a media app is playing: episode
      * title + show for podcasts, track name + artist for music.
+     * [positionMs] is the session's playback position, used to tell a
+     * resume (position preserved) apart from a replay (position reset).
      */
     private data class MediaMeta(
         val title: String,
         val artist: String?,
+        val album: String?,
         val durationMin: Int?,
-        val mediaUri: String?
+        val mediaUri: String?,
+        val positionMs: Long?,
+        val year: Int?
     )
 
     /**
@@ -104,7 +145,7 @@ object MediaPlaybackTracker {
      * metadata can lag playback start by a tick or two, so the next poll
      * retries.
      */
-    private fun mediaMetaOf(md: MediaMetadata?): MediaMeta? {
+    private fun mediaMetaOf(md: MediaMetadata?, positionMs: Long?): MediaMeta? {
         if (md == null) return null
         val title = md.getString(MediaMetadata.METADATA_KEY_TITLE)?.trim()
         if (title.isNullOrEmpty()) return null
@@ -115,11 +156,16 @@ object MediaPlaybackTracker {
         ).firstNotNullOfOrNull { key ->
             md.getString(key)?.trim()?.takeIf { it.isNotEmpty() && it != title }
         }
+        val album = md.getString(MediaMetadata.METADATA_KEY_ALBUM)
+            ?.trim()?.takeIf { it.isNotEmpty() && it != title }
         val durationMin = md.getLong(MediaMetadata.METADATA_KEY_DURATION)
             .takeIf { it > 0 }?.let { Math.round(it / 60000.0).toInt() }
         val mediaUri = md.getString(MediaMetadata.METADATA_KEY_MEDIA_URI)
             ?.trim()?.takeIf { it.isNotEmpty() }
-        return MediaMeta(title, artist, durationMin, mediaUri)
+        // Some players expose the release year in the session — free data.
+        val year = md.getString(MediaMetadata.METADATA_KEY_YEAR)
+            ?.trim()?.take(4)?.toIntOrNull()
+        return MediaMeta(title, artist, album, durationMin, mediaUri, positionMs, year)
     }
 
     /**
@@ -143,7 +189,10 @@ object MediaPlaybackTracker {
                 playingPackages = playing.map { it.packageName }.toSet()
                 metaByPackage = playing
                     .filter { it.packageName in habitsByPackage }
-                    .mapNotNull { c -> mediaMetaOf(c.metadata)?.let { c.packageName to it } }
+                    .mapNotNull { c ->
+                        mediaMetaOf(c.metadata, c.playbackState?.position)
+                            ?.let { c.packageName to it }
+                    }
                     .toMap()
             } catch (e: SecurityException) {
                 // Notification listener access not granted — auto-detection
@@ -170,6 +219,9 @@ object MediaPlaybackTracker {
                     advanceHabitState(appContext, habit, playing = false)
                 }
             }
+
+            // Drain at most one queued metadata lookup per tick.
+            pollNextLookup(appContext)
         }
     }
 
@@ -231,25 +283,97 @@ object MediaPlaybackTracker {
 
     /**
      * Logs the currently-playing item (podcast episode or music track) to
-     * the habit's text-entry log the FIRST time it is seen. Deduplicated by
-     * title+artist/show, so pausing and resuming the same item never creates
-     * duplicate entries. A no-op when the habit has no text-input file
-     * configured.
+     * the habit's text-entry log on every NEW play:
+     *  - a different item than the last logged one, OR
+     *  - the same item whose playback position RESET (repeat-one, replay,
+     *    seek back to the start) — a pause/resume keeps the position and
+     *    does NOT create a duplicate entry.
+     * A no-op when the habit has no text-input file configured.
      */
     private suspend fun maybeLogMediaEntry(context: Context, habit: String, meta: MediaMeta?) {
         if (meta == null) return
         val p = prefs(context)
-        val lastKey = KEY_LAST_EPISODE_PREFIX + habit
+        val lastItemKey = KEY_LAST_EPISODE_PREFIX + habit
+        val lastPosKey = KEY_LAST_POS_PREFIX + habit
         val dedupKey = meta.title + "|" + (meta.artist ?: "")
-        if (p.getString(lastKey, null) == dedupKey) return
+        val pos = meta.positionMs
+        val lastPos = p.getLong(lastPosKey, -1L)
+
+        val isNewPlay = p.getString(lastItemKey, null) != dedupKey ||
+            // Restarted from (near) the top after having been deep into it.
+            (pos != null && pos < 15_000 && lastPos > 45_000) ||
+            // Jumped far backwards (seek-to-start / repeat) — a ~2 s poll
+            // drift or a resume never moves the position back this far.
+            (pos != null && lastPos >= 0 && pos < lastPos - 30_000)
+
+        if (pos != null) {
+            p.edit().putLong(lastPosKey, pos).apply()
+        }
+        if (!isNewPlay) return
+        registerPlayInLibrary(context, meta)
         logMediaEntry(context, habit, meta)
-        p.edit().putString(lastKey, dedupKey).apply()
+        p.edit().putString(lastItemKey, dedupKey).apply()
     }
 
     /**
-     * Appends `"Title — Artist/Show (NN min)"` (plus the media URI when the
-     * app exposes one) to the habit's text-entry log via the same atomic
-     * write + internal backup the manual text dialog uses.
+     * Records the play in the global media-library lookup table
+     * (filesDir/media_library.json): canonical per-song facts (genre,
+     * year, album, artwork) are stored ONCE per song — keyed by the
+     * normalized `title|artist` — with a play counter and first/last-seen
+     * timestamps instead of a duplicate row per play. Songs whose
+     * genre/year are still unknown are queued for a one-time iTunes
+     * Search lookup (free, no API key) drained one per poll tick.
+     */
+    private fun registerPlayInLibrary(context: Context, meta: MediaMeta) {
+        try {
+            val library = MediaLibraryRepository(context)
+            val entry = library.registerPlay(meta.title, meta.artist, meta.album, meta.year)
+            if (entry.needsEnrichment) {
+                val key = library.keyFor(meta.title, meta.artist)
+                if (pendingLookups.none { it.key == key }) {
+                    pendingLookups.add(LookupRequest(key, meta.title, meta.artist))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register play in media library: ${e.message}")
+        }
+    }
+
+    /**
+     * Kicks off at most ONE queued iTunes lookup per poll tick; the
+     * network work runs in [enrichmentScope], off the poll mutex. A
+     * successful match fills in the canonical library entry
+     * (genre/year/album/artwork) once for every future play of that
+     * song; a definitive miss bumps the failure counter so hopeless
+     * songs stop being retried after
+     * [MediaLibraryRepository.MAX_FAILED_LOOKUPS] attempts. Transient
+     * network errors leave the entry untouched — it simply gets
+     * re-queued the next time the song is played.
+     */
+    private fun pollNextLookup(context: Context) {
+        val req = pendingLookups.poll() ?: return
+        enrichmentScope.launch {
+            try {
+                val enriched = ItunesMusicLookup.lookup(req.title, req.artist)
+                val library = MediaLibraryRepository(context)
+                if (enriched != null) {
+                    library.applyEnrichment(req.key, enriched)
+                } else {
+                    library.markFailedLookup(req.key)
+                    Log.d(TAG, "No iTunes match for '${req.title}'")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "iTunes lookup failed for '${req.title}': ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Appends `"HH:mm Title — Artist/Show (NN min)"` (plus the media URI
+     * when the app exposes one) to the habit's text-entry log via the same
+     * atomic write + internal backup the manual text dialog uses. The
+     * clock time is when the play was first seen, making the log a
+     * self-contained play-by-play list.
      */
     private suspend fun logMediaEntry(context: Context, habit: String, meta: MediaMeta) {
         try {
@@ -257,6 +381,8 @@ object MediaPlaybackTracker {
             val textUri = settings.textInputFileUris[habit]
             if (textUri.isNullOrEmpty()) return
             val entry = buildString {
+                append(LocalTime.now().format(ENTRY_TIME_FMT))
+                append("  ")
                 append(meta.title)
                 meta.artist?.let { append(" — ").append(it) }
                 meta.durationMin?.let { append(" (").append(it).append(" min)") }

@@ -3802,8 +3802,9 @@ class HabitViewModel(
 
     /**
      * Deletes the habit at [index] from the active screen (or flat order).
-     * Does NOT remove data from JSON files — historical data is preserved.
-     * Clears the selection after deletion.
+     * JSON data is preserved by default — the delete dialog offers
+     * [deleteHabitData] as an explicit opt-in purge. Clears the selection
+     * after deletion.
      */
     fun deleteHabit(index: Int) {
         val screens = _habitScreens.value
@@ -3844,6 +3845,63 @@ class HabitViewModel(
                     isSavingOrder = false
                 }
             }
+        }
+    }
+
+    /**
+     * Returns how many distinct days of stored data [habitName] has in the
+     * habits JSON — the union of dates across the primary count and all
+     * secondary-value slots. 0 when the habit has no data at all. Used by
+     * the delete dialog to show the user exactly what is at stake.
+     */
+    fun getDeleteDataDayCount(habitName: String): Int {
+        val dates = mutableSetOf<String>()
+        dates.addAll(cachedPhoneDb[habitName]?.keys ?: emptySet())
+        dates.addAll(cachedPhoneDb[secondaryValueKey(habitName)]?.keys ?: emptySet())
+        for (slot in 2..6) {
+            dates.addAll(cachedPhoneDb[secondaryValueSlotKey(habitName, slot)]?.keys ?: emptySet())
+        }
+        return dates.size
+    }
+
+    /**
+     * PERMANENTLY removes [habitName]'s data from the habits JSON: the
+     * primary count and every secondary-value slot. Invoked only when the
+     * user ticks "also delete data" in the delete dialog — the default
+     * delete keeps historical data.
+     *
+     * Guarded by the same anti-wipe gate as the other DB writers: refuses
+     * to persist when the database has not finished loading.
+     */
+    fun deleteHabitData(habitName: String) {
+        val uriStr = _settings.value.fileUri
+        if (uriStr.isEmpty()) {
+            Log.w(TAG, "deleteHabitData: no habits file configured — nothing purged")
+            return
+        }
+        if (!dbLoaded) {
+            Log.w(TAG, "deleteHabitData: DB not loaded yet, refusing to persist (anti-wipe gate)")
+            return
+        }
+        viewModelScope.launch {
+            val keysToRemove = listOf(habitName, secondaryValueKey(habitName)) +
+                (2..6).map { secondaryValueSlotKey(habitName, it) }
+            val mutableDb = cachedPhoneDb.toMutableMap()
+            var changed = false
+            for (key in keysToRemove) {
+                if (mutableDb.remove(key) != null) changed = true
+            }
+            if (!changed) {
+                Log.d(TAG, "deleteHabitData: no stored data found for '$habitName'")
+                return@launch
+            }
+            cachedPhoneDb = mutableDb
+            rebuildHabitList()
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(uriStr), context, mutableDb)
+            }
+            writeTaskerFile(_settings.value.taskerFileUri)
+            Log.i(TAG, "deleteHabitData: purged data of '$habitName' from JSON")
         }
     }
 
