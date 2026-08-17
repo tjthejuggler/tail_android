@@ -77,21 +77,8 @@ private val BORDER_SELECTED= Color(0xFF4FC3F7)
 // The cell background is lerped from BG_DAY_BASE toward the tier colour.
 // The top tier (white) also flips the day-number text to black.
 
-private data class PointsTier(
-    val lo: Int,
-    val hi: Int,
-    val r: Int, val g: Int, val b: Int   // target colour at full intensity
-)
-
-private val POINT_TIERS = listOf(
-    PointsTier( 1, 13,  180,  30,  30),   // red
-    PointsTier(14, 20,  210, 110,  20),   // orange
-    PointsTier(21, 30,   30, 180,  60),   // green
-    PointsTier(31, 41,   40, 100, 220),   // blue
-    PointsTier(42, 48,  200,  60, 180),   // pink
-    PointsTier(49, 55,  210, 190,  30),   // yellow
-    PointsTier(56, Int.MAX_VALUE, 230, 230, 230)  // white (text → black)
-)
+// The tier table itself lives in [PointTierColors] (single source of truth —
+// also used by the stats overlay to colour its today/avg7/avg30 numbers).
 
 /**
  * Returns the background colour and whether the day text should be dark (black)
@@ -100,7 +87,7 @@ private val POINT_TIERS = listOf(
 private fun tierColorForPoints(points: Int): Pair<Color, Boolean> {
     if (points <= 0) return Pair(BG_DAY_BASE, false)
 
-    val tier = POINT_TIERS.firstOrNull { points <= it.hi } ?: POINT_TIERS.last()
+    val tier = PointTierColors.TIERS.firstOrNull { points <= it.hi } ?: PointTierColors.TIERS.last()
     val range = (tier.hi - tier.lo).coerceAtLeast(1)
     val intensity = ((points - tier.lo).toFloat() / range).coerceIn(0f, 1f)
 

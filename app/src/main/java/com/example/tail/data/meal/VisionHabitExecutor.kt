@@ -7,7 +7,6 @@ import com.example.tail.data.AppSettings
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SubtypeDataRepository
-import com.example.tail.data.buildTaskerStatsContent
 import com.example.tail.ui.HabitIncrementBus
 import java.time.LocalDate
 
@@ -21,14 +20,30 @@ private const val TAG = "VisionHabitExec"
  * The LLM never increments anything directly — every proposal is first
  * validated against the real habit/subtype configuration via
  * [resolveHabitAction], then executed here with the same side-effects a
- * voice increment performs (subtype breakdown, timestamp, Tasker file,
+ * voice increment performs (subtype breakdown, timestamp,
  * increment-bus event).
  */
 object VisionHabitExecutor {
 
     /**
+     * Habits eligible for the camera/vision pipeline. When the user has
+     * flagged specific habits with the "Camera" edit-mode setting, ONLY those
+     * are offered to the LLM as choices (making its decision easy); with none
+     * flagged, every habit stays eligible (legacy behaviour).
+     */
+    fun cameraEligibleHabits(settings: AppSettings): List<String> {
+        val allHabits = (settings.habitScreens.flatMap { it.habitNames } + settings.habitOrder)
+            .filter { it.isNotBlank() && !it.startsWith("app_link:") }
+            .distinct()
+        val flagged = settings.cameraHabits
+        return if (flagged.isEmpty()) allHabits else allHabits.filter { it in flagged }
+    }
+
+    /**
      * Validates an LLM-proposed habit (and optional subtype) against the
-     * real habit configuration. Matching is case-insensitive and exact.
+     * camera-eligible habit configuration. Matching is case-insensitive and
+     * exact. An explicit "NONE" answer (the LLM is certain no available
+     * habit matches) resolves to null.
      *
      * @return The normalized (real) habit name + subtype pair, or null
      *         when the habit (or subtype) does not exist.
@@ -39,10 +54,9 @@ object VisionHabitExecutor {
         subtypeName: String?
     ): Pair<String, String?>? {
         if (habitName.isNullOrBlank()) return null
+        if (habitName.trim().equals("NONE", ignoreCase = true)) return null
 
-        val allHabits = (settings.habitScreens.flatMap { it.habitNames } + settings.habitOrder)
-            .filter { it.isNotBlank() && !it.startsWith("app_link:") }
-            .distinct()
+        val allHabits = cameraEligibleHabits(settings)
 
         val realHabit = allHabits.firstOrNull { it.equals(habitName.trim(), ignoreCase = true) }
             ?: return null
@@ -57,12 +71,12 @@ object VisionHabitExecutor {
     /**
      * Builds the "available habits" context block injected into vision
      * prompts so the LLM knows the only valid habit/subtype names it may
-     * propose. Returns an empty string when no habits are configured.
+     * propose — restricted to the camera-eligible habits (see
+     * [cameraEligibleHabits]). Returns an empty string when no habits are
+     * eligible.
      */
     fun buildHabitPrompt(settings: AppSettings): String {
-        val allHabits = (settings.habitScreens.flatMap { it.habitNames } + settings.habitOrder)
-            .filter { it.isNotBlank() && !it.startsWith("app_link:") }
-            .distinct()
+        val allHabits = cameraEligibleHabits(settings)
         if (allHabits.isEmpty()) return ""
         return allHabits.joinToString("\n") { habit ->
             val subtypes = settings.habitSubtypes[habit].orEmpty()
@@ -73,7 +87,7 @@ object VisionHabitExecutor {
 
     /**
      * Increments [habitName] by [amount], records the subtype breakdown
-     * and timestamp, updates the Tasker stats file, and emits on the
+     * and timestamp, and emits on the
      * [HabitIncrementBus] — mirroring what the smart voice service does
      * for a spoken increment.
      *
@@ -117,17 +131,6 @@ object VisionHabitExecutor {
                 Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
             }
 
-            if (settings.taskerFileUri.isNotEmpty()) {
-                try {
-                    val db = habitsRepo.loadDatabase(uri, context)
-                    val content = buildTaskerStatsContent(db, settings.habitDividers, settings.noPointsHabits, invertedBinaryHabits = settings.invertedBinaryHabits)
-                    context.contentResolver.openOutputStream(Uri.parse(settings.taskerFileUri), "wt")?.use { stream ->
-                        stream.bufferedWriter().use { it.write(content) }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to write Tasker file: ${e.message}")
-                }
-            }
 
             HabitIncrementBus.emit(habitName)
             null

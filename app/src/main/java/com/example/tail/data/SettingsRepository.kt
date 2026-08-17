@@ -18,7 +18,6 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 private val KEY_FILE_URI = stringPreferencesKey("file_uri")
 private val KEY_SCREENS_RELAY_FILE_URI = stringPreferencesKey("screens_relay_file_uri")
-private val KEY_TASKER_FILE_URI = stringPreferencesKey("tasker_file_uri")
 // In-app stats overlay (StatsOverlayService) master switch
 private val KEY_STATS_OVERLAY_ENABLED = booleanPreferencesKey("stats_overlay_enabled")
 private val KEY_CUSTOM_INPUT = stringSetPreferencesKey("custom_input_habits")
@@ -182,6 +181,7 @@ private val KEY_MEAL_API_KEY = stringPreferencesKey("meal_api_key")
 private val KEY_MEAL_MODEL = stringPreferencesKey("meal_model")
 private val KEY_MEAL_SYSTEM_PROMPT = stringPreferencesKey("meal_system_prompt")
 private val KEY_MEAL_HABITS = stringSetPreferencesKey("meal_habits")
+private val KEY_CAMERA_HABITS = stringSetPreferencesKey("camera_habits")
 // App link keys — stored as "app_link_key\x00label|||app_link_key\x00label" pairs
 private val KEY_APP_LINKS = stringPreferencesKey("app_links")
 // Habit app association keys — stored as "habitName\x00pkg1,pkg2,pkg3|||habitName\x00pkg1" pairs
@@ -786,7 +786,6 @@ class SettingsRepository(private val context: Context) {
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
-            taskerFileUri = prefs[KEY_TASKER_FILE_URI] ?: "",
             statsOverlayEnabled = prefs[KEY_STATS_OVERLAY_ENABLED] ?: false,
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
@@ -873,6 +872,7 @@ class SettingsRepository(private val context: Context) {
             mealModel = prefs[KEY_MEAL_MODEL] ?: "",
             mealSystemPrompt = prefs[KEY_MEAL_SYSTEM_PROMPT] ?: "",
             mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet(),
+            cameraHabits = prefs[KEY_CAMERA_HABITS] ?: emptySet(),
             appLinks = decodeFileUriMap(prefs[KEY_APP_LINKS] ?: ""),
             habitAppAssociations = decodeSubtypesMap(prefs[KEY_HABIT_APP_ASSOCIATIONS] ?: ""),
             habitLongPressActions = decodeFileUriMap(prefs[KEY_HABIT_LONG_PRESS_ACTIONS] ?: ""),
@@ -921,12 +921,6 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    /** Saves the SAF URI for the Tasker stats relay txt file. */
-    suspend fun saveTaskerFileUri(uri: String) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_TASKER_FILE_URI] = uri
-        }
-    }
 
     /** Saves the master switch for the in-app stats overlay. */
     suspend fun saveStatsOverlayEnabled(enabled: Boolean) {
@@ -1463,6 +1457,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that have the "Meal" type enabled. */
     suspend fun saveMealHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_MEAL_HABITS] = habits }
+    }
+
+    /** Saves the set of habits eligible for camera/vision auto-detection. */
+    suspend fun saveCameraHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_CAMERA_HABITS] = habits }
     }
 
     /** Saves the map of app-link key → app display label. */

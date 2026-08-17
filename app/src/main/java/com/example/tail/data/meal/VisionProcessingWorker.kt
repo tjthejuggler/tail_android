@@ -21,8 +21,24 @@ import java.time.ZoneId
 
 private const val TAG = "VisionWorker"
 private const val UNIQUE_WORK_NAME = "vision_processing"
-/** Minimum confidence for executing an LLM-proposed habit action (see MediaCaptureActivity). */
-private const val HABIT_ACTION_CONFIDENCE_THRESHOLD = 0.85
+
+/** Short "what the LLM saw" suffix for toasts/logs. Empty when unknown. */
+private fun visionSeenDescription(result: VisionResult): String {
+    val desc = result.nonFoodData?.detectedActivity
+        ?: result.processingNotes.removePrefix("Description:").trim()
+    return if (desc.isBlank()) "" else "\n${desc.take(120)}"
+}
+
+/** Shows a toast from the background worker (hops to the main thread). */
+private fun notifyCameraResult(context: Context, message: String) {
+    try {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Failed to show camera result toast", e)
+    }
+}
 
 /**
  * Background [CoroutineWorker] that drains the [VisionQueueRepository] by
@@ -112,13 +128,17 @@ class VisionProcessingWorker(
                     continue
                 }
 
-                // Smart auto-detection: execute a proposed habit action when
-                // the LLM is certain enough and the habit really exists.
+                // Smart auto-detection: execute the LLM's proposed habit
+                // action. The candidate list is restricted to camera-enabled
+                // habits (VisionHabitExecutor.buildHabitPrompt) and the LLM is
+                // instructed to always pick its best guess among them — so no
+                // confidence gate is applied. The user sees what was
+                // recognized via the toast and can undo a wrong guess.
                 if (result.classification != VisionClassification.FOOD_MEAL &&
-                    result.habitAction != null &&
-                    result.confidenceScore >= HABIT_ACTION_CONFIDENCE_THRESHOLD
+                    result.habitAction != null
                 ) {
                     val action = result.habitAction!!
+                    val seen = visionSeenDescription(result)
                     val resolved = VisionHabitExecutor.resolveHabitAction(
                         settings, action.habitName, action.subtypeName
                     )
@@ -126,6 +146,7 @@ class VisionProcessingWorker(
                         Log.w(TAG, "Item ${item.id}: proposed habit '${action.habitName}' not found — no action")
                         queueRepo.markCompleted(item.id, "none")
                         processed++
+                        notifyCameraResult(appContext, "📷 No camera habit matched$seen")
                     } else {
                         val (realHabit, realSubtype) = resolved
                         val err = VisionHabitExecutor.execute(
@@ -136,6 +157,11 @@ class VisionProcessingWorker(
                                 (realSubtype?.let { "/$it" } ?: "") + " ×${action.amount}")
                             queueRepo.markCompleted(item.id, "habit:$realHabit")
                             processed++
+                            notifyCameraResult(
+                                appContext,
+                                "📷 $realHabit" + (realSubtype?.let { " ($it)" } ?: "") +
+                                    " +${action.amount}$seen"
+                            )
                         } else {
                             val willRetry = queueRepo.markFailedOrRetry(item.id, err)
                             failed++
@@ -236,6 +262,12 @@ class VisionProcessingWorker(
                     queueRepo.markCompleted(item.id, "none")
                     Log.i(TAG, "Item ${item.id} classified as ${result.classification}: $notes")
                     processed++
+                    // The LLM saw something it couldn't tie to any camera
+                    // habit — tell the user what it saw instead of failing
+                    // silently.
+                    if (result.classification != VisionClassification.FOOD_MEAL) {
+                        notifyCameraResult(appContext, "📷 No camera habit matched" + visionSeenDescription(result))
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing item ${item.id}", e)

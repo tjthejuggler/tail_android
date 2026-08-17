@@ -210,8 +210,8 @@ fun MapScreen(
     var dataLoaded by remember { mutableStateOf(false) }
     // "The Orrery" reads the ViewModel's canonical loading-metrics StateFlow —
     // the exact same source the habit grid collects (cache-seeded so the very
-    // first frame already shows likely-correct tiers, refined with the
-    // tasker file's live today-total, and refreshed whenever habits change).
+    // first frame already shows likely-correct tiers, refined once the DB
+    // loads, and refreshed whenever habits change).
     // Recomputing independently here used to race the DB catch-up sync and
     // could latch a stale, lower tier (a pink layer where the grid showed
     // yellow); collecting the flow keeps both screens identical and

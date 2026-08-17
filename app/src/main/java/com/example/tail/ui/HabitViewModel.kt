@@ -734,20 +734,6 @@ class HabitViewModel(
                     }
                 }
 
-                // Load today's points from the tasker file so the spinner shows the
-                // correct tier immediately, before the full DB is loaded.
-                // Run synchronously (withContext) to ensure it completes before
-                // catchUpAndLoad sets isLoading=true.
-                val taskerPoints = withContext(Dispatchers.IO) {
-                    loadTodayPointsFromTaskerFile()
-                }
-                _todayPoints.value = taskerPoints
-                // Keep the hydrated cache averages; refine the daily spark
-                // with the tasker file's live total when it has one.
-                val cachedMetrics = _loadingMetrics.value
-                _loadingMetrics.value =
-                    if (taskerPoints > 0) cachedMetrics.copy(todayPoints = taskerPoints)
-                    else cachedMetrics
 
                 if (!isSavingOrder && !isSavingScreenIndex) {
                     // Sync screens from persisted settings
@@ -851,27 +837,6 @@ class HabitViewModel(
         }
     }
 
-    /**
-     * Reads the tasker stats file (total_habits.txt) and parses the `today=` value.
-     * This provides a fast, up-to-date points value for the loading spinner before
-     * the full DB is loaded. Returns 0 if the file is missing or unparsable.
-     */
-    private suspend fun loadTodayPointsFromTaskerFile(): Int {
-        val uriStr = _settings.value.taskerFileUri
-        if (uriStr.isEmpty()) return 0
-        return try {
-            val uri = Uri.parse(uriStr)
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                val content = stream.bufferedReader().readText()
-                // Parse "today=N" from the file (format: today=N\navg7=X.XX\navg30=X.XX\n)
-                val todayLine = content.lines().firstOrNull { it.startsWith("today=") }
-                todayLine?.substringAfter("=")?.trim()?.toIntOrNull() ?: 0
-            } ?: 0
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to read tasker file for today points: ${e.message}")
-            0
-        }
-    }
 
     /**
      * Returns the effective ordered list of habit names for the currently active screen.
@@ -1231,20 +1196,9 @@ class HabitViewModel(
         _habits.value = newList
         _todayPoints.value = newList.sumOf { it.todayCount }
         var freshMetrics = getLoadingMetrics(_selectedDate.value)
-        // The daily spark must always match what the app-open spinner
-        // shows: the tasker stats file's live today total. The DB-derived
-        // dayTotal can lag the file (increments synced to the file before
-        // the DB catches up, or effective-points rounding differences),
-        // which made the spinner drop a tier (pink) after load while the
-        // cold-start animation was yellow. Mirror the startup refinement
-        // exactly so every spinner in the app — grid, map, reloads —
-        // renders the same tiers.
-        if (_selectedDate.value == LocalDate.now()) {
-            val taskerPoints = loadTodayPointsFromTaskerFile()
-            if (taskerPoints > 0) {
-                freshMetrics = freshMetrics.copy(todayPoints = taskerPoints)
-            }
-        }
+        // The daily spark mirrors the app-open spinner: both derive from
+        // the same DB totals, so every spinner in the app — grid, map,
+        // reloads — renders the same tiers.
         _loadingMetrics.value = freshMetrics
         // Persist only metrics computed for today so history browsing never
         // poisons the cold-start cache.
@@ -1264,73 +1218,6 @@ class HabitViewModel(
         }
     }
 
-    /**
-     * Sets the SAF URI for the screens_layout.json relay file.
-     * Immediately writes the current screen layout to the file.
-     */
-    fun setTaskerFileUri(uri: Uri) {
-        viewModelScope.launch {
-            val uriString = uri.toString()
-            settingsRepo.saveTaskerFileUri(uriString)
-            _settings.value = _settings.value.copy(taskerFileUri = uriString)
-            // Write current stats immediately so the file is up-to-date
-            writeTaskerFile(uriString)
-        }
-    }
-
-    /**
-     * Writes today's habit stats to the Tasker relay txt file (if configured).
-     * Format:
-     *   today=<N>      — habits with count > 0 today
-     *   avg7=<X.XX>    — average habits done per day over last 7 days
-     *   avg30=<X.XX>   — average habits done per day over last 30 days
-     * Runs on Dispatchers.IO; errors are silently logged so they never disrupt the UI.
-     */
-    private fun writeTaskerFile(taskerUriString: String) {
-        if (taskerUriString.isEmpty()) return
-        val db = cachedPhoneDb
-        val dividers = _settings.value.habitDividers
-        // Exclude "Don't affect points" habits (e.g. Garmin imports) from totals
-        val noPointsHabits = _settings.value.noPointsHabits
-
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val content = com.example.tail.data.buildTaskerStatsContent(
-                    db = db,
-                    dividers = dividers,
-                    noPointsHabits = noPointsHabits,
-                    secondaryValueFallbackHabits = _settings.value.secondaryValueFallbackHabits,
-                    timerMinutesPrimaryHabits = _settings.value.widgetTimerMinutesPrimary,
-                    invertedBinaryHabits = _settings.value.invertedBinaryHabits
-                )
-
-                val uri = Uri.parse(taskerUriString)
-                context.contentResolver.openOutputStream(uri, "wt")?.use { stream ->
-                    stream.bufferedWriter().use { it.write(content) }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to write Tasker file: ${e.message}")
-            }
-        }
-    }
-
-    /**
-     * Forces an immediate recalculation of the Tasker stats file from the current
-     * database, correctly excluding "Don't affect points" habits.
-     *
-     * Use this to repair a stale/corrupted stats file (e.g. after the Garmin
-     * no-points fix) without waiting for the next habit increment. Surfaces a
-     * one-shot message via [_errorMessage] so the UI can confirm to the user.
-     */
-    fun refreshTaskerStatsFile() {
-        val uri = _settings.value.taskerFileUri
-        if (uri.isEmpty()) {
-            _errorMessage.value = "No Tasker stats file is configured."
-            return
-        }
-        writeTaskerFile(uri)
-        _errorMessage.value = "Tasker stats file recalculated."
-    }
 
     /**
      * Sends a generic broadcast announcing that a habit was incremented.
@@ -1606,11 +1493,10 @@ class HabitViewModel(
             try {
                 val uri = Uri.parse(uriString)
                 habitsRepo.persistDatabase(uri, context, updatedDb)
+                HabitsDataChangedBus.emit()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
-            // Update Tasker relay file after every count change
-            writeTaskerFile(_settings.value.taskerFileUri)
         }
 
         // Step 4: if this is a timed habit (and NOT subtyped — subtyped timed habits
@@ -1728,10 +1614,10 @@ class HabitViewModel(
             try {
                 val uri = Uri.parse(uriString)
                 habitsRepo.persistDatabase(uri, context, updatedDb)
+                HabitsDataChangedBus.emit()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
-            writeTaskerFile(_settings.value.taskerFileUri)
         }
 
         // Step 4: if this is a timed habit (and NOT subtyped)
@@ -1906,6 +1792,7 @@ class HabitViewModel(
                         try {
                             val uri = Uri.parse(fileUriString)
                             habitsRepo.persistDatabase(uri, context, updatedDb)
+                            HabitsDataChangedBus.emit()
                             rebuildHabitList()
                         } catch (e: Exception) {
                             _errorMessage.value = "Failed to save habit counts: ${e.message}"
@@ -2190,11 +2077,10 @@ class HabitViewModel(
             try {
                 val uri = Uri.parse(uriString)
                 habitsRepo.persistDatabase(uri, context, updatedDb)
+                HabitsDataChangedBus.emit()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
-            // Update Tasker relay file after every count change
-            writeTaskerFile(_settings.value.taskerFileUri)
         }
     }
 
@@ -2237,6 +2123,7 @@ class HabitViewModel(
             rebuildHabitList()
             try {
                 habitsRepo.persistDatabase(Uri.parse(uriString), context, updatedDb)
+                HabitsDataChangedBus.emit()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
@@ -2329,11 +2216,10 @@ class HabitViewModel(
             try {
                 val uri = Uri.parse(uriString)
                 habitsRepo.persistDatabase(uri, context, updatedDb)
+                HabitsDataChangedBus.emit()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to save: ${e.message}"
             }
-            // Update Tasker relay file after every count change
-            writeTaskerFile(_settings.value.taskerFileUri)
             onComplete()
         }
     }
@@ -2415,7 +2301,6 @@ class HabitViewModel(
 
             cachedPhoneDb = db
             rebuildHabitList()
-            writeTaskerFile(_settings.value.taskerFileUri)
         }
     }
 
@@ -2479,7 +2364,6 @@ class HabitViewModel(
 
             cachedPhoneDb = db
             rebuildHabitList()
-            writeTaskerFile(_settings.value.taskerFileUri)
         }
     }
 
@@ -2797,6 +2681,7 @@ class HabitViewModel(
             try {
                 val uri = Uri.parse(uriString)
                 habitsRepo.persistDatabase(uri, context, updatedDb)
+                HabitsDataChangedBus.emit()
                 _errorMessage.value =
                     "Backfilled \"$habitName\": $totalApplied increments across $daysTouched day(s), ${slots.size} value slot(s)."
             } catch (e: Exception) {
@@ -3221,12 +3106,6 @@ class HabitViewModel(
         _settings.value = _settings.value.copy(noPointsHabits = current)
         viewModelScope.launch {
             settingsRepo.saveNoPointsHabits(current)
-            // Recalculate all historical data by refreshing the Tasker stats file
-            // This ensures external files are updated with the new point calculations
-            val taskerUri = _settings.value.taskerFileUri
-            if (taskerUri.isNotEmpty()) {
-                writeTaskerFile(taskerUri)
-            }
         }
     }
 
@@ -3994,9 +3873,7 @@ class HabitViewModel(
     /**
      * Enables or disables the in-app stats overlay (StatsOverlayService) — the
      * always-on-top bar showing today / avg7 / avg30, fed by the same
-     * computation as the Tasker relay file. Toggling starts/stops the service.
-     * The Tasker file itself keeps being written either way until the overlay
-     * is confirmed working and explicitly retired.
+     * computation as the loading spinner. Toggling starts/stops the service.
      */
     fun setStatsOverlayEnabled(enabled: Boolean) {
         viewModelScope.launch {
@@ -4178,7 +4055,7 @@ class HabitViewModel(
             withContext(Dispatchers.IO) {
                 habitsRepo.persistDatabase(Uri.parse(uriStr), context, mutableDb)
             }
-            writeTaskerFile(_settings.value.taskerFileUri)
+            HabitsDataChangedBus.emit()
             Log.i(TAG, "deleteHabitData: purged data of '$habitName' from JSON")
         }
     }
@@ -4324,6 +4201,7 @@ class HabitViewModel(
                     rollForwardHabits = settings.rollForwardHabits.replaceElement(oldName, newName),
                     rollForwardManualDates = settings.rollForwardManualDates.replaceKey(oldName, newName),
                     mealHabits = settings.mealHabits.replaceElement(oldName, newName),
+                    cameraHabits = settings.cameraHabits.replaceElement(oldName, newName),
                     habitAppAssociations = settings.habitAppAssociations.replaceKey(oldName, newName),
                     habitLongPressActions = settings.habitLongPressActions.replaceKey(oldName, newName),
                     habitLongPressUrls = settings.habitLongPressUrls.replaceKey(oldName, newName),
@@ -4387,6 +4265,7 @@ class HabitViewModel(
                 settingsRepo.saveRollForwardHabits(newSettings.rollForwardHabits)
                 settingsRepo.saveRollForwardManualDates(newSettings.rollForwardManualDates)
                 settingsRepo.saveMealHabits(newSettings.mealHabits)
+                settingsRepo.saveCameraHabits(newSettings.cameraHabits)
                 settingsRepo.saveHabitAppAssociations(newSettings.habitAppAssociations)
                 settingsRepo.saveHabitLongPressActions(newSettings.habitLongPressActions)
                 settingsRepo.saveHabitLongPressUrls(newSettings.habitLongPressUrls)
@@ -4470,7 +4349,6 @@ class HabitViewModel(
                 val updatedDb = habitsRepo.invertHabit(uri, context, habitName)
                 cachedPhoneDb = updatedDb
                 rebuildHabitList()
-                writeTaskerFile(_settings.value.taskerFileUri)
                 Log.i(TAG, "invertHabit: successfully inverted '$habitName'")
             } catch (e: Exception) {
                 Log.e(TAG, "invertHabit: failed to invert habit", e)
@@ -8971,14 +8849,13 @@ class HabitViewModel(
      */
     fun getLoadingMetrics(date: LocalDate): LoadingMetrics {
         val db = cachedPhoneDb
-        // Habit set MUST mirror buildTaskerStatsContent (the tasker stats
-        // file's declared single source of truth for today/avg7/avg30):
-        // every DB habit except no-points habits and secondary-value
-        // storage keys. The previous screen/order-based set
-        // (trackedHabitNames) silently dropped habits that exist in the DB
-        // but not on any screen, yielding lower totals than the tasker
-        // file — so the spinner showed the tasker's yellow at startup and
-        // then dropped a tier (pink) once the DB load replaced the value.
+        // Habit set MUST mirror computeTaskerStats (the declared single
+        // source of truth for today/avg7/avg30): every DB habit except
+        // no-points habits and secondary-value storage keys. The previous
+        // screen/order-based set (trackedHabitNames) silently dropped
+        // habits that exist in the DB but not on any screen, yielding
+        // lower totals — so the spinner dropped a tier once the DB load
+        // replaced the value.
         val noPoints = _settings.value.noPointsHabits
         val tracked = db.keys.filter { it !in noPoints && !isSecondaryValueKey(it) }
 
@@ -9279,6 +9156,24 @@ class HabitViewModel(
             }
             settingsRepo.saveMealHabits(current)
             _settings.value = _settings.value.copy(mealHabits = current)
+        }
+    }
+
+    /**
+     * Toggles the "Camera" type on/off for a specific habit. Camera-enabled
+     * habits are the only ones offered to the LLM as choices when a photo is
+     * captured (see [com.example.tail.data.meal.VisionHabitExecutor]).
+     */
+    fun toggleCameraHabit(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.cameraHabits.toMutableSet()
+            if (habitName in current) {
+                current.remove(habitName)
+            } else {
+                current.add(habitName)
+            }
+            settingsRepo.saveCameraHabits(current)
+            _settings.value = _settings.value.copy(cameraHabits = current)
         }
     }
 

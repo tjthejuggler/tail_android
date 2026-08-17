@@ -1065,6 +1065,8 @@ fun HabitGridScreen(
                             mealDialogFromTap = false
                             mealDialogHabit = name
                         },
+                        cameraHabits = settings.cameraHabits,
+                        onToggleCamera = { name -> viewModel.toggleCameraHabit(name) },
                         habitLongPressActions = settings.habitLongPressActions,
                         onSetLongPressAction = { name, action ->
                             viewModel.setHabitLongPressAction(name, action)
@@ -3064,6 +3066,43 @@ private fun MealToggleSection(
 }
 
 /**
+ * "Camera" eligibility toggle: only habits with this enabled are offered to
+ * the LLM as choices when a photo is captured (quick capture / media capture
+ * auto-detection). Keeping the eligible set small makes the LLM's choice
+ * easy and reliable.
+ */
+@Composable
+private fun CameraToggleSection(
+    habitName: String,
+    isCamera: Boolean,
+    onToggleCamera: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "📷 Camera", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isCamera) "LLM may pick this from photos" else "Never chosen from photos",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isCamera,
+            onCheckedChange = { onToggleCamera(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66CCFF),
+                checkedTrackColor = Color(0xFF0A2A3A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+}
+
+/**
  * Settings section for configuring the long-press action of a habit.
  *
  * For meal habits the user can choose between App (default), URL, Camera, and Details.
@@ -3631,6 +3670,10 @@ private fun EditModeControlBar(
     mealHabits: Set<String> = emptySet(),
     onToggleMeal: (String) -> Unit = {},
     onOpenMealDetails: (String) -> Unit = {},
+    /** Habits eligible for camera/vision auto-detection ("Camera" setting). */
+    cameraHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the "Camera" setting for a habit. */
+    onToggleCamera: (String) -> Unit = {},
     /** Map of habit name → configured long-press action string. */
     habitLongPressActions: Map<String, String> = emptyMap(),
     /** Called when the user changes the long-press action (habitName, action). */
@@ -5190,6 +5233,12 @@ private fun EditModeControlBar(
                                 isMeal = selHabitName in mealHabits,
                                 onToggleMeal = onToggleMeal,
                                 onOpenMealDetails = onOpenMealDetails
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            CameraToggleSection(
+                                habitName = selHabitName,
+                                isCamera = selHabitName in cameraHabits,
+                                onToggleCamera = onToggleCamera
                             )
                         },
                         chessComContent = {

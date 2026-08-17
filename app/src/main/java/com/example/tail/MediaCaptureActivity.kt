@@ -105,11 +105,6 @@ private const val TAG = "MediaCapture"
 private const val AUTO_FINISH_TIMEOUT_MS = 35_000L
 /** Extra auto-finish window while the user speaks a tandem teaching instruction. */
 private const val TANDEM_SPEAK_WINDOW_MS = 30_000L
-/**
- * Minimum confidence for the LLM's proposed habit_action to be executed on a
- * plain photo capture. Below this, no action is taken ("when in doubt, do nothing").
- */
-private const val HABIT_ACTION_CONFIDENCE_THRESHOLD = 0.85
 
 /**
  * UI state for [MediaCaptureActivity].
@@ -932,11 +927,12 @@ class MediaCaptureActivity : ComponentActivity() {
             }
         }
 
-        // ── Smart auto-detection (non-food): execute the proposed habit
-        // action when the LLM is certain enough and the habit really exists.
+        // ── Smart auto-detection (non-food): execute the LLM's proposed
+        // habit action. The candidate list is restricted to camera-enabled
+        // habits and the LLM always picks its best guess among them — no
+        // confidence gate (the user sees the result and can undo it).
         if (result.classification != VisionClassification.FOOD_MEAL &&
-            result.habitAction != null &&
-            result.confidenceScore >= HABIT_ACTION_CONFIDENCE_THRESHOLD
+            result.habitAction != null
         ) {
             val action = result.habitAction!!
             val resolved = VisionHabitExecutor.resolveHabitAction(
@@ -950,11 +946,14 @@ class MediaCaptureActivity : ComponentActivity() {
                     this@MediaCaptureActivity, settings, realHabit, realSubtype, action.amount
                 )
                 if (err == null) {
+                    val seen = result.nonFoodData?.detectedActivity
+                        ?: result.processingNotes.removePrefix("Description:").trim()
                     val display = buildString {
                         voiceErrorNote?.let { append(it); append("\n\n") }
                         append("✅ Incremented $realHabit")
                         append(realSubtype?.let { " ($it)" } ?: "")
                         append(" ×${action.amount}")
+                        seen.takeIf { it.isNotBlank() }?.let { append("\n\nSaw: ${it.take(200)}") }
                         action.reasoning.takeIf { it.isNotBlank() }?.let { append("\n\nWhy: $it") }
                         append("\n\nConfidence: ${(result.confidenceScore * 100).toInt()}%")
                     }

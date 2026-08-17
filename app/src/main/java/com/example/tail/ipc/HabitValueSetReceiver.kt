@@ -7,7 +7,6 @@ import android.net.Uri
 import android.util.Log
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
-import com.example.tail.data.buildTaskerStatsContent
 import com.example.tail.ui.HabitIncrementBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -100,9 +99,7 @@ class HabitValueSetReceiver : BroadcastReceiver() {
                 }
 
                 // Convert date strings to LocalDate, skipping unparseable ones
-                val todayStr = LocalDate.now().toString()
                 val dateValues = mutableMapOf<LocalDate, Int>()
-                var todayChanged = false
                 for ((dateStr, minutes) in rawDateValues) {
                     val date = try {
                         LocalDate.parse(dateStr)
@@ -110,7 +107,6 @@ class HabitValueSetReceiver : BroadcastReceiver() {
                         Log.w(TAG, "Skipping unparseable date '$dateStr': ${e.message}")
                         continue
                     }
-                    if (dateStr == todayStr) todayChanged = true
                     dateValues[date] = minutes
                 }
 
@@ -129,13 +125,6 @@ class HabitValueSetReceiver : BroadcastReceiver() {
                 HabitIncrementBus.emit(habitName)
                 Log.i(TAG, "Set ${dateValues.size} dates for habit '$habitName'")
 
-                // Update the Tasker stats file if today's value was among those set
-                if (todayChanged) {
-                    val taskerUri = settings.taskerFileUri
-                    if (taskerUri.isNotEmpty()) {
-                        writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits, settings.invertedBinaryHabits)
-                    }
-                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to set habit values for '$habitName': ${e.message}", e)
             } finally {
@@ -165,30 +154,4 @@ class HabitValueSetReceiver : BroadcastReceiver() {
         return result
     }
 
-    /**
-     * Writes today's habit totals to the Tasker relay txt file.
-     * Mirrors the logic in HabitIncrementReceiver so external apps see
-     * up-to-date counts after a backfill that touched today.
-     */
-    private suspend fun writeTaskerFile(
-        context: Context,
-        habitsRepo: HabitsRepository,
-        habitsUri: Uri,
-        taskerUriString: String,
-        dividers: Map<String, Int>,
-        noPointsHabits: Set<String>,
-        invertedBinaryHabits: Set<String>
-    ) {
-        try {
-            val db = habitsRepo.loadDatabase(habitsUri, context)
-            val content = buildTaskerStatsContent(db, dividers, noPointsHabits, invertedBinaryHabits = invertedBinaryHabits)
-            val taskerUri = Uri.parse(taskerUriString)
-            context.contentResolver.openOutputStream(taskerUri, "wt")?.use { stream ->
-                stream.bufferedWriter().use { it.write(content) }
-            }
-            Log.i(TAG, "Tasker file updated after backfill")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to write Tasker file: ${e.message}")
-        }
-    }
 }

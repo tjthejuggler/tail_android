@@ -89,7 +89,6 @@ data class BackupBundle(
 data class SettingsSection(
     val fileUri: String = "",
     val screensRelayFileUri: String = "",
-    val taskerFileUri: String = "",
     val customInputHabits: List<String> = emptyList(),
     val habitOrder: List<String> = emptyList(),
     val habitScreens: List<HabitScreenBackup> = emptyList(),
@@ -176,6 +175,7 @@ data class SettingsSection(
     val mealModel: String = "",
     val mealSystemPrompt: String = "",
     val mealHabits: List<String> = emptyList(),
+    val cameraHabits: List<String> = emptyList(),
     val appLinks: Map<String, String> = emptyMap(),
     val habitAppAssociations: Map<String, List<String>> = emptyMap(),
     val habitLongPressActions: Map<String, String> = emptyMap(),

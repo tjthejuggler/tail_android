@@ -11,7 +11,6 @@ import com.example.tail.ui.HabitIncrementBus
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
-import com.example.tail.data.buildTaskerStatsContent
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.secondaryValueSlotKey
 import kotlinx.coroutines.CoroutineScope
@@ -179,11 +178,6 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
                     }
                 }
 
-                // Update the Tasker stats file so external apps see the new total immediately
-                val taskerUri = settings.taskerFileUri
-                if (taskerUri.isNotEmpty()) {
-                    writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits, settings.invertedBinaryHabits)
-                }
 
                 // Broadcast a generic "habit incremented" event for same-keystore listeners
                 try {
@@ -262,13 +256,6 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
                 HabitIncrementBus.emit(habitName)
                 Log.i(TAG, "JugCoach backfill: set ${days.size} days for '$habitName'")
 
-                // Update the Tasker stats file if today was among the backfilled days
-                if (java.time.LocalDate.now() in days.keys) {
-                    val taskerUri = settings.taskerFileUri
-                    if (taskerUri.isNotEmpty()) {
-                        writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits, settings.invertedBinaryHabits)
-                    }
-                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to backfill JugCoach history for '$habitName': ${e.message}", e)
             } finally {
@@ -324,32 +311,4 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
         return result
     }
 
-    /**
-     * Writes today's habit totals to the Tasker relay txt file.
-     * Mirrors the logic in HabitIncrementReceiver so external apps
-     * (e.g. Tasker) see an up-to-date count immediately after an IPC increment.
-     */
-    private suspend fun writeTaskerFile(
-        context: Context,
-        habitsRepo: HabitsRepository,
-        habitsUri: Uri,
-        taskerUriString: String,
-        dividers: Map<String, Int>,
-        noPointsHabits: Set<String>,
-        invertedBinaryHabits: Set<String>
-    ) {
-        try {
-            val db = habitsRepo.loadDatabase(habitsUri, context)
-            // Shared helper excludes "Don't affect points" habits (e.g. Garmin imports)
-            val content = buildTaskerStatsContent(db, dividers, noPointsHabits, invertedBinaryHabits = invertedBinaryHabits)
-
-            val taskerUri = Uri.parse(taskerUriString)
-            context.contentResolver.openOutputStream(taskerUri, "wt")?.use { stream ->
-                stream.bufferedWriter().use { it.write(content) }
-            }
-            Log.i(TAG, "Tasker file updated")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to write Tasker file: ${e.message}")
-        }
-    }
 }

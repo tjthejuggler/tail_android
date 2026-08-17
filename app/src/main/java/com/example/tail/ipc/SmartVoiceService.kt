@@ -30,7 +30,6 @@ import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.SubtypeTimedMigrator
 import com.example.tail.data.SpotifyTrack
 import com.example.tail.data.applyDivider
-import com.example.tail.data.buildTaskerStatsContent
 import com.example.tail.data.dateString
 import com.example.tail.ui.ACTION_HABIT_INCREMENTED
 import com.example.tail.ui.EXTRA_HABIT_NAME
@@ -589,11 +588,6 @@ class SmartVoiceService : Service() {
                     ttsParts.add(ttsPart)
                 }
 
-                // Update Tasker file
-                val taskerUri = settings.taskerFileUri
-                if (taskerUri.isNotEmpty()) {
-                    writeTaskerFile(applicationContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits, settings.invertedBinaryHabits)
-                }
 
                 // Confirmation vibration (single pulse — habit style)
                 vibrateConfirmation()
@@ -703,31 +697,6 @@ class SmartVoiceService : Service() {
         Log.d(TAG, "Note saved notification shown")
     }
 
-    // ── Tasker file ──────────────────────────────────────────────────────
-
-    private suspend fun writeTaskerFile(
-        context: Context,
-        habitsRepo: HabitsRepository,
-        habitsUri: Uri,
-        taskerUriString: String,
-        dividers: Map<String, Int>,
-        noPointsHabits: Set<String>,
-        invertedBinaryHabits: Set<String>
-    ) {
-        try {
-            val db = habitsRepo.loadDatabase(habitsUri, context)
-            // Shared helper excludes "Don't affect points" habits (e.g. Garmin imports)
-            val content = buildTaskerStatsContent(db, dividers, noPointsHabits, invertedBinaryHabits = invertedBinaryHabits)
-
-            val taskerUri = Uri.parse(taskerUriString)
-            context.contentResolver.openOutputStream(taskerUri, "wt")?.use { stream ->
-                stream.bufferedWriter().use { it.write(content) }
-            }
-            Log.i(TAG, "Tasker file updated")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to write Tasker file: ${e.message}")
-        }
-    }
 
     // ── TTS ──────────────────────────────────────────────────────────────
 

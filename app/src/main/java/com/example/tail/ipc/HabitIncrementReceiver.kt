@@ -12,7 +12,6 @@ import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.applyDivider
-import com.example.tail.data.buildTaskerStatsContent
 import com.example.tail.data.dateString
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -196,11 +195,6 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                     }
                 }
 
-                // Update the Tasker stats file so external apps see the new total immediately
-                val taskerUri = settings.taskerFileUri
-                if (taskerUri.isNotEmpty()) {
-                    writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits, settings.invertedBinaryHabits)
-                }
 
                 // Broadcast a generic "habit incremented" event for same-keystore listeners
                 try {
@@ -223,34 +217,6 @@ class HabitIncrementReceiver : BroadcastReceiver() {
         }
     }
 
-    /**
-     * Writes today's habit totals to the Tasker relay txt file.
-     * Mirrors the logic in HabitViewModel.writeTaskerFile() so external apps
-     * (e.g. Tasker) see an up-to-date count immediately after an IPC increment.
-     */
-    private suspend fun writeTaskerFile(
-        context: Context,
-        habitsRepo: HabitsRepository,
-        habitsUri: Uri,
-        taskerUriString: String,
-        dividers: Map<String, Int>,
-        noPointsHabits: Set<String>,
-        invertedBinaryHabits: Set<String>
-    ) {
-        try {
-            val db = habitsRepo.loadDatabase(habitsUri, context)
-            // Shared helper excludes "Don't affect points" habits (e.g. Garmin imports)
-            val content = buildTaskerStatsContent(db, dividers, noPointsHabits, invertedBinaryHabits = invertedBinaryHabits)
-
-            val taskerUri = Uri.parse(taskerUriString)
-            context.contentResolver.openOutputStream(taskerUri, "wt")?.use { stream ->
-                stream.bufferedWriter().use { it.write(content) }
-            }
-            Log.i(TAG, "Tasker file updated")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to write Tasker file: ${e.message}")
-        }
-    }
 
     /**
      * Resolves [habitId] to a habit name.

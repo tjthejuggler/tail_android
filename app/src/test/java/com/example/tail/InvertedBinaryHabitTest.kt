@@ -1,7 +1,7 @@
 package com.example.tail
 
 import com.example.tail.data.buildHabit
-import com.example.tail.data.buildTaskerStatsContent
+import com.example.tail.data.computeTaskerStats
 import com.example.tail.data.invertedBinaryPoints
 import com.example.tail.data.invertEntriesForInvertedBinary
 import org.junit.Assert.assertEquals
@@ -111,7 +111,7 @@ class InvertedBinaryHabitTest {
         assertEquals(true, habit.invertedBinary)
     }
 
-    // ── buildTaskerStatsContent ─────────────────────────────────────────────
+    // ── computeTaskerStats ───────────────────────────────────────────────────
 
     @Test
     fun `tasker totals include inverted points on clean days`() {
@@ -120,14 +120,14 @@ class InvertedBinaryHabitTest {
             "Coffee" to entriesOf(day4 to 0),          // clean today → 1 point
             "Pushups" to entriesOf(day4 to 25)          // normal habit → 25 points
         )
-        val content = buildTaskerStatsContent(
+        val stats = computeTaskerStats(
             db = db,
             dividers = emptyMap(),
             noPointsHabits = emptySet(),
             today = today,
             invertedBinaryHabits = setOf("Coffee")
         )
-        assertEquals("today=26", content.lineSequence().first())
+        assertEquals(26, stats.today)
     }
 
     @Test
@@ -136,13 +136,13 @@ class InvertedBinaryHabitTest {
         val db = mapOf(
             "Coffee" to entriesOf(day4 to 2)           // 2 coffees today → 0 points
         )
-        val content = buildTaskerStatsContent(
+        val stats = computeTaskerStats(
             db = db,
             dividers = emptyMap(),
             noPointsHabits = emptySet(),
             today = today,
             invertedBinaryHabits = setOf("Coffee")
         )
-        assertEquals("today=0", content.lineSequence().first())
+        assertEquals(0, stats.today)
     }
 }

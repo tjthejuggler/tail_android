@@ -459,20 +459,10 @@ data class AppSettings(
      */
     val screensRelayFileUri: String = "",
     /**
-     * SAF URI for the Tasker relay txt file.
-     * When set, the app writes three lines to this file after every habit count change:
-     *   today=<N>          — total habits done today (count > 0)
-     *   avg7=<X.XX>        — average habits done per day over the last 7 days
-     *   avg30=<X.XX>       — average habits done per day over the last 30 days
-     */
-    val taskerFileUri: String = "",
-    /**
      * Master switch for the in-app stats overlay (StatsOverlayService).
-     * When true, a small always-on-top bar shows the same today / avg7 / avg30
-     * numbers that the Tasker relay file receives — an in-app replacement for
-     * the Tasker overlay so the external file dependency can eventually be
-     * dropped. Geometry (position / width) is persisted separately by the
-     * service itself in SharedPreferences.
+     * When true, a small always-on-top bar shows the today / avg7 / avg30
+     * numbers, each tier-coloured. Geometry (position / width) is persisted
+     * separately by the service itself in SharedPreferences.
      */
     val statsOverlayEnabled: Boolean = false,
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
@@ -1008,6 +998,12 @@ data class AppSettings(
     val mealSystemPrompt: String = "",
     /** Habits that have the "Meal" type enabled. */
     val mealHabits: Set<String> = emptySet(),
+    /**
+     * Habits eligible for the camera/vision auto-detection ("Camera" setting).
+     * When non-empty, ONLY these habits are offered to the LLM as choices for
+     * a photo capture; when empty, every habit remains eligible (legacy).
+     */
+    val cameraHabits: Set<String> = emptySet(),
 
     // ── App Link settings ──────────────────────────────────────────────────
     /**

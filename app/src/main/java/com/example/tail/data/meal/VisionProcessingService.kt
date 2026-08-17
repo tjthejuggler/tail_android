@@ -51,8 +51,10 @@ class VisionProcessingService {
      *        associations (from [VisionMemoryRepository]) injected into the
      *        system prompt so the LLM applies its "memory".
      * @param habitPrompt Optional formatted list of valid habit / subtype
-     *        names. When provided, the LLM may propose a [HabitAction] for
-     *        non-food images — gated by a high confidence requirement.
+     *        names (camera-eligible habits only). When provided, the LLM
+     *        proposes a [HabitAction] for non-food images with its BEST
+     *        GUESS among them — confidence is informational only and never
+     *        gates the choice ("NONE" is reserved for "certainly no match").
      * @return The parsed [VisionResult], or null on failure.
      */
     suspend fun processImage(
@@ -590,7 +592,7 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
 ### JSON OUTPUT SCHEMA:
 {
   "classification": "FOOD_MEAL" | "NON_FOOD_HABIT" | "UNCERTAIN_OTHER",
-  "confidence_score": 0.0 to 1.0 (certainty about habit_action ONLY — never about whether the image is food),
+  "confidence_score": 0.0 to 1.0 (certainty about habit_action ONLY — never about whether the image is food; informational for the user, never a gate),
   "food_data": {
     "title": "String (Name of meal)",
     "summary": "String (Short description)",
@@ -614,7 +616,7 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
     "suggested_action": "String or null"
   },
   "habit_action": {
-    "habit_name": "String or null (exact habit name, only when VERY certain)",
+    "habit_name": "String or \"NONE\" (EXACT habit name from AVAILABLE HABITS — always your best guess; \"NONE\" only when the image certainly matches no available habit)",
     "subtype_name": "String or null",
     "amount": number,
     "reasoning": "String"
@@ -626,12 +628,15 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
         /**
          * Extra instructions appended to the system prompt when a habit list
          * is provided — enables the smart auto-detection (habit_action)
-         * path with a strict certainty requirement.
+         * path. The list contains only the user's camera-eligible habits, so
+         * the LLM is pushed to always pick its best guess among them.
          */
         private const val HABIT_ACTION_INSTRUCTIONS = """
 ### HABIT ACTION INSTRUCTIONS:
-- If the image clearly matches one of the learned associations above, OR unambiguously depicts an activity or item tied to one of the available habits (e.g. a supplement bottle clearly labeled "Glutamine" → the Pills habit with subtype Glutamine), include a "habit_action" object in your JSON with the EXACT habit name (and the exact subtype name when one applies).
-- confidence_score expresses how certain you are about the habit_action choice. Only include "habit_action" when that certainty is at least 0.85. When unsure WHICH habit applies, omit "habit_action" entirely (null) — the app will ask the user directly, so no information is lost. Low habit certainty must never affect food classification or food_data estimates.
+- The AVAILABLE HABITS list is hand-picked by the user as camera-detectable. Treat it as the WHOLE universe of choices: whenever the image plausibly relates to ANY of them, ALWAYS include a "habit_action" with your BEST GUESS (the closest match) — even when you are not fully certain. The user sees and can undo the result, so a wrong guess costs little but a missing guess is useless.
+- Use the EXACT habit name (and the exact subtype name when one applies), e.g. a supplement bottle clearly labeled "Glutamine" → the Pills habit with subtype Glutamine.
+- Set habit_name to "NONE" ONLY when the image certainly matches none of the available habits; in that case describe what you see in processing_notes.
+- confidence_score is informational only (shown to the user); it NEVER gates whether you include a habit_action and must never affect food classification or food_data estimates.
 - "habit_action.amount" defaults to 1; only use a larger number when the image clearly shows multiples (e.g. several pills taken at once).
 """
 
@@ -722,7 +727,11 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
             }
 
             val habitAction = json.optJSONObject("habit_action")?.let { ha ->
-                val name = ha.optString("habit_name").takeIf { it.isNotBlank() && it != "null" }
+                // "NONE" is the LLM's explicit "certainly none of the available
+                // habits" answer — treated exactly like a missing habit_action.
+                val name = ha.optString("habit_name").takeIf {
+                    it.isNotBlank() && it != "null" && !it.equals("NONE", ignoreCase = true)
+                }
                 if (name == null) null else HabitAction(
                     habitName = name,
                     subtypeName = ha.optString("subtype_name").takeIf {

@@ -96,7 +96,6 @@ data class HabitRestorePreview(
  *      triggers, chess readiness, GDrive — were missing and are now included)
  *
  * Things deliberately NOT backed up (because they are derived / re-fetchable):
- *   - Tasker stats relay file (regenerated after every habit change)
  *   - Screens-layout relay file (regenerated whenever screens change)
  *   - chess.com monthly cache (re-fetched from the API)
  *   - Garmin / GitHub API caches (re-fetched from the API)
@@ -712,7 +711,6 @@ class BackupManager(
         // file URIs
         settingsRepo.saveFileUri(s.fileUri)
         settingsRepo.saveScreensRelayFileUri(s.screensRelayFileUri)
-        settingsRepo.saveTaskerFileUri(s.taskerFileUri)
 
         // habit type sets
         settingsRepo.saveCustomInputHabits(s.customInputHabits.toSet())
@@ -818,6 +816,7 @@ class BackupManager(
             systemPrompt = s.mealSystemPrompt
         )
         settingsRepo.saveMealHabits(s.mealHabits.toSet())
+        settingsRepo.saveCameraHabits(s.cameraHabits.toSet())
         settingsRepo.saveAppLinks(s.appLinks)
         settingsRepo.saveHabitAppAssociations(s.habitAppAssociations)
         settingsRepo.saveHabitLongPressActions(s.habitLongPressActions)
@@ -1098,7 +1097,6 @@ class BackupManager(
     private fun toSettingsSection(s: AppSettings) = SettingsSection(
         fileUri = s.fileUri,
         screensRelayFileUri = s.screensRelayFileUri,
-        taskerFileUri = s.taskerFileUri,
         customInputHabits = s.customInputHabits.toList(),
         habitOrder = s.habitOrder,
         habitScreens = s.habitScreens.map { HabitScreenBackup(it.id, it.name, it.habitNames) },
@@ -1187,6 +1185,7 @@ class BackupManager(
         mealModel = s.mealModel,
         mealSystemPrompt = s.mealSystemPrompt,
         mealHabits = s.mealHabits.toList(),
+        cameraHabits = s.cameraHabits.toList(),
         appLinks = s.appLinks,
         habitAppAssociations = s.habitAppAssociations,
         habitLongPressActions = s.habitLongPressActions,

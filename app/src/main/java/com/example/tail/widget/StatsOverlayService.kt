@@ -16,6 +16,9 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -30,7 +33,9 @@ import com.example.tail.R
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.computeTaskerStats
+import com.example.tail.ui.HabitsDataChangedBus
 import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.ui.PointTierColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,19 +44,19 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * Foreground service that shows a small always-on-top stats bar with the same
- * daily / weekly / monthly point totals that the Tasker relay file receives
- * (today / avg7 / avg30 — computed by the shared [computeTaskerStats]).
+ * Foreground service that shows a small always-on-top stats bar with the
+ * daily / weekly / monthly point totals (today / avg7 / avg30 — computed by
+ * the shared [computeTaskerStats]), each number tier-coloured by
+ * [com.example.tail.ui.PointTierColors].
  *
- * This is the in-app replacement for the Tasker overlay: once confirmed
- * working, the external total_habits.txt dependency can be retired.
+ * Two modes (Settings → 📊 Stats Overlay → Edit mode):
+ *  - EDIT MODE ON: draggable bar with background + ◢ resize handle;
+ *    long-press opens the Tail app.
+ *  - EDIT MODE OFF (the clean default): just the bare coloured numbers —
+ *    no background, no handle, and touches pass through to apps beneath.
  *
- * The bar can be:
- *  - Dragged anywhere on the screen (touch and move)
- *  - Resized by dragging the ◢ corner handle — width and font size scale
- *    together, so "wider" also means "bigger text"
- *  - Long-pressed to open the Tail app
- *  - Hidden from its notification action (or the Settings master switch)
+ * The bar can also be hidden from its notification action (or the Settings
+ * master switch).
  *
  * Position/width/opacity persist across reboots via [StatsOverlayStore].
  * The service is START_STICKY and additionally revived by
@@ -70,8 +75,18 @@ class StatsOverlayService : Service() {
         /** Periodic refresh cadence — catches Syncthing desktop edits + midnight rollover. */
         private const val REFRESH_INTERVAL_MS = 60_000L
 
-        /** Debounce for HabitIncrementBus-driven refreshes. */
-        private const val BUS_DEBOUNCE_MS = 600L
+        /**
+         * Debounce for bus-driven refreshes. Emits fire only after the DB
+         * write is on disk, so this window just coalesces bursts (e.g.
+         * conditional-link chains) — keep it small so updates feel instant.
+         */
+        private const val BUS_DEBOUNCE_MS = 150L
+
+        /**
+         * Lowest allowed Y coordinate (px). Negative values let the bar ride
+         * over / above the status bar (see FLAG_LAYOUT_NO_LIMITS).
+         */
+        private const val MIN_Y = -300
 
         /** Action to hide the overlay from anywhere (e.g. notification action). */
         const val ACTION_STOP_OVERLAY = "com.example.tail.widget.STOP_STATS_OVERLAY"
@@ -133,6 +148,7 @@ class StatsOverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private var overlayView: FrameLayout? = null
     private var statsText: TextView? = null
+    private var resizeHandle: TextView? = null
     private lateinit var overlayParams: WindowManager.LayoutParams
 
     private val handler = Handler(Looper.getMainLooper())
@@ -145,9 +161,11 @@ class StatsOverlayService : Service() {
 
     // ── Refresh runnables ─────────────────────────────────────────────────
     private val refreshRunnable = Runnable { refreshStats() }
-    private val busDebouncedRefresh = Runnable {
+
+    /** Coalesces a burst of data-change events into one immediate refresh. */
+    private fun scheduleBusRefresh() {
         handler.removeCallbacks(refreshRunnable)
-        handler.postDelayed(refreshRunnable, 0)
+        handler.postDelayed(refreshRunnable, BUS_DEBOUNCE_MS)
     }
     private val periodicTick = object : Runnable {
         override fun run() {
@@ -169,6 +187,17 @@ class StatsOverlayService : Service() {
         geo = StatsOverlayStore.loadGeometry(this)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
+
+        // Bus-driven refreshes (habit changed anywhere in the process):
+        // external increments (voice / IPC / widgets) via HabitIncrementBus,
+        // in-app increments & edits via HabitsDataChangedBus. Collected here,
+        // once per service lifetime — onStartCommand can fire repeatedly.
+        serviceScope.launch {
+            HabitIncrementBus.events.collect { scheduleBusRefresh() }
+        }
+        serviceScope.launch {
+            HabitsDataChangedBus.events.collect { scheduleBusRefresh() }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -192,16 +221,9 @@ class StatsOverlayService : Service() {
             showOverlay()
         }
 
-        // Instant refresh on (re)start…
+        // Instant refresh on (re)start… …and the periodic heartbeat
+        // (bus listeners live in onCreate, started exactly once).
         refreshStats()
-        // …bus-driven refreshes (habit changed anywhere in the process)…
-        serviceScope.launch {
-            HabitIncrementBus.events.collect {
-                handler.removeCallbacks(busDebouncedRefresh)
-                handler.postDelayed(busDebouncedRefresh, BUS_DEBOUNCE_MS)
-            }
-        }
-        // …and the periodic heartbeat.
         handler.removeCallbacks(periodicTick)
         handler.postDelayed(periodicTick, REFRESH_INTERVAL_MS)
 
@@ -224,7 +246,7 @@ class StatsOverlayService : Service() {
         val screenWidth = Resources.getSystem().displayMetrics.widthPixels
 
         // First-run default: top-center, 220dp wide.
-        if (geo.x < 0 || geo.y < 0) {
+        if (geo.x == StatsOverlayStore.UNSET || geo.y == StatsOverlayStore.UNSET) {
             geo = geo.copy(
                 x = (screenWidth / 2 - geo.widthDp.dp(resources) / 2),
                 y = 48.dp(resources)
@@ -238,9 +260,12 @@ class StatsOverlayService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
                 // Absolute screen coordinates: y=0 is the very top of the
-                // screen, so the bar can sit over the status-bar area — the
-                // same spot the Tasker overlay used to occupy.
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                // screen, so the bar can sit over the status-bar area.
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                // IN_SCREEN alone still gets the bar inset below the status
+                // bar on modern Android; NO_LIMITS makes y=0 the physical
+                // top edge and permits negative Y fine-tuning from Settings.
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -248,14 +273,13 @@ class StatsOverlayService : Service() {
             y = geo.y
         }
 
-        val root = FrameLayout(this).apply {
-            background = barBackground()
-        }
+        // Background (edit mode only) is applied by applyEditMode().
+        val root = FrameLayout(this)
 
         val text = TextView(this).apply {
             this.text = "– – –"
             setTextColor(Color.WHITE)
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            typeface = Typeface.create(geo.fontFamily, Typeface.BOLD)
             gravity = Gravity.CENTER
             val hPad = 12.dp(resources)
             val vPad = 7.dp(resources)
@@ -284,12 +308,14 @@ class StatsOverlayService : Service() {
             FrameLayout.LayoutParams.WRAP_CONTENT,
             Gravity.CENTER
         ))
+        resizeHandle = handle
         root.addView(handle, handleLP)
         root.setOnTouchListener(BarTouchListener())
         overlayView = root
 
         try {
             windowManager.addView(root, overlayParams)
+            applyEditMode()
         } catch (e: Exception) {
             // Permission revoked or similar — stop cleanly and don't let the
             // watchdog keep retrying every heartbeat.
@@ -326,10 +352,34 @@ class StatsOverlayService : Service() {
                 geo.widthDp.dp(resources)
             val maxY = Resources.getSystem().displayMetrics.heightPixels - root.height
             overlayParams.x = geo.x.coerceIn(0, maxX.coerceAtLeast(0))
-            overlayParams.y = geo.y.coerceIn(0, maxY.coerceAtLeast(0))
+            overlayParams.y = geo.y.coerceIn(MIN_Y, maxY.coerceAtLeast(0))
             overlayParams.width = geo.widthDp.dp(resources)
-            root.background = barBackground()
             statsText?.textSize = fontSpForWidth(geo.widthDp)
+            statsText?.typeface = Typeface.create(geo.fontFamily, Typeface.BOLD)
+            applyEditMode()
+        }
+        // Re-render the coloured spans so font / brightness changes show live.
+        refreshStats()
+    }
+
+    /**
+     * Applies the edit-mode setting: while editing, the bar shows its
+     * background and the ◢ resize handle and accepts drags / long-press;
+     * otherwise it renders as bare tier-coloured numbers, background-free
+     * and fully touch-through (FLAG_NOT_TOUCHABLE) so it never blocks
+     * whatever is underneath — including the status bar area.
+     */
+    private fun applyEditMode() {
+        val edit = StatsOverlayStore.isEditMode(this)
+        overlayView?.let { root ->
+            root.background = if (edit) barBackground() else null
+            resizeHandle?.visibility = if (edit) View.VISIBLE else View.GONE
+            overlayParams.flags =
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                (if (edit) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
             updateLayout()
         }
     }
@@ -342,6 +392,7 @@ class StatsOverlayService : Service() {
         }
         overlayView = null
         statsText = null
+        resizeHandle = null
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -383,7 +434,7 @@ class StatsOverlayService : Service() {
                         val maxY = Resources.getSystem().displayMetrics.heightPixels -
                             (overlayView?.height ?: 0)
                         overlayParams.x = (initialX + dx.toInt()).coerceIn(0, maxX.coerceAtLeast(0))
-                        overlayParams.y = (initialY + dy.toInt()).coerceIn(0, maxY.coerceAtLeast(0))
+                        overlayParams.y = (initialY + dy.toInt()).coerceIn(MIN_Y, maxY.coerceAtLeast(0))
                         updateLayout()
                     }
                     return true
@@ -470,11 +521,13 @@ class StatsOverlayService : Service() {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    //  Stats computation — SAME source as the Tasker relay file
+    //  Stats computation — shared computeTaskerStats (spinner parity)
     // ──────────────────────────────────────────────────────────────────────
 
     private fun refreshStats() {
-        serviceScope.launch {
+        // DB load + stats compute run off the main thread; the result is
+        // marshalled back to the UI thread by postStats/postStatsText.
+        serviceScope.launch(Dispatchers.Default) {
             try {
                 val settings = settingsRepo.settingsFlow.first()
                 if (settings.fileUri.isEmpty()) {
@@ -492,9 +545,7 @@ class StatsOverlayService : Service() {
                     timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary,
                     invertedBinaryHabits = settings.invertedBinaryHabits
                 )
-                postStatsText(
-                    "${stats.today} ${formatNum(stats.avg7)} ${formatNum(stats.avg30)}"
-                )
+                postStats(stats.today, stats.avg7, stats.avg30)
             } catch (e: Exception) {
                 Log.w(TAG, "refreshStats failed: ${e.message}")
             }
@@ -504,6 +555,37 @@ class StatsOverlayService : Service() {
     /** Applies new stats text on the main thread (safe from any coroutine). */
     private fun postStatsText(text: String) {
         handler.post { statsText?.text = text }
+    }
+
+    /**
+     * Applies the three stats on the main thread, colouring each number with
+     * the shared point-tier ranking (red → orange → green → blue → pink →
+     * yellow → white) so the rank reads at a glance.
+     */
+    private fun postStats(today: Int, avg7: Double, avg30: Double) {
+        handler.post { statsText?.text = coloredStatsText(today, avg7, avg30) }
+    }
+
+    private fun coloredStatsText(today: Int, avg7: Double, avg30: Double): CharSequence {
+        val parts = listOf(
+            today.toString() to today,
+            formatNum(avg7) to Math.round(avg7).toInt(),
+            formatNum(avg30) to Math.round(avg30).toInt()
+        )
+        return SpannableStringBuilder().apply {
+            parts.forEachIndexed { i, (text, points) ->
+                if (i > 0) append(" ")
+                val start = length
+                append(text)
+                setSpan(
+                    ForegroundColorSpan(
+                        PointTierColors.textArgbForPoints(points, geo.fontBrightness)
+                    ),
+                    start, length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
     }
 
     /** Bare-number format: rounded to the nearest whole number ("44.4"→"44", "44.5"→"45"). */
@@ -562,25 +644,39 @@ object StatsOverlayStore {
     private const val KEY_Y = "y"
     private const val KEY_WIDTH_DP = "width_dp"
     private const val KEY_OPACITY = "opacity"
+    private const val KEY_FONT_FAMILY = "font_family"
+    private const val KEY_FONT_BRIGHTNESS = "font_brightness"
     private const val KEY_SHOULD_RUN = "should_run"
+    private const val KEY_EDIT_MODE = "edit_mode"
 
     const val DEFAULT_WIDTH_DP = 220
     const val DEFAULT_OPACITY = 0.80f
+    const val DEFAULT_FONT_FAMILY = "monospace"
+
+    /**
+     * "Position never set" sentinel. Real coordinates may now be NEGATIVE
+     * (the bar can ride over the status bar), so -1 is a legitimate Y value.
+     */
+    const val UNSET = Int.MIN_VALUE
 
     data class Geometry(
-        val x: Int = -1,          // -1 → first-run sentinel (auto top-center)
-        val y: Int = -1,
+        val x: Int = UNSET,       // UNSET → first-run sentinel (auto top-center)
+        val y: Int = UNSET,
         val widthDp: Int = DEFAULT_WIDTH_DP,
-        val opacity: Float = DEFAULT_OPACITY
+        val opacity: Float = DEFAULT_OPACITY,
+        val fontFamily: String = DEFAULT_FONT_FAMILY,
+        val fontBrightness: Float = 1f
     )
 
     fun loadGeometry(context: Context): Geometry {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return Geometry(
-            x = p.getInt(KEY_X, -1),
-            y = p.getInt(KEY_Y, -1),
+            x = p.getInt(KEY_X, UNSET),
+            y = p.getInt(KEY_Y, UNSET),
             widthDp = p.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_DP).coerceIn(120, 2000),
-            opacity = p.getFloat(KEY_OPACITY, DEFAULT_OPACITY).coerceIn(0.15f, 1f)
+            opacity = p.getFloat(KEY_OPACITY, DEFAULT_OPACITY).coerceIn(0.15f, 1f),
+            fontFamily = p.getString(KEY_FONT_FAMILY, DEFAULT_FONT_FAMILY) ?: DEFAULT_FONT_FAMILY,
+            fontBrightness = p.getFloat(KEY_FONT_BRIGHTNESS, 1f).coerceIn(0f, 1f)
         )
     }
 
@@ -590,6 +686,8 @@ object StatsOverlayStore {
             .putInt(KEY_Y, geo.y)
             .putInt(KEY_WIDTH_DP, geo.widthDp)
             .putFloat(KEY_OPACITY, geo.opacity)
+            .putString(KEY_FONT_FAMILY, geo.fontFamily)
+            .putFloat(KEY_FONT_BRIGHTNESS, geo.fontBrightness)
             .apply()
     }
 
@@ -597,6 +695,19 @@ object StatsOverlayStore {
     fun saveOpacity(context: Context, opacity: Float) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putFloat(KEY_OPACITY, opacity.coerceIn(0.15f, 1f))
+            .apply()
+    }
+
+    /**
+     * Saves only the number font (Settings font selector + brightness slider)
+     * without touching position/size — the overlay may have been dragged since
+     * Settings loaded its geometry snapshot, so a full saveGeometry() here
+     * would clobber the live position with stale coordinates.
+     */
+    fun saveFont(context: Context, family: String, brightness: Float) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_FONT_FAMILY, family)
+            .putFloat(KEY_FONT_BRIGHTNESS, brightness.coerceIn(0f, 1f))
             .apply()
     }
 
@@ -621,6 +732,21 @@ object StatsOverlayStore {
     fun setShouldRun(context: Context, value: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_SHOULD_RUN, value)
+            .apply()
+    }
+
+    /**
+     * True while the overlay is in "edit mode" (Settings toggle): background,
+     * ◢ resize handle and dragging are active. When false the bar renders as
+     * bare tier-coloured numbers and passes touches through to apps beneath.
+     */
+    fun isEditMode(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_EDIT_MODE, false)
+
+    fun setEditMode(context: Context, value: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_EDIT_MODE, value)
             .apply()
     }
 }

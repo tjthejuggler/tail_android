@@ -2,6 +2,7 @@ package com.example.tail.ui
 
 import android.content.Context
 import android.net.Uri
+import android.graphics.Typeface
 import android.util.Log
 import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -80,6 +81,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -198,20 +200,6 @@ fun SettingsScreen(
         }
     }
 
-    // Picker for the Tasker stats txt file — needs read+write so the app can overwrite it
-    val taskerFilePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            viewModel.setTaskerFileUri(uri)
-        }
-    }
-
     // Picker for screens_layout.json — needs read+write so the app can update the relay file
     val screensRelayFilePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -271,7 +259,7 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Data Files",
-                    summary = "Habit database · screens layout · Tasker stats",
+                    summary = "Habit database · screens layout",
                     icon = Icons.Filled.FolderOpen
                 ) {
                     HabitDatabaseFileSection(
@@ -282,12 +270,6 @@ fun SettingsScreen(
                     ScreensRelayFileSection(
                         fileUri = settings.screensRelayFileUri,
                         onPickFile = { screensRelayFilePicker.launch(arrayOf("*/*")) }
-                    )
-                    SettingsSubSectionDivider()
-                    TaskerStatsFileSection(
-                        fileUri = settings.taskerFileUri,
-                        onPickFile = { taskerFilePicker.launch(arrayOf("*/*")) },
-                        onRefresh = { viewModel.refreshTaskerStatsFile() }
                     )
                 }
             }
@@ -586,53 +568,6 @@ private fun ScreensRelayFileSection(
         Spacer(modifier = Modifier.height(8.dp))
         Button(onClick = onPickFile) {
             Text("Change Relay File")
-        }
-    }
-}
-
-/**
- * Tasker stats (total_habits.txt) picker sub-section with recalculate action.
- */
-@Composable
-private fun TaskerStatsFileSection(
-    fileUri: String,
-    onPickFile: () -> Unit,
-    onRefresh: () -> Unit
-) {
-    Column {
-        Text("Tasker Stats File (total_habits.txt)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        Text(
-            text = "A simple txt file Tasker can read for habit stats. " +
-                   "Updated after every habit count change. " +
-                   "Format: today=N / avg7=X.XX / avg30=X.XX",
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = if (fileUri.isEmpty()) "No file selected" else fileUri,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = onPickFile) {
-            Text("Change Tasker File")
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "If the totals look wrong (e.g. after a Garmin import), tap below to " +
-                   "rewrite the file now. \"Don't affect points\" habits are excluded.",
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Button(
-            onClick = onRefresh,
-            enabled = fileUri.isNotEmpty()
-        ) {
-            Text("🔄 Recalculate Stats File Now")
         }
     }
 }
@@ -1678,12 +1613,36 @@ private fun VoiceNoteSettingsSection(
 }
 
 /**
+ * Font options for the stats overlay numbers. Each pair is the Android
+ * Typeface family string to persist + a friendly label; the label is
+ * rendered in its own font so the selector doubles as a live preview.
+ */
+private val OVERLAY_FONT_OPTIONS: List<Pair<String, String>> = listOf(
+    "monospace" to "Monospace",
+    "sans-serif" to "Sans Serif",
+    "sans-serif-medium" to "Sans Medium",
+    "sans-serif-black" to "Sans Black",
+    "sans-serif-light" to "Sans Light",
+    "sans-serif-thin" to "Sans Thin",
+    "sans-serif-condensed" to "Sans Condensed",
+    "sans-serif-smallcaps" to "Sans Smallcaps",
+    "serif" to "Serif",
+    "serif-monospace" to "Serif Mono",
+    "casual" to "Casual",
+    "cursive" to "Cursive"
+)
+
+/** Friendly label for a stored overlay font family (falls back to the raw string). */
+private fun overlayFontLabel(family: String): String =
+    OVERLAY_FONT_OPTIONS.firstOrNull { it.first == family }?.second ?: family
+
+/**
  * Stats Overlay settings section — master switch for the always-on-top
  * today / avg7 / avg30 bar (StatsOverlayService).
  *
- * The overlay shows the exact same numbers the Tasker relay file receives
- * (shared computeTaskerStats), so it can replace the Tasker overlay once
- * confirmed. The bar itself is dragged to place it, and its ◢ corner handle
+ * The overlay shows today / avg7 / avg30 (shared computeTaskerStats), each
+ * number tier-coloured. Edit mode (below) toggles the background, ◢ handle
+ * and dragging. The bar itself is dragged to place it, and its ◢ corner handle
  * resizes it (width + font scale together) — this section covers the master
  * switch, background opacity and a position/size reset.
  */
@@ -1702,6 +1661,22 @@ private fun StatsOverlaySettingsSection(
             com.example.tail.widget.StatsOverlayStore.loadGeometry(context)
         )
     }
+
+    // Raw text for the exact-position fields — kept as strings so the Y field
+    // can hold a leading "-" (number keyboards can't type one; the ± button can).
+    var xText by remember {
+        mutableStateOf(
+            geometry.x.takeIf { it != com.example.tail.widget.StatsOverlayStore.UNSET }
+                ?.toString() ?: ""
+        )
+    }
+    var yText by remember {
+        mutableStateOf(
+            geometry.y.takeIf { it != com.example.tail.widget.StatsOverlayStore.UNSET }
+                ?.toString() ?: ""
+        )
+    }
+    var wText by remember { mutableStateOf(geometry.widthDp.toString()) }
 
     /** Tells the running overlay to re-read its stored geometry/opacity. */
     fun notifyOverlayChanged() {
@@ -1724,9 +1699,9 @@ private fun StatsOverlaySettingsSection(
             Column(modifier = Modifier.weight(1f)) {
                 Text("📊 Stats Overlay", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    text = "Always-on-top bar with today / avg7 / avg30 — the same " +
-                        "numbers the Tasker file gets. Drag the bar to place it (it can " +
-                        "sit right over the status bar), drag the ◢ corner to resize, " +
+                    text = "Always-on-top bar with today / avg7 / avg30, each number " +
+                        "tier-coloured. Turn ✏️ Edit mode on to drag the bar (it can " +
+                        "sit right over the status bar), resize via the ◢ corner, " +
                         "long-press to open Tail — or set exact values below.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1767,6 +1742,34 @@ private fun StatsOverlaySettingsSection(
 
         if (enabled) {
             Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("✏️ Edit mode", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(
+                        text = "ON: background + ◢ handle + dragging. OFF: bare " +
+                            "coloured numbers that pass touches through.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                var editMode by remember {
+                    mutableStateOf(
+                        com.example.tail.widget.StatsOverlayStore.isEditMode(context)
+                    )
+                }
+                Switch(
+                    checked = editMode,
+                    onCheckedChange = { want ->
+                        editMode = want
+                        com.example.tail.widget.StatsOverlayStore.setEditMode(context, want)
+                        notifyOverlayChanged()
+                    }
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "Background opacity: ${(geometry.opacity * 100).toInt()}%",
                 fontSize = 12.sp,
@@ -1783,6 +1786,101 @@ private fun StatsOverlaySettingsSection(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
+                text = "Number brightness: ${(geometry.fontBrightness * 100).toInt()}%",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Slider(
+                value = geometry.fontBrightness,
+                onValueChange = { geometry = geometry.copy(fontBrightness = it) },
+                onValueChangeFinished = {
+                    // Targeted save: a full saveGeometry() would clobber the
+                    // live x/y with this screen's possibly-stale snapshot.
+                    com.example.tail.widget.StatsOverlayStore.saveFont(
+                        context, geometry.fontFamily, geometry.fontBrightness
+                    )
+                    notifyOverlayChanged()
+                },
+                valueRange = 0f..1f
+            )
+            Text(
+                text = "100% = each number at its purest colour (red → pure " +
+                    "255,0,0). Slide left for duller, faded tones.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Number font",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            var fontMenuOpen by remember { mutableStateOf(false) }
+            Box {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { fontMenuOpen = true }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // The closed selector previews the current font in itself.
+                        Text(
+                            text = overlayFontLabel(geometry.fontFamily),
+                            fontFamily = FontFamily(
+                                Typeface.create(geometry.fontFamily, Typeface.BOLD)
+                            ),
+                            fontSize = 16.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = "Choose font",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                DropdownMenu(
+                    expanded = fontMenuOpen,
+                    onDismissRequest = { fontMenuOpen = false }
+                ) {
+                    // Every option's name renders in its own font — the menu
+                    // doubles as a side-by-side font preview.
+                    OVERLAY_FONT_OPTIONS.forEach { (family, label) ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    label,
+                                    fontFamily = FontFamily(
+                                        Typeface.create(family, Typeface.BOLD)
+                                    ),
+                                    fontSize = 16.sp
+                                )
+                            },
+                            trailingIcon = {
+                                if (family == geometry.fontFamily) {
+                                    Text("✓", fontWeight = FontWeight.Bold)
+                                }
+                            },
+                            onClick = {
+                                fontMenuOpen = false
+                                geometry = geometry.copy(fontFamily = family)
+                                com.example.tail.widget.StatsOverlayStore.saveFont(
+                                    context, family, geometry.fontBrightness
+                                )
+                                notifyOverlayChanged()
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
                 text = "Exact position & size",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
@@ -1790,26 +1888,41 @@ private fun StatsOverlaySettingsSection(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
-                    value = if (geometry.x >= 0) geometry.x.toString() else "",
-                    onValueChange = { geometry = geometry.copy(x = it.toIntOrNull() ?: -1) },
+                    value = xText,
+                    onValueChange = { v -> xText = v.filter { it.isDigit() }.take(4) },
                     label = { Text("X (px)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedTextField(
-                    value = if (geometry.y >= 0) geometry.y.toString() else "",
-                    onValueChange = { geometry = geometry.copy(y = it.toIntOrNull() ?: -1) },
+                    value = yText,
+                    onValueChange = { v ->
+                        yText = (if (v.startsWith("-")) "-" else "") +
+                            v.filter { it.isDigit() }.take(4)
+                    },
                     label = { Text("Y (px)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    // Number keyboards have no minus key — the ± trailing button
+                    // flips the sign so the bar can be nudged over the status bar.
+                    trailingIcon = {
+                        Text(
+                            text = "±",
+                            fontSize = 18.sp,
+                            modifier = Modifier
+                                .clickable {
+                                    yText = if (yText.startsWith("-")) yText.removePrefix("-")
+                                    else "-$yText"
+                                }
+                                .padding(6.dp)
+                        )
+                    },
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedTextField(
-                    value = geometry.widthDp.toString(),
-                    onValueChange = {
-                        geometry = geometry.copy(widthDp = it.toIntOrNull() ?: geometry.widthDp)
-                    },
+                    value = wText,
+                    onValueChange = { v -> wText = v.filter { it.isDigit() }.take(4) },
                     label = { Text("Width (dp)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -1819,6 +1932,15 @@ private fun StatsOverlaySettingsSection(
             Spacer(modifier = Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
+                    geometry = geometry.copy(
+                        // Blank field → UNSET sentinel → service auto-places top-center.
+                        x = xText.toIntOrNull()?.coerceAtLeast(0)
+                            ?: com.example.tail.widget.StatsOverlayStore.UNSET,
+                        y = yText.toIntOrNull()?.coerceIn(-300, 10_000)
+                            ?: com.example.tail.widget.StatsOverlayStore.UNSET,
+                        widthDp = (wText.toIntOrNull() ?: geometry.widthDp)
+                            .coerceIn(120, 2000)
+                    )
                     com.example.tail.widget.StatsOverlayStore.saveGeometry(context, geometry)
                     notifyOverlayChanged()
                 }) {
@@ -1827,6 +1949,9 @@ private fun StatsOverlaySettingsSection(
                 Button(onClick = {
                     com.example.tail.widget.StatsOverlayStore.resetGeometry(context)
                     geometry = com.example.tail.widget.StatsOverlayStore.loadGeometry(context)
+                    xText = ""
+                    yText = ""
+                    wText = geometry.widthDp.toString()
                     notifyOverlayChanged()
                 }) {
                     Text("Reset")
@@ -1835,17 +1960,16 @@ private fun StatsOverlaySettingsSection(
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "X/Y are pixels from the top-left of the screen (0,0 = very top, " +
-                    "over the status bar). Width is dp; the font scales with it. Values " +
-                    "are clamped to the screen on apply. Tip: drag the bar roughly in " +
-                    "place first, then fine-tune here.",
+                    "over the status bar). Y can be negative — use the ± button — to " +
+                    "nudge the bar even higher. Width is dp; the font scales with it. " +
+                    "Tip: drag the bar roughly in place first, then fine-tune here.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "The bar survives reboots and revives itself if Android kills " +
-                    "it. Hide it anytime from its notification. The Tasker file keeps " +
-                    "being written until you retire it.",
+                    "it. Hide it anytime from its notification.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
