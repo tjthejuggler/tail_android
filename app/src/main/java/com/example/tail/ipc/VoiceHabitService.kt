@@ -517,7 +517,7 @@ class VoiceHabitService : Service() {
                 // Update Tasker file
                 val taskerUri = settings.taskerFileUri
                 if (taskerUri.isNotEmpty()) {
-                    writeTaskerFile(applicationContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits)
+                    writeTaskerFile(applicationContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits, settings.invertedBinaryHabits)
                 }
 
                 // Confirmation vibration
@@ -549,12 +549,13 @@ class VoiceHabitService : Service() {
         habitsUri: Uri,
         taskerUriString: String,
         dividers: Map<String, Int>,
-        noPointsHabits: Set<String>
+        noPointsHabits: Set<String>,
+        invertedBinaryHabits: Set<String>
     ) {
         try {
             val db = habitsRepo.loadDatabase(habitsUri, context)
             // Shared helper excludes "Don't affect points" habits (e.g. Garmin imports)
-            val content = buildTaskerStatsContent(db, dividers, noPointsHabits)
+            val content = buildTaskerStatsContent(db, dividers, noPointsHabits, invertedBinaryHabits = invertedBinaryHabits)
 
             val taskerUri = Uri.parse(taskerUriString)
             context.contentResolver.openOutputStream(taskerUri, "wt")?.use { stream ->

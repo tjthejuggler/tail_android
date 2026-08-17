@@ -116,7 +116,12 @@ fun HabitButton(
     /** True while this habit should pulse (e.g. jumped to from global search). */
     isHighlighted: Boolean = false
 ) {
-    val habitStyle = getHabitStyle(habit.todayCount)
+    // Inverted-binary habits colour by RAW count (orange = done today, red = clean)
+    val habitStyle = if (habit.invertedBinary) {
+        getInvertedBinaryStyle(habit.rawTodayCount)
+    } else {
+        getHabitStyle(habit.todayCount)
+    }
     // Animate color transitions smoothly to prevent flickering
     val bgColor by animateColorAsState(
         targetValue = habitStyle.background,
@@ -374,6 +379,16 @@ fun HabitButton(
                     style = tightTextStyle
                 )
                 null -> {}
+            }
+            // Inverted-binary type marker: small ⊘ beneath the badge stack
+            if (habit.invertedBinary) {
+                Text(
+                    text = "⊘",
+                    color = Color(0xFFE0E0E0),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    style = tightTextStyle
+                )
             }
         }
 

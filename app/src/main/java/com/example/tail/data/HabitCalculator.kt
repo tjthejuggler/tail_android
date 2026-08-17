@@ -115,6 +115,64 @@ fun calculateStreakDisplay(entries: Map<String, Int>, targetDate: LocalDate? = n
     }
 }
 
+// ── Inverted binary helpers ──────────────────────────────────────────────────
+
+/**
+ * Points for an inverted-binary habit (e.g. coffee tracking): 1 point on days
+ * the habit was NOT done (raw count 0), 0 points on days it was done.
+ */
+fun invertedBinaryPoints(rawCount: Int): Int = if (rawCount > 0) 0 else 1
+
+/**
+ * Builds the inverted view of a habit's entries for inverted-binary habits.
+ *
+ * Every calendar day between the first and last entry (plus [targetDate] when
+ * given) is expanded, then flipped: raw 0 (not done) becomes 1 (success) and
+ * any raw > 0 (done) becomes 0 (failure). Feeding this dense inverted map into
+ * the regular streak/average calculators yields the inverted semantics:
+ * consecutive not-done days form the streak, a done day breaks it.
+ */
+fun invertEntriesForInvertedBinary(
+    entries: Map<String, Int>,
+    targetDate: LocalDate? = null
+): Map<String, Int> {
+    if (entries.isEmpty()) return emptyMap()
+    val withTarget = if (targetDate != null) {
+        val targetDateStr = dateString(targetDate)
+        if (targetDateStr !in entries) entries + (targetDateStr to 0) else entries
+    } else {
+        entries
+    }
+    return expandEntriesToCalendarDaysPublic(withTarget).mapValues { if (it.value == 0) 1 else 0 }
+}
+
+/**
+ * Streak display for inverted-binary habits, computed on the dense INVERTED
+ * map from [invertEntriesForInvertedBinary] (1 = clean/not-done day, 0 = done
+ * day).
+ *
+ * Unlike [calculateStreakDisplay] there is no "today is still in progress"
+ * forgiveness (its index-0 skip assumes a 0 day might still become non-zero).
+ * For inverted habits a done day is final: if the most recent day was done,
+ * the result is an antistreak of the consecutive done days ending on it;
+ * otherwise it is the streak of consecutive clean days ending on the most
+ * recent day.
+ */
+fun calculateInvertedStreakDisplay(invertedEntries: Map<String, Int>): Int {
+    if (invertedEntries.isEmpty()) return 0
+    val sorted = invertedEntries.keys.sorted().reversed()
+    val mostRecentDone = (invertedEntries[sorted.first()] ?: 0) == 0
+    var run = 0
+    for (day in sorted) {
+        val clean = (invertedEntries[day] ?: 0) != 0
+        // Continue while the day's state matches the run's state:
+        // counting done days when mostRecentDone, clean days otherwise.
+        if (clean == mostRecentDone) break
+        run++
+    }
+    return if (mostRecentDone) -run else run
+}
+
 /**
  * Calculates the longest streak of consecutive non-zero days.
  * Matches desktop get_longest_streak().
@@ -312,7 +370,8 @@ fun buildHabit(
     targetDate: java.time.LocalDate = java.time.LocalDate.now(),
     secondaryEntries: Map<String, Int> = emptyMap(),
     useSecondaryFallback: Boolean = false,
-    swapPrimarySecondary: Boolean = false
+    swapPrimarySecondary: Boolean = false,
+    invertedBinary: Boolean = false
 ): Habit {
     // Only include entries up to and including targetDate for streak/stat calculations
     val targetDateStr = dateString(targetDate)
@@ -331,27 +390,41 @@ fun buildHabit(
 
     val rawCountForDate = getCountForDate(filteredEntries, targetDate)
     val secValForDate = getCountForDate(filteredSecondary, targetDate)
+
+    // Inverted-binary habits: flip the dense day map (0 → 1 success, >0 → 0
+    // failure) so streaks/averages run on the inverted series. The all-time
+    // high day intentionally stays on the RAW entries (most occurrences in a
+    // single day, e.g. most coffees ever drunk).
+    val invertedEntries = if (invertedBinary) {
+        invertEntriesForInvertedBinary(effectiveEntries, targetDate)
+    } else null
+    val statsEntries = invertedEntries ?: effectiveEntries
+
     // todayCount shown on the button is the effective points value (with fallback)
-    val countForDate = if (swapPrimarySecondary) {
-        effectivePointsWithFallback(secValForDate, divider, rawCountForDate, true)
-    } else {
-        effectivePointsWithFallback(rawCountForDate, divider, secValForDate, useSecondaryFallback)
+    val countForDate = when {
+        invertedBinary -> invertedBinaryPoints(rawCountForDate)
+        swapPrimarySecondary -> effectivePointsWithFallback(secValForDate, divider, rawCountForDate, true)
+        else -> effectivePointsWithFallback(rawCountForDate, divider, secValForDate, useSecondaryFallback)
     }
-    val streakDisplay = calculateStreakDisplay(effectiveEntries, targetDate)
-    val longestStreak = calculateLongestStreak(effectiveEntries)
+    val streakDisplay = if (invertedBinary) {
+        calculateInvertedStreakDisplay(invertedEntries!!)
+    } else {
+        calculateStreakDisplay(statsEntries, targetDate)
+    }
+    val longestStreak = calculateLongestStreak(statsEntries)
 
     val (allTimeHighDayVal, allTimeHighDayDate) = calculateAllTimeHighDay(effectiveEntries)
-    val currentDayValue = getMostRecentValue(effectiveEntries)
+    val currentDayValue = getMostRecentValue(statsEntries)
 
     // Rolling averages for current period
-    val avgLast7 = getAverageOfLastNDays(effectiveEntries, 7, targetDate)
-    val avgLast30 = getAverageOfLastNDays(effectiveEntries, 30, targetDate)
-    val avgLast365 = getAverageOfLastNDays(effectiveEntries, 365, targetDate)
+    val avgLast7 = getAverageOfLastNDays(statsEntries, 7, targetDate)
+    val avgLast30 = getAverageOfLastNDays(statsEntries, 30, targetDate)
+    val avgLast365 = getAverageOfLastNDays(statsEntries, 365, targetDate)
 
     // All-time high rolling windows
-    val allTimeHighWeek = getAllTimeHighRolling(effectiveEntries, 7)
-    val allTimeHighMonth = getAllTimeHighRolling(effectiveEntries, 30)
-    val allTimeHighYear = getAllTimeHighRolling(effectiveEntries, 365)
+    val allTimeHighWeek = getAllTimeHighRolling(statsEntries, 7)
+    val allTimeHighMonth = getAllTimeHighRolling(statsEntries, 30)
+    val allTimeHighYear = getAllTimeHighRolling(statsEntries, 365)
 
     return Habit(
         name = name,
@@ -369,7 +442,8 @@ fun buildHabit(
         avgLast365Days = avgLast365,
         allTimeHighWeek = allTimeHighWeek,
         allTimeHighMonth = allTimeHighMonth,
-        allTimeHighYear = allTimeHighYear
+        allTimeHighYear = allTimeHighYear,
+        invertedBinary = invertedBinary
     )
 }
 
@@ -393,13 +467,18 @@ fun buildTaskerStatsContent(
     noPointsHabits: Set<String>,
     today: LocalDate = LocalDate.now(),
     secondaryValueFallbackHabits: Set<String> = emptySet(),
-    timerMinutesPrimaryHabits: Set<String> = emptySet()
+    timerMinutesPrimaryHabits: Set<String> = emptySet(),
+    invertedBinaryHabits: Set<String> = emptySet()
 ): String {
     fun dayTotal(date: LocalDate): Int {
         val ds = dateString(date)
         return db.entries.sumOf { (habitName, entries) ->
             if (habitName in noPointsHabits) return@sumOf 0
             if (isSecondaryValueKey(habitName)) return@sumOf 0
+            // Inverted-binary habits contribute 1 point on not-done days
+            if (habitName in invertedBinaryHabits) {
+                return@sumOf invertedBinaryPoints(entries[ds] ?: 0)
+            }
             if (habitName in timerMinutesPrimaryHabits) {
                 // Minutes (secondary slot) is primary; sessions are the fallback
                 val minutes = db[secondaryValueKey(habitName)]?.get(ds) ?: 0

@@ -120,7 +120,7 @@ object VisionHabitExecutor {
             if (settings.taskerFileUri.isNotEmpty()) {
                 try {
                     val db = habitsRepo.loadDatabase(uri, context)
-                    val content = buildTaskerStatsContent(db, settings.habitDividers, settings.noPointsHabits)
+                    val content = buildTaskerStatsContent(db, settings.habitDividers, settings.noPointsHabits, invertedBinaryHabits = settings.invertedBinaryHabits)
                     context.contentResolver.openOutputStream(Uri.parse(settings.taskerFileUri), "wt")?.use { stream ->
                         stream.bufferedWriter().use { it.write(content) }
                     }

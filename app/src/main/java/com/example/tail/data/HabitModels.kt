@@ -63,6 +63,15 @@ data class Habit(
     val useCustomInput: Boolean = false,
 
     /**
+     * True for "inverted binary" habits (e.g. coffee tracking). The raw count
+     * records how many times the habit was DONE (a coffee was drunk), but the
+     * semantics are inverted: a day with raw count 0 earns 1 point and extends
+     * the streak, while a day with raw count > 0 earns 0 points and breaks it.
+     * The button renders orange on done-days and red on clean days.
+     */
+    val invertedBinary: Boolean = false,
+
+    /**
      * When > 1, the raw stored count is divided by this value (rounded to nearest int)
      * to produce the displayed "points" value. The raw count is always stored as-is in
      * the database; only the display and totals use the divided value.
@@ -474,6 +483,14 @@ data class AppSettings(
      * when already at 1 has no effect (binary done/not-done behaviour).
      */
     val maxOneHabits: Set<String> = emptySet(),
+
+    /**
+     * Habits that have the "inverted binary" type enabled (e.g. coffee tracking).
+     * Tapping logs an occurrence (with timestamp), but points/streaks are inverted:
+     * a day with no taps earns 1 point and extends the streak; a day with one or
+     * more taps earns 0 points and breaks the streak (antistreak).
+     */
+    val invertedBinaryHabits: Set<String> = emptySet(),
 
     /**
      * Habits that have the "text input" feature enabled.

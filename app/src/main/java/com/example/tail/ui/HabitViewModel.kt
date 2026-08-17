@@ -1275,7 +1275,8 @@ class HabitViewModel(
                     dividers = dividers,
                     noPointsHabits = noPointsHabits,
                     secondaryValueFallbackHabits = _settings.value.secondaryValueFallbackHabits,
-                    timerMinutesPrimaryHabits = _settings.value.widgetTimerMinutesPrimary
+                    timerMinutesPrimaryHabits = _settings.value.widgetTimerMinutesPrimary,
+                    invertedBinaryHabits = _settings.value.invertedBinaryHabits
                 )
 
                 val uri = Uri.parse(taskerUriString)
@@ -1444,7 +1445,9 @@ class HabitViewModel(
         val divider = _settings.value.habitDividers[habitName] ?: 1
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(
-                todayCount = rangePoints ?: applyDivider(newCount, divider),
+                todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
+                    com.example.tail.data.invertedBinaryPoints(newCount)
+                } else applyDivider(newCount, divider),
                 rawTodayCount = newCount
             ) else h
         }
@@ -1520,7 +1523,9 @@ class HabitViewModel(
                 val linkedDivider = _settings.value.habitDividers[linkedName] ?: 1
                 _habits.value = _habits.value.map { h ->
                     if (h.name == linkedName) h.copy(
-                        todayCount = applyDivider(linkedClamped, linkedDivider),
+                        todayCount = if (linkedName in _settings.value.invertedBinaryHabits) {
+                            com.example.tail.data.invertedBinaryPoints(linkedClamped)
+                        } else applyDivider(linkedClamped, linkedDivider),
                         rawTodayCount = linkedClamped
                     ) else h
                 }
@@ -1630,7 +1635,9 @@ class HabitViewModel(
         val divider = _settings.value.habitDividers[habitName] ?: 1
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(
-                todayCount = rangePoints ?: applyDivider(newCount, divider),
+                todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
+                    com.example.tail.data.invertedBinaryPoints(newCount)
+                } else applyDivider(newCount, divider),
                 rawTodayCount = newCount
             ) else h
         }
@@ -2069,7 +2076,9 @@ class HabitViewModel(
         // Step 1: instant targeted UI update
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(
-                todayCount = rangePoints ?: applyDivider(clamped, divider),
+                todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
+                    com.example.tail.data.invertedBinaryPoints(clamped)
+                } else applyDivider(clamped, divider),
                 rawTodayCount = storedValue
             ) else h
         }
@@ -2216,7 +2225,9 @@ class HabitViewModel(
         // Step 1: instant targeted UI update
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(
-                todayCount = rangePoints ?: applyDivider(clamped, divider),
+                todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
+                    com.example.tail.data.invertedBinaryPoints(clamped)
+                } else applyDivider(clamped, divider),
                 rawTodayCount = storedValue
             ) else h
         }
@@ -2294,6 +2305,23 @@ class HabitViewModel(
             if (habitName in current) current.remove(habitName) else current.add(habitName)
             settingsRepo.saveMaxOneHabits(current)
             _settings.value = _settings.value.copy(maxOneHabits = current)
+        }
+    }
+
+    /**
+     * Toggles the "inverted binary" type on/off for [habitName].
+     * When enabled, points and streaks are inverted: a day with no taps earns
+     * 1 point and extends the streak; a day with one or more taps earns 0
+     * points and breaks the streak (antistreak).
+     */
+    fun toggleInvertedBinary(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.invertedBinaryHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveInvertedBinaryHabits(current)
+            _settings.value = _settings.value.copy(invertedBinaryHabits = current)
+            // Rebuild so streaks/points immediately reflect the new semantics
+            rebuildHabitList()
         }
     }
 
@@ -3233,6 +3261,10 @@ class HabitViewModel(
         val divider = _settings.value.habitDividers[habitName] ?: 1
         // Widget-timer habits with minutes primary: minutes (secondary-value slot)
         // drive points (divider applies), sessions are the zero-minutes fallback.
+        // Inverted-binary habits: 1 point on not-done days, 0 on done days
+        if (habitName in _settings.value.invertedBinaryHabits) {
+            return com.example.tail.data.invertedBinaryPoints(rawCount)
+        }
         if (habitName in _settings.value.widgetTimerMinutesPrimary) {
             val minutes = cachedPhoneDb[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
             return com.example.tail.data.effectivePointsWithFallback(minutes, divider, rawCount, true)
@@ -4085,6 +4117,7 @@ class HabitViewModel(
                     habitNotes = settings.habitNotes.replaceKey(oldName, newName),
                     valueDisplayLabels = settings.valueDisplayLabels.replaceKey(oldName, newName),
                     maxOneHabits = settings.maxOneHabits.replaceElement(oldName, newName),
+                    invertedBinaryHabits = settings.invertedBinaryHabits.replaceElement(oldName, newName),
                     bridgeMovieHabits = settings.bridgeMovieHabits.replaceElement(oldName, newName),
                     rollForwardHabits = settings.rollForwardHabits.replaceElement(oldName, newName),
                     rollForwardManualDates = settings.rollForwardManualDates.replaceKey(oldName, newName),
@@ -4143,6 +4176,7 @@ class HabitViewModel(
                 settingsRepo.saveHabitNotes(newSettings.habitNotes)
                 settingsRepo.saveValueDisplayLabels(newSettings.valueDisplayLabels)
                 settingsRepo.saveMaxOneHabits(newSettings.maxOneHabits)
+                settingsRepo.saveInvertedBinaryHabits(newSettings.invertedBinaryHabits)
                 settingsRepo.saveBridgeMovieHabits(newSettings.bridgeMovieHabits)
                 settingsRepo.saveRollForwardHabits(newSettings.rollForwardHabits)
                 settingsRepo.saveRollForwardManualDates(newSettings.rollForwardManualDates)

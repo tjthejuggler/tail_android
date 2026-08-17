@@ -968,6 +968,7 @@ fun HabitGridScreen(
                         selectedHabitScreenIndex = if (selectedHabitName != null)
                             viewModel.screenIndexForHabit(selectedHabitName) else -1,
                         maxOneHabits = settings.maxOneHabits,
+                        invertedBinaryHabits = settings.invertedBinaryHabits,
                         customInputHabits = settings.customInputHabits,
                         customInputAmounts = settings.customInputAmounts,
                         textInputHabits = settings.textInputHabits,
@@ -1001,6 +1002,7 @@ fun HabitGridScreen(
                                 maxOneRecalcHabit = name
                             }
                         },
+                        onToggleInvertedBinary = { name -> viewModel.toggleInvertedBinary(name) },
                         onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) },
                         onSetCustomInputAmounts = { name, amounts -> viewModel.setCustomInputAmounts(name, amounts) },
                         onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
@@ -3290,6 +3292,8 @@ private fun EditModeControlBar(
     activeScreenIndex: Int,
     selectedHabitScreenIndex: Int,
     maxOneHabits: Set<String>,
+    /** Habits with the "inverted binary" type (point + streak on NOT-done days). */
+    invertedBinaryHabits: Set<String> = emptySet(),
     customInputHabits: Set<String>,
     customInputAmounts: Map<String, List<Int>> = emptyMap(),
     textInputHabits: Set<String>,
@@ -3322,6 +3326,8 @@ private fun EditModeControlBar(
     onAddScreen: () -> Unit,
     onDeleteScreen: () -> Unit,
     onToggleMaxOne: (String) -> Unit,
+    /** Called when the user toggles the "Inverted binary" type for a habit. */
+    onToggleInvertedBinary: (String) -> Unit = {},
     onToggleCustomInput: (String) -> Unit,
     onSetCustomInputAmounts: (String, List<Int>) -> Unit = { _, _ -> },
     onToggleTextInput: (String) -> Unit,
@@ -4022,6 +4028,8 @@ private fun EditModeControlBar(
                         onSetHabitNote = onSetHabitNote,
                         maxOneHabits = maxOneHabits,
                         onToggleMaxOne = onToggleMaxOne,
+                        invertedBinaryHabits = invertedBinaryHabits,
+                        onToggleInvertedBinary = onToggleInvertedBinary,
                         customInputHabits = customInputHabits,
                         customInputAmounts = customInputAmounts,
                         onToggleCustomInput = onToggleCustomInput,
@@ -4939,6 +4947,8 @@ private fun HabitInputModesSection(
     onSetHabitNote: (String, String) -> Unit,
     maxOneHabits: Set<String>,
     onToggleMaxOne: (String) -> Unit,
+    invertedBinaryHabits: Set<String> = emptySet(),
+    onToggleInvertedBinary: (String) -> Unit = {},
     customInputHabits: Set<String>,
     customInputAmounts: Map<String, List<Int>>,
     onToggleCustomInput: (String) -> Unit,
@@ -5012,6 +5022,35 @@ private fun HabitInputModesSection(
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color(0xFF88FF88),
                 checkedTrackColor = Color(0xFF1A4A1A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    // Inverted binary toggle (e.g. coffee: tap when done, earn points when NOT done)
+    val isInvertedBinary = selectedHabitName in invertedBinaryHabits
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Inverted binary ⊘", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isInvertedBinary) "Skipped day = +1 point & streak; done day (orange) breaks it"
+                else "Normal points & streaks on done days",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isInvertedBinary,
+            onCheckedChange = { onToggleInvertedBinary(selectedHabitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFE0E0E0),
+                checkedTrackColor = Color(0xFF444444),
                 uncheckedThumbColor = Color(0xFF888888),
                 uncheckedTrackColor = Color(0xFF333333)
             )

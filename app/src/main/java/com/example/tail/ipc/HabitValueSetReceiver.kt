@@ -133,7 +133,7 @@ class HabitValueSetReceiver : BroadcastReceiver() {
                 if (todayChanged) {
                     val taskerUri = settings.taskerFileUri
                     if (taskerUri.isNotEmpty()) {
-                        writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits)
+                        writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits, settings.invertedBinaryHabits)
                     }
                 }
             } catch (e: Exception) {
@@ -176,11 +176,12 @@ class HabitValueSetReceiver : BroadcastReceiver() {
         habitsUri: Uri,
         taskerUriString: String,
         dividers: Map<String, Int>,
-        noPointsHabits: Set<String>
+        noPointsHabits: Set<String>,
+        invertedBinaryHabits: Set<String>
     ) {
         try {
             val db = habitsRepo.loadDatabase(habitsUri, context)
-            val content = buildTaskerStatsContent(db, dividers, noPointsHabits)
+            val content = buildTaskerStatsContent(db, dividers, noPointsHabits, invertedBinaryHabits = invertedBinaryHabits)
             val taskerUri = Uri.parse(taskerUriString)
             context.contentResolver.openOutputStream(taskerUri, "wt")?.use { stream ->
                 stream.bufferedWriter().use { it.write(content) }

@@ -95,6 +95,7 @@ data class SettingsSection(
     val habitScreens: List<HabitScreenBackup> = emptyList(),
     val activeScreenIndex: Int = 0,
     val maxOneHabits: List<String> = emptyList(),
+    val invertedBinaryHabits: List<String> = emptyList(),
     val textInputHabits: List<String> = emptyList(),
     val textInputOptionsHabits: List<String> = emptyList(),
     val textInputFileUris: Map<String, String> = emptyMap(),

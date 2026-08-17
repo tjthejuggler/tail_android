@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.applyDivider
+import com.example.tail.data.invertedBinaryPoints
 import com.example.tail.data.isSecondaryValueKey
 import com.example.tail.data.effectiveEntriesWithFallback
 import com.example.tail.data.effectivePointsWithFallback
@@ -92,11 +93,12 @@ fun AppStatsScreen(
     val noPointsHabits = settings.noPointsHabits
     val secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits
     val timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary
+    val invertedBinaryHabits = settings.invertedBinaryHabits
 
     // Compute all stats from the cached database
     val db = viewModel.getCachedDatabase()
-    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits) {
-        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits)
+    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits) {
+        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits)
     }
 
     // State for the habit-list popup
@@ -1123,7 +1125,8 @@ private fun computeAppStats(
     disabledHabits: Set<String> = emptySet(),
     noPointsHabits: Set<String> = emptySet(),
     secondaryValueFallbackHabits: Set<String> = emptySet(),
-    timerMinutesPrimaryHabits: Set<String> = emptySet()
+    timerMinutesPrimaryHabits: Set<String> = emptySet(),
+    invertedBinaryHabits: Set<String> = emptySet()
 ): AppStats {
     if (db.isEmpty()) return AppStats()
 
@@ -1131,6 +1134,8 @@ private fun computeAppStats(
     // When a habit has fallback enabled and its primary (minutes) value is 0,
     // the secondary (sessions) value is used directly as points (no divider).
     fun effPts(habitName: String, raw: Int, dateStr: String): Int {
+        // Inverted-binary habits: 1 point on not-done days, 0 on done days
+        if (habitName in invertedBinaryHabits) return invertedBinaryPoints(raw)
         val div = dividers[habitName] ?: 1
         val secVal = db[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
         if (habitName in timerMinutesPrimaryHabits) {

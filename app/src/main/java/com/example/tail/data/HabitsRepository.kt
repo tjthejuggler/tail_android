@@ -893,7 +893,8 @@ class HabitsRepository {
                 targetDate = targetDate,
                 secondaryEntries = secondaryEntries,
                 useSecondaryFallback = useFallback,
-                swapPrimarySecondary = minutesPrimary
+                swapPrimarySecondary = minutesPrimary,
+                invertedBinary = name in settings.invertedBinaryHabits
             )
         }
     }

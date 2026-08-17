@@ -182,7 +182,7 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
                 // Update the Tasker stats file so external apps see the new total immediately
                 val taskerUri = settings.taskerFileUri
                 if (taskerUri.isNotEmpty()) {
-                    writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits)
+                    writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits, settings.invertedBinaryHabits)
                 }
 
                 // Broadcast a generic "habit incremented" event for same-keystore listeners
@@ -266,7 +266,7 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
                 if (java.time.LocalDate.now() in days.keys) {
                     val taskerUri = settings.taskerFileUri
                     if (taskerUri.isNotEmpty()) {
-                        writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits)
+                        writeTaskerFile(appContext, habitsRepo, uri, taskerUri, settings.habitDividers, settings.noPointsHabits, settings.invertedBinaryHabits)
                     }
                 }
             } catch (e: Exception) {
@@ -335,12 +335,13 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
         habitsUri: Uri,
         taskerUriString: String,
         dividers: Map<String, Int>,
-        noPointsHabits: Set<String>
+        noPointsHabits: Set<String>,
+        invertedBinaryHabits: Set<String>
     ) {
         try {
             val db = habitsRepo.loadDatabase(habitsUri, context)
             // Shared helper excludes "Don't affect points" habits (e.g. Garmin imports)
-            val content = buildTaskerStatsContent(db, dividers, noPointsHabits)
+            val content = buildTaskerStatsContent(db, dividers, noPointsHabits, invertedBinaryHabits = invertedBinaryHabits)
 
             val taskerUri = Uri.parse(taskerUriString)
             context.contentResolver.openOutputStream(taskerUri, "wt")?.use { stream ->

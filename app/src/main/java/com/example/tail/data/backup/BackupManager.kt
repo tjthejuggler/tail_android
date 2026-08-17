@@ -721,6 +721,7 @@ class BackupManager(
         settingsRepo.saveActiveScreenIndex(s.activeScreenIndex)
 
         settingsRepo.saveMaxOneHabits(s.maxOneHabits.toSet())
+        settingsRepo.saveInvertedBinaryHabits(s.invertedBinaryHabits.toSet())
         settingsRepo.saveTextInputHabits(s.textInputHabits.toSet())
         settingsRepo.saveTextInputOptionsHabits(s.textInputOptionsHabits.toSet())
         settingsRepo.saveTextInputFileUris(s.textInputFileUris)
@@ -1102,6 +1103,7 @@ class BackupManager(
         habitScreens = s.habitScreens.map { HabitScreenBackup(it.id, it.name, it.habitNames) },
         activeScreenIndex = s.activeScreenIndex,
         maxOneHabits = s.maxOneHabits.toList(),
+        invertedBinaryHabits = s.invertedBinaryHabits.toList(),
         textInputHabits = s.textInputHabits.toList(),
         textInputOptionsHabits = s.textInputOptionsHabits.toList(),
         textInputFileUris = s.textInputFileUris,
