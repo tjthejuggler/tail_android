@@ -597,6 +597,16 @@ data class AppSettings(
      */
     val conditionalFeedMaxOneHabits: Set<String> = emptySet(),
 
+    /**
+     * Conditional habits whose feeds send POINTS instead of the raw count
+     * (sub-setting of the conditional type): the amount fed to each linked
+     * habit is the source's points delta — applyDivider(newCount) −
+     * applyDivider(oldCount) — so a minutes habit with a divider feeds its
+     * divided point value, not the raw minutes. Off by default (classic
+     * behaviour: the raw increment amount is fed through unchanged).
+     */
+    val conditionalFeedPointsHabits: Set<String> = emptySet(),
+
     /** Habits that have the "subtyped" feature enabled. */
     val subtypedHabits: Set<String> = emptySet(),
 

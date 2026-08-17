@@ -83,6 +83,7 @@ import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.applyDivider
+import com.example.tail.widget.HabitListWidgetProvider
 import com.example.tail.data.dateString
 import com.example.tail.data.expandEntriesToCalendarDaysPublic
 import com.example.tail.data.parseDate
@@ -104,6 +105,16 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 private const val TAG = "HabitVM"
+
+/**
+ * Parses one media text-log entry written by MediaPlaybackTracker:
+ * `"HH:mm Title — Artist/Show (NN min) — mediaUri"` (artist, duration and
+ * URI segments are all optional). Group1 = title, group2 = artist/show,
+ * group3 = duration minutes. Used by the per-show removal breakdown.
+ */
+private val MEDIA_LOG_ENTRY_REGEX = Regex(
+    "^\\d{1,2}:\\d{2}\\s+(.+?)(?:\\s+—\\s+(.+?))?(?:\\s+\\((\\d+)\\s*min\\))?(?:\\s+—\\s+.*)?$"
+)
 
 // Resonance-breathing secondary-value migration: pre-2026-08-08 primary values at or
 // below this are legacy session counts; anything larger is real backfilled minutes.
@@ -1490,6 +1501,18 @@ class HabitViewModel(
         // day feeds; secondary-slot feeds are not capped.
         val feedMaxOne = habitName in _settings.value.conditionalFeedMaxOneHabits
 
+        // "Feed points" sub-setting: feeds send the source's POINTS delta
+        // (divider-applied) instead of the raw increment amount, so a minutes
+        // habit with a divider feeds its divided point value to linked habits.
+        // The delta is computed from the day's totals so rounding accumulates
+        // exactly like the displayed points (30+1 min at ÷2 feeds 15 then 1).
+        val feedPoints = habitName in _settings.value.conditionalFeedPointsHabits
+        val sourceDivider = _settings.value.habitDividers[habitName] ?: 1
+        val baseFeedAmount = if (feedPoints && sourceDivider > 1) {
+            applyDivider(currentStored + amount, sourceDivider) -
+                applyDivider(currentStored, sourceDivider)
+        } else amount
+
         for (linkedName in linkedHabits) {
             // Resolve which value slot of the linked habit this feed targets:
             // Points (default) = its count; Value2/Value3 = its raw secondary slots.
@@ -1501,8 +1524,8 @@ class HabitViewModel(
             )
             val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
             val feedAmount = if (targetKey == linkedName && feedMaxOne) {
-                conditionalCappedFeedAmount(currentStored, amount)
-            } else amount
+                conditionalCappedFeedAmount(currentStored, baseFeedAmount)
+            } else baseFeedAmount
             if (feedAmount == 0) continue
             if (targetKey != linkedName) {
                 // Raw secondary slot: no max-1 cap; skip the instant row update
@@ -2520,12 +2543,14 @@ class HabitViewModel(
             val links = _settings.value.conditionalLinkedHabits.toMutableMap()
             val values = _settings.value.conditionalLinkValues.toMutableMap()
             val feedMaxOne = _settings.value.conditionalFeedMaxOneHabits.toMutableSet()
+            val feedPoints = _settings.value.conditionalFeedPointsHabits.toMutableSet()
             var linksChanged = false
             if (habitName in current) {
                 current.remove(habitName)
                 if (links.remove(habitName) != null) linksChanged = true
                 if (values.remove(habitName) != null) linksChanged = true
                 if (feedMaxOne.remove(habitName)) linksChanged = true
+                if (feedPoints.remove(habitName)) linksChanged = true
             } else {
                 current.add(habitName)
             }
@@ -2534,11 +2559,13 @@ class HabitViewModel(
                 settingsRepo.saveConditionalLinkedHabits(links)
                 settingsRepo.saveConditionalLinkValues(values)
                 settingsRepo.saveConditionalFeedMaxOneHabits(feedMaxOne)
+                settingsRepo.saveConditionalFeedPointsHabits(feedPoints)
                 _settings.value = _settings.value.copy(
                     conditionalHabits = current,
                     conditionalLinkedHabits = links,
                     conditionalLinkValues = values,
-                    conditionalFeedMaxOneHabits = feedMaxOne
+                    conditionalFeedMaxOneHabits = feedMaxOne,
+                    conditionalFeedPointsHabits = feedPoints
                 )
             } else {
                 _settings.value = _settings.value.copy(conditionalHabits = current)
@@ -2608,6 +2635,23 @@ class HabitViewModel(
             if (habitName in current) current.remove(habitName) else current.add(habitName)
             settingsRepo.saveConditionalFeedMaxOneHabits(current)
             _settings.value = _settings.value.copy(conditionalFeedMaxOneHabits = current)
+        }
+    }
+
+    /**
+     * Toggles the "feed points" sub-setting for a conditional habit.
+     * When enabled, the habit's feeds send its POINTS delta (the divider-
+     * applied value, exactly what the habit tile displays) instead of the
+     * raw increment amount — e.g. a minutes habit with ÷2 feeding +30
+     * sends +15 to its linked habits. Only meaningful when the habit has
+     * a divider > 1; otherwise points equal the raw count.
+     */
+    fun toggleConditionalFeedPoints(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.conditionalFeedPointsHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveConditionalFeedPointsHabits(current)
+            _settings.value = _settings.value.copy(conditionalFeedPointsHabits = current)
         }
     }
 
@@ -3774,6 +3818,112 @@ class HabitViewModel(
         com.example.tail.data.SpotifyDetector.openNotificationListenerSettings(context)
     }
 
+    // ── Media per-show breakdown (edit screen podcast removal) ─────────────
+
+    /** One show/podcast (or artist-less title) heard today on a media habit. */
+    data class MediaShowMinutes(
+        val show: String,
+        /** Sum of the logged "(NN min)" episode/track durations for today. */
+        val minutes: Int,
+        /** How many plays were logged for this show today. */
+        val plays: Int
+    )
+
+    private val _mediaTodayShows = MutableStateFlow<List<MediaShowMinutes>>(emptyList())
+
+    /** Today's per-show listening breakdown for the currently edited media habit. */
+    val mediaTodayShows: StateFlow<List<MediaShowMinutes>> = _mediaTodayShows.asStateFlow()
+
+    /**
+     * Parses one media text-log entry into (show, minutes). The show is the
+     * artist/show segment; entries without one (some music apps) fall back
+     * to the title itself. Returns null for entries that don't match the
+     * tracker's format (e.g. manual text notes the user typed).
+     */
+    private fun parseMediaShowEntry(text: String): Pair<String, Int>? {
+        val m = MEDIA_LOG_ENTRY_REGEX.matchEntire(text.trim()) ?: return null
+        val artist = m.groupValues[2].takeIf { it.isNotBlank() }
+        val show = artist ?: m.groupValues[1].takeIf { it.isNotBlank() } ?: return null
+        val minutes = m.groupValues[3].takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 0
+        return show to minutes
+    }
+
+    /**
+     * Loads today's per-show listening breakdown for a media habit from its
+     * text-entry log (the play-by-play entries MediaPlaybackTracker writes).
+     * Groups today's plays by show and sums the logged durations; sorted by
+     * minutes descending. Habits without a text log get an empty list.
+     */
+    fun loadMediaTodayShows(habitName: String) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) {
+            _mediaTodayShows.value = emptyList()
+            return
+        }
+        val datePrefix = dateString(LocalDate.now())
+        viewModelScope.launch {
+            val shows = withContext(Dispatchers.IO) {
+                try {
+                    val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                    log.entries
+                        .filter { (ts, _) -> ts.startsWith(datePrefix) }
+                        .mapNotNull { (_, text) -> parseMediaShowEntry(text) }
+                        .groupBy { it.first }
+                        .map { (show, plays) ->
+                            MediaShowMinutes(show, plays.sumOf { it.second }, plays.size)
+                        }
+                        .sortedByDescending { it.minutes }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Media show breakdown failed for '$habitName': ${e.message}")
+                    emptyList()
+                }
+            }
+            _mediaTodayShows.value = shows
+        }
+    }
+
+    /**
+     * Removes [show] from a media habit's TODAY listening: deletes today's
+     * log entries for that show and subtracts their logged minutes from the
+     * habit's minutes secondary-value slot for today (the same slot the
+     * tracker writes to, so the day total drops by exactly what that show
+     * contributed). Then refreshes the breakdown, widgets and listeners.
+     */
+    fun removeMediaShowFromToday(habitName: String, show: String) {
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) return
+        val dbUriString = _settings.value.fileUri
+        val datePrefix = dateString(LocalDate.now())
+        viewModelScope.launch {
+            try {
+                val textUri = Uri.parse(uriString)
+                val log = withContext(Dispatchers.IO) {
+                    textInputRepo.loadTextLog(textUri, context)
+                }
+                val doomed = log.entries.filter { (ts, text) ->
+                    ts.startsWith(datePrefix) && parseMediaShowEntry(text)?.first == show
+                }
+                if (doomed.isNotEmpty()) {
+                    textInputRepo.deleteTextEntries(
+                        textUri, context, doomed.map { it.key }, habitName = habitName
+                    )
+                }
+                val minutes = doomed.sumOf { parseMediaShowEntry(it.value)?.second ?: 0 }
+                if (minutes > 0 && dbUriString.isNotEmpty()) {
+                    habitsRepo.incrementHabitWithMinutes(
+                        Uri.parse(dbUriString), context, habitName, -minutes, 0
+                    )
+                    HabitIncrementBus.emit(habitName)
+                    HabitListWidgetProvider.refreshAll(context)
+                }
+                Log.i(TAG, "Removed media show '$show' for '$habitName': ${doomed.size} plays, -$minutes min")
+                loadMediaTodayShows(habitName)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to remove media show '$show' for '$habitName': ${e.message}")
+            }
+        }
+    }
+
     /**
      * Returns whether the user has granted Usage Access permission,
      * required for the widget trigger feature to work.
@@ -3914,22 +4064,26 @@ class HabitViewModel(
         }.toMap()
         val newConditional = s.conditionalHabits - deletedName
         val newFeedMaxOne = s.conditionalFeedMaxOneHabits - deletedName
+        val newFeedPoints = s.conditionalFeedPointsHabits - deletedName
         if (newLinked == s.conditionalLinkedHabits &&
             newValues == s.conditionalLinkValues &&
             newConditional == s.conditionalHabits &&
-            newFeedMaxOne == s.conditionalFeedMaxOneHabits
+            newFeedMaxOne == s.conditionalFeedMaxOneHabits &&
+            newFeedPoints == s.conditionalFeedPointsHabits
         ) return
         _settings.value = s.copy(
             conditionalHabits = newConditional,
             conditionalLinkedHabits = newLinked,
             conditionalLinkValues = newValues,
-            conditionalFeedMaxOneHabits = newFeedMaxOne
+            conditionalFeedMaxOneHabits = newFeedMaxOne,
+            conditionalFeedPointsHabits = newFeedPoints
         )
         viewModelScope.launch {
             settingsRepo.saveConditionalHabits(newConditional)
             settingsRepo.saveConditionalLinkedHabits(newLinked)
             settingsRepo.saveConditionalLinkValues(newValues)
             settingsRepo.saveConditionalFeedMaxOneHabits(newFeedMaxOne)
+            settingsRepo.saveConditionalFeedPointsHabits(newFeedPoints)
         }
     }
 
@@ -4093,6 +4247,7 @@ class HabitViewModel(
                     conditionalLinkedHabits = settings.conditionalLinkedHabits.replaceKeysAndValues(oldName, newName),
                     conditionalLinkValues = settings.conditionalLinkValues.replaceKeysAndInnerKeys(oldName, newName),
                     conditionalFeedMaxOneHabits = settings.conditionalFeedMaxOneHabits.replaceElement(oldName, newName),
+                    conditionalFeedPointsHabits = settings.conditionalFeedPointsHabits.replaceElement(oldName, newName),
                     subtypedHabits = settings.subtypedHabits.replaceElement(oldName, newName),
                     habitSubtypes = settings.habitSubtypes.replaceKey(oldName, newName),
                     subtypeDataFileUris = settings.subtypeDataFileUris.replaceKey(oldName, newName),

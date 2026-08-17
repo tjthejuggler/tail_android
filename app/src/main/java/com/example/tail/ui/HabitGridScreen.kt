@@ -988,6 +988,7 @@ fun HabitGridScreen(
                         conditionalLinkedHabits = settings.conditionalLinkedHabits,
                         conditionalLinkValues = settings.conditionalLinkValues,
                         conditionalFeedMaxOneHabits = settings.conditionalFeedMaxOneHabits,
+                        conditionalFeedPointsHabits = settings.conditionalFeedPointsHabits,
                         subtypedHabits = settings.subtypedHabits,
                         habitSubtypes = settings.habitSubtypes,
                         allHabitNames = viewModel.getAllHabitNames(),
@@ -1038,6 +1039,7 @@ fun HabitGridScreen(
                         onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
                         onToggleConditional = { name -> viewModel.toggleConditional(name) },
                         onToggleConditionalFeedMaxOne = { name -> viewModel.toggleConditionalFeedMaxOne(name) },
+                        onToggleConditionalFeedPoints = { name -> viewModel.toggleConditionalFeedPoints(name) },
                         onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name },
                         onBackfillConditional = { name -> conditionalBackfillHabit = name },
                         onToggleSubtyped = { name -> viewModel.toggleSubtyped(name) },
@@ -1250,6 +1252,9 @@ fun HabitGridScreen(
                         onSetMediaApp = { name -> mediaAppPickerHabit = name },
                         hasNotificationAccess = viewModel.hasNotificationListenerAccess(),
                         onRequestNotificationAccess = { viewModel.openNotificationListenerSettings() },
+                        mediaTodayShows = viewModel.mediaTodayShows.collectAsState().value,
+                        onLoadMediaShows = { name -> viewModel.loadMediaTodayShows(name) },
+                        onRemoveMediaShow = { name, show -> viewModel.removeMediaShowFromToday(name, show) },
                         onInvertHabit = { name -> viewModel.invertHabit(name) },
                         onGetInvertPreview = { name -> viewModel.getInvertPreview(name) }
                     )
@@ -2507,11 +2512,17 @@ private fun MediaSection(
     onToggleMedia: (String) -> Unit,
     onSetMediaApp: (String) -> Unit,
     hasNotificationAccess: Boolean,
-    onRequestNotificationAccess: () -> Unit
+    onRequestNotificationAccess: () -> Unit,
+    todayShows: List<HabitViewModel.MediaShowMinutes> = emptyList(),
+    onLoadShows: (String) -> Unit = {},
+    onRemoveShow: (String, String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val isEnabled = habitName in mediaHabits
     val mediaPkg = mediaApps[habitName]
+
+    // Load today's per-show breakdown whenever this section is shown.
+    LaunchedEffect(habitName) { onLoadShows(habitName) }
 
     // Resolve the media app's display label
     val appLabel = remember(mediaPkg) {
@@ -2623,6 +2634,49 @@ private fun MediaSection(
                     fontSize = 9.sp,
                     lineHeight = 12.sp
                 )
+            }
+
+            // ── Today's shows/podcasts with per-show removal ──────────
+            // Hitting ✕ next to a show deletes today's log entries for
+            // that show and subtracts its logged minutes from the habit's
+            // day total (see HabitViewModel.removeMediaShowFromToday).
+            if (todayShows.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Today's shows — ${todayShows.sumOf { it.minutes }} min total " +
+                        "(✕ removes a show's minutes)",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 11.sp
+                )
+                todayShows.forEach { entry ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = entry.show,
+                                color = Color(0xFFCCCCCC),
+                                fontSize = 11.sp,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = if (entry.plays == 1) "${entry.minutes} min"
+                                       else "${entry.plays} plays · ${entry.minutes} min",
+                                color = Color(0xFF888888),
+                                fontSize = 10.sp
+                            )
+                        }
+                        TextButton(
+                            onClick = { onRemoveShow(habitName, entry.show) },
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF6666)),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text("✕", fontSize = 13.sp)
+                        }
+                    }
+                }
             }
         }
     }
@@ -3387,6 +3441,10 @@ private fun EditModeControlBar(
     conditionalFeedMaxOneHabits: Set<String> = emptySet(),
     /** Called when the user toggles the "feed max1 point/day" conditional sub-setting. */
     onToggleConditionalFeedMaxOne: (String) -> Unit = {},
+    /** Conditional habits whose feeds send points (divider-applied) instead of raw counts. */
+    conditionalFeedPointsHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the "feed points" conditional sub-setting. */
+    onToggleConditionalFeedPoints: (String) -> Unit = {},
     subtypedHabits: Set<String>,
     habitSubtypes: Map<String, List<String>>,
     allHabitNames: List<String>,
@@ -3543,6 +3601,12 @@ private fun EditModeControlBar(
     hasNotificationAccess: Boolean = false,
     /** Called when the user taps to grant notification access. */
     onRequestNotificationAccess: () -> Unit = {},
+    /** Today's per-show listening breakdown for the selected media habit. */
+    mediaTodayShows: List<HabitViewModel.MediaShowMinutes> = emptyList(),
+    /** Called to (re)load the per-show breakdown for a media habit. */
+    onLoadMediaShows: (String) -> Unit = {},
+    /** Called when the user removes a show from today's media log (habitName, show). */
+    onRemoveMediaShow: (String, String) -> Unit = { _, _ -> },
     /** Called when the user confirms the invert operation for a habit. */
     onInvertHabit: (String) -> Unit = {},
     /** Returns invert preview stats for a habit, or null if it has no data. */
@@ -3874,6 +3938,7 @@ private fun EditModeControlBar(
                     habitDividers = habitDividers,
                     widgetTriggerApps = widgetTriggerApps,
                     widgetTimerMinutesPrimary = widgetTimerMinutesPrimary,
+                    mediaHabits = mediaHabits,
                     rawTodayCount = selectedHabitRawTodayCount,
                     secondaryTodayCount = selectedHabitSecondaryTodayCount,
                     onSetCount = onSetCount,
@@ -4001,16 +4066,6 @@ private fun EditModeControlBar(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 if (selectedHabitName != null) {
-                    // ── Meal toggle (top of settings — the meal screen is a
-                    // meal habit's primary interface) ────────────────────────
-                    MealToggleSection(
-                        habitName = selectedHabitName,
-                        isMeal = selectedHabitName in mealHabits,
-                        onToggleMeal = onToggleMeal,
-                        onOpenMealDetails = onOpenMealDetails
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
 
                     // ── Divider toggle ────────────────────────────────────────
                     val currentDivisor = habitDividers[selectedHabitName] ?: 1
@@ -4439,6 +4494,39 @@ private fun EditModeControlBar(
                                     uncheckedTrackColor = Color(0xFF333333)
                                 )
                             )
+                        }
+
+                        // ── "Feed points" sub-setting (only while conditional is
+                        // on AND a divider > 1 makes points differ from raw) ──
+                        val srcDivider = habitDividers[selectedHabitName] ?: 1
+                        if (srcDivider > 1) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            val isFeedPoints = selectedHabitName in conditionalFeedPointsHabits
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(text = "  Feed points (÷$srcDivider)", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                                    Text(
+                                        text = if (isFeedPoints) "Linked habits receive this habit's points"
+                                               else "Linked habits receive the raw count",
+                                        color = if (isFeedPoints) Color(0xFF66BB6A) else Color(0xFF888888),
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = isFeedPoints,
+                                    onCheckedChange = { onToggleConditionalFeedPoints(selectedHabitName) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFFFF88CC),
+                                        checkedTrackColor = Color(0xFF4A0030),
+                                        uncheckedThumbColor = Color(0xFF888888),
+                                        uncheckedTrackColor = Color(0xFF333333)
+                                    )
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(4.dp))
@@ -4882,17 +4970,6 @@ private fun EditModeControlBar(
                         }
                     }
 
-                    // ── Chess.com link toggle ────────────────────────────────
-                    // Extracted to its own composable to keep EditModeControlBar
-                    // under the JVM method-size limit.
-                    if (chessComEnabled) {
-                        ChessComLinkToggle(
-                            habitName = selectedHabitName,
-                            links = chessComHabitLinks,
-                            onSetLink = { type -> onSetChessComLink(selectedHabitName, type) }
-                        )
-                    }
-
                     // ── App Association section ───────────────────────────────
                     // Long-pressing this habit in the grid opens associated apps.
                     // Single app → launches directly; multiple → shows a picker.
@@ -4955,50 +5032,64 @@ private fun EditModeControlBar(
                         onSetTimerPrimaryValue = onSetTimerPrimaryValue
                     )
 
-                    // ── Media (auto listening-time tracking) ──────────────────
-                    // While the chosen media app (podcast app, Spotify, …) is
-                    // actually PLAYING audio, elapsed minutes are recorded
-                    // automatically. The bubble timer (above) remains the
-                    // manual fallback.
-                    Spacer(modifier = Modifier.height(6.dp))
-                    MediaSection(
-                        habitName = selectedHabitName,
-                        mediaHabits = mediaHabits,
-                        mediaApps = mediaApps,
-                        onToggleMedia = onToggleMedia,
-                        onSetMediaApp = onSetMediaApp,
-                        hasNotificationAccess = hasNotificationAccess,
-                        onRequestNotificationAccess = onRequestNotificationAccess
+                    // ── Special habit types (collapsible) ──────────────────────
+                    // Meal, Chess.com, Media, Garmin, GitHub and Movie Bridge —
+                    // the integration-backed habit types, grouped behind one
+                    // collapsible header so the edit panel stays tidy. Extracted
+                    // to its own composable to keep EditModeControlBar under the
+                    // JVM method-size limit.
+                    val selHabitName = selectedHabitName
+                    SpecialHabitTypesSection(
+                        mealContent = {
+                            MealToggleSection(
+                                habitName = selHabitName,
+                                isMeal = selHabitName in mealHabits,
+                                onToggleMeal = onToggleMeal,
+                                onOpenMealDetails = onOpenMealDetails
+                            )
+                        },
+                        chessComContent = {
+                            if (chessComEnabled) {
+                                ChessComLinkToggle(
+                                    habitName = selHabitName,
+                                    links = chessComHabitLinks,
+                                    onSetLink = { type -> onSetChessComLink(selHabitName, type) }
+                                )
+                            }
+                        },
+                        mediaContent = {
+                            MediaSection(
+                                habitName = selHabitName,
+                                mediaHabits = mediaHabits,
+                                mediaApps = mediaApps,
+                                onToggleMedia = onToggleMedia,
+                                onSetMediaApp = onSetMediaApp,
+                                hasNotificationAccess = hasNotificationAccess,
+                                onRequestNotificationAccess = onRequestNotificationAccess,
+                                todayShows = mediaTodayShows,
+                                onLoadShows = onLoadMediaShows,
+                                onRemoveShow = onRemoveMediaShow
+                            )
+                        },
+                        garminContent = {
+                            if (garminEnabled) {
+                                GarminLinkToggleSection(
+                                    selectedHabitName = selHabitName,
+                                    garminHabitLinks = garminHabitLinks,
+                                    onSetGarminLink = onSetGarminLink
+                                )
+                            }
+                        },
+                        githubContent = githubContent,
+                        movieBridgeContent = movieBridgeContent
                     )
 
-                    // ── Garmin link toggle ────────────────────────────────────
-                    // Extracted to its own composable to keep EditModeControlBar
-                    // under the JVM method-size limit.
-                    if (garminEnabled) {
-                        GarminLinkToggleSection(
-                            selectedHabitName = selectedHabitName,
-                            garminHabitLinks = garminHabitLinks,
-                            onSetGarminLink = onSetGarminLink
-                        )
-                    }
-
-                    // ── GitHub link toggle (rendered by caller) ──────────
-                    githubContent()
-
-                    // ── Movie Bridge link toggle (rendered by caller) ───────
-                    movieBridgeContent()
-
-                    // ── Restore this habit from a backup file ────────────────
-                    // Only this habit is affected; the rest of the backup is
-                    // ignored. Extracted to its own composable to keep
-                    // EditModeControlBar under the JVM method-size limit.
-                    RestoreFromBackupButton(onClick = onRestoreFromBackup)
-
-                    // ── Advanced section (invert, etc.) ────────────────────────
+                    // ── Advanced section (invert, restore-from-backup, etc.) ──
                     AdvancedSection(
                         habitName = selectedHabitName,
                         onInvertHabit = onInvertHabit,
-                        onGetInvertPreview = onGetInvertPreview
+                        onGetInvertPreview = onGetInvertPreview,
+                        onRestoreFromBackup = onRestoreFromBackup
                     )
                 }
             }
@@ -5341,6 +5432,8 @@ private fun HabitInputModesSection(
  *   the habit's PRIMARY value (per [widgetTimerMinutesPrimary]).
  * - Garmin-linked habits show a read-only label with the derived Garmin
  *   metric value.
+ * - Media habits edit their MINUTES (the secondary_value slot the media
+ *   tracker auto-records into), labelled "minutes:".
  * - Other single-value habits (e.g. divider habits) get a plain label naming
  *   the value, with an editable field.
  *
@@ -5356,6 +5449,7 @@ private fun EditModeValueEditorRow(
     habitDividers: Map<String, Int>,
     widgetTriggerApps: Map<String, String>,
     widgetTimerMinutesPrimary: Set<String>,
+    mediaHabits: Set<String> = emptySet(),
     rawTodayCount: Int,
     secondaryTodayCount: Int,
     onSetCount: (String, Int) -> Unit,
@@ -5365,8 +5459,9 @@ private fun EditModeValueEditorRow(
     val isGarminLinked = habitName in garminHabitLinks
     val isDivider = (habitDividers[habitName] ?: 1) > 1
     val isTimerHabit = !widgetTriggerApps[habitName].isNullOrBlank()
+    val isMediaHabit = habitName in mediaHabits
     val minutesPrimary = habitName in widgetTimerMinutesPrimary
-    if (!(isGarminLinked || isDivider || isTimerHabit)) return
+    if (!(isGarminLinked || isDivider || isTimerHabit || isMediaHabit)) return
 
     Spacer(modifier = Modifier.height(2.dp))
     // For Garmin habits, derive the value live on every recomposition so it
@@ -5408,9 +5503,11 @@ private fun EditModeValueEditorRow(
     }
     // Which value track the editor edits (timer habits only).
     // Defaults to the habit's PRIMARY value and resets if the
-    // primary value setting changes.
+    // primary value setting changes. Media habits always edit
+    // their MINUTES track — minutes are what the media tracker
+    // auto-records and what the user manages manually here.
     var editingMinutes by remember(habitName, minutesPrimary) {
-        mutableStateOf(minutesPrimary)
+        mutableStateOf(minutesPrimary || isMediaHabit)
     }
     var valuePickerExpanded by remember { mutableStateOf(false) }
     // The value being edited: minutes live in the secondary-
@@ -5480,7 +5577,11 @@ private fun EditModeValueEditorRow(
             // Single-value habit: just the name of the value
             // it represents, as a plain label.
             Text(
-                text = if (isGarminLinked) "garmin value:" else "true value:",
+                text = when {
+                    isGarminLinked -> "garmin value:"
+                    isMediaHabit -> "minutes:"
+                    else -> "true value:"
+                },
                 color = Color(0xFFAA88FF),
                 fontSize = 10.sp
             )
@@ -5546,14 +5647,77 @@ private fun EditModeValueEditorRow(
 // ── Advanced section ────────────────────────────────────────────────────────
 
 /**
+ * Collapsible "Special Habit Types" section in the habit edit panel.
+ *
+ * Groups the integration-backed habit types — Meal, Chess.com, Media,
+ * Garmin, GitHub and Movie Bridge — behind one collapsible header so the
+ * edit panel stays tidy. Collapsed by default; the content lambdas are
+ * only composed while expanded, so a collapsed section costs nothing.
+ * Extracted from EditModeControlBar to keep it under the JVM 64KB
+ * method-size limit.
+ */
+@Composable
+private fun SpecialHabitTypesSection(
+    mealContent: @Composable () -> Unit,
+    chessComContent: @Composable () -> Unit,
+    mediaContent: @Composable () -> Unit,
+    garminContent: @Composable () -> Unit,
+    githubContent: @Composable () -> Unit,
+    movieBridgeContent: @Composable () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Spacer(modifier = Modifier.height(6.dp))
+    HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
+    Spacer(modifier = Modifier.height(4.dp))
+
+    // Expandable header
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { expanded = !expanded },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "SPECIAL HABIT TYPES",
+            color = Color(0xFF888888),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+        )
+        Text(
+            text = if (expanded) "▾" else "▸",
+            color = Color(0xFF888888),
+            fontSize = 12.sp
+        )
+    }
+
+    if (expanded) {
+        Spacer(modifier = Modifier.height(6.dp))
+        mealContent()
+        Spacer(modifier = Modifier.height(4.dp))
+        chessComContent()
+        mediaContent()
+        garminContent()
+        githubContent()
+        movieBridgeContent()
+    }
+}
+
+/**
  * Collapsible "Advanced" section in the habit edit panel.
- * Currently hosts the Invert Data operation.
+ * Hosts the Invert Data operation and the per-habit Restore-from-Backup.
  */
 @Composable
 private fun AdvancedSection(
     habitName: String,
     onInvertHabit: (String) -> Unit,
-    onGetInvertPreview: (String) -> HabitViewModel.InvertPreview?
+    onGetInvertPreview: (String) -> HabitViewModel.InvertPreview?,
+    onRestoreFromBackup: () -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showInvertDialog by remember { mutableStateOf(false) }
@@ -5612,6 +5776,12 @@ private fun AdvancedSection(
                 Text("Invert", fontSize = 11.sp, color = Color(0xFFCC88CC))
             }
         }
+
+        // ── Restore this habit from a backup file ───────────────────
+        // Only this habit is affected; the rest of the backup is
+        // ignored. Extracted to its own composable to keep
+        // EditModeControlBar under the JVM method-size limit.
+        RestoreFromBackupButton(onClick = onRestoreFromBackup)
     }
 
     if (showInvertDialog) {

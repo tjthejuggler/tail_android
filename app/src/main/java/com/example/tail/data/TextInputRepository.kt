@@ -225,6 +225,27 @@ class TextInputRepository {
     }
 
     /**
+     * Deletes MULTIPLE text entries from the log file in one atomic
+     * read-modify-write (used by the media per-show removal, which clears
+     * every logged play of one show for a day). Keys not present are
+     * ignored. @param habitName If provided, also mirrors the updated log to internal storage.
+     * Returns the updated log map.
+     */
+    suspend fun deleteTextEntries(
+        uri: Uri,
+        context: Context,
+        timestamps: Collection<String>,
+        habitName: String? = null
+    ): Map<String, String> = withContext(Dispatchers.IO) {
+        if (timestamps.isEmpty()) return@withContext loadTextLog(uri, context)
+        val existing = loadTextLog(uri, context).toMutableMap()
+        timestamps.forEach { existing.remove(it) }
+        saveTextLog(uri, context, existing)
+        if (habitName != null) saveInternalBackup(context, habitName, existing)
+        existing
+    }
+
+    /**
      * Rolls forward a text entry to multiple dates.
      * Copies the text from [sourceTimestamp] to all dates in the range [startDate] to [endDate] (inclusive).
      * For each date in the range, uses noon (12:00:00) as the time.
