@@ -44,6 +44,7 @@ import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.APP_LINK_PREFIX
 import com.example.tail.data.appLinkKey
 import com.example.tail.data.appLinkPackageName
+import com.example.tail.data.appPackageNameOf
 import com.example.tail.data.isAppLink
 import com.example.tail.data.isSecondaryValueKey
 import com.example.tail.data.secondaryValueKey
@@ -3818,13 +3819,18 @@ class HabitViewModel(
             if (current[index].isEmpty()) return
             // Delegate to deleteAppLink for app-link entries
             if (isAppLink(current[index])) { deleteAppLink(index); return }
+            val deletedName = current[index]
             // Replace with empty placeholder so grid positions of other habits stay fixed
             current[index] = ""
             val updatedScreen = screen.copy(habitNames = current)
             val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
             _habitScreens.value = updatedScreens
             _selectedEditIndex.value = -1
-            viewModelScope.launch { rebuildHabitList() }
+            viewModelScope.launch {
+                rebuildHabitList()
+                // Deleted habits must no longer feed into (or be fed by) anything.
+                removeConditionalReferences(deletedName)
+            }
             persistScreens(updatedScreens)
         } else {
             val current = _habitOrder.value.toMutableList()
@@ -3832,6 +3838,7 @@ class HabitViewModel(
             if (current[index].isEmpty()) return
             // Delegate to deleteAppLink for app-link entries
             if (isAppLink(current[index])) { deleteAppLink(index); return }
+            val deletedName = current[index]
             // Replace with empty placeholder so grid positions of other habits stay fixed
             current[index] = ""
             _habitOrder.value = current
@@ -3845,7 +3852,52 @@ class HabitViewModel(
                 } finally {
                     isSavingOrder = false
                 }
+                // Deleted habits must no longer feed into (or be fed by) anything.
+                removeConditionalReferences(deletedName)
             }
+        }
+    }
+
+    /**
+     * Strips a deleted habit from all conditional-link settings so it no longer
+     * feeds into (or is fed by) any other habit: removes it as a conditional
+     * source, as a linked target of other sources, and from the feed-value and
+     * feed-max-one overrides. No-op when the habit had no conditional presence.
+     */
+    private fun removeConditionalReferences(deletedName: String) {
+        val s = _settings.value
+        val newLinked = s.conditionalLinkedHabits.mapNotNull { (src, targets) ->
+            if (src == deletedName) null
+            else {
+                val kept = targets - deletedName
+                if (kept.isEmpty()) null else src to kept
+            }
+        }.toMap()
+        val newValues = s.conditionalLinkValues.mapNotNull { (src, inner) ->
+            if (src == deletedName) null
+            else {
+                val kept = inner - deletedName
+                if (kept.isEmpty()) null else src to kept
+            }
+        }.toMap()
+        val newConditional = s.conditionalHabits - deletedName
+        val newFeedMaxOne = s.conditionalFeedMaxOneHabits - deletedName
+        if (newLinked == s.conditionalLinkedHabits &&
+            newValues == s.conditionalLinkValues &&
+            newConditional == s.conditionalHabits &&
+            newFeedMaxOne == s.conditionalFeedMaxOneHabits
+        ) return
+        _settings.value = s.copy(
+            conditionalHabits = newConditional,
+            conditionalLinkedHabits = newLinked,
+            conditionalLinkValues = newValues,
+            conditionalFeedMaxOneHabits = newFeedMaxOne
+        )
+        viewModelScope.launch {
+            settingsRepo.saveConditionalHabits(newConditional)
+            settingsRepo.saveConditionalLinkedHabits(newLinked)
+            settingsRepo.saveConditionalLinkValues(newValues)
+            settingsRepo.saveConditionalFeedMaxOneHabits(newFeedMaxOne)
         }
     }
 
@@ -4202,6 +4254,13 @@ class HabitViewModel(
             }
             settingsRepo.saveHabitIcons(current)
             _settings.value = _settings.value.copy(habitIcons = current)
+            // Choosing an installed-app icon implies the user wants that app
+            // tied to the habit: auto-create the app association so long-press
+            // launches it. Idempotent (no-op when already associated); the
+            // user can remove it manually in edit mode's app settings.
+            appPackageNameOf(iconName)?.let { pkg ->
+                addHabitAppAssociation(habitName, pkg)
+            }
             // Sync icon change to relay file so PC widget picks it up
             val relayUri = _settings.value.screensRelayFileUri
             if (relayUri.isNotEmpty()) {

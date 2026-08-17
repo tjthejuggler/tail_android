@@ -630,24 +630,63 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
-     * Removes [KEY_CONDITIONAL_LINKED_HABITS] entries whose key is no longer marked
-     * as a conditional habit in [KEY_CONDITIONAL_HABITS]. Such orphaned entries can be
-     * left behind when a habit's conditional type is toggled off (e.g. after the user
-     * restructures their links), and they otherwise resurface as phantom "Fed by"
-     * sources on the habits they still reference. Idempotent: only writes when an
-     * entry was actually removed, so it is safe to call on every startup.
+     * Removes conditional-link entries that reference habits which no longer
+     * exist (deleted from every screen and the flat order), plus entries whose
+     * key is no longer marked as a conditional habit in [KEY_CONDITIONAL_HABITS].
+     * Deleted habits otherwise linger as phantom "Fed by" sources on the habits
+     * they used to feed (and as stale link targets). Also prunes the conditional
+     * flag set and the feed-max-one set of deleted names. Idempotent: only
+     * writes when something was actually removed, so it is safe to call on
+     * every startup.
      */
     suspend fun pruneOrphanedConditionalLinks() {
         context.dataStore.edit { prefs ->
-            val linkedRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: return@edit
-            if (linkedRaw.isBlank()) return@edit
-            val conditional = prefs[KEY_CONDITIONAL_HABITS] ?: emptySet()
-            val decoded = decodeLinkedHabitsMap(linkedRaw)
-            val pruned = decoded.filterKeys { it in conditional }
-            if (pruned.size != decoded.size) {
-                val removed = decoded.keys - pruned.keys
-                Log.i("SettingsRepo", "Pruning orphaned conditional links for: $removed")
-                prefs[KEY_CONDITIONAL_LINKED_HABITS] = encodeLinkedHabitsMap(pruned)
+            // The set of habit names that actually exist right now. Mirrors
+            // getAllHabitNames(): screens are authoritative when present; the
+            // legacy flat order is only used when no screens exist. (The order
+            // key is stale once screens are in use — deleting a habit in
+            // screens mode never rewrites it — so unioning both would keep
+            // long-deleted habits "valid" and defeat the prune.)
+            val screensRaw = prefs[KEY_HABIT_SCREENS] ?: ""
+            val orderRaw = prefs[KEY_HABIT_ORDER] ?: ""
+            val validNames = if (screensRaw.isNotEmpty()) {
+                decodeScreens(screensRaw)
+                    .flatMap { it.habitNames }
+                    .filterTo(mutableSetOf()) { it.isNotEmpty() }
+            } else {
+                orderRaw.split("|||").filterTo(mutableSetOf()) { it.isNotEmpty() }
+            }
+            // Defensive: never wipe links when no habit names could be resolved
+            // (e.g. unexpected empty decode) — treat as "cannot verify".
+            if (validNames.isEmpty()) return@edit
+
+            // Drop the conditional flag from deleted habits.
+            val conditionalRaw = prefs[KEY_CONDITIONAL_HABITS] ?: emptySet()
+            val conditional = conditionalRaw.filterTo(mutableSetOf()) { it in validNames }
+            if (conditional != conditionalRaw) {
+                Log.i("SettingsRepo", "Pruning conditional flags for deleted habits: ${conditionalRaw - conditional}")
+                prefs[KEY_CONDITIONAL_HABITS] = conditional
+            }
+
+            // Keep only sources that are still conditional AND still exist;
+            // drop linked targets that no longer exist.
+            val linkedRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
+            var pruned: Map<String, Set<String>> = emptyMap()
+            if (linkedRaw.isNotBlank()) {
+                val decoded = decodeLinkedHabitsMap(linkedRaw)
+                pruned = decoded.mapNotNull { (src, targets) ->
+                    if (src !in conditional) return@mapNotNull null
+                    val kept = targets.filterTo(mutableSetOf()) { it in validNames }
+                    if (kept.isEmpty()) null else src to kept
+                }.toMap()
+                if (pruned != decoded) {
+                    val removedSources = decoded.keys - pruned.keys
+                    val removedTargets = decoded.entries.flatMap { (src, targets) ->
+                        (targets - (pruned[src] ?: emptySet())).map { "$src→$it" }
+                    }
+                    Log.i("SettingsRepo", "Pruning orphaned conditional links: sources=$removedSources targets=$removedTargets")
+                    prefs[KEY_CONDITIONAL_LINKED_HABITS] = encodeLinkedHabitsMap(pruned)
+                }
             }
 
             // Keep per-link feed-value overrides consistent with the link sets:
@@ -664,6 +703,15 @@ class SettingsRepository(private val context: Context) {
                     Log.i("SettingsRepo", "Pruning orphaned conditional link values for: ${values.keys - prunedValues.keys}")
                     prefs[KEY_CONDITIONAL_LINK_VALUES] = encodeNestedStringMap(prunedValues)
                 }
+            }
+
+            // Drop feed-max-one flags for habits that no longer exist or are
+            // no longer conditional.
+            val feedMaxOneRaw = prefs[KEY_CONDITIONAL_FEED_MAX_ONE_HABITS] ?: emptySet()
+            val prunedFeedMaxOne = feedMaxOneRaw.filterTo(mutableSetOf()) { it in conditional }
+            if (prunedFeedMaxOne != feedMaxOneRaw) {
+                Log.i("SettingsRepo", "Pruning feed-max-one flags for: ${feedMaxOneRaw - prunedFeedMaxOne}")
+                prefs[KEY_CONDITIONAL_FEED_MAX_ONE_HABITS] = prunedFeedMaxOne
             }
         }
     }

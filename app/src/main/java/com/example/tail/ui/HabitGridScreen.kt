@@ -5766,8 +5766,17 @@ private fun ConditionalLinksPickerDialog(
     onConfirm: (Set<String>, Map<String, String>) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // Alphabetically sorted candidate list (case-insensitive).
     val otherHabits = remember(allHabitNames, habitName) {
         allHabitNames.filter { it != habitName && it.isNotEmpty() }
+            .sortedBy { it.lowercase() }
+    }
+    // Search filter: blank query shows everything; otherwise case-insensitive
+    // substring match. Selected habits hidden by the filter stay selected.
+    var searchQuery by remember { mutableStateOf("") }
+    val visibleHabits = remember(otherHabits, searchQuery) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) otherHabits else otherHabits.filter { it.contains(q, ignoreCase = true) }
     }
     var selected by remember(currentLinks) { mutableStateOf(currentLinks.toMutableSet()) }
     // Linked habit name → feed-value key override (absent = Points, the default)
@@ -5793,10 +5802,34 @@ private fun ConditionalLinksPickerDialog(
             )
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Search filter box
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                singleLine = true,
+                placeholder = { Text("Search habits…", fontSize = 12.sp, color = Color(0xFF888888)) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFFFF88CC),
+                    unfocusedTextColor = Color(0xFFFF88CC),
+                    focusedBorderColor = Color(0xFFFF88CC),
+                    unfocusedBorderColor = Color(0xFF663355),
+                    cursorColor = Color(0xFFFF88CC)
+                ),
+                textStyle = TextStyle(fontSize = 12.sp)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
             if (otherHabits.isEmpty()) {
                 Text(
                     text = "No other habits available.",
                     color = Color(0xFF666666),
+                    fontSize = 12.sp
+                )
+            } else if (visibleHabits.isEmpty()) {
+                Text(
+                    text = "No habits match \"${searchQuery.trim()}\".",
+                    color = Color(0xFF888888),
                     fontSize = 12.sp
                 )
             } else {
@@ -5806,7 +5839,7 @@ private fun ConditionalLinksPickerDialog(
                         .height(360.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    otherHabits.forEach { name ->
+                    visibleHabits.forEach { name ->
                         val isChecked = name in selected
                         // Feed-value options: Points always; Value2/Value3 only when
                         // the linked habit actually has those raw slots available.
