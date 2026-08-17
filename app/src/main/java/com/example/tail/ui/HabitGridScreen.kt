@@ -117,7 +117,14 @@ import androidx.compose.ui.window.Dialog
 import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppIconInfo
+import com.example.tail.data.ACTIVITY_ID_PREFIX
 import com.example.tail.data.AppIconRepository
+import com.example.tail.data.encodeShortcutEntry
+import com.example.tail.data.findShortcutInfo
+import com.example.tail.data.isActivityEntry
+import com.example.tail.data.launchShortcutEntry
+import com.example.tail.data.parseShortcutEntry
+import com.example.tail.data.queryAppShortcuts
 import com.example.tail.data.appIconNameOf
 import com.example.tail.data.isAppIconName
 import com.example.tail.data.isTextIconName
@@ -914,11 +921,16 @@ fun HabitGridScreen(
                                         val associations = settings.habitAppAssociations[habit.name]
                                         if (!associations.isNullOrEmpty()) {
                                             if (associations.size == 1) {
-                                                // Single app — launch directly, bypass list
-                                                val launchIntent = context.packageManager
-                                                    .getLaunchIntentForPackage(associations[0])
-                                                if (launchIntent != null) {
-                                                    context.startActivity(launchIntent)
+                                                // Single entry — launch directly, bypass list.
+                                                // Shortcut entries open their specific shortcut;
+                                                // plain entries open the app's launch intent.
+                                                val entry = associations[0]
+                                                if (!launchShortcutEntry(context, entry)) {
+                                                    val launchIntent = context.packageManager
+                                                        .getLaunchIntentForPackage(entry)
+                                                    if (launchIntent != null) {
+                                                        context.startActivity(launchIntent)
+                                                    }
                                                 }
                                             } else {
                                                 // Multiple apps — show picker dialog
@@ -1796,6 +1808,14 @@ fun HabitGridScreen(
                 viewModel.addHabitAppAssociation(habitName, packageName)
                 appAssociationPickerHabit = null
             },
+            // A specific shortcut of an app is associated as an encoded entry
+            onConfirmShortcut = { packageName, shortcutId, _ ->
+                viewModel.addHabitAppAssociation(
+                    habitName,
+                    encodeShortcutEntry(packageName, shortcutId)
+                )
+                appAssociationPickerHabit = null
+            },
             onDismiss = { appAssociationPickerHabit = null }
         )
     }
@@ -1850,11 +1870,15 @@ fun HabitGridScreen(
         if (packages.isNotEmpty()) {
             AssociatedAppLauncherDialog(
                 habitName = habitName,
-                packageNames = packages,
-                onLaunch = { pkg ->
-                    val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
-                    if (launchIntent != null) {
-                        context.startActivity(launchIntent)
+                entries = packages,
+                onLaunch = { entry ->
+                    // Shortcut entries launch their specific shortcut;
+                    // plain entries fall through to the app's launch intent.
+                    if (!launchShortcutEntry(context, entry)) {
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage(entry)
+                        if (launchIntent != null) {
+                            context.startActivity(launchIntent)
+                        }
                     }
                     appLauncherHabit = null
                 },
@@ -2780,13 +2804,25 @@ private fun AssociatedAppRow(
     val context = LocalContext.current
     val pm = context.packageManager
 
+    // The entry may be a plain package name or an encoded shortcut reference
+    val shortcut = remember(packageName) { parseShortcutEntry(packageName) }
+    val appPkg = shortcut?.first ?: packageName
+
     // Load app label and icon
     val appLabel = remember(packageName) {
-        try { pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString() }
-        catch (e: Exception) { packageName }
+        try { pm.getApplicationLabel(pm.getApplicationInfo(appPkg, 0)).toString() }
+        catch (e: Exception) { appPkg }
+    }
+    // Resolve the shortcut's display name (null when inaccessible or gone)
+    val shortcutLabel = remember(packageName) {
+        shortcut?.let { (p, id) ->
+            findShortcutInfo(context, p, id)?.label
+                // Fallback: class simple name for activities, raw id for shortcuts
+                ?: if (id.startsWith(ACTIVITY_ID_PREFIX)) id.substringAfterLast('.') else id
+        }
     }
     val iconBitmap = remember(packageName) {
-        try { drawableToBitmapForDialog(pm.getApplicationIcon(packageName)) }
+        try { drawableToBitmapForDialog(pm.getApplicationIcon(appPkg)) }
         catch (e: Exception) { null }
     }
 
@@ -2807,9 +2843,12 @@ private fun AssociatedAppRow(
             Box(modifier = Modifier.size(20.dp))
         }
         Spacer(modifier = Modifier.width(6.dp))
-        // App label (truncated)
+        // App / shortcut label (truncated)
         Text(
-            text = appLabel.take(20),
+            text = (
+                if (shortcut != null) "⚡ ${shortcutLabel ?: shortcut.second}"
+                else appLabel
+            ).take(20),
             color = Color(0xFF88CCFF),
             fontSize = 10.sp,
             modifier = Modifier.weight(1f)
@@ -2861,7 +2900,8 @@ private fun AssociatedAppRow(
 @Composable
 private fun AssociatedAppLauncherDialog(
     habitName: String,
-    packageNames: List<String>,
+    /** Association entries — plain package names and/or encoded shortcut entries. */
+    entries: List<String>,
     onLaunch: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2893,12 +2933,20 @@ private fun AssociatedAppLauncherDialog(
                     .fillMaxWidth()
                     .heightIn(max = 400.dp)
             ) {
-                lazyItems(packageNames) { pkg ->
-                    val label = remember(pkg) {
+                lazyItems(entries) { entry ->
+                    val shortcut = remember(entry) { parseShortcutEntry(entry) }
+                    val pkg = shortcut?.first ?: entry
+                    val label = remember(entry) {
                         try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }
                         catch (e: Exception) { pkg }
                     }
-                    val iconBitmap = remember(pkg) {
+                    val shortcutLabel = remember(entry) {
+                        shortcut?.let { (p, id) ->
+                            findShortcutInfo(context, p, id)?.label
+                                ?: if (id.startsWith(ACTIVITY_ID_PREFIX)) id.substringAfterLast('.') else id
+                        }
+                    }
+                    val iconBitmap = remember(entry) {
                         try { drawableToBitmapForDialog(pm.getApplicationIcon(pkg)) }
                         catch (e: Exception) { null }
                     }
@@ -2920,8 +2968,16 @@ private fun AssociatedAppLauncherDialog(
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text(text = label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                            Text(text = pkg, color = Color(0xFF888888), fontSize = 10.sp)
+                            Text(
+                                text = if (shortcut != null) "⚡ ${shortcutLabel ?: shortcut.second}" else label,
+                                color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = if (shortcut != null)
+                                           "$pkg · ${if (isActivityEntry(entry)) "activity" else "shortcut"}"
+                                       else pkg,
+                                color = Color(0xFF888888), fontSize = 10.sp
+                            )
                         }
                     }
                 }
@@ -5069,7 +5125,10 @@ private fun EditModeControlBar(
                             Text(text = "📱 App Association", color = Color(0xFFCCCCCC), fontSize = 12.sp)
                             Text(
                                 text = if (currentAppAssociations.isEmpty()) "Long-press increments habit"
-                                       else if (currentAppAssociations.size == 1) "Long-press opens app"
+                                       else if (currentAppAssociations.size == 1)
+                                           if (parseShortcutEntry(currentAppAssociations[0]) != null)
+                                               "Long-press opens shortcut"
+                                           else "Long-press opens app"
                                        else "Long-press shows ${currentAppAssociations.size} apps",
                                 color = if (currentAppAssociations.isNotEmpty()) Color(0xFF66CCFF) else Color(0xFF888888),
                                 fontSize = 10.sp
@@ -8942,9 +9001,17 @@ private data class AppPickerItem(
 internal fun AppPickerDialog(
     context: Context,
     onConfirm: (packageName: String, label: String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /**
+     * When set, each app row can be expanded to reveal the app's published
+     * shortcuts, letting the caller associate a specific shortcut instead of
+     * the whole app. Null (default) keeps the dialog app-only.
+     */
+    onConfirmShortcut: ((packageName: String, shortcutId: String, label: String) -> Unit)? = null
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    // Package whose shortcuts are currently expanded inline (null = none)
+    var expandedPackage by remember { mutableStateOf<String?>(null) }
 
     // Load installed apps once
     val allApps by remember {
@@ -8968,6 +9035,13 @@ internal fun AppPickerDialog(
             it.label.contains(searchQuery, ignoreCase = true) ||
             it.packageName.contains(searchQuery, ignoreCase = true)
         }
+    }
+
+    // Everything the expanded app can be bound to: its published shortcuts
+    // (needs default-launcher status) plus its exported activities (always
+    // available — the same mechanism Tasker uses).
+    val expandedResult = remember(expandedPackage) {
+        expandedPackage?.let { queryAppShortcuts(context, it) }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -9008,43 +9082,120 @@ internal fun AppPickerDialog(
             ) {
                 lazyItems(filteredApps) { app ->
                     val pm = context.packageManager
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onConfirm(app.packageName, app.label) }
-                            .padding(vertical = 6.dp, horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // App icon
-                        val iconBitmap = remember(app.packageName) {
-                            try {
-                                drawableToBitmapForDialog(pm.getApplicationIcon(app.packageName))
-                            } catch (e: Exception) {
-                                null
+                    val isExpanded = expandedPackage == app.packageName
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onConfirm(app.packageName, app.label) }
+                                .padding(vertical = 6.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // App icon
+                            val iconBitmap = remember(app.packageName) {
+                                try {
+                                    drawableToBitmapForDialog(pm.getApplicationIcon(app.packageName))
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                            if (iconBitmap != null) {
+                                Image(
+                                    bitmap = iconBitmap.asImageBitmap(),
+                                    contentDescription = app.label,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            } else {
+                                Box(modifier = Modifier.size(32.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = app.label,
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = app.packageName,
+                                    color = Color(0xFF888888),
+                                    fontSize = 10.sp
+                                )
+                            }
+                            // Expand toggle — reveals the app's shortcuts so a
+                            // specific one can be associated instead of the app.
+                            if (onConfirmShortcut != null) {
+                                TextButton(
+                                    onClick = {
+                                        expandedPackage = if (isExpanded) null else app.packageName
+                                    },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                                ) {
+                                    Text(
+                                        if (isExpanded) "▾" else "▸",
+                                        fontSize = 13.sp,
+                                        color = Color(0xFF66CCFF)
+                                    )
+                                }
                             }
                         }
-                        if (iconBitmap != null) {
-                            Image(
-                                bitmap = iconBitmap.asImageBitmap(),
-                                contentDescription = app.label,
-                                modifier = Modifier.size(32.dp)
-                            )
-                        } else {
-                            Box(modifier = Modifier.size(32.dp))
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                text = app.label,
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = app.packageName,
-                                color = Color(0xFF888888),
-                                fontSize = 10.sp
-                            )
+                        // Inline shortcut/activity rows for the expanded app
+                        if (isExpanded && onConfirmShortcut != null && expandedResult != null) {
+                            if (!expandedResult.shortcutsAccessible) {
+                                Text(
+                                    "Published shortcuts need default-launcher status — activities below always work",
+                                    color = Color(0xFF888888),
+                                    fontSize = 10.sp,
+                                    modifier = Modifier.padding(start = 48.dp, bottom = 2.dp)
+                                )
+                            }
+                            if (expandedResult.isEmpty) {
+                                Text(
+                                    "No shortcuts or activities",
+                                    color = Color(0xFF888888),
+                                    fontSize = 10.sp,
+                                    modifier = Modifier.padding(start = 48.dp, bottom = 6.dp)
+                                )
+                            } else {
+                                expandedResult.shortcuts.forEach { shortcut ->
+                                    ShortcutPickerRow(
+                                        badge = "⚡",
+                                        label = shortcut.label,
+                                        sublabel = buildString {
+                                            append(shortcut.shortcutId)
+                                            when {
+                                                shortcut.isManifest -> append(" · static")
+                                                shortcut.isDynamic -> append(" · dynamic")
+                                                shortcut.isPinned -> append(" · pinned")
+                                            }
+                                        },
+                                        onClick = {
+                                            onConfirmShortcut(app.packageName, shortcut.shortcutId, shortcut.label)
+                                        }
+                                    )
+                                }
+                                if (expandedResult.activities.isNotEmpty()) {
+                                    Text(
+                                        "Activities",
+                                        color = Color(0xFF666666),
+                                        fontSize = 9.sp,
+                                        modifier = Modifier.padding(start = 48.dp, top = 6.dp)
+                                    )
+                                    expandedResult.activities.forEach { act ->
+                                        ShortcutPickerRow(
+                                            badge = "▶",
+                                            label = act.label,
+                                            sublabel = act.shortcutId
+                                                .removePrefix(ACTIVITY_ID_PREFIX)
+                                                .substringAfterLast('.'),
+                                            onClick = {
+                                                onConfirmShortcut(app.packageName, act.shortcutId, act.label)
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -9059,6 +9210,41 @@ internal fun AppPickerDialog(
                     Text("Cancel", color = Color(0xFF888888))
                 }
             }
+        }
+    }
+}
+
+/**
+ * One indented entry under an expanded app row in [AppPickerDialog]:
+ * a published shortcut (⚡) or an exported activity (▶).
+ */
+@Composable
+private fun ShortcutPickerRow(
+    badge: String,
+    label: String,
+    sublabel: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = 48.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(badge, fontSize = 12.sp)
+        Spacer(modifier = Modifier.width(6.dp))
+        Column {
+            Text(
+                text = label,
+                color = Color(0xFF66CCFF),
+                fontSize = 12.sp
+            )
+            Text(
+                text = sublabel,
+                color = Color(0xFF666666),
+                fontSize = 9.sp
+            )
         }
     }
 }
