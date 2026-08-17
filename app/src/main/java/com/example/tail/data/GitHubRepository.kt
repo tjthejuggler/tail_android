@@ -78,6 +78,11 @@ class GitHubRepository(private val context: Context) {
                 onRateLimited(e.resetEpochSeconds)
                 hitRateLimit = true
                 emptyList()
+            } catch (e: GitHubApiException) {
+                // Auth/access failures (401/403/404) must propagate so the
+                // caller can tell the user the real cause (e.g. a token
+                // without private-repo access) instead of "no commits found".
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to fetch commits page $page: ${e.message}")
                 break
@@ -230,6 +235,11 @@ class GitHubRepository(private val context: Context) {
                 onRateLimited(e.resetEpochSeconds)
                 hitRateLimit = true
                 emptyList()
+            } catch (e: GitHubApiException) {
+                // Auth/access failures (401/403/404) must propagate so the
+                // caller can tell the user the real cause (e.g. a token
+                // without private-repo access) instead of "no commits found".
+                throw e
             } catch (e: Exception) {
                 break
             }
@@ -424,6 +434,10 @@ class GitHubRepository(private val context: Context) {
         // Fetch recent commits for daily distribution
         val commits = try {
             service.fetchCommits(owner, repo, page = 1, token = token)
+        } catch (e: GitHubApiException) {
+            // Auth/access failures (401/403/404) propagate to the polling
+            // loop so persistent misconfiguration is visible to the user.
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "fetchRecent failed: ${e.message}")
             return@withContext emptyMap()

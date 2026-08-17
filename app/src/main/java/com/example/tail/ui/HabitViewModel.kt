@@ -21,6 +21,7 @@ import com.example.tail.data.BridgeMovie
 import com.example.tail.data.ChessComType
 import com.example.tail.data.GarminRepository
 import com.example.tail.data.GarminType
+import com.example.tail.data.GitHubApiException
 import com.example.tail.data.GitHubMetric
 import com.example.tail.data.GitHubRateLimitException
 import com.example.tail.data.GitHubRepository
@@ -6561,13 +6562,26 @@ class HabitViewModel(
                         // Rate limit message already set by onRateLimited callback
                         Log.w(TAG, "GitHub backlog for $habitName was rate limited, keeping existing data")
                     } else {
-                        _githubSyncStatus.value = "No commits found for $owner/$repo. Check the URL is correct."
+                        _githubSyncStatus.value = "No commits found for $owner/$repo. " +
+                            "Check the URL — if the repo is private, the token needs " +
+                            "the 'repo' scope (classic) or Contents: Read-only (fine-grained)."
                     }
                 }
             } catch (e: GitHubRateLimitException) {
                 Log.e(TAG, "GitHub backlog rate limited for $habitName: ${e.message}")
                 val mins = ((e.resetEpochSeconds - System.currentTimeMillis() / 1000) / 60).coerceAtLeast(0)
                 _githubSyncStatus.value = "Rate limited by GitHub. Try again in ~${mins} min."
+            } catch (e: GitHubApiException) {
+                Log.e(TAG, "GitHub backlog API error for $habitName: HTTP ${e.statusCode}")
+                _githubSyncStatus.value = when (e.statusCode) {
+                    404 -> "Repo $owner/$repo not found. If it is PRIVATE, the token needs " +
+                        "access: classic tokens require the 'repo' scope; fine-grained " +
+                        "tokens need the repo selected + Contents: Read-only."
+                    401 -> "GitHub rejected the token (401). Check that it is valid and not expired."
+                    403 -> "GitHub denied access to $owner/$repo (403). The token may lack " +
+                        "permission for this private repo."
+                    else -> "GitHub API error ${e.statusCode} for $owner/$repo."
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "GitHub backlog failed for $habitName: ${e.message}")
                 _githubSyncStatus.value = "Backlog failed: ${e.message?.take(80)}"
@@ -6699,6 +6713,16 @@ class HabitViewModel(
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "GitHub commit message sync failed for $habitName: ${e.message}")
+                }
+            } catch (e: GitHubApiException) {
+                // Persistent auth/access failure — surface it instead of
+                // failing silently every poll cycle.
+                Log.w(TAG, "GitHub sync API error for $habitName: HTTP ${e.statusCode}")
+                _githubSyncStatus.value = when (e.statusCode) {
+                    404 -> "Repo not found for $habitName — private repos need a token " +
+                        "with 'repo' scope (classic) or Contents: Read-only (fine-grained)."
+                    401 -> "GitHub rejected the token (401) for $habitName."
+                    else -> "GitHub denied access (${e.statusCode}) for $habitName."
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "GitHub sync failed for $habitName: ${e.message}")

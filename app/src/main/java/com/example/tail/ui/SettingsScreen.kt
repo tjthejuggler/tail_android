@@ -1048,6 +1048,13 @@ private fun GithubSettingsSection(
                 fontSize = 10.sp,
                 color = Color(0xFF888888)
             )
+            Text(
+                text = "Private repos: classic tokens need the 'repo' scope; " +
+                       "fine-grained tokens need the repo selected under Repository " +
+                       "access + Contents: Read-only permission.",
+                fontSize = 10.sp,
+                color = Color(0xFF888888)
+            )
 
             Spacer(modifier = Modifier.height(8.dp))
             Button(onClick = { viewModel.saveGithubSettings(enabled, token) }) {
