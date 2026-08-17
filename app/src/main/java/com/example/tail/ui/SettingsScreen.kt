@@ -60,6 +60,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -326,9 +327,11 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Overlays & Tools",
-                    summary = "Floating bubble · chess readiness · debug mode",
+                    summary = "Stats overlay · floating bubble · chess readiness · debug mode",
                     icon = Icons.Filled.Layers
                 ) {
+                    StatsOverlaySettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
                     FloatingBubbleSettingsSection(context = context)
                     SettingsSubSectionDivider()
                     ChessReadinessSettingsSection(viewModel = viewModel, settings = settings)
@@ -1667,6 +1670,182 @@ private fun VoiceNoteSettingsSection(
                 text = "Dictated notes are prepended to the top of this file with a " +
                        "\"## YYYY-MM-DD HH:MM:SS\" header. Set up a Samsung Routine with " +
                        "\"Voice Note\" as the app action.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * Stats Overlay settings section — master switch for the always-on-top
+ * today / avg7 / avg30 bar (StatsOverlayService).
+ *
+ * The overlay shows the exact same numbers the Tasker relay file receives
+ * (shared computeTaskerStats), so it can replace the Tasker overlay once
+ * confirmed. The bar itself is dragged to place it, and its ◢ corner handle
+ * resizes it (width + font scale together) — this section covers the master
+ * switch, background opacity and a position/size reset.
+ */
+@Composable
+private fun StatsOverlaySettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    val context = LocalContext.current
+    val enabled = settings.statsOverlayEnabled
+    var permissionMissing by remember {
+        mutableStateOf(!android.provider.Settings.canDrawOverlays(context))
+    }
+    var geometry by remember {
+        mutableStateOf(
+            com.example.tail.widget.StatsOverlayStore.loadGeometry(context)
+        )
+    }
+
+    /** Tells the running overlay to re-read its stored geometry/opacity. */
+    fun notifyOverlayChanged() {
+        if (!com.example.tail.widget.StatsOverlayService.isRunning) return
+        try {
+            context.startService(
+                android.content.Intent(
+                    context,
+                    com.example.tail.widget.StatsOverlayService::class.java
+                ).setAction(com.example.tail.widget.StatsOverlayService.ACTION_SETTINGS_CHANGED)
+            )
+        } catch (_: Exception) { /* service not running */ }
+    }
+
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("📊 Stats Overlay", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    text = "Always-on-top bar with today / avg7 / avg30 — the same " +
+                        "numbers the Tasker file gets. Drag the bar to place it (it can " +
+                        "sit right over the status bar), drag the ◢ corner to resize, " +
+                        "long-press to open Tail — or set exact values below.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = { want ->
+                    permissionMissing =
+                        !android.provider.Settings.canDrawOverlays(context)
+                    if (want && permissionMissing) {
+                        // Open the system "Display over other apps" screen; the
+                        // user returns here and flips the switch again.
+                        try {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    android.net.Uri.parse("package:${context.packageName}")
+                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        } catch (_: Exception) { /* settings screen unavailable */ }
+                    } else {
+                        viewModel.setStatsOverlayEnabled(want)
+                    }
+                }
+            )
+        }
+
+        if (enabled && permissionMissing) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "⚠ \"Display over other apps\" permission is missing — the bar " +
+                    "cannot show. Toggle the switch again after granting it.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Background opacity: ${(geometry.opacity * 100).toInt()}%",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Slider(
+                value = geometry.opacity,
+                onValueChange = { geometry = geometry.copy(opacity = it) },
+                onValueChangeFinished = {
+                    com.example.tail.widget.StatsOverlayStore.saveOpacity(context, geometry.opacity)
+                    notifyOverlayChanged()
+                },
+                valueRange = 0.15f..1f
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Exact position & size",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = if (geometry.x >= 0) geometry.x.toString() else "",
+                    onValueChange = { geometry = geometry.copy(x = it.toIntOrNull() ?: -1) },
+                    label = { Text("X (px)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = if (geometry.y >= 0) geometry.y.toString() else "",
+                    onValueChange = { geometry = geometry.copy(y = it.toIntOrNull() ?: -1) },
+                    label = { Text("Y (px)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = geometry.widthDp.toString(),
+                    onValueChange = {
+                        geometry = geometry.copy(widthDp = it.toIntOrNull() ?: geometry.widthDp)
+                    },
+                    label = { Text("Width (dp)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    com.example.tail.widget.StatsOverlayStore.saveGeometry(context, geometry)
+                    notifyOverlayChanged()
+                }) {
+                    Text("Apply Position & Size")
+                }
+                Button(onClick = {
+                    com.example.tail.widget.StatsOverlayStore.resetGeometry(context)
+                    geometry = com.example.tail.widget.StatsOverlayStore.loadGeometry(context)
+                    notifyOverlayChanged()
+                }) {
+                    Text("Reset")
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "X/Y are pixels from the top-left of the screen (0,0 = very top, " +
+                    "over the status bar). Width is dp; the font scales with it. Values " +
+                    "are clamped to the screen on apply. Tip: drag the bar roughly in " +
+                    "place first, then fine-tune here.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "The bar survives reboots and revives itself if Android kills " +
+                    "it. Hide it anytime from its notification. The Tasker file keeps " +
+                    "being written until you retire it.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

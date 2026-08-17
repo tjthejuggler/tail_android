@@ -52,6 +52,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Revive the always-on-top stats overlay if the user enabled it but it
+        // died (process kill, APK update, OEM cleanup). No-op when off/running.
+        com.example.tail.widget.StatsOverlayService.ensureRunning(applicationContext)
+
         val debugPrefs = DebugPreferences(applicationContext)
         val debugNoteRepo = DebugNoteRepository(applicationContext, debugPrefs)
 

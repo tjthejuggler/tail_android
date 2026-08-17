@@ -448,20 +448,29 @@ fun buildHabit(
 }
 
 /**
- * Builds the Tasker relay file content (today / avg7 / avg30 point totals).
+ * Structured today / avg7 / avg30 point totals — see [computeTaskerStats].
+ * Consumed by the Tasker relay file ([buildTaskerStatsContent]) and by the
+ * in-app stats overlay ([com.example.tail.widget.StatsOverlayService]) so both
+ * surfaces always show identical numbers.
+ */
+data class TaskerStats(
+    val today: Int,
+    val avg7: Double,
+    val avg30: Double
+)
+
+/**
+ * Computes the today / avg7 / avg30 point totals.
  *
  * This is the single source of truth for the Tasker stats file across every
- * write site (HabitViewModel + the IPC services). It applies dividers and,
- * crucially, EXCLUDES any habit listed in [noPointsHabits] (the "Don't affect
- * points" setting) so Garmin-imported and other no-points habits never inflate
- * the relayed totals.
+ * write site (HabitViewModel + the IPC services) AND for the in-app stats
+ * overlay. It applies dividers and, crucially, EXCLUDES any habit listed in
+ * [noPointsHabits] (the "Don't affect points" setting) so Garmin-imported and
+ * other no-points habits never inflate the relayed totals.
  *
- * Format (matches the in-app daily-total logic in computeAppStats/getDailyTotals):
- *   today=<N>
- *   avg7=<X.XX>
- *   avg30=<X.XX>
+ * Matches the in-app daily-total logic in computeAppStats/getDailyTotals.
  */
-fun buildTaskerStatsContent(
+fun computeTaskerStats(
     db: HabitsDatabase,
     dividers: Map<String, Int>,
     noPointsHabits: Set<String>,
@@ -469,7 +478,7 @@ fun buildTaskerStatsContent(
     secondaryValueFallbackHabits: Set<String> = emptySet(),
     timerMinutesPrimaryHabits: Set<String> = emptySet(),
     invertedBinaryHabits: Set<String> = emptySet()
-): String {
+): TaskerStats {
     fun dayTotal(date: LocalDate): Int {
         val ds = dateString(date)
         return db.entries.sumOf { (habitName, entries) ->
@@ -507,7 +516,35 @@ fun buildTaskerStatsContent(
         return total.toDouble() / days
     }
 
-    val avg7 = avgOverDays(7)
-    val avg30 = avgOverDays(30)
-    return "today=$todayCount\navg7=${"%.2f".format(avg7)}\navg30=${"%.2f".format(avg30)}\n"
+    return TaskerStats(
+        today = todayCount,
+        avg7 = avgOverDays(7),
+        avg30 = avgOverDays(30)
+    )
+}
+
+/**
+ * Builds the Tasker relay file content (today / avg7 / avg30 point totals)
+ * from [computeTaskerStats]. Kept as a thin formatter so the on-disk format
+ * can never drift from the structured computation.
+ *
+ * Format:
+ *   today=<N>
+ *   avg7=<X.XX>
+ *   avg30=<X.XX>
+ */
+fun buildTaskerStatsContent(
+    db: HabitsDatabase,
+    dividers: Map<String, Int>,
+    noPointsHabits: Set<String>,
+    today: LocalDate = LocalDate.now(),
+    secondaryValueFallbackHabits: Set<String> = emptySet(),
+    timerMinutesPrimaryHabits: Set<String> = emptySet(),
+    invertedBinaryHabits: Set<String> = emptySet()
+): String {
+    val stats = computeTaskerStats(
+        db, dividers, noPointsHabits, today,
+        secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits
+    )
+    return "today=${stats.today}\navg7=${"%.2f".format(stats.avg7)}\navg30=${"%.2f".format(stats.avg30)}\n"
 }

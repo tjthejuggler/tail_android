@@ -348,6 +348,24 @@
         </activity>
 
         <!--
+            StatsOverlayService: foreground service that manages the always-on-top
+            stats bar overlay (TYPE_APPLICATION_OVERLAY). Shows the same
+            today / avg7 / avg30 point totals that the Tasker relay file
+            receives, so the Tasker dependency can eventually be retired.
+            The bar is draggable, resizable (corner handle) and revived by the
+            watchdog after crashes/reboots. Uses foregroundServiceType="specialUse"
+            as required on Android 14+.
+        -->
+        <service
+            android:name=".widget.StatsOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent habit stats overlay bar" />
+        </service>
+
+        <!--
             FloatingBubbleService: foreground service that manages the
             WindowManager overlay (TYPE_APPLICATION_OVERLAY). Shows a
             draggable bubble with the Tail icon over other apps.

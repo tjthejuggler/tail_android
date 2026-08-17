@@ -3992,6 +3992,25 @@ class HabitViewModel(
     }
 
     /**
+     * Enables or disables the in-app stats overlay (StatsOverlayService) — the
+     * always-on-top bar showing today / avg7 / avg30, fed by the same
+     * computation as the Tasker relay file. Toggling starts/stops the service.
+     * The Tasker file itself keeps being written either way until the overlay
+     * is confirmed working and explicitly retired.
+     */
+    fun setStatsOverlayEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepo.saveStatsOverlayEnabled(enabled)
+            _settings.value = _settings.value.copy(statsOverlayEnabled = enabled)
+            if (enabled) {
+                com.example.tail.widget.StatsOverlayService.start(context)
+            } else {
+                com.example.tail.widget.StatsOverlayService.stop(context)
+            }
+        }
+    }
+
+    /**
      * Sets the app associated with Chess Readiness. The floating bubble will
      * appear over this app and its popup menu gains a "Chess Readiness"
      * option. Only meaningful while the feature is enabled.

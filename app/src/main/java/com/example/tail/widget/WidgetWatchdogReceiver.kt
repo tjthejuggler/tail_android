@@ -33,25 +33,44 @@ class WidgetWatchdogReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val appContext = context.applicationContext
         val shouldRun = monitorShouldRun(appContext)
-        if (!shouldRun) {
-            // Feature deliberately off — let the heartbeat die out.
-            return
+        val overlayShouldRun = StatsOverlayStore.shouldRun(appContext)
+        if (!shouldRun && !overlayShouldRun) {
+            // Both features deliberately off — let the heartbeat die out.
+        } else {
+            reviveServices(appContext, shouldRun, overlayShouldRun)
+            schedule(appContext)
         }
+    }
 
-        try {
-            if (!WidgetTriggerService.isRunning) {
-                Log.d(TAG, "Watchdog: monitor dead — restarting it")
-                appContext.startForegroundService(
-                    Intent(appContext, WidgetTriggerService::class.java)
-                )
+    /** Best-effort revival of the monitor and/or the stats overlay. */
+    private fun reviveServices(appContext: Context, monitor: Boolean, overlay: Boolean) {
+        if (monitor) {
+            try {
+                if (!WidgetTriggerService.isRunning) {
+                    Log.d(TAG, "Watchdog: monitor dead — restarting it")
+                    appContext.startForegroundService(
+                        Intent(appContext, WidgetTriggerService::class.java)
+                    )
+                }
+            } catch (e: Exception) {
+                // FGS start can be blocked while the app is cached; the next
+                // heartbeat retries (and any user interaction lifts the block).
+                Log.d(TAG, "Watchdog: monitor restart deferred — ${e.message}")
             }
-        } catch (e: Exception) {
-            // FGS start can be blocked while the app is cached; the next
-            // heartbeat retries (and any user interaction lifts the block).
-            Log.d(TAG, "Watchdog: monitor restart deferred — ${e.message}")
         }
 
-        schedule(appContext)
+        if (overlay) {
+            try {
+                if (!StatsOverlayService.isRunning) {
+                    Log.d(TAG, "Watchdog: stats overlay dead — restarting it")
+                    appContext.startForegroundService(
+                        Intent(appContext, StatsOverlayService::class.java)
+                    )
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Watchdog: stats overlay restart deferred — ${e.message}")
+            }
+        }
     }
 
     companion object {

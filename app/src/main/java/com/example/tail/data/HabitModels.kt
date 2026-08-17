@@ -466,6 +466,15 @@ data class AppSettings(
      *   avg30=<X.XX>       — average habits done per day over the last 30 days
      */
     val taskerFileUri: String = "",
+    /**
+     * Master switch for the in-app stats overlay (StatsOverlayService).
+     * When true, a small always-on-top bar shows the same today / avg7 / avg30
+     * numbers that the Tasker relay file receives — an in-app replacement for
+     * the Tasker overlay so the external file dependency can eventually be
+     * dropped. Geometry (position / width) is persisted separately by the
+     * service itself in SharedPreferences.
+     */
+    val statsOverlayEnabled: Boolean = false,
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
     /** Custom display order for habits (legacy flat list, used when screens is empty). */
     val habitOrder: List<String> = emptyList(),

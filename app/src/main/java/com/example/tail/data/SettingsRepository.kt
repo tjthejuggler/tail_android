@@ -19,6 +19,8 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 private val KEY_FILE_URI = stringPreferencesKey("file_uri")
 private val KEY_SCREENS_RELAY_FILE_URI = stringPreferencesKey("screens_relay_file_uri")
 private val KEY_TASKER_FILE_URI = stringPreferencesKey("tasker_file_uri")
+// In-app stats overlay (StatsOverlayService) master switch
+private val KEY_STATS_OVERLAY_ENABLED = booleanPreferencesKey("stats_overlay_enabled")
 private val KEY_CUSTOM_INPUT = stringSetPreferencesKey("custom_input_habits")
 private val KEY_HABIT_ORDER = stringPreferencesKey("habit_order")
 private val KEY_HABIT_SCREENS = stringPreferencesKey("habit_screens")
@@ -785,6 +787,7 @@ class SettingsRepository(private val context: Context) {
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
             taskerFileUri = prefs[KEY_TASKER_FILE_URI] ?: "",
+            statsOverlayEnabled = prefs[KEY_STATS_OVERLAY_ENABLED] ?: false,
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
             habitScreens = screens,
@@ -922,6 +925,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveTaskerFileUri(uri: String) {
         context.dataStore.edit { prefs ->
             prefs[KEY_TASKER_FILE_URI] = uri
+        }
+    }
+
+    /** Saves the master switch for the in-app stats overlay. */
+    suspend fun saveStatsOverlayEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_STATS_OVERLAY_ENABLED] = enabled
         }
     }
 
