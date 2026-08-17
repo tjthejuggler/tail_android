@@ -654,14 +654,18 @@ class SettingsRepository(private val context: Context) {
             // key is stale once screens are in use — deleting a habit in
             // screens mode never rewrites it — so unioning both would keep
             // long-deleted habits "valid" and defeat the prune.)
+            // App-link entries are excluded just like in getAllHabitNames():
+            // they are launch shortcuts, not habits, so any conditional flag
+            // or link pointing at one is treated as orphaned and pruned.
             val screensRaw = prefs[KEY_HABIT_SCREENS] ?: ""
             val orderRaw = prefs[KEY_HABIT_ORDER] ?: ""
             val validNames = if (screensRaw.isNotEmpty()) {
                 decodeScreens(screensRaw)
                     .flatMap { it.habitNames }
-                    .filterTo(mutableSetOf()) { it.isNotEmpty() }
+                    .filterTo(mutableSetOf()) { it.isNotEmpty() && !isAppLink(it) }
             } else {
-                orderRaw.split("|||").filterTo(mutableSetOf()) { it.isNotEmpty() }
+                orderRaw.split("|||")
+                    .filterTo(mutableSetOf()) { it.isNotEmpty() && !isAppLink(it) }
             }
             // Defensive: never wipe links when no habit names could be resolved
             // (e.g. unexpected empty decode) — treat as "cannot verify".

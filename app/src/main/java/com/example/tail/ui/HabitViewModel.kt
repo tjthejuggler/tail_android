@@ -5900,14 +5900,20 @@ class HabitViewModel(
 
     /**
      * Returns all habit names across all screens (for graph mode selection).
+     * App-link entries are NOT habits (they are grid shortcuts that launch an
+     * app), so they are excluded — every habit-selection picker (conditional
+     * links, chess readiness, map settings, …) is fed from this list.
      */
     fun getAllHabitNames(): List<String> {
         val screens = _habitScreens.value
         return if (screens.isNotEmpty()) {
-            screens.flatMap { it.habitNames }.filter { it.isNotEmpty() }.distinct()
+            screens.flatMap { it.habitNames }
+                .filter { it.isNotEmpty() && !isAppLink(it) }
+                .distinct()
         } else {
             val order = _habitOrder.value
-            (if (order.isNotEmpty()) order else HABIT_ORDER).filter { it.isNotEmpty() }
+            (if (order.isNotEmpty()) order else HABIT_ORDER)
+                .filter { it.isNotEmpty() && !isAppLink(it) }
         }
     }
 
