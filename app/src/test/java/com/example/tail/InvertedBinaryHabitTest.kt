@@ -53,7 +53,7 @@ class InvertedBinaryHabitTest {
     // ── buildHabit: streak semantics ────────────────────────────────────────
 
     @Test
-    fun `clean days build a positive streak even though the square is red`() {
+    fun `clean days build a positive streak with the square orange`() {
         // Four consecutive zero days ending on day4
         val entries = entriesOf(day1 to 0, day2 to 0, day3 to 0, day4 to 0)
         val habit = buildHabit("Coffee", entries, useCustomInput = false, targetDate = day4, invertedBinary = true)

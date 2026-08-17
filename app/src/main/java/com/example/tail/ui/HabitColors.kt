@@ -71,12 +71,12 @@ fun getHabitColor(habitName: String, count: Int): Color {
  */
 /**
  * Style for inverted-binary habits (e.g. coffee tracking). The colour is driven
- * by the RAW count, not points: orange on days the habit was done (≥ 1
- * occurrence) and red on clean days (0 occurrences) — the exact opposite
- * emotional reading of a normal habit.
+ * by the RAW count, not points, and mirrors the point outcome: orange on clean
+ * days (0 occurrences → +1 point earned) and red on days the habit was done
+ * (≥ 1 occurrence → no point, streak broken).
  */
 fun getInvertedBinaryStyle(rawCount: Int): HabitStyle =
-    HabitStyle(background = if (rawCount > 0) ColorOrange else ColorRed)
+    HabitStyle(background = if (rawCount > 0) ColorRed else ColorOrange)
 
 fun getHabitStyle(count: Int): HabitStyle {
     return when {

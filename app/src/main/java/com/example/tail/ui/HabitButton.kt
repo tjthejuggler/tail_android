@@ -116,7 +116,7 @@ fun HabitButton(
     /** True while this habit should pulse (e.g. jumped to from global search). */
     isHighlighted: Boolean = false
 ) {
-    // Inverted-binary habits colour by RAW count (orange = done today, red = clean)
+    // Inverted-binary habits colour by RAW count (orange = clean day → +1 point, red = done today)
     val habitStyle = if (habit.invertedBinary) {
         getInvertedBinaryStyle(habit.rawTodayCount)
     } else {

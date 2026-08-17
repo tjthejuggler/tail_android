@@ -5350,7 +5350,7 @@ private fun HabitInputModesSection(
         Column {
             Text(text = "Inverted binary ⊘", color = Color(0xFFCCCCCC), fontSize = 12.sp)
             Text(
-                text = if (isInvertedBinary) "Skipped day = +1 point & streak; done day (orange) breaks it"
+                text = if (isInvertedBinary) "Skipped day = +1 point & streak; done day (red) breaks it"
                 else "Normal points & streaks on done days",
                 color = Color(0xFF888888), fontSize = 10.sp
             )
