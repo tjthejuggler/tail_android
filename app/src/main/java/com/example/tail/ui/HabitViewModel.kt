@@ -629,7 +629,7 @@ class HabitViewModel(
             }
         }
 
-        // Collect in-process increment events from VoiceHabitService / IPC receivers
+        // Collect in-process increment events from SmartVoiceService / IPC receivers
         // so the UI updates instantly without waiting for ON_RESUME.
         viewModelScope.launch {
             HabitIncrementBus.events.collect { habitName ->

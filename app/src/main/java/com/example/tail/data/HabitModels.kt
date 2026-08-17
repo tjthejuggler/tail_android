@@ -768,7 +768,7 @@ data class AppSettings(
     val voiceTriggerHabits: Set<String> = emptySet(),
     /**
      * Maps habit name → set of trigger words (stored lowercase).
-     * When the VoiceHabitService hears speech containing any of these words,
+     * When the SmartVoiceService hears speech containing any of these words,
      * the corresponding habit is incremented.
      */
     val voiceTriggerWords: Map<String, Set<String>> = emptyMap(),

@@ -501,8 +501,8 @@ class MediaCaptureActivity : ComponentActivity() {
 
     /**
      * Starts [SmartVoiceService] for voice listening **immediately** (smart
-     * routing to habits/notes). Mirrors [SmartVoiceActivity] — the service
-     * handles vibration, SpeechRecognizer, TTS, and confirmation overlays.
+     * routing to habits/notes) — the service handles vibration,
+     * SpeechRecognizer, TTS, and confirmation overlays.
      */
     private fun startVoiceMode() {
         val spotifyTrack = SpotifyDetector.getCurrentSpotifyTrack(applicationContext)

@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 /**
  * In-process event bus for habit increment notifications.
  *
- * When [VoiceHabitService], [HabitIncrementReceiver], or [ShareTextActivity]
+ * When [SmartVoiceService], [HabitIncrementReceiver], or [ShareTextActivity]
  * increment a habit outside the ViewModel, they emit the habit name here.
  * [HabitViewModel] collects the flow and reloads the DB so the UI updates
  * instantly — no Android broadcast permission headaches.

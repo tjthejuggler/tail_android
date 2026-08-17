@@ -22,7 +22,6 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.widget.Toast
-import com.example.tail.TextTriggerActivity
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
@@ -63,9 +62,9 @@ private const val TANDEM_EXTRA_LISTEN_MS = 20_000L // extra window while tandem 
  *  - Split the spoken text into individual words.
  *  - Count how many words match a configured habit trigger word.
  *  - If **more than half** of the words are trigger words → habit mode
- *    (increment matched habits, same as [VoiceHabitService]).
+ *    (increment matched habits).
  *  - If **half or fewer** words are trigger words → note mode
- *    (prepend text to notes file, same as [VoiceNoteService]).
+ *    (prepend text to notes file).
  *
  * Two modes of operation:
  *  1. **Text supplied** — If the launching intent contains [Intent.EXTRA_TEXT],
@@ -103,7 +102,7 @@ class SmartVoiceService : Service() {
         spotifyTrack = SpotifyDetector.fromIntent(intent)
             ?: SpotifyDetector.getCurrentSpotifyTrack(applicationContext)
 
-        val suppliedText = TextTriggerActivity.extractText(intent)
+        val suppliedText = extractText(intent)
         val notificationText = if (!suppliedText.isNullOrEmpty())
             "🧠 Processing: \"$suppliedText\""
         else
@@ -359,7 +358,7 @@ class SmartVoiceService : Service() {
         }
     }
 
-    // ── Habit mode (mirrors VoiceHabitService) ───────────────────────────
+    // ── Habit mode ───────────────────────────────────────────────────────
 
     /**
      * Maps English number words to their integer values.
@@ -614,7 +613,7 @@ class SmartVoiceService : Service() {
         }
     }
 
-    // ── Note mode (mirrors VoiceNoteService) ─────────────────────────────
+    // ── Note mode ────────────────────────────────────────────────────────
 
     private fun handleAsNote(text: String, settings: com.example.tail.data.AppSettings, capturedSpotifyTrack: SpotifyTrack? = null) {
         if (settings.voiceNoteFileUri.isEmpty()) {
@@ -704,7 +703,7 @@ class SmartVoiceService : Service() {
         Log.d(TAG, "Note saved notification shown")
     }
 
-    // ── Tasker file (mirrors VoiceHabitService) ─────────────────────────
+    // ── Tasker file ──────────────────────────────────────────────────────
 
     private suspend fun writeTaskerFile(
         context: Context,
@@ -885,5 +884,34 @@ class SmartVoiceService : Service() {
             wakeLock?.let { if (it.isHeld) it.release() }
         } catch (_: Exception) {}
         wakeLock = null
+    }
+
+    companion object {
+        /**
+         * Extracts text from an intent by checking multiple common extra keys
+         * and the data URI. Returns the first non-empty value found, or null.
+         */
+        fun extractText(intent: Intent?): String? {
+            if (intent == null) return null
+
+            val extraKeys = listOf(
+                Intent.EXTRA_TEXT,          // "android.intent.extra.TEXT"
+                "text",                     // common shorthand
+                "voice_text",               // custom
+                "android.intent.extra.PROCESS_TEXT", // ACTION_PROCESS_TEXT
+                "query"                     // some automation tools use this
+            )
+
+            for (key in extraKeys) {
+                val value = intent.getStringExtra(key)
+                if (!value.isNullOrEmpty()) return value
+            }
+
+            // Fallback: check data URI
+            val data = intent.dataString
+            if (!data.isNullOrEmpty()) return data
+
+            return null
+        }
     }
 }
