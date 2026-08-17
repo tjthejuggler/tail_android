@@ -111,6 +111,20 @@ class LocationRepository(private val context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
+    // ── In-memory parsed-map caches ──────────────────────────────────────────
+    // Each of the three maps below lives in SharedPreferences as ONE giant
+    // JSON string. It used to be re-parsed from scratch on EVERY read — and
+    // every single-entry save re-parsed the entire map just to add one date.
+    // These caches hold the parsed result for the lifetime of the process
+    // (the same lifecycle as the SharedPreferences snapshot itself, so an
+    // external XML push from the seeder script is picked up on the next
+    // process start exactly as before). Maps are replaced wholesale and
+    // never mutated after publish, so @Volatile reads from background
+    // threads (the map screen loads on Dispatchers.Default) are safe.
+    @Volatile private var cachedLocationMap: Map<String, String>? = null
+    @Volatile private var cachedCoordsMap: Map<String, String>? = null
+    @Volatile private var cachedSecondaryMap: Map<String, String>? = null
+
     init {
         seedDefaultIgnoredCountriesIfNeeded()
     }
@@ -797,10 +811,13 @@ class LocationRepository(private val context: Context) {
     }
 
     private fun loadMap(): Map<String, String> {
+        cachedLocationMap?.let { return it }
         val json = prefs.getString(KEY_LOCATIONS, null) ?: return emptyMap()
         return try {
             val obj = JSONObject(json)
-            obj.keys().asSequence().associateWith { obj.getString(it) }
+            val parsed = obj.keys().asSequence().associateWith { obj.getString(it) }
+            cachedLocationMap = parsed
+            parsed
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse location map: ${e.message}")
             emptyMap()
@@ -812,15 +829,19 @@ class LocationRepository(private val context: Context) {
         map[date.toString()] = label
         val obj = JSONObject(map as Map<*, *>)
         prefs.edit().putString(KEY_LOCATIONS, obj.toString()).apply()
+        cachedLocationMap = map
         dataVersion++
         Log.d(TAG, "Saved location for $date: $label")
     }
 
     private fun loadCoordsMap(): Map<String, String> {
+        cachedCoordsMap?.let { return it }
         val json = prefs.getString(KEY_COORDS, null) ?: return emptyMap()
         return try {
             val obj = JSONObject(json)
-            obj.keys().asSequence().associateWith { obj.getString(it) }
+            val parsed = obj.keys().asSequence().associateWith { obj.getString(it) }
+            cachedCoordsMap = parsed
+            parsed
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse coords map: ${e.message}")
             emptyMap()
@@ -844,6 +865,7 @@ class LocationRepository(private val context: Context) {
         map[date.toString()] = "$lat,$lon"
         val obj = JSONObject(map as Map<*, *>)
         prefs.edit().putString(KEY_COORDS, obj.toString()).apply()
+        cachedCoordsMap = map
         dataVersion++
         Log.d(TAG, "Saved coords for $date: $lat, $lon")
     }
@@ -853,6 +875,7 @@ class LocationRepository(private val context: Context) {
         if (map.remove(date.toString()) != null) {
             val obj = JSONObject(map as Map<*, *>)
             prefs.edit().putString(KEY_LOCATIONS, obj.toString()).apply()
+            cachedLocationMap = map
             dataVersion++
             Log.d(TAG, "Removed location for $date")
         }
@@ -863,6 +886,7 @@ class LocationRepository(private val context: Context) {
         if (map.remove(date.toString()) != null) {
             val obj = JSONObject(map as Map<*, *>)
             prefs.edit().putString(KEY_COORDS, obj.toString()).apply()
+            cachedCoordsMap = map
             dataVersion++
             Log.d(TAG, "Removed coords for $date")
         }
@@ -957,6 +981,7 @@ class LocationRepository(private val context: Context) {
         combined.put(newEntry)
         map[today.toString()] = combined.toString()
         prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
+        cachedSecondaryMap = map
         dataVersion++
         Log.d(TAG, "Logged secondary location for $today: $label ($lat, $lon) at ${timeMinutes}min")
     }
@@ -1038,6 +1063,7 @@ class LocationRepository(private val context: Context) {
         combined.put(newEntry)
         map[date.toString()] = combined.toString()
         prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
+        cachedSecondaryMap = map
         dataVersion++
         Log.d(TAG, "Added manual secondary location for $date: $label (${coords.first}, ${coords.second}) at ${timeMinutes}min")
         return label
@@ -1059,6 +1085,7 @@ class LocationRepository(private val context: Context) {
             map[date.toString()] = arr.toString()
         }
         prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
+        cachedSecondaryMap = map
         dataVersion++
         Log.d(TAG, "Removed secondary location #$index for $date")
     }
@@ -1077,6 +1104,7 @@ class LocationRepository(private val context: Context) {
         arr.put(index, obj)
         map[date.toString()] = arr.toString()
         prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
+        cachedSecondaryMap = map
         dataVersion++
         Log.d(TAG, "Updated secondary location #$index time to ${newTimeMinutes}min for $date")
     }
@@ -1121,10 +1149,13 @@ class LocationRepository(private val context: Context) {
 
     /** Loads the date-string → JSON-array-string map from SharedPrefs. */
     private fun loadSecondaryMap(): Map<String, String> {
+        cachedSecondaryMap?.let { return it }
         val json = prefs.getString(KEY_SECONDARY_LOCATIONS, null) ?: return emptyMap()
         return try {
             val obj = JSONObject(json)
-            obj.keys().asSequence().associateWith { obj.getString(it) }
+            val parsed = obj.keys().asSequence().associateWith { obj.getString(it) }
+            cachedSecondaryMap = parsed
+            parsed
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse secondary locations map: ${e.message}")
             emptyMap()

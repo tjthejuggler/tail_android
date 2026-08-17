@@ -8921,6 +8921,21 @@ class HabitViewModel(
     }
 
     /**
+     * Bulk version of the 30-day monthly average from [getDayStatsLight] for a
+     * whole collection of dates at once (date → rounded average). Used by the
+     * map screen to colour every dated dot in ONE sliding-window pass instead
+     * of a 30-day × per-habit re-scan per date — see
+     * [com.example.tail.data.monthlyAveragesBulk] for the algorithm.
+     */
+    fun getMonthlyAveragesBulk(dates: Collection<LocalDate>): Map<LocalDate, Int> =
+        com.example.tail.data.monthlyAveragesBulk(
+            db = cachedPhoneDb,
+            tracked = trackedHabitNames().ifEmpty { cachedPhoneDb.keys },
+            settings = _settings.value,
+            dates = dates
+        )
+
+    /**
      * Triple-metric stats for "The Orrery" loading animation: today's total
      * points, the 7-day weekly average and the 30-day monthly average, all
      * ending on [date]. Computed in a single pass over the 30-day window.

@@ -237,13 +237,19 @@ fun MapScreen(
             // Compute each date's accent colour based on main habit or monthly average.
             val mainHabit = settings.mapMainHabit
             val hideZero = settings.mapHideZeroDays
+            // ONE bulk sliding-window pass for every date's 30-day average.
+            // The old per-date getDayStatsLight() call re-scanned 30 days ×
+            // every tracked habit per date — with years of seeded location
+            // data that was O(D·30·H) and took ~20 s to load the map.
+            val monthlyAvgByDate = if (mainHabit != null) emptyMap() else
+                viewModel.getMonthlyAveragesBulk(c.keys)
             val dc = c.keys.associateWith { date ->
                 val points = if (mainHabit != null) {
                     // Use main habit value for this date
                     viewModel.getHabitValueForDate(mainHabit, date)
                 } else {
-                    // Use monthly average
-                    kotlin.math.round(viewModel.getDayStatsLight(date).monthlyAverage).toInt()
+                    // Use monthly average (precomputed in bulk above)
+                    monthlyAvgByDate[date] ?: 0
                 }
                 
                 // Skip zero values if hideZero is enabled
