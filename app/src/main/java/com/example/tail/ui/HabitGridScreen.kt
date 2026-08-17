@@ -306,6 +306,9 @@ fun HabitGridScreen(
     var mealDialogHabit by remember { mutableStateOf<String?>(null) }
     // True when the dialog was opened by tapping the habit (increment already happened)
     var mealDialogFromTap by remember { mutableStateOf(false) }
+    // Non-null meal log id when the panel should auto-open that meal's editor
+    // (set by the timestamp editor's pencil action for meal habits).
+    var mealDialogFocusLogId by remember { mutableStateOf<String?>(null) }
 
     // Timestamp editor dialog state
     var timestampEditorHabitName by remember { mutableStateOf<String?>(null) }
@@ -1130,6 +1133,13 @@ fun HabitGridScreen(
                                 timestampEditorList = viewModel.timestampRepo.getTimestampsForDay(name, selectedDate)
                                 timestampEditorHabitName = name
                             }
+                            // Refresh text entries so the timestamp cards can show
+                            // the text logged at each increment time.
+                            if (name in settings.textInputHabits) {
+                                viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
+                                    editModeTextEntries = entries
+                                }
+                            }
                         },
                         todayTextEntries = editModeTextEntries,
                         onLoadTextEntries = { name, onResult ->
@@ -1389,29 +1399,100 @@ fun HabitGridScreen(
         }
     }
 
-    // Timestamp editor dialog
+    // Timestamp editor dialog — card-based: each same-moment increment group
+    // shows its time (underlined = tappable to re-time), the increment amount,
+    // and any text logged at that time; the pencil edits amount/text in place
+    // (or jumps to the meal editor for meal habits).
     timestampEditorHabitName?.let { habitName ->
         TimestampEditorDialog(
             habitName = habitName,
             timestamps = timestampEditorList,
-            onUpdateTimestamp = { index, newTime ->
+            textEntries = editModeTextEntries.associate { (fullTs, text) ->
+                fullTs.takeLast(8) to text
+            },
+            isMealHabit = habitName in settings.mealHabits,
+            canEditText = habitName in settings.textInputHabits,
+            onUpdateTimeGroup = { oldTime, newTime ->
                 timestampScope.launch {
-                    timestampEditorList = viewModel.timestampRepo.updateTimestamp(habitName, selectedDate, index, newTime)
+                    timestampEditorList = viewModel.timestampRepo.updateTimestampsAtTime(
+                        habitName, selectedDate, oldTime, newTime
+                    )
                     selectedHabitTimestampCount = timestampEditorList.size
-                    // Sync the habit count with the number of timestamps
-                    // (user may have edited timestamps, so count should match)
+                    // Group size unchanged — no habit count adjustment needed.
                 }
             },
-            onDeleteTimestamp = { index ->
+            onDeleteTimeGroup = { time ->
                 timestampScope.launch {
-                    timestampEditorList = viewModel.timestampRepo.deleteTimestamp(habitName, selectedDate, index)
+                    val removed = timestampEditorList.count { it == time }
+                    timestampEditorList = viewModel.timestampRepo.deleteTimestampsAtTime(
+                        habitName, selectedDate, time
+                    )
                     selectedHabitTimestampCount = timestampEditorList.size
-                    // Decrement the habit count to match
+                    // Decrement the habit count to match the removed units
                     val currentHabit = habits.find { it.name == habitName }
-                    if (currentHabit != null && currentHabit.rawTodayCount > timestampEditorList.size) {
-                        viewModel.setHabitCount(habitName, currentHabit.rawTodayCount - 1)
+                    if (currentHabit != null && removed > 0 &&
+                        currentHabit.rawTodayCount > timestampEditorList.size
+                    ) {
+                        viewModel.setHabitCount(habitName, currentHabit.rawTodayCount - removed)
                     }
                 }
+            },
+            onSetGroupAmount = { time, newAmount ->
+                timestampScope.launch {
+                    val before = timestampEditorList.count { it == time }
+                    timestampEditorList = viewModel.timestampRepo.setTimestampCountAtTime(
+                        habitName, selectedDate, time, newAmount
+                    )
+                    selectedHabitTimestampCount = timestampEditorList.size
+                    // Keep the habit count in step with the edited amount
+                    val delta = newAmount - before
+                    if (delta != 0) {
+                        val currentHabit = habits.find { it.name == habitName }
+                        if (currentHabit != null) {
+                            if (delta > 0 && currentHabit.rawTodayCount < timestampEditorList.size) {
+                                viewModel.setHabitCount(habitName, timestampEditorList.size)
+                            } else if (delta < 0 && currentHabit.rawTodayCount > timestampEditorList.size) {
+                                viewModel.setHabitCount(habitName, currentHabit.rawTodayCount + delta)
+                            }
+                        }
+                    }
+                }
+            },
+            onUpdateText = { time, newText ->
+                val fullTs = "${com.example.tail.data.dateString(selectedDate)} $time"
+                fun reloadTextEntries() {
+                    viewModel.loadTextEntriesWithTimestamps(habitName, selectedDate) { entries ->
+                        editModeTextEntries = entries
+                    }
+                }
+                if (newText.isBlank()) {
+                    viewModel.deleteTextEntry(habitName, fullTs) { reloadTextEntries() }
+                } else {
+                    viewModel.updateTextEntry(habitName, fullTs, newText) { reloadTextEntries() }
+                }
+            },
+            onEditMeal = { time ->
+                // Jump to the pre-existing meal editor for the meal logged
+                // closest to this increment time (same day).
+                val parsedTime = runCatching { java.time.LocalTime.parse(time) }.getOrNull()
+                val targetEpoch = parsedTime?.let {
+                    java.time.LocalDateTime.of(selectedDate, it)
+                        .atZone(java.time.ZoneId.systemDefault())
+                        .toInstant().toEpochMilli()
+                }
+                val logs = viewModel.mealLogsForHabit.value
+                val focus = if (targetEpoch != null) {
+                    logs.filter {
+                        java.time.Instant.ofEpochMilli(it.anchorTime())
+                            .atZone(java.time.ZoneId.systemDefault()).toLocalDate() == selectedDate
+                    }.minByOrNull { kotlin.math.abs(it.anchorTime() - targetEpoch) }
+                } else {
+                    null
+                }
+                timestampEditorHabitName = null
+                mealDialogFromTap = false
+                mealDialogFocusLogId = focus?.id
+                mealDialogHabit = habitName
             },
             onAddTimestamp = { time ->
                 timestampScope.launch {
@@ -1531,9 +1612,13 @@ fun HabitGridScreen(
         MealDetailDialog(
             habitName = habitName,
             viewModel = viewModel,
-            onDismiss = { mealDialogHabit = null },
+            onDismiss = {
+                mealDialogHabit = null
+                mealDialogFocusLogId = null
+            },
             incrementAlreadyDone = mealDialogFromTap,
-            selectedDate = selectedDate
+            selectedDate = selectedDate,
+            focusLogId = mealDialogFocusLogId
         )
     }
 

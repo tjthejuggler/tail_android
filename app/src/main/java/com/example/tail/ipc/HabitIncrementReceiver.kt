@@ -145,10 +145,12 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                 HabitIncrementBus.emit(habitName)
                 Log.i(TAG, "Incremented habit '$habitName' by $amount via IPC broadcast")
 
-                // Record timestamp for IPC-triggered increment
+                // Record timestamp for IPC-triggered increment — one per unit of
+                // amount so the timestamp editor's increment amounts match the
+                // day's count even for external app integration.
                 try {
                     val tsRepo = HabitTimestampRepository(appContext)
-                    tsRepo.addTimestamp(habitName)
+                    tsRepo.addTimestamps(habitName, amount)
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
                 }

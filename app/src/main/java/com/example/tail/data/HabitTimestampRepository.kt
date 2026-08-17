@@ -231,6 +231,94 @@ class HabitTimestampRepository(private val context: Context) {
     }
 
     /**
+     * Updates ALL timestamps equal to [oldTime] for [habitName] on [date] to
+     * [newTime] (multi-increments at one moment are stored as duplicate time
+     * strings — they move as a group). Returns the updated day list.
+     */
+    suspend fun updateTimestampsAtTime(
+        habitName: String,
+        date: LocalDate,
+        oldTime: String,
+        newTime: String
+    ): List<String> {
+        return fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data[habitName] ?: return@withLock emptyList()
+            val dayList = habitMap[dateStr] ?: return@withLock emptyList()
+            if (oldTime in dayList) {
+                habitMap[dateStr] = dayList.map { if (it == oldTime) newTime else it }.toMutableList()
+                habitMap[dateStr]!!.sort()
+                saveAll(data)
+                habitMap[dateStr]!!.toList()
+            } else {
+                dayList.toList()
+            }
+        }
+    }
+
+    /**
+     * Deletes ALL timestamps equal to [time] for [habitName] on [date].
+     * Returns the updated day list.
+     */
+    suspend fun deleteTimestampsAtTime(
+        habitName: String,
+        date: LocalDate,
+        time: String
+    ): List<String> {
+        return fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data[habitName] ?: return@withLock emptyList()
+            val dayList = habitMap[dateStr] ?: return@withLock emptyList()
+            habitMap[dateStr] = dayList.filter { it != time }.toMutableList()
+            if (habitMap[dateStr]!!.isEmpty()) {
+                habitMap.remove(dateStr)
+            }
+            if (habitMap.isEmpty()) {
+                data.remove(habitName)
+            }
+            saveAll(data)
+            habitMap[dateStr]?.sorted() ?: emptyList()
+        }
+    }
+
+    /**
+     * Ensures exactly [count] timestamps equal to [time] exist for [habitName]
+     * on [date] — i.e. re-sizes a same-moment increment group. Adding units
+     * appends duplicates of [time]; removing units drops duplicates. Returns
+     * the updated day list.
+     */
+    suspend fun setTimestampCountAtTime(
+        habitName: String,
+        date: LocalDate,
+        time: String,
+        count: Int
+    ): List<String> {
+        if (count < 0) return getTimestampsForDay(habitName, date)
+        return fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data.getOrPut(habitName) { mutableMapOf() }
+            val dayList = habitMap.getOrPut(dateStr) { mutableListOf() }
+            val others = dayList.filter { it != time }
+            val group = List(count) { time }
+            val merged = (others + group).toMutableList()
+            merged.sort()
+            if (merged.isEmpty()) {
+                habitMap.remove(dateStr)
+            } else {
+                habitMap[dateStr] = merged
+            }
+            if (habitMap.isEmpty()) {
+                data.remove(habitName)
+            }
+            saveAll(data)
+            habitMap[dateStr]?.sorted() ?: emptyList()
+        }
+    }
+
+    /**
      * Update the last (most recent) timestamp for [habitName] on [date] to [newTime].
      * Returns the updated list of timestamps, or empty list if none exist.
      */

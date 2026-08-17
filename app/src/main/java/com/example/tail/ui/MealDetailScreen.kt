@@ -93,7 +93,13 @@ fun MealDetailDialog(
     onDismiss: () -> Unit,
     incrementAlreadyDone: Boolean = false,
     /** Only meal logs from this date are shown in the history feed. */
-    selectedDate: LocalDate = LocalDate.now()
+    selectedDate: LocalDate = LocalDate.now(),
+    /**
+     * When set, the full editor opens automatically for this meal log — used
+     * by the timestamp editor's pencil action to jump straight to the meal
+     * logged at a specific increment time.
+     */
+    focusLogId: String? = null
 ) {
     val context = LocalContext.current
     val allMealLogs by viewModel.mealLogsForHabit.collectAsState()
@@ -122,6 +128,13 @@ fun MealDetailDialog(
 
     // ── Editor + voice state (shared between capture row and editor) ─────
     var editingLog by remember { mutableStateOf<MealLog?>(null) }
+
+    // Jump straight into the editor for a focused meal (timestamp editor pencil).
+    LaunchedEffect(focusLogId, mealLogs) {
+        if (focusLogId != null) {
+            editingLog = mealLogs.firstOrNull { it.id == focusLogId }
+        }
+    }
     var showQuickLog by remember { mutableStateOf(false) }
     var voiceError by remember { mutableStateOf<String?>(null) }
     var editorTranscript by remember { mutableStateOf<String?>(null) }

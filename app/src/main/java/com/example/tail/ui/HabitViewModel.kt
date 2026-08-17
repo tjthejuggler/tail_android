@@ -1608,10 +1608,13 @@ class HabitViewModel(
             }
         }
 
-        // Step 5: record timestamp(s) if requested
-        if (recordTimestamp && amount > 0) {
+        // Step 5: record timestamp(s) if requested. One timestamp PER stored unit
+        // (storedDelta, not amount) so the timestamp editor's increment amounts
+        // always match the day's count — including max-1 clamps and point tiers.
+        val storedDelta = newCount - currentStored
+        if (recordTimestamp && storedDelta > 0) {
             viewModelScope.launch {
-                timestampRepo.addTimestamp(habitName, _selectedDate.value)
+                timestampRepo.addTimestamps(habitName, storedDelta, _selectedDate.value)
             }
         }
 
@@ -1724,10 +1727,13 @@ class HabitViewModel(
             }
         }
 
-        // Step 5: record timestamp(s) if requested
-        if (recordTimestamp && amount > 0) {
+        // Step 5: record timestamp(s) if requested. One timestamp PER stored unit
+        // (storedDelta, not amount) so the timestamp editor's increment amounts
+        // always match the day's count — including max-1 clamps and point tiers.
+        val storedDelta = newCount - currentStored
+        if (recordTimestamp && storedDelta > 0) {
             viewModelScope.launch {
-                timestampRepo.addTimestamp(habitName, _selectedDate.value)
+                timestampRepo.addTimestamps(habitName, storedDelta, _selectedDate.value)
             }
         }
 

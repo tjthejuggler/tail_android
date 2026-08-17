@@ -26,6 +26,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,49 +38,83 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 /**
+ * A group of increments that happened at the same moment.
+ *
+ * The repository stores one "HH:mm:ss" string PER increment unit, so a
+ * multi-increment (e.g. "+5" via IPC, widget batch, or in-app amount) is a run
+ * of identical time strings. The editor aggregates them into one card showing
+ * the shared time and the increment amount (group size).
+ */
+private data class TimeGroup(
+    val time: String,
+    val amount: Int
+)
+
+/**
  * Dialog for viewing, editing, deleting, and adding habit increment timestamps
  * for a specific habit on a specific day.
  *
- * When editing or adding a timestamp, shows a scrolling wheel time picker
- * (Hour · Minute · AM/PM) **plus** quick +/- hour/minute offset buttons.
- *
- * @param habitName The habit being edited
- * @param timestamps Current list of "HH:mm:ss" timestamps for today
- * @param onUpdateTimestamp Called with (index, newTime) when a timestamp is edited
- * @param onDeleteTimestamp Called with (index) when a timestamp is deleted
- * @param onAddTimestamp Called with (time) when a new timestamp is added
- * @param onDismiss Called when the dialog is dismissed
+ * Each same-moment increment group is rendered as a CARD showing:
+ *  - the time, UNDERLINED to signal it is tappable → inline wheel editor that
+ *    re-times the whole group;
+ *  - the increment amount contributed at that time ("+N" chip);
+ *  - any text logged at that time, abbreviated to two lines with an
+ *    expand/collapse toggle;
+ *  - a pencil button that temporarily makes the card EDITABLE (amount + text)
+ *    — for meal habits it instead jumps to the pre-existing meal editor for
+ *    the meal logged at that time;
+ *  - a delete button that removes the whole group.
  */
 @Composable
 fun TimestampEditorDialog(
     habitName: String,
     timestamps: List<String>,
-    onUpdateTimestamp: (Int, String) -> Unit,
-    onDeleteTimestamp: (Int) -> Unit,
-    onAddTimestamp: (String) -> Unit,
+    /** Text entries for the day keyed by "HH:mm:ss" time-of-day. */
+    textEntries: Map<String, String> = emptyMap(),
+    /** True for meal habits — the pencil opens the meal editor instead. */
+    isMealHabit: Boolean = false,
+    /** True when the habit has a text log (text field shown in card edit mode). */
+    canEditText: Boolean = false,
+    /** Re-time every increment at [oldTime] to [newTime]. */
+    onUpdateTimeGroup: (oldTime: String, newTime: String) -> Unit,
+    /** Delete every increment at [time]. */
+    onDeleteTimeGroup: (time: String) -> Unit,
+    /** Set the increment amount contributed at [time] to [newAmount]. */
+    onSetGroupAmount: (time: String, newAmount: Int) -> Unit,
+    /** Upsert the text logged at [time] (empty string clears it). */
+    onUpdateText: (time: String, newText: String) -> Unit,
+    /** Open the pre-existing meal editor for the meal logged at [time]. */
+    onEditMeal: (time: String) -> Unit,
+    /** Add a new single increment at [time]. */
+    onAddTimestamp: (time: String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    // -1 = not editing; >= 0 = editing that index; Int.MAX_VALUE = adding new
-    var editingIndex by remember { mutableStateOf(-1) }
+    // Aggregate duplicate time strings into per-moment groups (chronological).
+    val groups = remember(timestamps) {
+        timestamps.groupBy { it }.map { (time, list) -> TimeGroup(time, list.size) }
+    }
 
-    // Absolute time state for editing an existing timestamp
-    var editingHour24 by remember { mutableIntStateOf(0) }
-    var editingMinute by remember { mutableIntStateOf(0) }
-    var editingOriginalTime by remember { mutableStateOf(LocalTime.MIDNIGHT) }
+    // null = nothing open; a time string = that group is being re-timed;
+    // ADD_NEW = the "Add Time" wheel editor is open.
+    val addNewSentinel = "__add_new__"
+    var editingTime by remember { mutableStateOf<String?>(null) }
+    // null = no card in edit mode; a time string = that card is editable.
+    var editingCard by remember { mutableStateOf<String?>(null) }
 
-    // Absolute time state for "add new" mode
-    var addHour24 by remember { mutableIntStateOf(LocalTime.now().hour) }
-    var addMinute by remember { mutableIntStateOf(LocalTime.now().minute) }
-    var addOriginalTime by remember { mutableStateOf(LocalTime.now()) }
-
-    val isAddingNew = editingIndex == Int.MAX_VALUE
+    // Absolute time state for the inline wheel editor.
+    var wheelHour24 by remember { mutableIntStateOf(0) }
+    var wheelMinute by remember { mutableIntStateOf(0) }
+    var wheelOriginalTime by remember { mutableStateOf(LocalTime.MIDNIGHT) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -93,13 +128,17 @@ fun TimestampEditorDialog(
         text = {
             Column {
                 Text(
-                    text = "${timestamps.size} timestamped increment${if (timestamps.size != 1) "s" else ""}",
+                    text = if (groups.size == 1 && groups.first().amount == 1)
+                        "1 timestamped increment"
+                    else
+                        "${timestamps.size} increment${if (timestamps.size != 1) "s" else ""} " +
+                            "across ${groups.size} time${if (groups.size != 1) "s" else ""}",
                     fontSize = 12.sp,
                     color = Color(0xFF888888)
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                if (timestamps.isEmpty() && !isAddingNew) {
+                if (timestamps.isEmpty() && editingTime != addNewSentinel) {
                     Text(
                         text = "No timestamps recorded for today.",
                         fontSize = 12.sp,
@@ -111,100 +150,84 @@ fun TimestampEditorDialog(
                             .fillMaxWidth()
                             .heightIn(max = 380.dp)
                     ) {
-                        itemsIndexed(timestamps) { index, time ->
-                            if (editingIndex == index) {
-                                // Inline wheel editor mode
+                        itemsIndexed(groups, key = { _, g -> g.time }) { index, group ->
+                            if (editingTime == group.time) {
+                                // ── Inline wheel editor: re-time this group ──
                                 TimestampWheelEditor(
-                                    originalTime = editingOriginalTime,
-                                    hour24 = editingHour24,
-                                    minute = editingMinute,
+                                    originalTime = wheelOriginalTime,
+                                    hour24 = wheelHour24,
+                                    minute = wheelMinute,
                                     onTimeChange = { h, m ->
-                                        editingHour24 = h
-                                        editingMinute = m
+                                        wheelHour24 = h
+                                        wheelMinute = m
                                     },
                                     onConfirm = {
-                                        val adjusted = LocalTime.of(editingHour24, editingMinute)
-                                        onUpdateTimestamp(index, adjusted.format(DateTimeFormatter.ofPattern("HH:mm:ss")))
-                                        editingIndex = -1
+                                        val adjusted = LocalTime.of(wheelHour24, wheelMinute)
+                                            .format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                                        if (adjusted != group.time) {
+                                            onUpdateTimeGroup(group.time, adjusted)
+                                        }
+                                        editingTime = null
                                     },
-                                    onCancel = { editingIndex = -1 }
+                                    onCancel = { editingTime = null }
                                 )
                             } else {
-                                // Display mode
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(
-                                            if (index % 2 == 0) Color(0xFF1A1A1A) else Color.Transparent
-                                        )
-                                        .padding(vertical = 4.dp, horizontal = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "${index + 1}.",
-                                        fontSize = 12.sp,
-                                        color = Color(0xFF666666),
-                                        modifier = Modifier.width(24.dp)
-                                    )
-                                    Text(
-                                        text = formatTimeDisplay(time),
-                                        fontSize = 14.sp,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    IconButton(
-                                        onClick = {
-                                            editingIndex = index
-                                            val parsed = runCatching {
-                                                LocalTime.parse(time)
-                                            }.getOrDefault(LocalTime.now())
-                                            editingOriginalTime = parsed
-                                            editingHour24 = parsed.hour
-                                            editingMinute = parsed.minute
-                                        },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Edit,
-                                            contentDescription = "Edit",
-                                            tint = Color(0xFF88CCFF),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = { onDeleteTimestamp(index) },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "Delete",
-                                            tint = Color(0xFFFF6666),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
+                                TimestampCard(
+                                    group = group,
+                                    index = index,
+                                    text = textEntries[group.time].orEmpty(),
+                                    isEditing = editingCard == group.time,
+                                    isMealHabit = isMealHabit,
+                                    canEditText = canEditText,
+                                    onStartEditTime = {
+                                        val parsed = runCatching { LocalTime.parse(group.time) }
+                                            .getOrDefault(LocalTime.now())
+                                        wheelOriginalTime = parsed
+                                        wheelHour24 = parsed.hour
+                                        wheelMinute = parsed.minute
+                                        editingTime = group.time
+                                    },
+                                    onStartEditInfo = {
+                                        if (isMealHabit) {
+                                            onEditMeal(group.time)
+                                        } else {
+                                            editingCard = group.time
+                                        }
+                                    },
+                                    onCancelEditInfo = { editingCard = null },
+                                    onSaveEditInfo = { newAmount, newText ->
+                                        if (newAmount != group.amount) {
+                                            onSetGroupAmount(group.time, newAmount)
+                                        }
+                                        if (canEditText && newText != textEntries[group.time].orEmpty()) {
+                                            onUpdateText(group.time, newText)
+                                        }
+                                        editingCard = null
+                                    },
+                                    onDelete = { onDeleteTimeGroup(group.time) }
+                                )
                             }
+                            Spacer(modifier = Modifier.height(6.dp))
                         }
 
                         // "Add new" inline wheel editor
-                        if (isAddingNew) {
-                            item {
+                        if (editingTime == addNewSentinel) {
+                            item(key = addNewSentinel) {
                                 TimestampWheelEditor(
-                                    originalTime = addOriginalTime,
-                                    hour24 = addHour24,
-                                    minute = addMinute,
+                                    originalTime = wheelOriginalTime,
+                                    hour24 = wheelHour24,
+                                    minute = wheelMinute,
                                     onTimeChange = { h, m ->
-                                        addHour24 = h
-                                        addMinute = m
+                                        wheelHour24 = h
+                                        wheelMinute = m
                                     },
                                     onConfirm = {
-                                        val adjusted = LocalTime.of(addHour24, addMinute)
-                                        onAddTimestamp(adjusted.format(DateTimeFormatter.ofPattern("HH:mm:ss")))
-                                        editingIndex = -1
+                                        val adjusted = LocalTime.of(wheelHour24, wheelMinute)
+                                            .format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                                        onAddTimestamp(adjusted)
+                                        editingTime = null
                                     },
-                                    onCancel = { editingIndex = -1 }
+                                    onCancel = { editingTime = null }
                                 )
                             }
                         }
@@ -213,15 +236,15 @@ fun TimestampEditorDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // "Add Time" button — only when not already adding
-                if (!isAddingNew && editingIndex == -1) {
+                // "Add Time" button — only when nothing is being edited
+                if (editingTime == null && editingCard == null) {
                     Button(
                         onClick = {
                             val now = LocalTime.now()
-                            addOriginalTime = now
-                            addHour24 = now.hour
-                            addMinute = now.minute
-                            editingIndex = Int.MAX_VALUE
+                            wheelOriginalTime = now
+                            wheelHour24 = now.hour
+                            wheelMinute = now.minute
+                            editingTime = addNewSentinel
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A3A)),
                         modifier = Modifier.height(32.dp)
@@ -251,11 +274,235 @@ fun TimestampEditorDialog(
 }
 
 /**
+ * A single increment card: underlined (tappable) time, amount chip, abbreviated
+ * text with expand toggle, pencil + delete actions. When [isEditing] the amount
+ * and text become editable inputs with Save/Cancel.
+ */
+@Composable
+private fun TimestampCard(
+    group: TimeGroup,
+    index: Int,
+    text: String,
+    isEditing: Boolean,
+    isMealHabit: Boolean,
+    canEditText: Boolean,
+    onStartEditTime: () -> Unit,
+    onStartEditInfo: () -> Unit,
+    onCancelEditInfo: () -> Unit,
+    onSaveEditInfo: (newAmount: Int, newText: String) -> Unit,
+    onDelete: () -> Unit
+) {
+    // Per-card expand state for the abbreviated text preview.
+    var textExpanded by remember(group.time) { mutableStateOf(false) }
+    var textOverflows by remember(group.time) { mutableStateOf(false) }
+    // Editable fields — re-seeded whenever the underlying group data changes
+    // so re-entering edit mode never shows a stale amount or text.
+    var amountText by remember(group.time, group.amount) { mutableStateOf(group.amount.toString()) }
+    var editText by remember(group.time, text) { mutableStateOf(text) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1A1A1E), RoundedCornerShape(10.dp))
+            .border(
+                1.dp,
+                if (isEditing) Color(0xFF88CCFF) else Color(0xFF333340),
+                RoundedCornerShape(10.dp)
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        // ── Header: index • underlined time • amount chip • actions ──
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "${index + 1}.",
+                fontSize = 12.sp,
+                color = Color(0xFF666666),
+                modifier = Modifier.width(24.dp)
+            )
+            // The time itself is the re-time affordance: underlined + tappable.
+            Text(
+                text = formatTimeDisplay(group.time),
+                fontSize = 14.sp,
+                color = Color(0xFF88DDFF),
+                fontWeight = FontWeight.Medium,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier
+                    .clickable(onClick = onStartEditTime)
+                    .weight(1f)
+            )
+            // Amount chip: how much was contributed at this time.
+            Text(
+                text = "+${group.amount}",
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = if (group.amount > 1) Color(0xFF66FFAA) else Color(0xFF889988),
+                modifier = Modifier
+                    .background(
+                        if (group.amount > 1) Color(0xFF003322) else Color(0xFF222826),
+                        RoundedCornerShape(6.dp)
+                    )
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            )
+            IconButton(
+                onClick = onStartEditInfo,
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = if (isMealHabit) "Edit meal" else "Edit increment info",
+                    tint = Color(0xFF88CCFF),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete",
+                    tint = Color(0xFFFF6666),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+
+        // ── Text preview (abbreviated, expandable) ──
+        if (!isEditing && text.isNotBlank()) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = text,
+                fontSize = 12.sp,
+                color = Color(0xFFBBBBCC),
+                fontStyle = FontStyle.Italic,
+                maxLines = if (textExpanded) Int.MAX_VALUE else 2,
+                overflow = TextOverflow.Ellipsis,
+                onTextLayout = { result ->
+                    if (!textExpanded) textOverflows = result.hasVisualOverflow
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (textOverflows || textExpanded) {
+                Text(
+                    text = if (textExpanded) "▾ less" else "▸ more",
+                    fontSize = 11.sp,
+                    color = Color(0xFF88CCFF),
+                    modifier = Modifier
+                        .clickable { textExpanded = !textExpanded }
+                        .padding(top = 2.dp)
+                )
+            }
+        }
+
+        // ── Inline edit mode: amount stepper + text field ──
+        if (isEditing) {
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Amount:", fontSize = 12.sp, color = Color(0xFF999999))
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF333333), RoundedCornerShape(6.dp))
+                        .clickable {
+                            val n = (amountText.toIntOrNull() ?: 1) - 1
+                            if (n >= 0) amountText = n.toString()
+                        }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) { Text("−", color = Color(0xFFAAAAAA), fontSize = 14.sp) }
+                Spacer(modifier = Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF111418), RoundedCornerShape(6.dp))
+                        .border(1.dp, Color(0xFF444444), RoundedCornerShape(6.dp))
+                        .width(44.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = amountText,
+                        fontSize = 13.sp,
+                        color = Color(0xFF66FFAA),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF333333), RoundedCornerShape(6.dp))
+                        .clickable {
+                            val n = (amountText.toIntOrNull() ?: 0) + 1
+                            amountText = n.toString()
+                        }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) { Text("+", color = Color(0xFFAAAAAA), fontSize = 14.sp) }
+            }
+
+            if (canEditText) {
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = editText,
+                    onValueChange = { editText = it },
+                    placeholder = { Text("Note at this time…", fontSize = 12.sp, color = Color(0xFF666666)) },
+                    singleLine = false,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = Color(0xFFDDDDDD))
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF333333), RoundedCornerShape(6.dp))
+                        .clickable {
+                            // Reset local edits and leave edit mode.
+                            amountText = group.amount.toString()
+                            editText = text
+                            onCancelEditInfo()
+                        }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) { Text("Cancel", color = Color(0xFFAAAAAA), fontSize = 12.sp) }
+                Spacer(modifier = Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF004488), RoundedCornerShape(6.dp))
+                        .clickable {
+                            val n = (amountText.toIntOrNull() ?: group.amount).coerceAtLeast(0)
+                            onSaveEditInfo(n, editText.trim())
+                        }
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) { Text("Save", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+            }
+        }
+
+        // Meal hint under the header when not editing.
+        if (!isEditing && isMealHabit) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "✏️ opens the meal editor for this time",
+                fontSize = 10.sp,
+                color = Color(0xFF667788)
+            )
+        }
+    }
+}
+
+/**
  * Inline wheel-based editor for a single timestamp.
  * Shows a scrolling wheel time picker and confirm/cancel.
  *
  * @param originalTime The original time before editing (for offset display)
- * @param hour24 Current hour in24-hour format being edited
+ * @param hour24 Current hour in 24-hour format being edited
  * @param minute Current minute being edited
  * @param onTimeChange Called when the wheel changes the time
  * @param onConfirm Called when the user confirms the edit
