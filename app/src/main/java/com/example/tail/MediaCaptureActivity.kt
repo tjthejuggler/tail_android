@@ -907,8 +907,7 @@ class MediaCaptureActivity : ComponentActivity() {
             if (reviewedLog != null) {
                 val note = listOfNotNull(
                     voiceErrorNote,
-                    "Best guess below — adjust anything before saving. " +
-                        "Confidence: ${(result.confidenceScore * 100).toInt()}%"
+                    "Best guess below — adjust anything before saving."
                 ).joinToString("\n\n")
                 runOnUiThread { captureState = CaptureState.MealEdit(reviewedLog, note) }
                 return
@@ -965,6 +964,7 @@ class MediaCaptureActivity : ComponentActivity() {
         correctableHabits = (settings.habitScreens.flatMap { it.habitNames } + settings.habitOrder)
             .filter { it.isNotBlank() && !it.startsWith("app_link:") }
             .distinct()
+            .sortedBy { it.lowercase() }
         correctableSubtypes = settings.habitSubtypes
         val rawSeen = result.nonFoodData?.detectedActivity
             ?: notes.removePrefix("Description:").trim().ifBlank { notes }
@@ -1120,12 +1120,95 @@ class MediaCaptureActivity : ComponentActivity() {
                     incrementAmount = st.amount
                 )
             )
-            val incError = VisionHabitExecutor.execute(
+
+            // ── Meal habit: the corrected photo + description must ALSO
+            // become a meal card (photo attached, LLM best-guess nutrition
+            // parsed from the description). Incrementing alone would lose
+            // the meal report — photo + voice description is more than
+            // enough to fill the card.
+            val isMealHabit = realHabit in settings.mealHabits
+            var mergedIntoExisting = false
+            var mealTitle: String? = null
+            if (isMealHabit) {
+                val mealLogRepo = MealLogRepository(this@MediaCaptureActivity)
+                val now = System.currentTimeMillis()
+
+                // Best-effort nutrition parse of the user's description
+                // (voice memo / typed text). Null on any failure — the
+                // card is still created with the raw description.
+                val fd = if (settings.mealEnabled && settings.mealApiKey.isNotBlank() &&
+                    settings.mealBaseUrl.isNotBlank() && settings.mealModel.isNotBlank() &&
+                    st.description.isNotBlank()
+                ) {
+                    try {
+                        VisionProcessingService().processMealText(
+                            st.description,
+                            VisionConfig(
+                                baseUrl = settings.mealBaseUrl,
+                                apiKey = settings.mealApiKey,
+                                model = settings.mealModel,
+                                userSystemPrompt = settings.mealSystemPrompt
+                            )
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Correction meal-text parse failed: ${e.message}")
+                        null
+                    }
+                } else null
+
+                val active = mealLogRepo.findActiveGroup(realHabit, now)
+                if (active != null) {
+                    // Same meal group still open — merge photo + details
+                    // into the existing card; that group's increment
+                    // already happened, so no new increment below.
+                    mealLogRepo.updateLog(
+                        active.mergedWith(
+                            foodData = fd,
+                            extraImageUri = st.imagePath,
+                            transcript = st.description.takeIf { it.isNotBlank() }
+                        )
+                    )
+                    mergedIntoExisting = true
+                    mealTitle = active.title
+                } else {
+                    val log = MealLog(
+                        id = java.util.UUID.randomUUID().toString(),
+                        habitId = realHabit,
+                        timestamp = now,
+                        imageUri = st.imagePath,
+                        imageUris = listOf(st.imagePath),
+                        title = fd?.title?.takeIf { it.isNotBlank() }
+                            ?: st.description.takeIf { it.isNotBlank() }?.take(40)
+                            ?: "Meal",
+                        summary = fd?.summary?.takeIf { it.isNotBlank() },
+                        calories = fd?.estimatedCalories ?: 0,
+                        macronutrients = fd?.macronutrients ?: Macronutrients(),
+                        ingredientsDetected = fd?.ingredientsDetected ?: emptyList(),
+                        isVeganVerified = fd?.isVeganVerified ?: false,
+                        healthNotes = fd?.healthNotes,
+                        voiceTranscript = st.description.takeIf { it.isNotBlank() },
+                        macroRatings = fd?.macroRatings,
+                        countedIncrement = true,
+                        groupStartTimestamp = now
+                    )
+                    mealLogRepo.addLog(log)
+                    mealTitle = log.title
+                }
+            }
+
+            val incError = if (mergedIntoExisting) null else VisionHabitExecutor.execute(
                 this@MediaCaptureActivity, settings, realHabit, realSubtype, st.amount
             )
             val display = buildString {
                 append("🧠 Learned! \"$description\"\n\n")
                 append("→ $realHabit" + (realSubtype?.let { " / $it" } ?: "") + " ×${st.amount}\n\n")
+                if (mealTitle != null) {
+                    append(
+                        if (mergedIntoExisting) "🍽 Merged into meal \"$mealTitle\"."
+                        else "🍽 Meal card created: \"$mealTitle\"."
+                    )
+                    append("\n\n")
+                }
                 append(
                     if (incError == null) "✅ Incremented now, too."
                     else "⚠️ Saved to memory, but the increment failed: $incError"
@@ -1665,7 +1748,7 @@ private fun CorrectionScreen(
     }
 }
 
-/** Simple scrollable single-choice picker dialog. */
+/** Scrollable single-choice picker dialog: alphabetical + searchable. */
 @Composable
 private fun HabitPickerDialog(
     title: String,
@@ -1674,20 +1757,44 @@ private fun HabitPickerDialog(
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit
 ) {
+    var query by remember { mutableStateOf("") }
+    val sorted = remember(options) { options.sortedBy { it.lowercase() } }
+    val filtered = remember(sorted, query) {
+        if (query.isBlank()) sorted
+        else sorted.filter { it.contains(query, ignoreCase = true) }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                options.forEach { option ->
-                    Text(
-                        text = option + (if (option == selected) "  ✓" else ""),
-                        fontSize = 15.sp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelect(option) }
-                            .padding(vertical = 10.dp)
-                    )
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    filtered.forEach { option ->
+                        Text(
+                            text = option + (if (option == selected) "  ✓" else ""),
+                            fontSize = 15.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(option) }
+                                .padding(vertical = 10.dp)
+                        )
+                    }
+                    if (filtered.isEmpty()) {
+                        Text(
+                            "No matches",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 10.dp)
+                        )
+                    }
                 }
             }
         },

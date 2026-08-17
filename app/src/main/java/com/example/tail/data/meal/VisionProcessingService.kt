@@ -590,7 +590,7 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
 ### JSON OUTPUT SCHEMA:
 {
   "classification": "FOOD_MEAL" | "NON_FOOD_HABIT" | "UNCERTAIN_OTHER",
-  "confidence_score": 0.0 to 1.0,
+  "confidence_score": 0.0 to 1.0 (certainty about habit_action ONLY — never about whether the image is food),
   "food_data": {
     "title": "String (Name of meal)",
     "summary": "String (Short description)",
@@ -708,7 +708,7 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
             )
             val confidence = json.optDouble("confidence_score", 0.0)
 
-            val foodData = json.optJSONObject("food_data")?.let { parseFoodData(it) }
+            val parsedFoodData = json.optJSONObject("food_data")?.let { parseFoodData(it) }
 
             val nonFoodData = json.optJSONObject("non_food_data")?.let { nfd ->
                 NonFoodData(
@@ -733,10 +733,38 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
                 )
             }
 
+            // ── Food-first normalization ─────────────────────────────────────
+            // Confidence must only ever gate the (non-food) habit_action
+            // choice — NEVER the meal itself. LLMs sometimes hedge by
+            // labelling an obvious meal "UNCERTAIN_OTHER" while still
+            // filling food_data: any substantive food_data means the image
+            // IS food. Conversely, a "FOOD_MEAL" without specifics still
+            // gets a placeholder card the user can edit — a meal capture
+            // must never be dropped just because details are unknown.
+            val hasSubstantiveFood = parsedFoodData != null && (
+                parsedFoodData.title.isNotBlank() ||
+                    parsedFoodData.estimatedCalories > 0 ||
+                    parsedFoodData.macronutrients.proteinGrams > 0 ||
+                    parsedFoodData.macronutrients.carbsGrams > 0 ||
+                    parsedFoodData.macronutrients.fatGrams > 0 ||
+                    parsedFoodData.ingredientsDetected.isNotEmpty()
+                )
+            val effectiveClassification =
+                if (hasSubstantiveFood) VisionClassification.FOOD_MEAL else classification
+            val effectiveFoodData = when {
+                hasSubstantiveFood -> parsedFoodData
+                effectiveClassification == VisionClassification.FOOD_MEAL ->
+                    // Classified as food but no specifics given — still make
+                    // the card (placeholder the user can edit in the review
+                    // screen) instead of losing the meal.
+                    FoodData(title = "Meal")
+                else -> null
+            }
+
             VisionResult(
-                classification = classification,
+                classification = effectiveClassification,
                 confidenceScore = confidence,
-                foodData = foodData,
+                foodData = effectiveFoodData,
                 nonFoodData = nonFoodData,
                 habitAction = habitAction,
                 processingNotes = json.optString("processing_notes", "")

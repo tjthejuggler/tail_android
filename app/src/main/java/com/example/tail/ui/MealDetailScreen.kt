@@ -316,8 +316,7 @@ fun MealDetailDialog(
                 if (visibleLogs.isEmpty()) {
                     item {
                         Text(
-                            if (activeTags.isEmpty())
-                                "No meals recorded yet.\nUse 📷 / 🖼️ / 🎤 / ⚡ above — every meal gets a card."
+                            if (activeTags.isEmpty()) "No meals recorded yet."
                             else "No meals match the selected tags.",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
