@@ -6,22 +6,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Unit tests for the Phase 1 Pre-Session Diagnostic Engine (spec v2.1).
- * Covers slider-derived clarity, multi-puzzle cold-start scoring, the
- * graduated strike penalty, edge cases and rate limiting.
+ * Unit tests for the Phase 1 Pre-Session Diagnostic Engine (spec v3.0).
+ * Covers fine-grained sub-score tiers, the adaptive percentile gate
+ * (cold start, bar lowering, ceiling/floor clamps, window rules), the
+ * strict absolute cutoffs, edge cases and rate limiting.
  */
 class ChessReadinessEngineTest {
 
     private val NOW = 1_700_000_000_000L
+    private val DAY = 24L * 60 * 60 * 1000
+    private val HOUR = 60L * 60 * 1000
 
     private fun input(
-        sleep: ChessReadinessEngine.SleepTier = ChessReadinessEngine.SleepTier.TIER_1,
-        clarity: ChessReadinessEngine.ClarityTier = ChessReadinessEngine.ClarityTier.TIER_1,
-        puzzleTimes: List<Int> = listOf(30, 40, 50), // avg 40 s → 25 pts
+        sleep: Int = 95,                       // → 25 pts
+        clarityAvg: Double = 9.0,              // → 25 pts
+        puzzleTimes: List<Int> = listOf(25, 28, 30), // avg ~27.7 s → 25 pts
         rush: Int = 30,
-        ath: Int = 30,
+        ath: Int = 30,                         // ratio 1.0 → 25 pts
         strikes: Int = 0
-    ) = ChessReadinessEngine.ReadinessInput(sleep, clarity, puzzleTimes, rush, ath, strikes)
+    ) = ChessReadinessEngine.ReadinessInput(sleep, clarityAvg, puzzleTimes, rush, ath, strikes)
 
     // ── Composite scoring ──────────────────────────────────────────────────
 
@@ -41,8 +44,8 @@ class ChessReadinessEngineTest {
     fun `worst inputs yield 0 and RED`() {
         val r = ChessReadinessEngine.evaluate(
             input(
-                sleep = ChessReadinessEngine.SleepTier.TIER_3,
-                clarity = ChessReadinessEngine.ClarityTier.TIER_3,
+                sleep = 0,
+                clarityAvg = 0.0,
                 puzzleTimes = listOf(180, 180, 180),
                 rush = 0,
                 strikes = 3
@@ -54,72 +57,90 @@ class ChessReadinessEngineTest {
     }
 
     @Test
-    fun `mixed tiers yield 90 exactly GREEN`() {
-        // sleep T1(25) + clarity T2(15) + puzzles fast(25) + rush 80%(25) = 90
+    fun `fine-grained mid case yields 70 and YELLOW on cold start`() {
+        // sleep 80→20, clarity 7.0→20, puzzles avg 100 s→9, rush 0.85→21 = 70
         val r = ChessReadinessEngine.evaluate(
-            input(clarity = ChessReadinessEngine.ClarityTier.TIER_2, rush = 80, ath = 100),
+            input(
+                sleep = 80,
+                clarityAvg = 7.0,
+                puzzleTimes = listOf(90, 100, 110),
+                rush = 34,
+                ath = 40
+            ),
             NOW
         )
-        assertEquals(90, r.ccrs)
-        assertEquals(ChessReadinessEngine.ReadinessState.GREEN_LIGHT, r.state)
+        assertEquals(70, r.ccrs)
+        assertEquals(ChessReadinessEngine.ReadinessState.YELLOW_LIGHT, r.state)
     }
 
-    // ── Slider-derived clarity ─────────────────────────────────────────────
+    // ── Sleep points (6 tiers from the raw Garmin score) ───────────────────
 
     @Test
-    fun `clarity average boundaries map to tiers`() {
-        assertEquals(
-            ChessReadinessEngine.ClarityTier.TIER_1,
-            ChessReadinessEngine.clarityTierFromAverage(7.5)
-        )
-        assertEquals(
-            ChessReadinessEngine.ClarityTier.TIER_2,
-            ChessReadinessEngine.clarityTierFromAverage(7.4)
-        )
-        assertEquals(
-            ChessReadinessEngine.ClarityTier.TIER_2,
-            ChessReadinessEngine.clarityTierFromAverage(5.0)
-        )
-        assertEquals(
-            ChessReadinessEngine.ClarityTier.TIER_3,
-            ChessReadinessEngine.clarityTierFromAverage(4.9)
-        )
+    fun `sleep tier boundaries`() {
+        val p = ChessReadinessEngine::sleepPoints
+        assertEquals(25, p(100))
+        assertEquals(25, p(85))
+        assertEquals(20, p(84))
+        assertEquals(20, p(75))
+        assertEquals(15, p(74))
+        assertEquals(15, p(65))
+        assertEquals(10, p(64))
+        assertEquals(10, p(55))
+        assertEquals(5, p(54))
+        assertEquals(5, p(45))
+        assertEquals(0, p(44))
+        assertEquals(0, p(0))
     }
 
     @Test
-    fun `four strong sliders average to tier 1`() {
-        // 8, 8, 7, 8 → avg 7.75 → Tier 1
-        assertEquals(
-            ChessReadinessEngine.ClarityTier.TIER_1,
-            ChessReadinessEngine.clarityTierFromAverage(listOf(8, 8, 7, 8).average())
-        )
+    fun `sleep score is clamped to 0-100`() {
+        assertEquals(0, ChessReadinessEngine.sleepPoints(-5))
+        assertEquals(25, ChessReadinessEngine.sleepPoints(120))
     }
 
-    // ── Rated puzzle scoring ───────────────────────────────────────────────
+    // ── Clarity points (6 tiers from the slider average) ───────────────────
 
     @Test
-    fun `rated puzzle average under 45 seconds gives 25`() {
-        assertEquals(25, ChessReadinessEngine.ratedPuzzleScore(listOf(30, 40, 50)))
-        assertEquals(25, ChessReadinessEngine.ratedPuzzleScore(listOf(44, 44, 44)))
+    fun `clarity tier boundaries`() {
+        val p = ChessReadinessEngine::clarityPoints
+        assertEquals(25, p(10.0))
+        assertEquals(25, p(8.0))
+        assertEquals(20, p(7.9))
+        assertEquals(20, p(6.5))
+        assertEquals(15, p(6.4))
+        assertEquals(15, p(5.0))
+        assertEquals(10, p(4.9))
+        assertEquals(10, p(3.5))
+        assertEquals(5, p(3.4))
+        assertEquals(5, p(2.0))
+        assertEquals(0, p(1.9))
+        assertEquals(0, p(0.0))
+    }
+
+    // ── Rated puzzle scoring (7 speed tiers) ───────────────────────────────
+
+    @Test
+    fun `rated puzzle speed tiers`() {
+        val p = ChessReadinessEngine::ratedPuzzleScore
+        assertEquals(25, p(listOf(28, 29, 30)))   // avg 29 → 25
+        assertEquals(21, p(listOf(30, 30, 30)))   // avg 30 → 21
+        assertEquals(21, p(listOf(44, 44, 44)))
+        assertEquals(17, p(listOf(45, 45, 45)))
+        assertEquals(17, p(listOf(59, 59, 59)))
+        assertEquals(13, p(listOf(60, 60, 60)))
+        assertEquals(13, p(listOf(89, 89, 89)))
+        assertEquals(9, p(listOf(90, 90, 90)))
+        assertEquals(9, p(listOf(119, 119, 119)))
+        assertEquals(4, p(listOf(120, 120, 120)))
+        assertEquals(4, p(listOf(149, 149, 149)))
+        assertEquals(0, p(listOf(150, 150, 150)))
+        assertEquals(0, p(listOf(180, 180, 180)))
     }
 
     @Test
-    fun `rated puzzle average 45 to 119 seconds gives 15`() {
-        assertEquals(15, ChessReadinessEngine.ratedPuzzleScore(listOf(45, 45, 45)))
-        assertEquals(15, ChessReadinessEngine.ratedPuzzleScore(listOf(119, 119, 119)))
-        assertEquals(15, ChessReadinessEngine.ratedPuzzleScore(listOf(100, 100, 100)))
-    }
-
-    @Test
-    fun `rated puzzle average 120 or more gives 0`() {
-        assertEquals(0, ChessReadinessEngine.ratedPuzzleScore(listOf(120, 120, 120)))
-        assertEquals(0, ChessReadinessEngine.ratedPuzzleScore(listOf(180, 180, 180)))
-    }
-
-    @Test
-    fun `one failed puzzle among three still allows 15`() {
-        // 60 + 60 + 180(failed) → avg 100 → 15 pts
-        assertEquals(15, ChessReadinessEngine.ratedPuzzleScore(listOf(60, 60, 180)))
+    fun `one failed puzzle among three lands in a middle tier`() {
+        // 60 + 60 + 180(failed) → avg 100 → 9 pts
+        assertEquals(9, ChessReadinessEngine.ratedPuzzleScore(listOf(60, 60, 180)))
     }
 
     @Test
@@ -127,97 +148,232 @@ class ChessReadinessEngineTest {
         assertEquals(0, ChessReadinessEngine.ratedPuzzleScore(emptyList()))
     }
 
-    // ── Puzzle Rush bands ──────────────────────────────────────────────────
+    // ── Puzzle Rush bands (6 ratio bands, 3 pts per strike) ────────────────
 
     @Test
-    fun `rush ratio at or above 80 percent gives 25`() {
-        assertEquals(25, ChessReadinessEngine.rushScore(40, 50, 0))
-        assertEquals(25, ChessReadinessEngine.rushScore(50, 50, 0))
+    fun `rush ratio bands`() {
+        val p = ChessReadinessEngine::rushScore
+        assertEquals(25, p(50, 50, 0)) // 1.00
+        assertEquals(25, p(45, 50, 0)) // 0.90
+        assertEquals(21, p(40, 50, 0)) // 0.80
+        assertEquals(17, p(35, 50, 0)) // 0.70
+        assertEquals(13, p(30, 50, 0)) // 0.60
+        assertEquals(8, p(25, 50, 0))  // 0.50
+        assertEquals(4, p(20, 50, 0))  // 0.40
+        assertEquals(0, p(19, 50, 0))  // 0.38
     }
 
     @Test
-    fun `rush ratio 65 to 79 percent gives 15`() {
-        assertEquals(15, ChessReadinessEngine.rushScore(33, 50, 0))
-        assertEquals(15, ChessReadinessEngine.rushScore(39, 50, 0))
-    }
-
-    @Test
-    fun `rush ratio below 65 percent gives 0`() {
-        assertEquals(0, ChessReadinessEngine.rushScore(32, 50, 0))
-    }
-
-    // ── Graduated strike penalty (v2.1 — no more instant zero) ─────────────
-
-    @Test
-    fun `each strike deducts 5 points from the band`() {
-        // 22/25 = 88 % → band 25; 3 strikes → 25 − 15 = 10 (was 0 in v2.0)
-        assertEquals(10, ChessReadinessEngine.rushScore(22, 25, 3))
-        assertEquals(20, ChessReadinessEngine.rushScore(40, 50, 1))
-        assertEquals(15, ChessReadinessEngine.rushScore(40, 50, 2))
+    fun `each strike deducts 3 points from the band`() {
+        assertEquals(22, ChessReadinessEngine.rushScore(50, 50, 1))
+        assertEquals(19, ChessReadinessEngine.rushScore(50, 50, 2))
+        assertEquals(16, ChessReadinessEngine.rushScore(50, 50, 3))
+        assertEquals(10, ChessReadinessEngine.rushScore(30, 50, 1)) // 13 − 3
     }
 
     @Test
     fun `strike penalty floors at zero`() {
-        // 15-band with 3 strikes → 15 − 15 = 0
-        assertEquals(0, ChessReadinessEngine.rushScore(33, 50, 3))
-        // 0-band stays 0
-        assertEquals(0, ChessReadinessEngine.rushScore(32, 50, 3))
+        assertEquals(0, ChessReadinessEngine.rushScore(20, 50, 2)) // 4 − 6 → 0
+        assertEquals(0, ChessReadinessEngine.rushScore(19, 50, 3)) // 0-band
     }
 
     @Test
     fun `cold start floor of 10 protects new accounts`() {
-        // ATH = 2 (below floor) → baseline becomes 10; 8/10 = 0.8 → 25 pts
-        assertEquals(25, ChessReadinessEngine.rushScore(8, 2, 0))
+        // ATH = 2 (below floor) → baseline becomes 10; 8/10 = 0.8 → 21 pts
+        assertEquals(21, ChessReadinessEngine.rushScore(8, 2, 0))
     }
 
-    // ── State boundaries ───────────────────────────────────────────────────
+    // ── Percentile helper ──────────────────────────────────────────────────
 
     @Test
-    fun `state boundaries at 70 and 85`() {
+    fun `percentile of empty list is zero`() {
+        assertEquals(0.0, ChessReadinessEngine.percentileOf(emptyList(), 0.6), 1e-9)
+    }
+
+    @Test
+    fun `percentile of single value is that value`() {
+        assertEquals(42.0, ChessReadinessEngine.percentileOf(listOf(42), 0.35), 1e-9)
+    }
+
+    @Test
+    fun `percentile interpolates linearly`() {
+        val v = listOf(10, 20, 30, 40, 50) // already ascending
+        assertEquals(10.0, ChessReadinessEngine.percentileOf(v, 0.0), 1e-9)
+        assertEquals(50.0, ChessReadinessEngine.percentileOf(v, 1.0), 1e-9)
+        assertEquals(30.0, ChessReadinessEngine.percentileOf(v, 0.5), 1e-9)
+        // rank 2.4 → 30 + 0.4 × (40 − 30) = 34
+        assertEquals(34.0, ChessReadinessEngine.percentileOf(v, 0.6), 1e-9)
+        // order-insensitive
+        assertEquals(34.0, ChessReadinessEngine.percentileOf(v.reversed(), 0.6), 1e-9)
+    }
+
+    // ── Adaptive thresholds ────────────────────────────────────────────────
+
+    /** [count] tests ending at NOW, each one day apart, cycling [scores]. */
+    private fun historyOf(vararg scores: Int, daysAgo: Int = 0): List<ChessReadinessEngine.ReadinessTest> =
+        scores.mapIndexed { i, s ->
+            ChessReadinessEngine.ReadinessTest(
+                timestamp = NOW - (daysAgo + scores.size - 1 - i) * DAY,
+                ccrs = s,
+                state = "X"
+            )
+        }
+
+    @Test
+    fun `empty history uses cold start thresholds`() {
+        val t = ChessReadinessEngine.computeThresholds(emptyList(), NOW)
+        assertEquals(ChessReadinessEngine.COLD_START_GREEN, t.green)
+        assertEquals(ChessReadinessEngine.COLD_START_YELLOW, t.yellow)
+        assertEquals(ChessReadinessEngine.ThresholdBasis.COLD_START, t.basis)
+        assertEquals(0, t.sampleSize)
+    }
+
+    @Test
+    fun `fewer than five recent tests still uses cold start`() {
+        val t = ChessReadinessEngine.computeThresholds(historyOf(50, 60, 70, 80), NOW)
+        assertEquals(ChessReadinessEngine.ThresholdBasis.COLD_START, t.basis)
+        assertEquals(4, t.sampleSize)
+    }
+
+    @Test
+    fun `five recent tests switch to percentiles`() {
+        // sorted [50,55,60,65,70]: p60 rank 2.4 → 62 (≤ 80, unclamped) ·
+        // p35 rank 1.4 → 57 → ceiling-clamped to ABSOLUTE_YELLOW (55)
+        val t = ChessReadinessEngine.computeThresholds(historyOf(50, 55, 60, 65, 70), NOW)
+        assertEquals(62, t.green)
+        assertEquals(ChessReadinessEngine.ABSOLUTE_YELLOW, t.yellow)
+        assertEquals(ChessReadinessEngine.ThresholdBasis.PERCENTILE, t.basis)
+        assertEquals(5, t.sampleSize)
+    }
+
+    @Test
+    fun `weak recent history lowers the bar below cold start`() {
+        // sorted [40,45,50,50,55]: p60 → 50 · p35 → 47
+        val t = ChessReadinessEngine.computeThresholds(historyOf(40, 45, 50, 50, 55), NOW)
+        assertEquals(50, t.green)
+        assertEquals(47, t.yellow)
+        assertTrue(t.green < ChessReadinessEngine.COLD_START_GREEN)
+    }
+
+    @Test
+    fun `strong history cannot ratchet the bar above the absolute cutoffs`() {
+        // sorted [85,90,95,100,100]: p60 → 97 (clamped to 80) · p35 → 92 (clamped to 55)
+        val t = ChessReadinessEngine.computeThresholds(historyOf(85, 90, 95, 100, 100), NOW)
+        assertEquals(ChessReadinessEngine.ABSOLUTE_GREEN, t.green)
+        assertEquals(ChessReadinessEngine.ABSOLUTE_YELLOW, t.yellow)
+    }
+
+    @Test
+    fun `very weak history sinks only to the floors`() {
+        // sorted [20,25,30,30,35]: p60 → 30 (floored to 45) · p35 → 27 (floored to 30)
+        val t = ChessReadinessEngine.computeThresholds(historyOf(20, 25, 30, 30, 35), NOW)
+        assertEquals(ChessReadinessEngine.GREEN_FLOOR, t.green)
+        assertEquals(ChessReadinessEngine.YELLOW_FLOOR, t.yellow)
+    }
+
+    @Test
+    fun `tests older than the window are excluded`() {
+        // 3 tests 30 days old + 2 recent → only 2 in window → cold start
+        val old = historyOf(10, 20, 30, daysAgo = 30)
+        val recent = historyOf(60, 65)
+        val t = ChessReadinessEngine.computeThresholds(old + recent, NOW)
+        assertEquals(ChessReadinessEngine.ThresholdBasis.COLD_START, t.basis)
+        assertEquals(2, t.sampleSize)
+    }
+
+    @Test
+    fun `future tests are excluded from the window`() {
+        val future = listOf(
+            ChessReadinessEngine.ReadinessTest(NOW + DAY, 100, "X")
+        )
+        val t = ChessReadinessEngine.computeThresholds(future, NOW)
+        assertEquals(ChessReadinessEngine.ThresholdBasis.COLD_START, t.basis)
+    }
+
+    @Test
+    fun `window is capped at the last 15 tests`() {
+        val scores = IntArray(20) { 51 + it } // 51..70, all recent
+        val t = ChessReadinessEngine.computeThresholds(historyOf(*scores), NOW)
+        assertEquals(15, t.sampleSize)
+        // The newest 15 are 56..70 — p60 of those: sorted 56..70,
+        // rank 0.6×14 = 8.4 → 64 + 0.4×1 = 64.4 → 64
+        assertEquals(64, t.green)
+    }
+
+    // ── Gate decision (stateFor / evaluate with history) ───────────────────
+
+    @Test
+    fun `strict cutoff - score 80 always passes however strong the history`() {
+        val strong = historyOf(85, 90, 95, 100, 100) // green bar clamped to 80
+        val r80 = ChessReadinessEngine.evaluate(
+            input(sleep = 85, clarityAvg = 7.0, puzzleTimes = listOf(50, 50, 50), rush = 40, ath = 50, strikes = 1),
+            NOW, strong
+        ) // 25 + 20 + 17 + 18 = 80
+        assertEquals(80, r80.ccrs)
+        assertEquals(ChessReadinessEngine.ReadinessState.GREEN_LIGHT, r80.state)
+    }
+
+    @Test
+    fun `below the strict cutoff on strong history is not green`() {
+        val strong = historyOf(85, 90, 95, 100, 100) // green bar 80
+        val r79 = ChessReadinessEngine.evaluate(
+            input(sleep = 85, clarityAvg = 7.0, puzzleTimes = listOf(50, 50, 50), rush = 35, ath = 50),
+            NOW, strong
+        ) // 25 + 20 + 17 + 17 = 79
+        assertEquals(79, r79.ccrs)
+        assertEquals(ChessReadinessEngine.ReadinessState.YELLOW_LIGHT, r79.state)
+    }
+
+    @Test
+    fun `relatively good score passes on weak history`() {
+        // Bar lowered to green 50 by weak history — a 60 goes GREEN
+        val weak = historyOf(40, 45, 50, 50, 55)
+        val r = ChessReadinessEngine.evaluate(
+            input(sleep = 65, clarityAvg = 5.0, puzzleTimes = listOf(80, 80, 80), rush = 35, ath = 50),
+            NOW, weak
+        ) // 15 + 15 + 13 + 17 = 60
+        assertEquals(60, r.ccrs)
+        assertEquals(ChessReadinessEngine.ReadinessState.GREEN_LIGHT, r.state)
+        assertEquals(50, r.greenThreshold)
+        assertEquals(47, r.yellowThreshold)
+        assertEquals(5, r.thresholdSampleSize)
+    }
+
+    @Test
+    fun `same 60 is only yellow on cold start defaults`() {
+        val r = ChessReadinessEngine.evaluate(
+            input(sleep = 65, clarityAvg = 5.0, puzzleTimes = listOf(80, 80, 80), rush = 35, ath = 50),
+            NOW
+        )
+        assertEquals(ChessReadinessEngine.ReadinessState.YELLOW_LIGHT, r.state)
+        assertEquals(ChessReadinessEngine.COLD_START_GREEN, r.greenThreshold)
+        assertEquals(ChessReadinessEngine.ThresholdBasis.COLD_START, r.thresholdBasis)
+    }
+
+    @Test
+    fun `fromScore keeps the cold start mapping`() {
         assertEquals(
             ChessReadinessEngine.ReadinessState.GREEN_LIGHT,
-            ChessReadinessEngine.ReadinessState.fromScore(85)
+            ChessReadinessEngine.ReadinessState.fromScore(75)
         )
         assertEquals(
             ChessReadinessEngine.ReadinessState.YELLOW_LIGHT,
-            ChessReadinessEngine.ReadinessState.fromScore(84)
+            ChessReadinessEngine.ReadinessState.fromScore(74)
         )
         assertEquals(
             ChessReadinessEngine.ReadinessState.YELLOW_LIGHT,
-            ChessReadinessEngine.ReadinessState.fromScore(70)
+            ChessReadinessEngine.ReadinessState.fromScore(55)
         )
         assertEquals(
             ChessReadinessEngine.ReadinessState.RED_LIGHT,
-            ChessReadinessEngine.ReadinessState.fromScore(69)
-        )
-    }
-
-    // ── Garmin sleep score mapping ─────────────────────────────────────────
-
-    @Test
-    fun `garmin sleep score maps to tiers`() {
-        assertEquals(
-            ChessReadinessEngine.SleepTier.TIER_1,
-            ChessReadinessEngine.sleepTierFromGarminScore(80)
-        )
-        assertEquals(
-            ChessReadinessEngine.SleepTier.TIER_2,
-            ChessReadinessEngine.sleepTierFromGarminScore(79)
-        )
-        assertEquals(
-            ChessReadinessEngine.SleepTier.TIER_2,
-            ChessReadinessEngine.sleepTierFromGarminScore(60)
-        )
-        assertEquals(
-            ChessReadinessEngine.SleepTier.TIER_3,
-            ChessReadinessEngine.sleepTierFromGarminScore(59)
+            ChessReadinessEngine.ReadinessState.fromScore(54)
         )
     }
 
     // ── Rate limiting ──────────────────────────────────────────────────────
 
-    private fun test(ts: Long, ccrs: Int) =
-        ChessReadinessEngine.ReadinessTest(ts, ccrs, "X")
+    private fun test(ts: Long, ccrs: Int, state: String = "X") =
+        ChessReadinessEngine.ReadinessTest(ts, ccrs, state)
 
     @Test
     fun `no history allows test`() {
@@ -227,8 +383,10 @@ class ChessReadinessEngineTest {
     }
 
     @Test
-    fun `green or yellow result enforces 60 minute cooldown`() {
-        val history = listOf(test(NOW - 30L * 60 * 1000, 85)) // 30 min ago, GREEN
+    fun `green state result enforces 60 minute cooldown`() {
+        val history = listOf(
+            test(NOW - 30L * 60 * 1000, 62, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
+        ) // 30 min ago, dynamically GREEN
         val status = ChessReadinessEngine.checkGate(history, NOW)
         assertTrue(status is ChessReadinessEngine.GateStatus.Blocked)
         assertTrue(
@@ -236,15 +394,34 @@ class ChessReadinessEngineTest {
                 is ChessReadinessEngine.GateError.CooldownActive
         )
         // retryAt = last test + 60 min → 30 min from NOW
-        assertEquals(
-            NOW + 30L * 60 * 1000,
-            status.error.retryAt
+        assertEquals(NOW + 30L * 60 * 1000, status.error.retryAt)
+    }
+
+    @Test
+    fun `legacy record without state falls back to score heuristic`() {
+        // Blank/"X" state with ccrs ≥ 70 → treated as passed → cooldown path
+        val legacy = listOf(test(NOW - 30L * 60 * 1000, 85))
+        val status = ChessReadinessEngine.checkGate(legacy, NOW)
+        assertTrue(status is ChessReadinessEngine.GateStatus.Blocked)
+        assertTrue(
+            (status as ChessReadinessEngine.GateStatus.Blocked).error
+                is ChessReadinessEngine.GateError.CooldownActive
+        )
+        // Blank/"X" state with ccrs < 70 → rest path
+        val legacyFail = listOf(test(NOW - 20L * 60 * 1000, 50))
+        val status2 = ChessReadinessEngine.checkGate(legacyFail, NOW)
+        assertTrue(status2 is ChessReadinessEngine.GateStatus.Blocked)
+        assertTrue(
+            (status2 as ChessReadinessEngine.GateStatus.Blocked).error
+                is ChessReadinessEngine.GateError.RestPeriodActive
         )
     }
 
     @Test
     fun `cooldown expires after 60 minutes`() {
-        val history = listOf(test(NOW - 61L * 60 * 1000, 85))
+        val history = listOf(
+            test(NOW - 61L * 60 * 1000, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
+        )
         assertTrue(
             ChessReadinessEngine.checkGate(history, NOW)
                 is ChessReadinessEngine.GateStatus.Allowed
@@ -252,8 +429,10 @@ class ChessReadinessEngineTest {
     }
 
     @Test
-    fun `red result enforces score-scaled recovery lock`() {
-        val history = listOf(test(NOW - 20L * 60 * 1000, 40)) // 20 min ago, RED
+    fun `red state result enforces score-scaled recovery lock`() {
+        val history = listOf(
+            test(NOW - 20L * 60 * 1000, 40, ChessReadinessEngine.ReadinessState.RED_LIGHT.name)
+        )
         val status = ChessReadinessEngine.checkGate(history, NOW)
         assertTrue(status is ChessReadinessEngine.GateStatus.Blocked)
         assertTrue(
@@ -265,7 +444,9 @@ class ChessReadinessEngineTest {
     @Test
     fun `poor fail lock expires after 60 minutes`() {
         // ccrs 40 sits in the 60-minute tier
-        val history = listOf(test(NOW - 61L * 60 * 1000, 40))
+        val history = listOf(
+            test(NOW - 61L * 60 * 1000, 40, ChessReadinessEngine.ReadinessState.RED_LIGHT.name)
+        )
         assertTrue(
             ChessReadinessEngine.checkGate(history, NOW)
                 is ChessReadinessEngine.GateStatus.Allowed
@@ -291,12 +472,16 @@ class ChessReadinessEngineTest {
 
     @Test
     fun `marginal fail re-test allowed after 31 minutes but poor fail still locked`() {
-        val marginal = listOf(test(NOW - 31L * 60 * 1000, 65)) // 30-min tier
+        val marginal = listOf(
+            test(NOW - 31L * 60 * 1000, 65, ChessReadinessEngine.ReadinessState.RED_LIGHT.name)
+        ) // 30-min tier
         assertTrue(
             ChessReadinessEngine.checkGate(marginal, NOW)
                 is ChessReadinessEngine.GateStatus.Allowed
         )
-        val poor = listOf(test(NOW - 31L * 60 * 1000, 50)) // 60-min tier
+        val poor = listOf(
+            test(NOW - 31L * 60 * 1000, 50, ChessReadinessEngine.ReadinessState.RED_LIGHT.name)
+        ) // 60-min tier
         assertTrue(
             ChessReadinessEngine.checkGate(poor, NOW)
                 is ChessReadinessEngine.GateStatus.Blocked
@@ -305,12 +490,16 @@ class ChessReadinessEngineTest {
 
     @Test
     fun `severe fail stays locked for two hours`() {
-        val history = listOf(test(NOW - 90L * 60 * 1000, 10)) // 120-min tier
+        val history = listOf(
+            test(NOW - 90L * 60 * 1000, 10, ChessReadinessEngine.ReadinessState.RED_LIGHT.name)
+        ) // 120-min tier
         assertTrue(
             ChessReadinessEngine.checkGate(history, NOW)
                 is ChessReadinessEngine.GateStatus.Blocked
         )
-        val expired = listOf(test(NOW - 121L * 60 * 1000, 10))
+        val expired = listOf(
+            test(NOW - 121L * 60 * 1000, 10, ChessReadinessEngine.ReadinessState.RED_LIGHT.name)
+        )
         assertTrue(
             ChessReadinessEngine.checkGate(expired, NOW)
                 is ChessReadinessEngine.GateStatus.Allowed
@@ -319,7 +508,9 @@ class ChessReadinessEngineTest {
 
     @Test
     fun `four tests in 24 hours blocks the fifth`() {
-        val history = (1..4).map { test(NOW - it * 60L * 60 * 1000, 90) }
+        val history = (1..4).map {
+            test(NOW - it * 60L * 60 * 1000, 90, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
+        }
         val status = ChessReadinessEngine.checkGate(history, NOW)
         assertTrue(status is ChessReadinessEngine.GateStatus.Blocked)
         assertTrue(
@@ -327,10 +518,7 @@ class ChessReadinessEngineTest {
                 is ChessReadinessEngine.GateError.MaxDailyTests
         )
         // retryAt = oldest test in the window + 24 h → NOW - 4 h + 24 h
-        assertEquals(
-            NOW + 20L * 60 * 60 * 1000,
-            status.error.retryAt
-        )
+        assertEquals(NOW + 20L * 60 * 60 * 1000, status.error.retryAt)
     }
 
     @Test
@@ -397,24 +585,24 @@ class ChessReadinessEngineTest {
     }
 
     @Test
-    fun `slider mapping feeds the tier thresholds correctly`() {
-        // (5, 5, 2) → calm 10 + focus 10 + energy 2.5 = 7.5 — Tier 1 boundary
+    fun `slider mapping feeds the point tiers correctly`() {
+        // (5, 5, 2) → calm 10 + focus 10 + energy 2.5 = 7.5 — 20-pt tier
         assertEquals(7.5, ChessReadinessEngine.clarityAverageFromSliders(5, 5, 2), 1e-9)
         assertEquals(
-            ChessReadinessEngine.ClarityTier.TIER_1,
-            ChessReadinessEngine.clarityTierFromAverage(
+            20,
+            ChessReadinessEngine.clarityPoints(
                 ChessReadinessEngine.clarityAverageFromSliders(5, 5, 2)
             )
         )
         assertEquals(
-            ChessReadinessEngine.ClarityTier.TIER_2,
-            ChessReadinessEngine.clarityTierFromAverage(
+            15,
+            ChessReadinessEngine.clarityPoints(
                 ChessReadinessEngine.clarityAverageFromSliders(3, 3, 3)
             )
         )
         assertEquals(
-            ChessReadinessEngine.ClarityTier.TIER_3,
-            ChessReadinessEngine.clarityTierFromAverage(
+            0,
+            ChessReadinessEngine.clarityPoints(
                 ChessReadinessEngine.clarityAverageFromSliders(1, 1, 1)
             )
         )

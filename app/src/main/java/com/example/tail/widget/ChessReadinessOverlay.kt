@@ -404,10 +404,8 @@ class ChessReadinessOverlay(service: Context) {
     private fun submitRushResult() {
         val rushScore = rushScoreField?.text?.toString()?.toIntOrNull() ?: return
         val input = ChessReadinessEngine.ReadinessInput(
-            sleepTier = ChessReadinessEngine.sleepTierFromGarminScore(sleepScore ?: 0),
-            clarityTier = ChessReadinessEngine.clarityTierFromAverage(
-                ChessReadinessEngine.clarityAverageFromSliders(stress, focus, energy)
-            ),
+            sleepScore = sleepScore ?: 0,
+            clarityAverage = ChessReadinessEngine.clarityAverageFromSliders(stress, focus, energy),
             puzzleTimesSec = puzzleTimes,
             rushScore = rushScore,
             rushAllTimeHigh = rushAth,
@@ -427,7 +425,9 @@ class ChessReadinessOverlay(service: Context) {
                 render()
             }
             is ChessReadinessEngine.GateStatus.Allowed -> {
-                val r = ChessReadinessEngine.evaluate(input, now)
+                // History drives the adaptive percentile pass bars; the new
+                // test is appended only after evaluation, so it is not in it.
+                val r = ChessReadinessEngine.evaluate(input, now, history)
                 ChessReadinessStore.appendTest(
                     context,
                     ChessReadinessEngine.ReadinessTest(r.timestamp, r.ccrs, r.state.name)
@@ -472,6 +472,16 @@ class ChessReadinessOverlay(service: Context) {
             spacer(10)
             r.state.permitted.forEach { bullet("✓ $it", 0xFF66BB6A.toInt()) }
             r.state.prohibited.forEach { bullet("✗ $it", 0xFFEF4444.toInt()) }
+            spacer(8)
+            body(
+                "Sleep ${r.sSleep} · Clarity ${r.sClarity} · " +
+                    "Puzzles ${r.pPuzzle} · Rush ${r.pRush}",
+                color = 0xFF999999.toInt(), size = 13
+            )
+            val basis = if (r.thresholdBasis ==
+                ChessReadinessEngine.ThresholdBasis.PERCENTILE
+            ) "your last ${r.thresholdSampleSize} tests" else "cold start"
+            hint("Pass bar — Green ≥ ${r.greenThreshold} · Yellow ≥ ${r.yellowThreshold} ($basis)")
             spacer(8)
             val validUntil = Instant.ofEpochMilli(r.validUntil)
                 .atZone(ZoneId.systemDefault())
