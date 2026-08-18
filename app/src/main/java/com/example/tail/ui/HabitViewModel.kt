@@ -57,6 +57,7 @@ import com.example.tail.data.secondaryValueSlotKey
 import com.example.tail.data.conditionalCappedFeedAmount
 import com.example.tail.data.conditionalLinkStorageKey
 import com.example.tail.data.conditionalSyncFeedAmount
+import com.example.tail.data.positiveSyncDayDeltas
 import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.effectiveMinutesEnabled
 import com.example.tail.data.minutesHabitName
@@ -7469,10 +7470,15 @@ class HabitViewModel(
                 }.filterValues { it != 0 }
 
                 if (dailyValues.isNotEmpty()) {
+                    // Snapshot the PRE-reset stored values: conditional feeds
+                    // must be computed against what was really stored before
+                    // the reset zeroes the habit, so a backlog re-fetch never
+                    // re-feeds history into linked habits.
+                    val beforeEntries = cachedPhoneDb[habitName] ?: emptyMap()
                     // Reset this habit's data before applying new data (authoritative source)
                     resetGithubHabitData(habitName, s)
                     _githubSyncStatus.value = "Applying backlog to $habitName…"
-                    applyGithubData(habitName, dailyValues, _settings.value)
+                    applyGithubData(habitName, dailyValues, _settings.value, beforeEntries)
                     _githubSyncStatus.value = "GitHub backlog complete: ${dailyValues.size} days for $habitName"
                 } else if (allMetrics.isNotEmpty()) {
                     // All metrics data exists but the selected metric has no non-zero days
@@ -7546,7 +7552,8 @@ class HabitViewModel(
     private suspend fun applyGithubData(
         habitName: String,
         dailyValues: Map<String, Int>,
-        s: AppSettings
+        s: AppSettings,
+        beforeEntries: Map<String, Int>? = null
     ) {
         if (dailyValues.isEmpty()) return
 
@@ -7558,8 +7565,12 @@ class HabitViewModel(
             return
         }
 
-        val mutableDb = cachedPhoneDb.toMutableMap()
+        var mutableDb = cachedPhoneDb.toMutableMap()
         val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap()
+        // Pre-change values per date for conditional feeds. Callers that reset
+        // the habit first (fetchGithubBacklog) pass the PRE-reset snapshot so a
+        // re-fetch never re-feeds history into linked habits.
+        val before = beforeEntries ?: habitEntries.toMap()
         var dbChanged = false
         val todayStr = dateString(LocalDate.now())
 
@@ -7572,11 +7583,81 @@ class HabitViewModel(
         }
         mutableDb[habitName] = habitEntries.toSortedMap()
 
+        // Conditional feeds: a GitHub-linked habit with the Conditional type
+        // feeds its linked habits, mirroring applyGarminData (value-slot
+        // resolution, feed-max-1 cap, feed-points divider deltas and max-one
+        // targets included). Feeds fire only for POSITIVE day deltas — new
+        // commits/lines raising a day's stored value. Downward corrections
+        // never un-feed; run the conditional backfill on the linked habit to
+        // true-up after a correction.
+        val linkedTodayDeltas = mutableMapOf<String, Int>()
+        if (habitName in s.conditionalHabits) {
+            val linkedNames = s.conditionalLinkedHabits[habitName] ?: emptySet()
+            val positiveDayDeltas = positiveSyncDayDeltas(before, dailyValues)
+            if (linkedNames.isNotEmpty() && positiveDayDeltas.isNotEmpty()) {
+                val feedMaxOne = habitName in s.conditionalFeedMaxOneHabits
+                // "Feed points" sub-setting: feeds send the source's POINTS
+                // delta (divider-applied) instead of the raw metric delta,
+                // matching the manual increment path's step 2c semantics.
+                val feedPoints = habitName in s.conditionalFeedPointsHabits
+                val sourceDivider = s.habitDividers[habitName] ?: 1
+                for (linkedName in linkedNames) {
+                    val valueKey = effectiveConditionalLinkValueKey(
+                        s.conditionalLinkValues,
+                        s.secondaryValueHabits,
+                        s.chessComHabitLinks,
+                        habitName, linkedName
+                    )
+                    val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
+                    for ((date, storedBefore, delta) in positiveDayDeltas) {
+                        val baseFeedAmount = if (feedPoints && sourceDivider > 1) {
+                            applyDivider(storedBefore + delta, sourceDivider) -
+                                applyDivider(storedBefore, sourceDivider)
+                        } else delta
+                        // Points slot: respect the feed-max-1 cap. Raw secondary
+                        // slots (Value2/Value3) are never capped, like the manual path.
+                        val feedAmount = if (targetKey == linkedName) {
+                            conditionalSyncFeedAmount(storedBefore, baseFeedAmount, feedMaxOne)
+                        } else baseFeedAmount
+                        if (feedAmount == 0) continue
+
+                        if (targetKey == linkedName) {
+                            val linkedEntries = mutableDb[targetKey] ?: emptyMap()
+                            val linkedRaw = (linkedEntries[date] ?: 0) + feedAmount
+                            val linkedClamped = if (linkedName in s.maxOneHabits)
+                                linkedRaw.coerceAtMost(1) else linkedRaw
+                            // Max-one target already fed that day — nothing changes.
+                            if (linkedClamped == (linkedEntries[date] ?: 0)) continue
+                        }
+
+                        mutableDb = habitsRepo.applyIncrementToDb(
+                            mutableDb, targetKey, feedAmount, LocalDate.parse(date)
+                        ).toMutableMap()
+                        dbChanged = true
+                        Log.d(TAG, "GitHub conditional feed: '$habitName' +$delta on $date → " +
+                            "'$targetKey' +$feedAmount")
+                        if (date == todayStr) {
+                            linkedTodayDeltas[linkedName] =
+                                (linkedTodayDeltas[linkedName] ?: 0) + feedAmount
+                        }
+                    }
+                }
+            }
+        }
+
         if (dbChanged) {
             cachedPhoneDb = mutableDb
             rebuildHabitList()
             withContext(Dispatchers.IO) {
                 habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
+            }
+            // Timestamps for linked habits fed by today's GitHub deltas
+            if (linkedTodayDeltas.isNotEmpty()) {
+                val now = HabitTimestampRepository.nowTime()
+                val today = LocalDate.now()
+                for ((linkedName, delta) in linkedTodayDeltas) {
+                    timestampRepo.addTimestamps(linkedName, delta, today, now)
+                }
             }
             Log.d(TAG, "GitHub data applied to '$habitName' (${dailyValues.size} days)")
         }

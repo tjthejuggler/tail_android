@@ -381,6 +381,26 @@ fun conditionalSyncFeedAmount(sourceStoredBefore: Int, delta: Int, feedMaxOne: B
     else -> delta
 }
 
+/**
+ * Computes the positive per-day deltas of a sync-driven authoritative write
+ * ([after] = the new absolute daily values, [before] = the previously stored
+ * ones): a Triple(date, storedBefore, delta) for every day whose value rose.
+ * Days that fell or stayed equal produce nothing — downward corrections must
+ * never un-feed a linked habit. Days missing from [before] count as 0, so the
+ * first-ever sync of a source feeds its whole history (matching the Garmin
+ * path in applyGarminData). Callers that reset the habit before re-applying
+ * (e.g. fetchGithubBacklog) must pass the PRE-reset snapshot as [before] so a
+ * backlog re-fetch never re-feeds history into linked habits.
+ */
+fun positiveSyncDayDeltas(
+    before: Map<String, Int>,
+    after: Map<String, Int>
+): List<Triple<String, Int, Int>> = after.mapNotNull { (date, newValue) ->
+    val storedBefore = before[date] ?: 0
+    val delta = newValue - storedBefore
+    if (delta > 0) Triple(date, storedBefore, delta) else null
+}
+
 // ── Display-label helpers (UI-only overrides) ────────────────────────────────
 /**
  * Returns the **default** human-readable label for a value/metric key when no
