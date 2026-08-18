@@ -139,6 +139,21 @@
             android:readPermission="com.example.tail.permission.TAIL_INTEGRATION" />
 
         <!--
+            FileProvider: hands ACTION_IMAGE_CAPTURE (system camera) a writable
+            content URI inside files/meal_images/ so the meal editor can snap a
+            photo and analyse it with the LLM inline (see res/xml/file_paths.xml).
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.example.tail.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!--
             BroadcastReceiver: listens for ACTION_INCREMENT_HABIT from same-keystore apps.
             android:permission restricts which senders can deliver the broadcast.
         -->

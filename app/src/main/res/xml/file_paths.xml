@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Meal photos captured straight into internal storage from the meal
+         editor's "Camera (AI)" action (TakePicture needs a shareable
+         content URI; the file lands in files/meal_images/). -->
+    <files-path
+        name="meal_images"
+        path="meal_images/" />
+</paths>

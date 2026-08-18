@@ -54,6 +54,21 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import com.example.tail.data.meal.FoodData
+import com.example.tail.data.meal.MealPhotoAnalysis
+import com.example.tail.data.meal.MealPhotoAnalyser
+import kotlinx.coroutines.launch
 
 private val EDIT_DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 private val EDIT_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
@@ -94,22 +109,107 @@ fun MealEditorContent(
     var ratings by remember { mutableStateOf(log.macroRatings ?: MacroRatings()) }
     var vegan by remember { mutableStateOf(log.isVeganVerified) }
     var removedImages by remember { mutableStateOf(setOf<String>()) }
+    var addedImages by remember { mutableStateOf(listOf<String>()) }
 
     val logZdt = remember(log.id) {
         Instant.ofEpochMilli(log.timestamp).atZone(ZoneId.systemDefault())
     }
-    var dateText by remember(log.id) { mutableStateOf(logZdt.toLocalDate().format(EDIT_DATE_FMT)) }
+    // Date is read-only; time is edited exclusively through the wheel popup.
+    val dateText = remember(log.id) { logZdt.toLocalDate().format(EDIT_DATE_FMT) }
     var timeText by remember(log.id) { mutableStateOf(logZdt.toLocalTime().format(EDIT_TIME_FMT)) }
-    var timeError by remember { mutableStateOf(false) }
+    var showTimeWheel by remember { mutableStateOf(false) }
+    var wheelHour by remember(log.id) { mutableStateOf(logZdt.hour) }
+    var wheelMinute by remember(log.id) { mutableStateOf(logZdt.minute) }
     var transcript by remember { mutableStateOf(log.voiceTranscript ?: "") }
+
+    val images = log.imageList().filter { it !in removedImages } + addedImages
+
+    // ── AI photo analysis (camera / gallery) ─────────────────────────
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var analysing by remember { mutableStateOf(false) }
+    var analysisError by remember { mutableStateOf<String?>(null) }
+    var pendingCapturePath by remember { mutableStateOf<String?>(null) }
+
+    /** Applies LLM food data onto the editor fields (user can still adjust). */
+    fun applyFoodData(fd: FoodData) {
+        if (fd.title.isNotBlank()) title = fd.title
+        if (fd.estimatedCalories > 0) calories = fd.estimatedCalories.toString()
+        if (fd.macronutrients.proteinGrams > 0.0) protein = formatMacroNum(fd.macronutrients.proteinGrams)
+        if (fd.macronutrients.carbsGrams > 0.0) carbs = formatMacroNum(fd.macronutrients.carbsGrams)
+        if (fd.macronutrients.fatGrams > 0.0) fat = formatMacroNum(fd.macronutrients.fatGrams)
+        fd.macroRatings?.let { ratings = it }
+        if (fd.ingredientsDetected.isNotEmpty()) {
+            tags = (tags + fd.ingredientsDetected.map { it.trim().lowercase() }).distinct()
+        }
+        if (fd.summary.isNotBlank()) summary = fd.summary
+        if (fd.isVeganVerified) vegan = true
+    }
+
+    /** Keeps the photo even when analysis fails; fills fields when it succeeds. */
+    fun handleAnalysisResult(res: MealPhotoAnalysis) {
+        res.imagePath?.let { path ->
+            if (path !in images && path !in addedImages) addedImages = addedImages + path
+        }
+        if (res.error != null) {
+            analysisError = res.error
+        } else {
+            analysisError = null
+            res.foodData?.let { applyFoodData(it) }
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val relPath = pendingCapturePath
+        pendingCapturePath = null
+        if (ok && relPath != null) {
+            analysing = true
+            scope.launch {
+                handleAnalysisResult(MealPhotoAnalyser.analyseFile(context, relPath))
+                analysing = false
+            }
+        }
+    }
+
+    fun launchCameraCapture() {
+        val relPath = "meal_images/meal_${java.util.UUID.randomUUID()}.jpg"
+        val file = File(context.filesDir, relPath)
+        file.parentFile?.mkdirs()
+        val uri = FileProvider.getUriForFile(context, "com.example.tail.fileprovider", file)
+        pendingCapturePath = relPath
+        cameraLauncher.launch(uri)
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) launchCameraCapture()
+        else analysisError = "Camera permission denied"
+    }
+
+    val onCameraClick: () -> Unit = {
+        val granted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) launchCameraCapture()
+        else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            analysing = true
+            scope.launch {
+                handleAnalysisResult(MealPhotoAnalyser.analyseUri(context, uri))
+                analysing = false
+            }
+        }
+    }
 
     // A fresh mic result recorded while this editor is open replaces the
     // transcript field content (the field itself stays user-editable).
     LaunchedEffect(externalTranscript) {
         if (!externalTranscript.isNullOrBlank()) transcript = externalTranscript
     }
-
-    val images = log.imageList().filter { it !in removedImages }
 
     Column {
         note?.let {
@@ -136,7 +236,10 @@ fun MealEditorContent(
                         )
                         if (allowDelete || allowTimeEdit) {
                             IconButton(
-                                onClick = { removedImages = removedImages + path },
+                                onClick = {
+                                    if (path in addedImages) addedImages = addedImages - path
+                                    else removedImages = removedImages + path
+                                },
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
                                     .size(20.dp)
@@ -159,6 +262,49 @@ fun MealEditorContent(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
+        // ── AI photo analysis buttons ───────────────────────────────────
+        Row(modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = onCameraClick,
+                enabled = !analysing,
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Camera (AI)", fontSize = 12.sp)
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+            OutlinedButton(
+                onClick = {
+                    galleryLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                enabled = !analysing,
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Upload (AI)", fontSize = 12.sp)
+            }
+        }
+        if (analysing) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "Analysing photo…",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        analysisError?.let {
+            Text("📷 $it", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = title,
             onValueChange = { title = it },
@@ -167,32 +313,52 @@ fun MealEditorContent(
             singleLine = true
         )
 
-        // ── Time ────────────────────────────────────────────────────────
+        // ── Time: date read-only, time via the wheel popup ──────────────
         if (allowTimeEdit) {
             Spacer(modifier = Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = dateText,
-                    onValueChange = { dateText = it; timeError = false },
-                    label = { Text("Date (yyyy-MM-dd)") },
-                    modifier = Modifier.weight(1.4f),
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                OutlinedTextField(
-                    value = timeText,
-                    onValueChange = { timeText = it; timeError = false },
-                    label = { Text("Time (HH:mm)") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Text(
+                        "📅 $dateText",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = { showTimeWheel = !showTimeWheel }) {
+                    Text(if (showTimeWheel) "Done" else "🕒 $timeText")
+                }
             }
-            if (timeError) {
-                Text(
-                    "Invalid date/time — use yyyy-MM-dd and HH:mm (24h)",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.error
-                )
+            if (showTimeWheel) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    TimeWheelPicker(
+                        hour24 = wheelHour,
+                        minute = wheelMinute,
+                        onTimeChange = { h, m ->
+                            wheelHour = h
+                            wheelMinute = m
+                            timeText = String.format("%02d:%02d", h, m)
+                        },
+                        compact = true
+                    )
+                }
             }
         }
 
@@ -308,18 +474,16 @@ fun MealEditorContent(
         Spacer(modifier = Modifier.height(12.dp))
         Button(
             onClick = {
-                // Validate the date/time before saving
+                // Date is fixed; time always comes from the wheel (HH:mm),
+                // so parsing cannot fail — fall back defensively regardless.
                 var newTimestamp = log.timestamp
                 if (allowTimeEdit) {
-                    try {
-                        val d = LocalDate.parse(dateText.trim(), EDIT_DATE_FMT)
-                        val t = LocalTime.parse(timeText.trim(), EDIT_TIME_FMT)
-                        newTimestamp = d.atTime(t)
+                    newTimestamp = try {
+                        LocalDate.parse(dateText, EDIT_DATE_FMT)
+                            .atTime(LocalTime.parse(timeText, EDIT_TIME_FMT))
                             .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        timeError = false
                     } catch (e: Exception) {
-                        timeError = true
-                        return@Button
+                        log.timestamp
                     }
                 }
                 val keptImages = images
