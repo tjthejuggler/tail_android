@@ -662,6 +662,19 @@ class FloatingBubbleService : Service() {
                 .start()
         }
 
+        // A Chess Readiness test in progress owns the bubble: resume the
+        // wizard straight at its current step (puzzle/rush result entry) —
+        // no picker menu, no other options. loadSession() self-clears
+        // expired sessions, so a null here simply falls through to the
+        // normal menu/timer behaviour.
+        if (chessReadinessActive &&
+            ChessReadinessStore.loadSession(this) != null
+        ) {
+            hideHabitPickerMenu()
+            openChessReadiness()
+            return
+        }
+
         val habit = triggerHabitName
         if (habit == null) {
             if (chessReadinessActive || triggerHabitNames.size > 1) {

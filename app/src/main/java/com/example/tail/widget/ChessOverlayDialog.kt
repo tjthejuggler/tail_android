@@ -293,11 +293,28 @@ class ChessOverlayDialog(private val context: Context) {
         /**
          * A row of single-select chips (e.g. Solved/Failed, 0–3 strikes).
          * [selected] is the currently chosen index, or -1 for none.
+         * Tapping a chip restyles the whole row immediately so the choice is
+         * clearly visible without the caller having to re-render its step.
          */
         fun chipRow(options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
             }
+            val chips = ArrayList<TextView>(options.size)
+
+            fun applySelection(sel: Int) {
+                chips.forEachIndexed { i, chip ->
+                    val isSel = i == sel
+                    chip.setTextColor(if (isSel) C.ACCENT else 0xFFAAAAAA.toInt())
+                    chip.setTypeface(null, if (isSel) Typeface.BOLD else Typeface.NORMAL)
+                    (chip.background as? GradientDrawable)?.apply {
+                        setColor(if (isSel) C.CHIP_BG_SEL else C.CHIP_BG)
+                        setStroke(dp(1), if (isSel) C.ACCENT else C.CHIP_BG)
+                    }
+                    chip.invalidate()
+                }
+            }
+
             options.forEachIndexed { i, option ->
                 val chip = TextView(context).apply {
                     text = option
@@ -309,9 +326,14 @@ class ChessOverlayDialog(private val context: Context) {
                     background = GradientDrawable().apply {
                         setColor(if (i == selected) C.CHIP_BG_SEL else C.CHIP_BG)
                         cornerRadius = 10f * density
+                        setStroke(dp(1), if (i == selected) C.ACCENT else C.CHIP_BG)
                     }
-                    setOnClickListener { onSelect(i) }
+                    setOnClickListener {
+                        applySelection(i)
+                        onSelect(i)
+                    }
                 }
+                chips.add(chip)
                 row.addView(
                     chip,
                     LinearLayout.LayoutParams(
