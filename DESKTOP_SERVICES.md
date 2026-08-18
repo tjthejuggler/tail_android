@@ -603,3 +603,59 @@ supervisor installer. The supervisor replaces them all:
 - `tail_bridge/tail-bridge.service`
 - `tail_bridge/movie-watcher.service`
 - `garmin_proxy/install_autostart.sh` (old installer, superseded by `install_supervisor.sh`)
+
+## 11. PC Bubble Widget (Tail Bridge Transport)
+
+*(Added 2026-08-18; migrated from a Syncthing file transport to the Tail
+Bridge the same day — zero-setup, same pattern as Garmin and movies)*
+
+The **PC floating bubble widget** (`~/Projects/py_habits_widget/pc_bubble_widget.py`)
+lets you time habits on the desktop and deliver them to the phone. Everything
+flows through the **Tail Bridge** (`tail_bridge/bridge_server.py`, port 8001)
+— the same FastAPI server that serves the Garmin proxy data and the movie
+cache. No folders to pick, no Syncthing involved.
+
+### Transport: four bridge endpoints, bridge is the single writer
+
+| Endpoint | Caller | Purpose |
+|---|---|---|
+| `GET/POST /api/v1/pc_widget/config` | phone | habit squares the PC widget shows |
+| `POST /api/v1/pc_widget/event` | PC | queue one event (bridge assigns the ID) |
+| `GET /api/v1/pc_widget/events` | PC | events not yet acked |
+| `POST /api/v1/pc_widget/acks` | phone | acks; the bridge prunes the queue |
+
+Bridge state lives in `~/.config/tail_bridge/` (atomic writes). Delivery is
+at-least-once + acks = effectively-once; the bridge caps the queue at 500
+entries as a safety valve. All endpoints require the `X-App-Auth` shared
+secret (`ANDROID_PROXY_KEY`).
+
+### Phone side (zero new settings)
+
+- The bridge connection is **auto-derived from the Garmin settings** —
+  `bridgeConnectionFrom()` in `PcEventQueue.kt` builds
+  `scheme://host:8001` from `garminProxyUrl` and reuses `garminAppToken`
+  as the auth token, exactly like the movie-bridge feature.
+- Edit mode → habit → **🖥 PC Widget** toggle (`pcWidgetHabits`); toggling
+  pushes the config to the bridge immediately (`pushPcWidgetConfig()`).
+- `PcEventQueueProcessor` (app/src/main/java/com/example/tail/data/PcEventQueue.kt)
+  drains the queue: on app foreground, at app start, and every 45 s while the
+  floating bubble service runs. Sessions apply as +1 session AND +minutes on
+  the habit's secondary value (atomic single write, date-aware); taps respect
+  max-one caps; conditional links feed exactly like the IPC receiver; the
+  timestamp is recorded at the event's own start time. Failed applies are not
+  acked and retry on the next poll (increments are additive, so a re-apply
+  after a lost ack is safe).
+
+### PC side
+
+- Run: `~/Projects/py_habits_widget/start_pc_bubble.sh` (project venv).
+- `pc_widget_sync.py` talks to `http://127.0.0.1:8001` with the token
+  auto-resolved from the environment or the bridge's `.env` file — nothing
+  to configure. If the bridge is down the widget keeps its squares/badges
+  and flashes a write failure instead of crashing.
+- Tray icon with recall-to-tray; no taskbar entry; position + running timers
+  persist in `~/.config/pc_bubble_widget/state.json`; single-instance guarded.
+- Unit tests: `PcEventQueueCodecTest` (JVM) covers the wire format;
+  `pc_widget_smoke_test.py` spins up an in-process fake bridge and checks
+  the full offscreen round-trip (config → tap → ack → prune → bridge-down
+  resilience).

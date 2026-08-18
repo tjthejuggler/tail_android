@@ -711,6 +711,7 @@ class BackupManager(
         // file URIs
         settingsRepo.saveFileUri(s.fileUri)
         settingsRepo.saveScreensRelayFileUri(s.screensRelayFileUri)
+        settingsRepo.savePcWidgetHabits(s.pcWidgetHabits.toSet())
 
         // habit type sets
         settingsRepo.saveCustomInputHabits(s.customInputHabits.toSet())
@@ -1097,6 +1098,7 @@ class BackupManager(
     private fun toSettingsSection(s: AppSettings) = SettingsSection(
         fileUri = s.fileUri,
         screensRelayFileUri = s.screensRelayFileUri,
+        pcWidgetHabits = s.pcWidgetHabits.toList(),
         customInputHabits = s.customInputHabits.toList(),
         habitOrder = s.habitOrder,
         habitScreens = s.habitScreens.map { HabitScreenBackup(it.id, it.name, it.habitNames) },

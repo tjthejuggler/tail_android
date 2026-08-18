@@ -70,6 +70,10 @@ All endpoints require the `X-App-Auth` header (except `/health`).
 | GET | `/api/v1/garmin/latest` | Most recent day's Garmin health metrics |
 | GET | `/api/v1/garmin/recent?limit=10` | N most recent days of Garmin metrics |
 | GET | `/api/v1/garmin/health` | Garmin source health (cache status) |
+| GET/POST | `/api/v1/pc_widget/config` | PC bubble widget habit squares (phone pushes) |
+| POST | `/api/v1/pc_widget/event` | Queue one PC habit event (bridge assigns ID) |
+| GET | `/api/v1/pc_widget/events` | PC habit events not yet acked by the phone |
+| POST | `/api/v1/pc_widget/acks` | Phone acks; the bridge prunes acked events |
 
 ### Example Response (`/api/v1/movies/latest`)
 

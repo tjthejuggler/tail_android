@@ -543,7 +543,8 @@ class StatsOverlayService : Service() {
                     noPointsHabits = settings.noPointsHabits,
                     secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits,
                     timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary,
-                    invertedBinaryHabits = settings.invertedBinaryHabits
+                    invertedBinaryHabits = settings.invertedBinaryHabits,
+                    secondaryValueHabits = settings.secondaryValueHabits
                 )
                 postStats(stats.today, stats.avg7, stats.avg30)
             } catch (e: Exception) {

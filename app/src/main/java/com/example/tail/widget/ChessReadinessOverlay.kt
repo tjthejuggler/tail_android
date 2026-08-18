@@ -507,8 +507,8 @@ class ChessReadinessOverlay(service: Context) {
 
 /**
  * Credits time spent on a readiness-test step to [habitName] (if linked in
- * Settings): adds [minutes] to the habit's MINUTES secondary value
- * (`secondary_value:<habitName>` in habitsdb.txt) and +[sessions] to the
+ * Settings): adds [minutes] to the habit's first-class MINUTES slot
+ * (`minutes:<habitName>` in habitsdb.txt) and +[sessions] to the
  * habit's own session-count slot, in one atomic read-modify-write — the
  * same write the bubble timer uses
  * ([HabitsRepository.incrementHabitWithMinutes]).

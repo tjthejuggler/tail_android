@@ -59,10 +59,15 @@ fun monthlyAveragesBulk(
         val divider = settings.habitDividers[name] ?: 1
         val inverted = name in settings.invertedBinaryHabits
         val minutesPrimary = name in settings.widgetTimerMinutesPrimary
-        val secEntries = if (inverted || (!minutesPrimary && name !in settings.secondaryValueFallbackHabits)) {
-            null
-        } else {
-            db[secondaryValueKey(name)]
+        // Minutes-primary habits read the first-class minutes slot; sessions-
+        // primary fallback habits read the legacy secondary slot when they use
+        // it or have data there (chess.com games, JugCoach seconds), otherwise
+        // the minutes slot.
+        val secEntries = when {
+            inverted -> null
+            minutesPrimary -> db[minutesKey(name)]
+            name !in settings.secondaryValueFallbackHabits -> null
+            else -> db[fallbackSlotKey(name, settings.secondaryValueHabits, db)]
         }
         for (i in 0 until nDays) {
             val ds = dateStrs[i]

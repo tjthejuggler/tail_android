@@ -40,9 +40,13 @@ On the Android side:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
+import time
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
@@ -195,6 +199,135 @@ def suggest_movie(
     if recent:
         return recent[0]
     raise HTTPException(status_code=404, detail="No movies available")
+
+
+# ── PC bubble widget endpoints ────────────────────────────────────────────────
+# The PC floating bubble widget (py_habits_widget/pc_bubble_widget.py) times
+# habits on the desktop; the phone app toggles which habits appear on it.
+# The bridge is the single meeting point (and the single writer of both state
+# files, so there are never sync conflicts):
+#
+#   phone  → POST /pc_widget/config   (which habits the widget should show)
+#   widget → GET  /pc_widget/config   (localhost poll, same auth token)
+#   widget → POST /pc_widget/event    (timer session / tap, server assigns id)
+#   phone  → GET  /pc_widget/events   (pull everything not yet acked)
+#   phone  → POST /pc_widget/acks     (applied event ids; bridge prunes them)
+#
+# Delivery is at-least-once + acks = effectively-once: if the ack POST fails
+# the phone re-pulls and re-applies on the next poll.
+
+PC_WIDGET_STATE_DIR = Path.home() / ".config" / "tail_bridge"
+PC_WIDGET_CONFIG_PATH = PC_WIDGET_STATE_DIR / "pc_widget_config.json"
+PC_WIDGET_EVENTS_PATH = PC_WIDGET_STATE_DIR / "pc_habit_events.json"
+PC_WIDGET_MAX_EVENTS = 500  # safety valve if the phone never acks
+
+
+def _pc_widget_read(path: Path) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _pc_widget_write(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+        f.write("\n")
+    tmp.replace(path)
+
+
+@app.get("/api/v1/pc_widget/config", tags=["pc_widget"])
+def pc_widget_get_config(api_key: str = Security(verify_key)):
+    """Current PC-widget habit squares (empty list until the phone pushes one)."""
+    return _pc_widget_read(PC_WIDGET_CONFIG_PATH) or {"version": 1, "habits": []}
+
+
+@app.post("/api/v1/pc_widget/config", tags=["pc_widget"])
+def pc_widget_set_config(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """Phone pushes the habit squares the PC widget should show."""
+    habits = payload.get("habits")
+    if not isinstance(habits, list):
+        raise HTTPException(status_code=400, detail="body must contain a 'habits' list")
+    clean = []
+    for h in habits:
+        if not isinstance(h, dict):
+            continue
+        name = h.get("name")
+        if isinstance(name, str) and name.strip():
+            clean.append({
+                "name": name,
+                "icon": h.get("icon") if isinstance(h.get("icon"), str) else None,
+                "minutes_primary": bool(h.get("minutes_primary", False)),
+            })
+    body = {
+        "version": 1,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "habits": clean,
+    }
+    _pc_widget_write(PC_WIDGET_CONFIG_PATH, body)
+    logger.info(f"pc_widget config updated: {len(clean)} habits")
+    return {"ok": True, "count": len(clean)}
+
+
+@app.post("/api/v1/pc_widget/event", tags=["pc_widget"])
+def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """PC widget appends one habit event; the bridge assigns its id."""
+    habit = payload.get("habit")
+    if not isinstance(habit, str) or not habit.strip():
+        raise HTTPException(status_code=400, detail="'habit' is required")
+    event = {
+        "id": "pc-{}-{}".format(int(time.time() * 1000), uuid.uuid4().hex[:6]),
+        "habit": habit,
+        "kind": payload.get("kind") if payload.get("kind") in ("session", "tap") else "tap",
+        "date": payload.get("date") or datetime.now().strftime("%Y-%m-%d"),
+        "start": payload.get("start") or datetime.now().strftime("%H:%M:%S"),
+        "end": payload.get("end") or datetime.now().strftime("%H:%M:%S"),
+        "minutes": max(0, int(payload.get("minutes") or 0)),
+    }
+    events = _pc_widget_read(PC_WIDGET_EVENTS_PATH).get("events")
+    events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+    events.append(event)
+    if len(events) > PC_WIDGET_MAX_EVENTS:
+        events = events[-PC_WIDGET_MAX_EVENTS:]
+    _pc_widget_write(PC_WIDGET_EVENTS_PATH, {
+        "version": 1,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "events": events,
+    })
+    logger.info(f"pc_widget event queued: {event['habit']} ({event['kind']}, {event['minutes']}m)")
+    return {"ok": True, "id": event["id"]}
+
+
+@app.get("/api/v1/pc_widget/events", tags=["pc_widget"])
+def pc_widget_get_events(api_key: str = Security(verify_key)):
+    """Phone pulls every event not yet acked (acks prune, so this is the queue)."""
+    events = _pc_widget_read(PC_WIDGET_EVENTS_PATH).get("events")
+    events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+    return {"version": 1, "events": events, "count": len(events)}
+
+
+@app.post("/api/v1/pc_widget/acks", tags=["pc_widget"])
+def pc_widget_acks(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """Phone confirms applied events; the bridge removes them from the queue."""
+    processed = payload.get("processed")
+    if not isinstance(processed, list):
+        raise HTTPException(status_code=400, detail="body must contain a 'processed' list")
+    acked = {p for p in processed if isinstance(p, str)}
+    events = _pc_widget_read(PC_WIDGET_EVENTS_PATH).get("events")
+    events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+    remaining = [e for e in events if e.get("id") not in acked]
+    if len(remaining) != len(events):
+        _pc_widget_write(PC_WIDGET_EVENTS_PATH, {
+            "version": 1,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "events": remaining,
+        })
+    logger.info(f"pc_widget acks: {len(acked)} ids, {len(remaining)} still queued")
+    return {"ok": True, "remaining": len(remaining)}
 
 
 if __name__ == "__main__":

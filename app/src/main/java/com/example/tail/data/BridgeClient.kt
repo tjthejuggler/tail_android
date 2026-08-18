@@ -82,6 +82,51 @@ class BridgeClient {
     }
 
     /**
+     * POSTs JSON to a bridge endpoint.
+     *
+     * @param bridgeUrl  Base URL of the bridge server (e.g. "http://192.168.1.100:8001")
+     * @param token      The X-App-Auth shared secret
+     * @param path       API path after /api/v1/ (e.g. "pc_widget/config")
+     * @param body       JSON request body
+     * @return Parsed response JSONObject, or null on any error
+     */
+    suspend fun post(
+        bridgeUrl: String,
+        token: String,
+        path: String,
+        body: JSONObject
+    ): JSONObject? = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = bridgeUrl.trim().trimEnd('/')
+            val url = URL("$cleanUrl/api/v1/$path")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = CONNECT_TIMEOUT
+            conn.readTimeout = READ_TIMEOUT
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("X-App-Auth", token)
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+
+            val code = conn.responseCode
+            if (code != 200) {
+                val errorBody = conn.errorStream?.bufferedReader()?.readText()?.take(200) ?: ""
+                Log.w(TAG, "HTTP $code for POST $url: $errorBody")
+                conn.disconnect()
+                return@withContext null
+            }
+            val responseBody = conn.inputStream.bufferedReader().readText()
+            conn.disconnect()
+            JSONObject(responseBody)
+        } catch (e: Exception) {
+            Log.w(TAG, "POST failed for '$path': ${e.message}")
+            null
+        }
+    }
+
+    /**
      * Checks whether the bridge server is reachable and the token is valid.
      * Returns true if the server responded with a valid health JSON.
      */

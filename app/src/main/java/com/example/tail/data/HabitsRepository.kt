@@ -562,10 +562,10 @@ class HabitsRepository {
     ): HabitsDatabase = incrementHabitForDate(uri, context, habitName, amount, LocalDate.now())
 
     /**
-     * Atomically increments BOTH value slots of a widget-timer habit for
+     * Atomically increments BOTH value slots of a timer-tracked habit for
      * today in a single read-modify-write: +[sessions] in the habit's own
-     * slot and +[minutes] in its secondary-value slot
-     * (`secondary_value:<habitName>`).
+     * slot and +[minutes] in its first-class minutes slot
+     * (`minutes:<habitName>`).
      *
      * One atomic write instead of two back-to-back [incrementHabit] calls
      * matters: a concurrent reader/writer (e.g. the app's startup
@@ -594,10 +594,10 @@ class HabitsRepository {
         habitEntries[dateStr] = (habitEntries[dateStr] ?: 0) + sessions
         db[habitName] = habitEntries.toSortedMap()
 
-        val secKey = secondaryValueKey(habitName)
-        val secEntries = db[secKey]?.toMutableMap() ?: mutableMapOf()
-        secEntries[dateStr] = (secEntries[dateStr] ?: 0) + minutes
-        db[secKey] = secEntries.toSortedMap()
+        val minKey = minutesKey(habitName)
+        val minEntries = db[minKey]?.toMutableMap() ?: mutableMapOf()
+        minEntries[dateStr] = (minEntries[dateStr] ?: 0) + minutes
+        db[minKey] = minEntries.toSortedMap()
 
         saveDatabase(uri, context, db)
         db
@@ -621,6 +621,19 @@ class HabitsRepository {
         uri: Uri,
         context: Context,
         increments: Map<String, Int>
+    ): HabitsDatabase = incrementHabitSlotsForDate(uri, context, increments, LocalDate.now())
+
+    /**
+     * Date-aware variant of [incrementHabitSlots]: applies all increments to
+     * [date] instead of today. Used by the PC-widget event queue processor,
+     * which may apply events that were queued on the PC while the phone was
+     * offline (possibly on a previous day).
+     */
+    suspend fun incrementHabitSlotsForDate(
+        uri: Uri,
+        context: Context,
+        increments: Map<String, Int>,
+        date: LocalDate
     ): HabitsDatabase = withContext(Dispatchers.IO) {
         val positive = increments.filterValues { it > 0 }
         if (positive.isEmpty()) return@withContext loadDatabase(uri, context)
@@ -631,7 +644,7 @@ class HabitsRepository {
             throw HabitsLoadFailedException(loadResult)
         }
         val db = loadResult.db.toMutableMap()
-        val dateStr = dateString(LocalDate.now())
+        val dateStr = dateString(date)
 
         for ((key, amount) in positive) {
             val entries = db[key]?.toMutableMap() ?: mutableMapOf()
@@ -864,6 +877,13 @@ class HabitsRepository {
             }
         }
 
+        // Also rename the first-class minutes slot (`minutes:<habit>`)
+        val oldMinutesKey = minutesKey(oldName)
+        if (db.containsKey(oldMinutesKey)) {
+            db[minutesKey(newName)] = db[oldMinutesKey]!!
+            db.remove(oldMinutesKey)
+        }
+
         saveDatabase(uri, context, db)
         db
     }
@@ -882,16 +902,24 @@ class HabitsRepository {
             val entries = db[name] ?: emptyMap()
             val minutesPrimary = name in settings.widgetTimerMinutesPrimary
             val useFallback = name in settings.secondaryValueFallbackHabits || minutesPrimary
-            val secondaryEntries = if (useFallback) {
-                db[secondaryValueKey(name)] ?: emptyMap()
-            } else emptyMap()
+            // Minutes-primary: the minutes slot drives points (sessions are the
+            // zero-minutes fallback). Sessions-primary fallback: the legacy
+            // generic secondary slot when the habit uses it or has data there
+            // (e.g. Meditations/Apnea/Resonance sessions, chess.com games,
+            // JugCoach seconds), otherwise the minutes slot.
+            val fallbackEntries = when {
+                minutesPrimary -> db[minutesKey(name)] ?: emptyMap()
+                useFallback -> db[fallbackSlotKey(name, settings.secondaryValueHabits, db)]
+                    ?: emptyMap()
+                else -> emptyMap()
+            }
             buildHabit(
                 name = name,
                 entries = entries,
                 useCustomInput = name in settings.customInputHabits,
                 divider = settings.habitDividers[name] ?: 1,
                 targetDate = targetDate,
-                secondaryEntries = secondaryEntries,
+                secondaryEntries = fallbackEntries,
                 useSecondaryFallback = useFallback,
                 swapPrimarySecondary = minutesPrimary,
                 invertedBinary = name in settings.invertedBinaryHabits

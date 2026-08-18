@@ -215,11 +215,67 @@ val SECONDARY_VALUE_SLOT_PREFIXES: List<String> = listOf(
 )
 
 /**
+ * Prefix for the FIRST-CLASS MINUTES slot (`"minutes:Habit"`).
+ *
+ * Every habit implicitly has a minutes value — no setup and no settings-set
+ * membership required. Timer-based features (phone bubble, PC widget,
+ * trigger apps, media tracking, chess readiness) always write +1 session to
+ * the habit's own key AND +N minutes here, so the data is already there if
+ * the user ever switches the habit to minutes-primary ("Primary value:
+ * Minutes").
+ *
+ * Same conventions as the secondary-value slots: filtered out of habit-list
+ * / stats iterations via [isInternalValueKey], renamed together with the
+ * habit, and synced via the same habitsdb.txt file.
+ */
+const val MINUTES_PREFIX = "minutes:"
+
+/** Returns true if [name] is a first-class minutes storage key (`minutes:<habit>`). */
+fun isMinutesKey(name: String): Boolean = name.startsWith(MINUTES_PREFIX)
+
+/** Builds the storage key for the minutes of [habitName]. */
+fun minutesKey(habitName: String): String = "$MINUTES_PREFIX$habitName"
+
+/**
+ * Resolves which storage slot holds a habit's sessions-primary fallback value:
+ * the legacy generic `secondary_value:` slot when the habit is a Value2-track
+ * member OR simply has data there (chess.com games, JugCoach seconds, Value2
+ * minutes of habits never touched by the minutes-slot migration), otherwise
+ * the first-class `minutes:` slot. Data-driven so un-migrated legacy writers
+ * keep feeding the fallback exactly as before the minutes slot existed.
+ */
+fun fallbackSlotKey(
+    habitName: String,
+    secondaryValueHabits: Set<String>,
+    db: HabitsDatabase
+): String {
+    val legacyKey = secondaryValueKey(habitName)
+    return if (habitName in secondaryValueHabits || !db[legacyKey].isNullOrEmpty()) {
+        legacyKey
+    } else {
+        minutesKey(habitName)
+    }
+}
+
+/** Extracts the habit name from a minutes key, or null if [name] is not one. */
+fun minutesHabitName(name: String): String? =
+    name.takeIf { it.startsWith(MINUTES_PREFIX) }?.removePrefix(MINUTES_PREFIX)
+
+/**
  * Returns true if [name] is any secondary-value storage key
  * (any of the [SECONDARY_VALUE_SLOT_PREFIXES] slots).
  */
 fun isSecondaryValueKey(name: String): Boolean =
     SECONDARY_VALUE_SLOT_PREFIXES.any { name.startsWith(it) }
+
+/**
+ * Returns true if [name] is any NON-habit internal storage key — a
+ * secondary-value slot OR the first-class minutes slot. Use this wherever
+ * the database key set is iterated as "habits" (stats, grids, point totals)
+ * so internal value slots are always excluded.
+ */
+fun isInternalValueKey(name: String): Boolean =
+    isSecondaryValueKey(name) || isMinutesKey(name)
 
 /** Returns true if [name] is a second-slot secondary-value storage key. */
 fun isSecondaryValue2Key(name: String): Boolean = name.startsWith(SECONDARY_VALUE2_PREFIX)
@@ -340,6 +396,7 @@ fun defaultLabelForValueKey(valueKey: String): String = when (valueKey) {
     GRAPH_METRIC_VALUE1 -> "Value 1"
     GRAPH_METRIC_VALUE2 -> "Value 2"
     GRAPH_METRIC_VALUE3 -> "Value 3"
+    GRAPH_METRIC_MINUTES -> "Minutes"
     GRAPH_METRIC_JUGCOACH_TIME -> "Time (min)"
     GRAPH_METRIC_JUGCOACH_CATCHES -> "Catches"
     GRAPH_METRIC_JUGCOACH_TIME_CATCH -> "Time·Catch (min)"
@@ -395,6 +452,11 @@ const val GRAPH_METRIC_VALUE2 = "value2"
  * Currently written by the chess.com integration (daily win percentage, 0-100).
  */
 const val GRAPH_METRIC_VALUE3 = "value3"
+/**
+ * Minutes — the first-class minutes slot (`minutes:` storage key), available
+ * for EVERY habit (written automatically by all timer-based features).
+ */
+const val GRAPH_METRIC_MINUTES = "minutes"
 /**
  * JugCoach juggling metrics — fed by the JugCoach integration via
  * `ACTION_JUGCOACH_SESSION` (one broadcast per completed run). The six
@@ -476,6 +538,14 @@ data class AppSettings(
      * The PC widget reads this file to mirror the same multi-screen layout.
      */
     val screensRelayFileUri: String = "",
+    /**
+     * Habits that appear as timer squares on the PC floating bubble widget.
+     * Toggled per-habit from the habit edit panel ("PC Widget"). The phone
+     * pushes this list (plus icons) to the Tail Bridge (/pc_widget/config,
+     * connection auto-derived from the Garmin proxy settings) so the PC
+     * widget can mirror it — no extra setup needed.
+     */
+    val pcWidgetHabits: Set<String> = emptySet(),
     /**
      * Master switch for the in-app stats overlay (StatsOverlayService).
      * When true, a small always-on-top bar shows the today / avg7 / avg30

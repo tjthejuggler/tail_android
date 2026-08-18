@@ -1116,10 +1116,12 @@ fun HabitGridScreen(
                         onChangeIcon = { name -> iconPickerHabitName = name },
                         onSetCount = { name, count -> viewModel.setHabitCount(name, count) },
                         onSetCountWithRollForward = { name, count, endDate -> viewModel.setHabitCountWithRollForward(name, count, endDate) },
-                        onSetSecondaryCount = { name, count -> viewModel.setHabitSecondaryCount(name, count) },
-                        selectedHabitSecondaryTodayCount = selectedHabitName?.let {
-                            viewModel.getSecondaryTodayCount(it)
+                        onSetMinutesCount = { name, count -> viewModel.setHabitMinutesCount(name, count) },
+                        selectedHabitMinutesTodayCount = selectedHabitName?.let {
+                            viewModel.getMinutesTodayCount(it)
                         } ?: 0,
+                        minutesFallbackHabits = settings.secondaryValueFallbackHabits,
+                        onToggleMinutesFallback = { name -> viewModel.toggleMinutesFallbackHabit(name) },
                         onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
                         onToggleConditional = { name -> viewModel.toggleConditional(name) },
                         onToggleConditionalFeedMaxOne = { name -> viewModel.toggleConditionalFeedMaxOne(name) },
@@ -1190,6 +1192,15 @@ fun HabitGridScreen(
                                 MovieBridgeToggleSection(
                                     isMovieLinked = selectedHabitName in settings.bridgeMovieHabits,
                                     onToggle = { viewModel.toggleBridgeMovieHabit(selectedHabitName) }
+                                )
+                            }
+                        },
+                        pcWidgetContent = {
+                            if (selectedHabitName != null) {
+                                PcWidgetToggleSection(
+                                    isOnPcWidget = selectedHabitName in settings.pcWidgetHabits,
+                                    syncConfigured = settings.garminProxyUrl.isNotEmpty(),
+                                    onToggle = { viewModel.togglePcWidgetHabit(selectedHabitName) }
                                 )
                             }
                         },
@@ -2546,14 +2557,11 @@ private fun WidgetTriggerSection(
     onToggleWidgetTrigger: (String) -> Unit,
     onSetWidgetTriggerApp: (String) -> Unit,
     hasUsageAccess: Boolean,
-    onRequestUsageAccess: () -> Unit,
-    widgetTimerMinutesPrimary: Set<String> = emptySet(),
-    onSetTimerPrimaryValue: (String, Boolean) -> Unit = { _, _ -> }
+    onRequestUsageAccess: () -> Unit
 ) {
     val context = LocalContext.current
     val isEnabled = habitName in widgetTriggerHabits
     val triggerPkg = widgetTriggerApps[habitName]
-    val minutesPrimary = habitName in widgetTimerMinutesPrimary
 
     // Resolve the trigger app's display label
     val triggerLabel = remember(triggerPkg) {
@@ -2651,60 +2659,8 @@ private fun WidgetTriggerSection(
                 }
             }
 
-            // Primary value selector (timer habits): minutes vs sessions.
-            // Whichever is primary drives points/display; the other is the
-            // fallback used only on days where the primary value is zero.
-            if (triggerPkg != null) {
-                Spacer(modifier = Modifier.height(4.dp))
-                var primaryExpanded by remember { mutableStateOf(false) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "⏱ Primary Value", color = Color(0xFFAAAAAA), fontSize = 11.sp)
-                        Text(
-                            text = if (minutesPrimary) "Minutes (timer) — sessions fallback"
-                                   else "Sessions — minutes fallback",
-                            color = Color(0xFF999999),
-                            fontSize = 10.sp
-                        )
-                    }
-                    Box {
-                        Button(
-                            onClick = { primaryExpanded = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text(
-                                if (minutesPrimary) "Minutes ▾" else "Sessions ▾",
-                                fontSize = 11.sp,
-                                color = Color(0xFF66CCFF)
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = primaryExpanded,
-                            onDismissRequest = { primaryExpanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Minutes (timer)", fontSize = 13.sp) },
-                                onClick = {
-                                    primaryExpanded = false
-                                    onSetTimerPrimaryValue(habitName, true)
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Sessions", fontSize = 13.sp) },
-                                onClick = {
-                                    primaryExpanded = false
-                                    onSetTimerPrimaryValue(habitName, false)
-                                }
-                            )
-                        }
-                    }
-                }
-            }
+            // Primary value selection lives in the universal PrimaryValueSection
+            // in the main edit panel (single source of truth for every habit).
         }
     }
 }
@@ -3440,7 +3396,7 @@ private fun HabitToggleSection(
         Column {
             Text(text = "Secondary value", color = Color(0xFFCCCCCC), fontSize = 12.sp)
             Text(
-                text = if (isSecondaryValue) "Extra value track (e.g. session count)"
+                text = if (isSecondaryValue) "Tracks a second value alongside points"
                        else "Single value only",
                 color = if (isSecondaryValue) Color(0xFF66BB6A) else Color(0xFF888888),
                 fontSize = 10.sp
@@ -3471,7 +3427,7 @@ private fun HabitToggleSection(
             Column {
                 Text(text = "Fallback to secondary", color = Color(0xFFCCCCCC), fontSize = 12.sp)
                 Text(
-                    text = if (isSecondaryValueFallback) "Uses secondary value for points when primary is 0"
+                    text = if (isSecondaryValueFallback) "Second value used for points when primary is 0"
                            else "Primary value only for points",
                     color = if (isSecondaryValueFallback) Color(0xFF66BB6A) else Color(0xFF888888),
                     fontSize = 10.sp
@@ -3490,6 +3446,90 @@ private fun HabitToggleSection(
         }
 
         Spacer(modifier = Modifier.height(6.dp))
+    }
+}
+
+/**
+ * Universal per-habit "Primary value" selector for the first-class minutes
+ * model. Every habit implicitly has a minutes slot (`minutes:<habit>`);
+ * this section picks which value drives points and spells out the fallback
+ * semantics. Shown for every habit — with secondary values enabled the
+ * wording adapts (the second value is tracked alongside the primary) and
+ * the fallback switch defers to the "Fallback to secondary" toggle so the
+ * two never compete.
+ */
+@Composable
+private fun PrimaryValueSection(
+    habitName: String,
+    isSecondaryValue: Boolean,
+    minutesPrimary: Boolean,
+    onSetPrimaryValue: (String, Boolean) -> Unit,
+    minutesFallback: Boolean,
+    onToggleMinutesFallback: (String) -> Unit
+) {
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        text = "⭐ Primary value",
+        color = Color(0xFF88CCFF),
+        fontSize = 11.sp
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        PrimaryValuePill(
+            text = "Sessions",
+            selected = !minutesPrimary,
+            onClick = { onSetPrimaryValue(habitName, false) }
+        )
+        PrimaryValuePill(
+            text = "Minutes",
+            selected = minutesPrimary,
+            onClick = { onSetPrimaryValue(habitName, true) }
+        )
+    }
+    Spacer(modifier = Modifier.height(2.dp))
+    Text(
+        text = when {
+            isSecondaryValue && minutesPrimary ->
+                "Minutes drive points; second value tracked alongside"
+            isSecondaryValue ->
+                "Sessions drive points; second value tracked alongside"
+            minutesPrimary -> "Minutes drive points; sessions are the fallback on 0-minute days"
+            minutesFallback -> "Sessions drive points; minutes are the fallback on 0-session days"
+            else -> "Sessions drive points"
+        },
+        color = Color(0xFF999999),
+        fontSize = 10.sp
+    )
+
+    // Secondary-value habits use the "Fallback to secondary" toggle above
+    // instead — avoid two competing fallback switches.
+    if (!minutesPrimary && !isSecondaryValue) {
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = "Fallback to minutes", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(
+                    text = if (minutesFallback) "Minutes used for points on 0-session days"
+                           else "No fallback",
+                    color = if (minutesFallback) Color(0xFF66BB6A) else Color(0xFF888888),
+                    fontSize = 10.sp
+                )
+            }
+            Switch(
+                checked = minutesFallback,
+                onCheckedChange = { onToggleMinutesFallback(habitName) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF66BB6A),
+                    checkedTrackColor = Color(0xFF2E7D32),
+                    uncheckedThumbColor = Color(0xFF888888),
+                    uncheckedTrackColor = Color(0xFF333333)
+                )
+            )
+        }
     }
 }
 
@@ -3542,11 +3582,7 @@ private fun ValueLabelsSection(
     hasSecondaryValue: Boolean,
     subtypes: List<String>,
     labels: Map<String, String>,
-    onSetLabel: (String, String, String) -> Unit,
-    /** True when the secondary slot (Value2) is treated as the primary value. */
-    minutesPrimary: Boolean = false,
-    /** Called when the user changes which value is primary (habitName, value2IsPrimary). */
-    onSetPrimaryValue: (String, Boolean) -> Unit = { _, _ -> }
+    onSetLabel: (String, String, String) -> Unit
 ) {
     if (!hasSecondaryValue && subtypes.isEmpty()) return
 
@@ -3579,31 +3615,8 @@ private fun ValueLabelsSection(
             onSetLabel = onSetLabel
         )
 
-        // ── Primary value selector: which slot drives points; the other
-        // becomes the fallback when the primary is zero on a day.
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "⭐ Primary value (the other becomes the points fallback)",
-            color = Color(0xFF88CCFF),
-            fontSize = 11.sp
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        val v1Label = labels[com.example.tail.data.GRAPH_METRIC_VALUE1]?.ifBlank { null }
-            ?: com.example.tail.data.defaultLabelForValueKey(com.example.tail.data.GRAPH_METRIC_VALUE1)
-        val v2Label = labels[com.example.tail.data.GRAPH_METRIC_VALUE2]?.ifBlank { null }
-            ?: com.example.tail.data.defaultLabelForValueKey(com.example.tail.data.GRAPH_METRIC_VALUE2)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PrimaryValuePill(
-                text = v1Label,
-                selected = !minutesPrimary,
-                onClick = { onSetPrimaryValue(habitName, false) }
-            )
-            PrimaryValuePill(
-                text = v2Label,
-                selected = minutesPrimary,
-                onClick = { onSetPrimaryValue(habitName, true) }
-            )
-        }
+        // Primary-value selection for the minutes slot moved to the universal
+        // PrimaryValueSection in the main edit panel.
     }
 
     subtypes.forEach { subtype ->
@@ -3825,10 +3838,14 @@ private fun EditModeControlBar(
     onRenameHabit: (String, String) -> Unit,
     onSetCount: (String, Int) -> Unit,
     onSetCountWithRollForward: (String, Int, java.time.LocalDate) -> Unit = { _, _, _ -> },
-    /** Called when the user sets the SECONDARY value (timer minutes) for a habit. */
-    onSetSecondaryCount: (String, Int) -> Unit = { _, _ -> },
-    /** Today's secondary-value count (timer minutes) for the selected habit. */
-    selectedHabitSecondaryTodayCount: Int = 0,
+    /** Called when the user sets the MINUTES value (`minutes:<habit>` slot) for a habit. */
+    onSetMinutesCount: (String, Int) -> Unit = { _, _ -> },
+    /** Today's minutes count (`minutes:<habit>` slot) for the selected habit. */
+    selectedHabitMinutesTodayCount: Int = 0,
+    /** Habits that use the minutes slot as points fallback on 0-session days. */
+    minutesFallbackHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the minutes fallback for a habit. */
+    onToggleMinutesFallback: (String) -> Unit = {},
     onSetDivider: (String, Int) -> Unit,
     onToggleConditional: (String) -> Unit,
     onSetConditionalLinks: (String) -> Unit,
@@ -3877,6 +3894,7 @@ private fun EditModeControlBar(
     // ── GitHub Integration (rendered by caller, like movieBridgeContent) ──
     githubContent: @Composable () -> Unit = {},
     movieBridgeContent: @Composable () -> Unit = {},
+    pcWidgetContent: @Composable () -> Unit = {},
     voiceTriggerEnabled: Boolean = false,
     voiceTriggerHabits: Set<String> = emptySet(),
     voiceTriggerWords: Map<String, Set<String>> = emptyMap(),
@@ -4297,10 +4315,27 @@ private fun EditModeControlBar(
                     widgetTimerMinutesPrimary = widgetTimerMinutesPrimary,
                     mediaHabits = mediaHabits,
                     rawTodayCount = selectedHabitRawTodayCount,
-                    secondaryTodayCount = selectedHabitSecondaryTodayCount,
+                    minutesTodayCount = selectedHabitMinutesTodayCount,
                     onSetCount = onSetCount,
-                    onSetSecondaryCount = onSetSecondaryCount
+                    onSetMinutesCount = onSetMinutesCount
                 )
+                // Minutes — direct editor for the first-class `minutes:<habit>`
+                // slot, at the top beside the value editor. Skipped when the
+                // editor above already covers minutes (timer dropdown, media
+                // habits) or when the habit's values live elsewhere (Garmin
+                // sync, secondary-value track).
+                if (selectedHabitName != null &&
+                    selectedHabitName !in garminHabitLinks &&
+                    selectedHabitName !in mediaHabits &&
+                    widgetTriggerApps[selectedHabitName].isNullOrBlank() &&
+                    selectedHabitName !in secondaryValueSettings.habits
+                ) {
+                    EditModeMinutesEditorRow(
+                        habitName = selectedHabitName,
+                        minutesToday = selectedHabitMinutesTodayCount,
+                        onSetMinutesToday = onSetMinutesCount
+                    )
+                }
                 // Timestamps button — always available so timestamps can be
                 // added/edited for any habit on any day (past or current),
                 // even when none exist yet.
@@ -5020,15 +5055,27 @@ private fun EditModeControlBar(
                         onToggleSecondaryValueFallback = secondaryValueSettings.onToggleSecondaryValueFallback
                     )
 
+                    // ── Primary value (Sessions vs Minutes) — first-class minutes ──
+                    // Every habit has a minutes slot (`minutes:<habit>`). Shown
+                    // for ALL habits — with secondary values on, the wording
+                    // adapts and the fallback switch defers to the
+                    // "Fallback to secondary" toggle above.
+                    PrimaryValueSection(
+                        habitName = selectedHabitName,
+                        isSecondaryValue = selectedHabitName in secondaryValueSettings.habits,
+                        minutesPrimary = selectedHabitName in widgetTimerMinutesPrimary,
+                        onSetPrimaryValue = onSetTimerPrimaryValue,
+                        minutesFallback = selectedHabitName in minutesFallbackHabits,
+                        onToggleMinutesFallback = onToggleMinutesFallback
+                    )
+
                     // ── Value Labels (display-only override) ───────────────────
                     ValueLabelsSection(
                         habitName = selectedHabitName,
                         hasSecondaryValue = selectedHabitName in secondaryValueSettings.habits,
                         subtypes = habitSubtypes[selectedHabitName] ?: emptyList(),
                         labels = valueDisplayLabels[selectedHabitName] ?: emptyMap(),
-                        onSetLabel = onSetValueDisplayLabel,
-                        minutesPrimary = selectedHabitName in widgetTimerMinutesPrimary,
-                        onSetPrimaryValue = onSetTimerPrimaryValue
+                        onSetLabel = onSetValueDisplayLabel
                     )
 
                     // ── Custom Point Ranges toggle ────────────────────────────
@@ -5387,9 +5434,7 @@ private fun EditModeControlBar(
                         onToggleWidgetTrigger = onToggleWidgetTrigger,
                         onSetWidgetTriggerApp = onSetWidgetTriggerApp,
                         hasUsageAccess = hasUsageAccess,
-                        onRequestUsageAccess = onRequestUsageAccess,
-                        widgetTimerMinutesPrimary = widgetTimerMinutesPrimary,
-                        onSetTimerPrimaryValue = onSetTimerPrimaryValue
+                        onRequestUsageAccess = onRequestUsageAccess
                     )
 
                     // ── Daily ask (scheduled notification) ─────────────────
@@ -5458,7 +5503,8 @@ private fun EditModeControlBar(
                             }
                         },
                         githubContent = githubContent,
-                        movieBridgeContent = movieBridgeContent
+                        movieBridgeContent = movieBridgeContent,
+                        pcWidgetContent = pcWidgetContent
                     )
 
                     // ── Advanced section (invert, restore-from-backup, etc.) ──
@@ -5804,12 +5850,12 @@ private fun HabitInputModesSection(
  * Edit-mode row for setting a habit's "true value" for the selected date.
  *
  * - Timer habits (widget trigger app configured) track TWO values — sessions
- *   (the habit's own slot) and minutes (the secondary_value slot) — so they
- *   get a dropdown that picks which value to edit. The default selection is
- *   the habit's PRIMARY value (per [widgetTimerMinutesPrimary]).
+ *   (the habit's own slot) and minutes (the first-class `minutes:<habit>`
+ *   slot) — so they get a dropdown that picks which value to edit. The
+ *   default selection is the habit's PRIMARY value (per [widgetTimerMinutesPrimary]).
  * - Garmin-linked habits show a read-only label with the derived Garmin
  *   metric value.
- * - Media habits edit their MINUTES (the secondary_value slot the media
+ * - Media habits edit their MINUTES (the `minutes:<habit>` slot the media
  *   tracker auto-records into), labelled "minutes:".
  * - Other single-value habits (e.g. divider habits) get a plain label naming
  *   the value, with an editable field.
@@ -5828,9 +5874,9 @@ private fun EditModeValueEditorRow(
     widgetTimerMinutesPrimary: Set<String>,
     mediaHabits: Set<String> = emptySet(),
     rawTodayCount: Int,
-    secondaryTodayCount: Int,
+    minutesTodayCount: Int,
     onSetCount: (String, Int) -> Unit,
-    onSetSecondaryCount: (String, Int) -> Unit
+    onSetMinutesCount: (String, Int) -> Unit
 ) {
     val habitName = selectedHabitName ?: return
     val isGarminLinked = habitName in garminHabitLinks
@@ -5887,9 +5933,9 @@ private fun EditModeValueEditorRow(
         mutableStateOf(minutesPrimary || isMediaHabit)
     }
     var valuePickerExpanded by remember { mutableStateOf(false) }
-    // The value being edited: minutes live in the secondary-
-    // value slot, sessions in the habit's own slot.
-    val editingValue = if (editingMinutes) secondaryTodayCount else rawTodayCount
+    // The value being edited: minutes live in the first-class
+    // `minutes:<habit>` slot, sessions in the habit's own slot.
+    val editingValue = if (editingMinutes) minutesTodayCount else rawTodayCount
     // Editable remembered field bound to the edited value. Re-keyed on the
     // edited track so switching Minutes/Sessions reloads the other track's
     // stored value instead of keeping stale text.
@@ -5994,7 +6040,7 @@ private fun EditModeValueEditorRow(
                     trueValueText = digits.toIntOrNull()?.toString() ?: ""
                     val newCount = trueValueText.toIntOrNull() ?: 0
                     if (editingMinutes) {
-                        onSetSecondaryCount(habitName, newCount)
+                        onSetMinutesCount(habitName, newCount)
                     } else {
                         onSetCount(habitName, newCount)
                     }
@@ -6021,6 +6067,60 @@ private fun EditModeValueEditorRow(
     }
 }
 
+/**
+ * Direct editor for the first-class `minutes:<habit>` slot, shown at the
+ * top of the edit bar beside the value editor for habits whose value
+ * editor doesn't already cover minutes (plain and divider habits).
+ */
+@Composable
+private fun EditModeMinutesEditorRow(
+    habitName: String,
+    minutesToday: Int,
+    onSetMinutesToday: (String, Int) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "minutes:",
+            color = Color(0xFFAA88FF),
+            fontSize = 10.sp
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        var minutesText by remember(habitName) { mutableStateOf(minutesToday.toString()) }
+        var minutesFieldFocused by remember { mutableStateOf(false) }
+        // Sync when today's minutes change externally (timer, PC widget,
+        // media tracker). While focused, an EMPTY text is a legitimate
+        // mid-edit state and must not be coerced back to "0" (cursor jump).
+        val parsedMinutes = minutesText.toIntOrNull()
+        if (parsedMinutes != minutesToday && (parsedMinutes != null || !minutesFieldFocused)) {
+            minutesText = minutesToday.toString()
+        }
+        OutlinedTextField(
+            value = minutesText,
+            onValueChange = { v: String ->
+                val digits = v.filter { it.isDigit() }
+                minutesText = digits.toIntOrNull()?.toString() ?: ""
+                onSetMinutesToday(habitName, minutesText.toIntOrNull() ?: 0)
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier
+                .width(64.dp)
+                .onFocusChanged { minutesFieldFocused = it.isFocused },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color(0xFFAA88FF),
+                unfocusedTextColor = Color(0xFFAA88FF),
+                focusedBorderColor = Color(0xFFAA88FF),
+                unfocusedBorderColor = Color(0xFF664488)
+            ),
+            textStyle = TextStyle(fontSize = 12.sp, textAlign = TextAlign.Center)
+        )
+    }
+}
+
 // ── Advanced section ────────────────────────────────────────────────────────
 
 /**
@@ -6040,7 +6140,8 @@ private fun SpecialHabitTypesSection(
     mediaContent: @Composable () -> Unit,
     garminContent: @Composable () -> Unit,
     githubContent: @Composable () -> Unit,
-    movieBridgeContent: @Composable () -> Unit
+    movieBridgeContent: @Composable () -> Unit,
+    pcWidgetContent: @Composable () -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -6082,6 +6183,7 @@ private fun SpecialHabitTypesSection(
         garminContent()
         githubContent()
         movieBridgeContent()
+        pcWidgetContent()
     }
 }
 
@@ -8032,6 +8134,50 @@ private fun MovieBridgeToggleSection(
         }
         Switch(
             checked = isMovieLinked,
+            onCheckedChange = { onToggle() },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66BB6A),
+                checkedTrackColor = Color(0xFF1B5E20),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+}
+
+/**
+ * PC Widget toggle for the habit edit panel — adds/removes the habit as a
+ * timer square on the desktop floating bubble widget. The phone pushes the
+ * list to the Tail Bridge; the PC widget mirrors it live.
+ * Extracted to its own composable to keep [EditModeControlBar] under the
+ * JVM method-size limit.
+ */
+@Composable
+private fun PcWidgetToggleSection(
+    isOnPcWidget: Boolean,
+    syncConfigured: Boolean,
+    onToggle: () -> Unit
+) {
+    Spacer(modifier = Modifier.height(6.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "🖥 PC Widget", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = when {
+                    !syncConfigured -> "Connect the Tail Bridge (Garmin) in Settings first"
+                    isOnPcWidget -> "Timer square on the PC bubble widget"
+                    else -> "Not shown on the PC widget"
+                },
+                color = if (isOnPcWidget && syncConfigured) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isOnPcWidget,
             onCheckedChange = { onToggle() },
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color(0xFF66BB6A),

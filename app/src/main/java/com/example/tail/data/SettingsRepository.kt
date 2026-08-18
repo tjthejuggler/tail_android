@@ -18,6 +18,8 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 private val KEY_FILE_URI = stringPreferencesKey("file_uri")
 private val KEY_SCREENS_RELAY_FILE_URI = stringPreferencesKey("screens_relay_file_uri")
+// PC floating widget sync (noteVault/tail/ folder shared via Syncthing)
+private val KEY_PC_WIDGET_HABITS = stringSetPreferencesKey("pc_widget_habits")
 // In-app stats overlay (StatsOverlayService) master switch
 private val KEY_STATS_OVERLAY_ENABLED = booleanPreferencesKey("stats_overlay_enabled")
 private val KEY_CUSTOM_INPUT = stringSetPreferencesKey("custom_input_habits")
@@ -171,6 +173,14 @@ private val KEY_MIGRATION_APNEA_SECONDARY_DONE = booleanPreferencesKey("migratio
 
 // Migration flag — set to true after the one-time resonance-breathing secondary-value data migration.
 private val KEY_MIGRATION_RESONANCE_SECONDARY_DONE = booleanPreferencesKey("migration_resonance_secondary_done")
+
+// Migration flag — set to true after the one-time move of timer minutes from
+// the generic secondary_value: slot to the first-class minutes: slot.
+private val KEY_MIGRATION_MINUTES_SLOT_DONE = booleanPreferencesKey("migration_minutes_slot_done")
+
+// One-time cleanup: chess.com sync used to record one timestamp per MINUTE;
+// trim chess.com-linked habits' daily timestamps to one per game.
+private val KEY_CHESS_TIMESTAMPS_TRIMMED = booleanPreferencesKey("migration_chess_timestamps_trimmed")
 
 // Migration flag — set to true after the one-time import of the legacy external
 // subtype/timed per-habit SAF JSON files into the internal stores (2026-08-15).
@@ -747,6 +757,22 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[KEY_MIGRATION_RESONANCE_SECONDARY_DONE] = true }
     }
 
+    suspend fun isMinutesSlotMigrationDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_MINUTES_SLOT_DONE] ?: false }.first()
+    }
+
+    suspend fun setMinutesSlotMigrationDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_MINUTES_SLOT_DONE] = true }
+    }
+
+    suspend fun isChessTimestampsTrimDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_CHESS_TIMESTAMPS_TRIMMED] ?: false }.first()
+    }
+
+    suspend fun setChessTimestampsTrimDone() {
+        context.dataStore.edit { it[KEY_CHESS_TIMESTAMPS_TRIMMED] = true }
+    }
+
     suspend fun isSubtypeTimedInternalized(): Boolean {
         return context.dataStore.data.map { it[KEY_MIGRATION_SUBTYPE_TIMED_INTERNALIZED] ?: false }.first()
     }
@@ -788,6 +814,7 @@ class SettingsRepository(private val context: Context) {
         AppSettings(
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
+            pcWidgetHabits = prefs[KEY_PC_WIDGET_HABITS] ?: emptySet(),
             statsOverlayEnabled = prefs[KEY_STATS_OVERLAY_ENABLED] ?: false,
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
@@ -938,6 +965,12 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_SCREENS_RELAY_FILE_URI] = uri
         }
     }
+
+    /** Saves the set of habits shown on the PC floating bubble widget. */
+    suspend fun savePcWidgetHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_PC_WIDGET_HABITS] = habits }
+    }
+
 
     suspend fun saveCustomInputHabits(habits: Set<String>) {
         context.dataStore.edit { prefs ->

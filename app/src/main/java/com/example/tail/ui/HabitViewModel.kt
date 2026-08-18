@@ -48,7 +48,9 @@ import com.example.tail.data.appLinkKey
 import com.example.tail.data.appLinkPackageName
 import com.example.tail.data.appPackageNameOf
 import com.example.tail.data.isAppLink
+import com.example.tail.data.isInternalValueKey
 import com.example.tail.data.isSecondaryValueKey
+import com.example.tail.data.minutesKey
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.secondaryValue2Key
 import com.example.tail.data.secondaryValueSlotKey
@@ -61,6 +63,7 @@ import com.example.tail.data.GRAPH_METRIC_POINTS
 import com.example.tail.data.GRAPH_METRIC_VALUE1
 import com.example.tail.data.GRAPH_METRIC_VALUE2
 import com.example.tail.data.GRAPH_METRIC_VALUE3
+import com.example.tail.data.GRAPH_METRIC_MINUTES
 import com.example.tail.data.GRAPH_METRIC_CALORIES
 import com.example.tail.data.GRAPH_METRIC_PROTEIN
 import com.example.tail.data.GRAPH_METRIC_CARBS
@@ -83,7 +86,10 @@ import com.example.tail.data.OmdbOutcome
 import com.example.tail.data.ImdbRatingCache
 import com.example.tail.data.ParsedTitle
 import com.example.tail.data.HabitsRepository
+import com.example.tail.data.BridgeClient
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.PcEventQueueProcessor
+import com.example.tail.data.bridgeConnectionFrom
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.applyDivider
 import com.example.tail.widget.ChessReadinessLogStore
@@ -830,6 +836,14 @@ class HabitViewModel(
                     if (s.screensRelayFileUri.isNotEmpty() && s.habitScreens.isNotEmpty()) {
                         writeScreensRelayFile(s.habitScreens, s.activeScreenIndex, s.screensRelayFileUri)
                     }
+                    // Refresh the PC floating-widget config on startup and apply any
+                    // PC habit events that queued up while the app was closed.
+                    if (s.garminProxyUrl.isNotEmpty()) {
+                        pushPcWidgetConfig()
+                        withContext(Dispatchers.IO) {
+                            PcEventQueueProcessor(context).processOnce()
+                        }
+                    }
                     // Start chess.com polling if enabled
                     if (s.chessComEnabled && s.chessComUsername.isNotEmpty()) {
                         startChessComPolling()
@@ -1003,6 +1017,110 @@ class HabitViewModel(
         Log.i(TAG, "Resonance secondary migration complete.")
     }
 
+    /**
+     * One-time migration to the FIRST-CLASS MINUTES slot (`minutes:<habit>`).
+     *
+     * Timer-based features (phone bubble, PC widget, trigger apps, media
+     * tracking, chess readiness) used to write minutes into the GENERIC
+     * secondary-value slot (`secondary_value:<habit>`), which required per-habit
+     * setup plus manual "Minutes" display labels. Every habit now has a real
+     * minutes slot automatically — no setup, semantically known by the app.
+     *
+     * For every habit fed by those timer features this moves the
+     * `secondary_value:` data into `minutes:` (max-merge), removes the stale
+     * legacy settings (secondary-value membership, fallback membership,
+     * Sessions/Minutes display labels) and keeps minutes-primary habits
+     * minutes-primary. "Good Posture" is additionally switched to
+     * minutes-primary (user request, 2026-08-18).
+     *
+     * Habits that use the generic secondary slot for OTHER data (Meditations/
+     * Apnea/Resonance session counts, chess.com games, JugCoach seconds, IMDb
+     * ratings) are NOT touched. Idempotent: safe to re-run.
+     */
+    private suspend fun performMinutesSlotMigration(uri: Uri) {
+        try {
+            val s = _settings.value
+            val chessLinked = setOf(
+                com.example.tail.widget.ChessReadinessStore.linkedPuzzleHabit(context),
+                com.example.tail.widget.ChessReadinessStore.linkedRushHabit(context)
+            ).filter { it.isNotBlank() }
+            val timerFed = s.widgetTimerMinutesPrimary +
+                s.pcWidgetHabits +
+                s.widgetTriggerApps.values.toSet() +
+                s.mediaHabits +
+                chessLinked +
+                setOf("Good Posture")
+            val db = cachedPhoneDb.toMutableMap()
+            var changed = false
+            val secHabits = s.secondaryValueHabits.toMutableSet()
+            val fallback = s.secondaryValueFallbackHabits.toMutableSet()
+            val labels = s.valueDisplayLabels.toMutableMap()
+            val minutesPrimary = s.widgetTimerMinutesPrimary.toMutableSet()
+            for (habit in timerFed) {
+                val secKey = secondaryValueKey(habit)
+                val secData = db[secKey] ?: continue
+                val minKey = minutesKey(habit)
+                val merged = (db[minKey] ?: emptyMap()).toMutableMap()
+                for ((d, v) in secData) merged[d] = maxOf(merged[d] ?: 0, v)
+                db[minKey] = merged
+                db.remove(secKey)
+                changed = true
+                secHabits.remove(habit)
+                fallback.remove(habit)
+                labels.remove(habit)
+                if (habit == "Good Posture") minutesPrimary.add(habit)
+            }
+            if (changed) {
+                habitsRepo.saveDatabase(uri, context, db)
+                cachedPhoneDb = db
+            }
+            settingsRepo.saveSecondaryValueHabits(secHabits)
+            settingsRepo.saveSecondaryValueFallbackHabits(fallback)
+            settingsRepo.saveValueDisplayLabels(labels)
+            settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
+            _settings.value = _settings.value.copy(
+                secondaryValueHabits = secHabits,
+                secondaryValueFallbackHabits = fallback,
+                valueDisplayLabels = labels,
+                widgetTimerMinutesPrimary = minutesPrimary
+            )
+            settingsRepo.setMinutesSlotMigrationDone()
+            Log.i(TAG, "performMinutesSlotMigration: done")
+        } catch (e: Exception) {
+            Log.e(TAG, "performMinutesSlotMigration failed (will retry next load): ${e.message}")
+        }
+    }
+
+    /**
+     * One-time cleanup: the chess.com sync used to record one timestamp per
+     * MINUTE played (the minutes delta was passed to addTimestamps). Trims
+     * each chess.com-linked habit's daily timestamp lists down to that day's
+     * game count — one timestamp per game — keeping the earliest entries.
+     */
+    private suspend fun performChessTimestampTrim() {
+        try {
+            val s = _settings.value
+            if (s.chessComHabitLinks.isNotEmpty()) {
+                val all = timestampRepo.loadAll()
+                for (habitName in s.chessComHabitLinks.keys) {
+                    val days = all[habitName] ?: continue
+                    val gamesEntries = cachedPhoneDb[secondaryValueKey(habitName)] ?: continue
+                    for ((dateStr, stamps) in days) {
+                        val games = gamesEntries[dateStr] ?: 0
+                        if (games > 0 && stamps.size > games) {
+                            val date = com.example.tail.data.parseDate(dateStr) ?: continue
+                            timestampRepo.setTimestampsForDay(habitName, date, stamps.take(games))
+                        }
+                    }
+                }
+            }
+            settingsRepo.setChessTimestampsTrimDone()
+            Log.i(TAG, "performChessTimestampTrim: done")
+        } catch (e: Exception) {
+            Log.e(TAG, "performChessTimestampTrim failed (will retry next load): ${e.message}")
+        }
+    }
+
     private suspend fun catchUpAndLoad(uri: Uri) {
         _isLoading.value = true
         _errorMessage.value = null
@@ -1036,6 +1154,20 @@ class HabitViewModel(
             // mechanism can use them for points on days with 0 minutes.
             if (!settingsRepo.isResonanceSecondaryMigrationDone()) {
                 performResonanceSecondaryMigration(uri)
+            }
+
+            // ── One-time first-class minutes-slot migration ────────────────
+            // Timer features used to write minutes into the generic secondary
+            // slot; move them to the dedicated minutes: slot.
+            if (!settingsRepo.isMinutesSlotMigrationDone()) {
+                performMinutesSlotMigration(uri)
+            }
+
+            // ── One-time chess.com timestamp trim ──────────────────────────
+            // The chess.com sync used to record one timestamp per minute;
+            // trim to one per game.
+            if (!settingsRepo.isChessTimestampsTrimDone()) {
+                performChessTimestampTrim()
             }
 
             // Perform roll forward BEFORE ensureDaysExist creates today=0
@@ -1272,6 +1404,17 @@ class HabitViewModel(
         }
     }
 
+    /** Toggles whether [habitName] appears as a timer square on the PC widget. */
+    fun togglePcWidgetHabit(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.pcWidgetHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.savePcWidgetHabits(current)
+            _settings.value = _settings.value.copy(pcWidgetHabits = current)
+            pushPcWidgetConfig()
+        }
+    }
+
     /**
      * Navigate the selected date by [deltaDays] (negative = go back, positive = go forward).
      * Cannot navigate past today.
@@ -1325,7 +1468,7 @@ class HabitViewModel(
         val noPointsHabits = _settings.value.noPointsHabits
         // Use all habit names present in the DB (covers all screens),
         // excluding secondary-value storage entries
-        val habitNames = db.keys.filter { !isSecondaryValueKey(it) }
+        val habitNames = db.keys.filter { !isInternalValueKey(it) }
 
         val result = mutableMapOf<String, Int>()
         // Build date strings for every day in the month
@@ -3228,20 +3371,84 @@ class HabitViewModel(
      */
     private fun effectivePointsForDate(habitName: String, rawCount: Int, dateStr: String): Int {
         val divider = _settings.value.habitDividers[habitName] ?: 1
-        // Widget-timer habits with minutes primary: minutes (secondary-value slot)
-        // drive points (divider applies), sessions are the zero-minutes fallback.
+        // Minutes-primary habits: minutes (the first-class minutes slot) drive
+        // points (divider applies), sessions are the zero-minutes fallback.
         // Inverted-binary habits: 1 point on not-done days, 0 on done days
         if (habitName in _settings.value.invertedBinaryHabits) {
             return com.example.tail.data.invertedBinaryPoints(rawCount)
         }
         if (habitName in _settings.value.widgetTimerMinutesPrimary) {
-            val minutes = cachedPhoneDb[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+            val minutes = cachedPhoneDb[minutesKey(habitName)]?.get(dateStr) ?: 0
             return com.example.tail.data.effectivePointsWithFallback(minutes, divider, rawCount, true)
         }
         val useFallback = habitName in _settings.value.secondaryValueFallbackHabits
         if (!useFallback) return applyDivider(rawCount, divider)
-        val secVal = cachedPhoneDb[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+        // Fallback source: the legacy generic secondary slot when the habit
+        // uses it or has data there (Meditations/Apnea/Resonance sessions,
+        // chess.com games, JugCoach seconds), otherwise the first-class
+        // minutes slot.
+        val fallbackKey = com.example.tail.data.fallbackSlotKey(
+            habitName, _settings.value.secondaryValueHabits, cachedPhoneDb
+        )
+        val secVal = cachedPhoneDb[fallbackKey]?.get(dateStr) ?: 0
         return com.example.tail.data.effectivePointsWithFallback(rawCount, divider, secVal, true)
+    }
+
+    /**
+     * Returns the selected date's minutes for [habitName] from the first-class
+     * minutes slot (`minutes:<habit>`).
+     */
+    fun getMinutesTodayCount(habitName: String): Int {
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        return cachedPhoneDb[minutesKey(habitName)]?.get(dateStr) ?: 0
+    }
+
+    /**
+     * Sets the selected date's minutes for [habitName] in the first-class
+     * minutes slot (clamped to ≥ 0), then refreshes the habit list,
+     * widgets and listeners.
+     */
+    fun setHabitMinutesCount(habitName: String, newCount: Int) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isNullOrEmpty()) return
+        val clamped = newCount.coerceAtLeast(0)
+        viewModelScope.launch {
+            try {
+                val uri = Uri.parse(uriString)
+                val result = habitsRepo.loadDatabaseResult(uri, context)
+                if (result !is com.example.tail.data.HabitsLoadResult.Success) {
+                    throw com.example.tail.data.HabitsLoadFailedException(result)
+                }
+                val db = result.db.toMutableMap()
+                val minKey = minutesKey(habitName)
+                val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+                val entries = db[minKey]?.toMutableMap() ?: mutableMapOf()
+                if (clamped > 0) entries[dateStr] = clamped else entries.remove(dateStr)
+                if (entries.isEmpty()) db.remove(minKey) else db[minKey] = entries.toSortedMap()
+                habitsRepo.saveDatabase(uri, context, db)
+                cachedPhoneDb = db
+                rebuildHabitList()
+                HabitIncrementBus.emit(habitName)
+                HabitListWidgetProvider.refreshAll(context)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to set minutes: ${e.message}"
+            }
+        }
+    }
+
+    /**
+     * Toggles the "fall back to minutes" points fallback for a sessions-primary
+     * habit. Writes the shared fallback set; the fallback SOURCE resolves to
+     * the minutes slot unless the habit uses the legacy generic secondary value.
+     */
+    fun toggleMinutesFallbackHabit(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.secondaryValueFallbackHabits
+            val updated = if (habitName in current) current - habitName else current + habitName
+            settingsRepo.saveSecondaryValueFallbackHabits(updated)
+            _settings.value = _settings.value.copy(secondaryValueFallbackHabits = updated)
+            rebuildHabitList()
+        }
     }
 
     /**
@@ -3577,44 +3784,21 @@ class HabitViewModel(
      */
     fun setWidgetTriggerApp(habitName: String, packageName: String) {
         viewModelScope.launch {
-            val settings = _settings.value
-            val apps = settings.widgetTriggerApps.toMutableMap()
+            val apps = _settings.value.widgetTriggerApps.toMutableMap()
             apps[habitName] = packageName
             settingsRepo.saveWidgetTriggerApps(apps)
             _settings.value = _settings.value.copy(widgetTriggerApps = apps)
 
-            // First-time setup for the timer feature: give the habit a "minutes"
-            // secondary value (where the bubble timer writes), enable the points
-            // fallback, and make minutes the PRIMARY value by default (the raw
-            // session count becomes the fallback). Users can swap this later.
-            if (packageName.isNotBlank() && settings.widgetTriggerApps[habitName].isNullOrBlank()) {
-                val secVal = settings.secondaryValueHabits + habitName
-                val fallback = settings.secondaryValueFallbackHabits + habitName
-                val minutesPrimary = settings.widgetTimerMinutesPrimary + habitName
-                val labels = settings.valueDisplayLabels.toMutableMap()
-                labels[habitName] = mapOf(
-                    com.example.tail.data.GRAPH_METRIC_VALUE1 to "Sessions",
-                    com.example.tail.data.GRAPH_METRIC_VALUE2 to "Minutes"
-                )
-                settingsRepo.saveSecondaryValueHabits(secVal)
-                settingsRepo.saveSecondaryValueFallbackHabits(fallback)
-                settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
-                settingsRepo.saveValueDisplayLabels(labels)
-                _settings.value = _settings.value.copy(
-                    secondaryValueHabits = secVal,
-                    secondaryValueFallbackHabits = fallback,
-                    widgetTimerMinutesPrimary = minutesPrimary,
-                    valueDisplayLabels = labels
-                )
-                rebuildHabitList()
-            }
+            // No value-setup needed anymore: every habit has a first-class
+            // minutes slot automatically, and which value is primary is a
+            // single explicit toggle in the edit panel.
 
             updateWidgetTriggerService()
         }
     }
 
     /**
-     * Sets which value is PRIMARY for a widget-timer habit:
+     * Sets which value is PRIMARY for a habit (any habit, not just timer ones):
      *  - [minutesPrimary] = true  → minutes drive points/display; sessions are
      *    the fallback used only on days with zero minutes.
      *  - [minutesPrimary] = false → sessions primary; minutes fallback.
@@ -3626,6 +3810,11 @@ class HabitViewModel(
             settingsRepo.saveWidgetTimerMinutesPrimary(updated)
             _settings.value = _settings.value.copy(widgetTimerMinutesPrimary = updated)
             rebuildHabitList()
+            // The PC widget config carries the minutes-primary flag — refresh it
+            // when a PC-widget habit's primary value changes.
+            if (habitName in _settings.value.pcWidgetHabits) {
+                pushPcWidgetConfig()
+            }
         }
     }
 
@@ -4039,6 +4228,7 @@ class HabitViewModel(
         val dates = mutableSetOf<String>()
         dates.addAll(cachedPhoneDb[habitName]?.keys ?: emptySet())
         dates.addAll(cachedPhoneDb[secondaryValueKey(habitName)]?.keys ?: emptySet())
+        dates.addAll(cachedPhoneDb[minutesKey(habitName)]?.keys ?: emptySet())
         for (slot in 2..6) {
             dates.addAll(cachedPhoneDb[secondaryValueSlotKey(habitName, slot)]?.keys ?: emptySet())
         }
@@ -4065,7 +4255,7 @@ class HabitViewModel(
             return
         }
         viewModelScope.launch {
-            val keysToRemove = listOf(habitName, secondaryValueKey(habitName)) +
+            val keysToRemove = listOf(habitName, secondaryValueKey(habitName), minutesKey(habitName)) +
                 (2..6).map { secondaryValueSlotKey(habitName, it) }
             val mutableDb = cachedPhoneDb.toMutableMap()
             var changed = false
@@ -4224,6 +4414,7 @@ class HabitViewModel(
                     maxOneHabits = settings.maxOneHabits.replaceElement(oldName, newName),
                     invertedBinaryHabits = settings.invertedBinaryHabits.replaceElement(oldName, newName),
                     bridgeMovieHabits = settings.bridgeMovieHabits.replaceElement(oldName, newName),
+                    pcWidgetHabits = settings.pcWidgetHabits.replaceElement(oldName, newName),
                     rollForwardHabits = settings.rollForwardHabits.replaceElement(oldName, newName),
                     rollForwardManualDates = settings.rollForwardManualDates.replaceKey(oldName, newName),
                     mealHabits = settings.mealHabits.replaceElement(oldName, newName),
@@ -4288,6 +4479,7 @@ class HabitViewModel(
                 settingsRepo.saveMaxOneHabits(newSettings.maxOneHabits)
                 settingsRepo.saveInvertedBinaryHabits(newSettings.invertedBinaryHabits)
                 settingsRepo.saveBridgeMovieHabits(newSettings.bridgeMovieHabits)
+                settingsRepo.savePcWidgetHabits(newSettings.pcWidgetHabits)
                 settingsRepo.saveRollForwardHabits(newSettings.rollForwardHabits)
                 settingsRepo.saveRollForwardManualDates(newSettings.rollForwardManualDates)
                 settingsRepo.saveMealHabits(newSettings.mealHabits)
@@ -4320,6 +4512,8 @@ class HabitViewModel(
                 if (relayUri.isNotEmpty()) {
                     writeScreensRelayFile(newHabitScreens, _activeScreenIndex.value, relayUri)
                 }
+                // Keep the PC floating-widget config in step with the rename
+                pushPcWidgetConfig()
                 
                 Log.i(TAG, "renameHabit: successfully renamed '$oldName' to '$newName'")
             } catch (e: Exception) {
@@ -4409,6 +4603,11 @@ class HabitViewModel(
             val relayUri = _settings.value.screensRelayFileUri
             if (relayUri.isNotEmpty()) {
                 writeScreensRelayFile(_habitScreens.value, _activeScreenIndex.value, relayUri)
+            }
+            // The PC floating-widget config embeds icon overrides — refresh it
+            // when an icon changes for a habit shown on the PC widget.
+            if (habitName in _settings.value.pcWidgetHabits) {
+                pushPcWidgetConfig()
             }
         }
     }
@@ -4603,6 +4802,51 @@ class HabitViewModel(
             Log.d(TAG, "Wrote screens relay file: ${screens.size} screens, ${_settings.value.habitIcons.size} icon overrides")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to write screens relay file: ${e.message}")
+        }
+    }
+
+    /**
+     * Pushes the PC-widget habit config to the Tail Bridge so the desktop
+     * floating bubble knows which habits to show as timer squares. Uses the
+     * bridge connection auto-derived from the Garmin proxy settings (same
+     * as the movie bridge — no extra setup); silently skips when the
+     * bridge isn't configured and retries on the next change/startup.
+     *
+     * Payload:
+     * {
+     *   "version": 1,
+     *   "updated_at": "<iso-8601>",
+     *   "habits": [
+     *     { "name": "Meditation", "icon": "lotus", "minutes_primary": true },
+     *     ...
+     *   ]
+     * }
+     */
+    private suspend fun pushPcWidgetConfig() {
+        val s = _settings.value
+        val bridge = bridgeConnectionFrom(s.garminProxyUrl, s.garminAppToken) ?: return
+        try {
+            val root = JSONObject()
+            root.put("version", 1)
+            root.put("updated_at", java.time.Instant.now().toString())
+            val habitsArray = JSONArray()
+            for (habitName in s.pcWidgetHabits) {
+                val habitObj = JSONObject()
+                habitObj.put("name", habitName)
+                s.habitIcons[habitName]?.let { habitObj.put("icon", it) }
+                habitObj.put("minutes_primary", habitName in s.widgetTimerMinutesPrimary)
+                habitsArray.put(habitObj)
+            }
+            root.put("habits", habitsArray)
+
+            val resp = BridgeClient().post(bridge.first, bridge.second, "pc_widget/config", root)
+            if (resp != null) {
+                Log.d(TAG, "Pushed PC widget config: ${s.pcWidgetHabits.size} habits")
+            } else {
+                Log.w(TAG, "PC widget config push failed (bridge unreachable?)")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to push PC widget config: ${e.message}")
         }
     }
 
@@ -5017,6 +5261,14 @@ class HabitViewModel(
                 if (hasV2) metrics.add(v2)
             }
         }
+        // First-class minutes slot — available for every habit once any
+        // timer-based feature has written minutes (or always for
+        // minutes-primary habits).
+        val hasMinutes = habitName in _settings.value.widgetTimerMinutesPrimary ||
+            !cachedPhoneDb[minutesKey(habitName)].isNullOrEmpty()
+        if (hasMinutes) {
+            metrics.add(GraphMetricOption(com.example.tail.data.GRAPH_METRIC_MINUTES, com.example.tail.data.displayLabelForValue(habitName, com.example.tail.data.GRAPH_METRIC_MINUTES, labels)))
+        }
         // Value3 (second-slot secondary value, `secondary_value2:`) — written by
         // the chess.com integration (daily win percentage)
         if (habitName in _settings.value.chessComHabitLinks) {
@@ -5183,6 +5435,8 @@ class HabitViewModel(
         val garminValue: Int? = null,   // for Garmin-linked habits (actual metric value)
         val secondaryValue: Int? = null, // for habits with secondary values enabled
         val tertiaryValue: Int? = null, // second-slot secondary value (secondary_value2:)
+        // ── First-class minutes slot (`minutes:<habitName>`) ──
+        val minutesValue: Int? = null,
         // ── Meal habit data (populated only for meal-type habits) ──
         val mealCalories: Int? = null,
         val mealProtein: Int? = null,   // rounded grams
@@ -5273,6 +5527,11 @@ class HabitViewModel(
         } else null
         val jugcoachTimeEntries = if (isJugcoach) cachedPhoneDb[secondaryValueKey(habitName)] else null
         val useSecondaryFallback = habitName in _settings.value.secondaryValueFallbackHabits
+        val minutesPrimary = habitName in _settings.value.widgetTimerMinutesPrimary
+        // First-class minutes slot (`minutes:<habitName>`) — exists for every
+        // habit; populated by all timer-fed sources (phone bubble, PC widget,
+        // trigger apps, media tracking, chess readiness).
+        val minutesEntries = cachedPhoneDb[minutesKey(habitName)]
         val startStr = dateString(startDate)
         val endStr = dateString(endDate)
 
@@ -5365,6 +5624,7 @@ class HabitViewModel(
             } else null
             
             val secVal = secondaryEntries?.get(ds)
+            val minutesVal = minutesEntries?.get(ds)
             val mealDay = mealAggregates[ds]
             val ghMetrics = _githubDailyCache[habitName]?.get(ds)
             // When cache is empty (before re-fetch), fall back to DB value for the
@@ -5375,19 +5635,32 @@ class HabitViewModel(
                     date = cursor,
                     dateStr = ds,
                     rawValue = filteredRaw,
-                    pointsValue = if (habitName in _settings.value.widgetTimerMinutesPrimary) {
-                        // Minutes primary: minutes drive points, sessions fallback
+                    pointsValue = if (minutesPrimary) {
+                        // Minutes primary: minutes (dedicated slot) drive points,
+                        // sessions are the fallback
                         com.example.tail.data.effectivePointsWithFallback(
-                            secVal ?: 0, divider, filteredRaw, true
+                            minutesVal ?: 0, divider, filteredRaw, true
                         )
                     } else {
+                        // Sessions primary: the fallback value lives in the legacy
+                        // secondary slot for habits that use it or have data there,
+                        // the minutes slot otherwise
+                        val fallbackVal = if (
+                            habitName in _settings.value.secondaryValueHabits ||
+                            !cachedPhoneDb[secondaryValueKey(habitName)].isNullOrEmpty()
+                        ) {
+                            secVal ?: 0
+                        } else {
+                            minutesVal ?: 0
+                        }
                         com.example.tail.data.effectivePointsWithFallback(
-                            filteredRaw, divider, secVal ?: 0, useSecondaryFallback
+                            filteredRaw, divider, fallbackVal, useSecondaryFallback
                         )
                     },
                     garminValue = garminVal,
                     secondaryValue = secVal,
                     tertiaryValue = tertiaryEntries?.get(ds),
+                    minutesValue = minutesVal,
                     mealCalories = mealDay?.calories,
                     mealProtein = mealDay?.proteinGrams?.roundToInt(),
                     mealCarbs = mealDay?.carbsGrams?.roundToInt(),
@@ -5436,6 +5709,7 @@ class HabitViewModel(
         GRAPH_METRIC_VALUE1 -> dp.garminValue ?: dp.rawValue
         GRAPH_METRIC_VALUE2 -> dp.secondaryValue ?: 0
         GRAPH_METRIC_VALUE3 -> dp.tertiaryValue ?: 0
+        GRAPH_METRIC_MINUTES -> dp.minutesValue ?: 0
         GRAPH_METRIC_IMDB -> dp.secondaryValue ?: 0
         GRAPH_METRIC_RUNTIME -> dp.movieRuntimeMinutes ?: 0
         GRAPH_METRIC_CALORIES -> dp.mealCalories ?: 0
@@ -5464,6 +5738,7 @@ class HabitViewModel(
         GRAPH_METRIC_VALUE1 -> if (dp.garminValue != null) dp.copy(garminValue = value) else dp.copy(rawValue = value)
         GRAPH_METRIC_VALUE2 -> dp.copy(secondaryValue = value)
         GRAPH_METRIC_VALUE3 -> dp.copy(tertiaryValue = value)
+        GRAPH_METRIC_MINUTES -> dp.copy(minutesValue = value)
         GRAPH_METRIC_IMDB -> dp.copy(secondaryValue = value)
         GRAPH_METRIC_RUNTIME -> dp.copy(movieRuntimeMinutes = value)
         GRAPH_METRIC_CALORIES -> dp.copy(mealCalories = value)
@@ -6051,6 +6326,18 @@ class HabitViewModel(
             if (triggerCount > 0) {
                 com.example.tail.widget.WidgetTriggerService.updateServiceState(context, triggerCount)
             }
+            // Drain the PC widget event queue on the bridge BEFORE reloading
+            // the phone DB below, so sessions recorded on the PC show up in
+            // this same refresh. No-op when the bridge isn't configured.
+            try {
+                if (_settings.value.garminProxyUrl.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        PcEventQueueProcessor(context).processOnce()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "onAppForegrounded: PC event queue drain failed: ${e.message}")
+            }
             // Re-read the phone DB so external increments (e.g. from ShareTextActivity)
             // are visible immediately when the user returns to the app.
             val phoneUriStr = _settings.value.fileUri
@@ -6546,6 +6833,9 @@ class HabitViewModel(
             // Pre-update primary counts per date — needed by the conditional
             // "feed max1" cap to tell first-activity days from already-fed ones.
             val preExistingCounts = mutableMapOf<String, Int>()
+            // Pre-update games count for today — timestamps are recorded per
+            // NEW game, not per minute.
+            val preGamesToday = gamesEntries[todayStr] ?: 0
 
             for ((dateStr, stats) in dailyStats) {
                 val games = stats.games
@@ -6581,15 +6871,24 @@ class HabitViewModel(
             mutableDb[secondaryValueKey(habitName)] = gamesEntries.toSortedMap()
             mutableDb[secondaryValue2Key(habitName)] = resultEntries.toSortedMap()
 
-            // Track today's delta for timestamp recording
+            // Track today's timestamp count: ONE timestamp per NEW game (the
+            // count is minutes, but the underlying event is a game); at least
+            // one when minutes moved without a new game (e.g. rounding).
             val todayDelta = dateDeltas[todayStr]
             if (todayDelta != null && todayDelta > 0) {
-                todayDeltas[habitName] = todayDelta
+                val newGames = ((gamesEntries[todayStr] ?: 0) - preGamesToday).coerceAtLeast(0)
+                todayDeltas[habitName] = if (newGames > 0) newGames else 1
             }
 
             // Propagate to conditional linked habits for dates where count increased
             if (dateDeltas.isNotEmpty() && habitName in s.conditionalHabits) {
                 val linkedHabits = s.conditionalLinkedHabits[habitName] ?: emptySet()
+                // Match the tap-path feed semantics (incrementHabit step 2c):
+                // "Feed points" sources feed their divider-applied POINTS delta
+                // instead of the raw minutes delta, so a minutes habit with a
+                // divider feeds divided points to its linked habits.
+                val feedPoints = habitName in s.conditionalFeedPointsHabits
+                val sourceDivider = s.habitDividers[habitName] ?: 1
                 for (linkedName in linkedHabits) {
                     // Feed the value slot this link is configured to target
                     // (Points = the linked habit's count; Value2/Value3 = raw slots)
@@ -6602,13 +6901,18 @@ class HabitViewModel(
                     )
                     val linkedEntries = (mutableDb[targetKey] ?: emptyMap()).toMutableMap()
                     for ((dateStr, delta) in dateDeltas) {
+                        val preCount = preExistingCounts[dateStr] ?: 0
+                        val baseFeedAmount = if (feedPoints && sourceDivider > 1) {
+                            applyDivider(preCount + delta, sourceDivider) -
+                                applyDivider(preCount, sourceDivider)
+                        } else delta
                         // "Feed max1" cap: a feed-max-one source contributes at most
                         // 1 point per day to Points targets (first activity of the
                         // day only); secondary-slot feeds stay uncapped.
                         val feedDelta =
                             if (targetKey == linkedName && habitName in s.conditionalFeedMaxOneHabits) {
-                                conditionalCappedFeedAmount(preExistingCounts[dateStr] ?: 0, delta)
-                            } else delta
+                                conditionalCappedFeedAmount(preCount, baseFeedAmount)
+                            } else baseFeedAmount
                         if (feedDelta == 0) continue
                         val existing = linkedEntries[dateStr] ?: 0
                         val newVal = if (targetKey == linkedName && linkedName in s.maxOneHabits) {
@@ -6635,7 +6939,9 @@ class HabitViewModel(
                 habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
             }
 
-            // Record timestamps only for the NEW increments (delta), not the total count
+            // Record timestamps only for NEW activity — one per new game
+            // played today (todayDeltas already carries the per-game count),
+            // never one per minute.
             if (todayDeltas.isNotEmpty()) {
                 val now = HabitTimestampRepository.nowTime()
                 val today = LocalDate.now()
@@ -9128,7 +9434,7 @@ class HabitViewModel(
         // lower totals — so the spinner dropped a tier once the DB load
         // replaced the value.
         val noPoints = _settings.value.noPointsHabits
-        val tracked = db.keys.filter { it !in noPoints && !isSecondaryValueKey(it) }
+        val tracked = db.keys.filter { it !in noPoints && !isInternalValueKey(it) }
 
         var dayTotal = 0
         var weekSum = 0
@@ -9165,7 +9471,7 @@ class HabitViewModel(
         val db = cachedPhoneDb
         val dateStr = dateString(date)
         val dividers = _settings.value.habitDividers
-        val tracked = trackedHabitNames().ifEmpty { db.keys }
+        val tracked = trackedHabitNames().ifEmpty { db.keys.filter { !isInternalValueKey(it) } }
         val fallbackHabits = _settings.value.secondaryValueFallbackHabits
 
         var totalPoints = 0
@@ -9197,10 +9503,20 @@ class HabitViewModel(
             // Widget-timer habits with minutes primary: swap the roles so minutes
             // drive the streak and sessions are the fallback.
             val swapped = name in timerMinutesPrimary
-            // Apply secondary-value fallback so days with 0 primary but non-zero
-            // secondary count as "done" for streak purposes.
             val useFallback = name in fallbackHabits || swapped
-            val secEntries = if (useFallback) db[secondaryValueKey(name)] ?: emptyMap() else emptyMap()
+            // Fallback source: minutes slot for minutes-primary habits; the
+            // legacy secondary slot for habits that use it or have data there
+            // (chess.com games, JugCoach seconds); minutes slot otherwise.
+            val fallbackKey = if (swapped) {
+                minutesKey(name)
+            } else {
+                com.example.tail.data.fallbackSlotKey(
+                    name, _settings.value.secondaryValueHabits, db
+                )
+            }
+            // Apply the fallback so days with 0 primary but non-zero fallback
+            // count as "done" for streak purposes.
+            val secEntries = if (useFallback) db[fallbackKey] ?: emptyMap() else emptyMap()
             val entries = if (swapped) {
                 com.example.tail.data.effectiveEntriesWithFallback(secEntries, rawEntries, true)
             } else {

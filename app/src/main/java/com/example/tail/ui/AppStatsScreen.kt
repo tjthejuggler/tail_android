@@ -48,9 +48,10 @@ import androidx.compose.ui.window.Dialog
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.applyDivider
 import com.example.tail.data.invertedBinaryPoints
-import com.example.tail.data.isSecondaryValueKey
+import com.example.tail.data.isInternalValueKey
 import com.example.tail.data.effectiveEntriesWithFallback
 import com.example.tail.data.effectivePointsWithFallback
+import com.example.tail.data.minutesKey
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.expandEntriesToCalendarDaysPublic
 import com.example.tail.data.parseDate
@@ -92,14 +93,15 @@ fun AppStatsScreen(
 
     val disabledHabits = settings.disabledHabits
     val noPointsHabits = settings.noPointsHabits
+    val secondaryValueHabits = settings.secondaryValueHabits
     val secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits
     val timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary
     val invertedBinaryHabits = settings.invertedBinaryHabits
 
     // Compute all stats from the cached database
     val db = viewModel.getCachedDatabase()
-    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits) {
-        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits)
+    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits) {
+        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits)
     }
 
     // State for the habit-list popup
@@ -1158,26 +1160,33 @@ private fun computeAppStats(
     dividers: Map<String, Int>,
     disabledHabits: Set<String> = emptySet(),
     noPointsHabits: Set<String> = emptySet(),
+    secondaryValueHabits: Set<String> = emptySet(),
     secondaryValueFallbackHabits: Set<String> = emptySet(),
     timerMinutesPrimaryHabits: Set<String> = emptySet(),
     invertedBinaryHabits: Set<String> = emptySet()
 ): AppStats {
     if (db.isEmpty()) return AppStats()
 
-    // Local helper: effective points considering secondary-value fallback.
-    // When a habit has fallback enabled and its primary (minutes) value is 0,
-    // the secondary (sessions) value is used directly as points (no divider).
+    // Local helper: effective points considering value-slot fallback.
+    // Minutes-primary habits read points from the dedicated minutes slot
+    // (`minutes:<habit>`) with sessions as fallback. Sessions-primary habits
+    // fall back to the legacy secondary slot (legacy habits) or the minutes
+    // slot — the fallback value is used directly (no divider) when the
+    // primary value is 0.
     fun effPts(habitName: String, raw: Int, dateStr: String): Int {
         // Inverted-binary habits: 1 point on not-done days, 0 on done days
         if (habitName in invertedBinaryHabits) return invertedBinaryPoints(raw)
         val div = dividers[habitName] ?: 1
-        val secVal = db[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
         if (habitName in timerMinutesPrimaryHabits) {
             // Minutes primary: minutes drive points, sessions are the fallback
-            return effectivePointsWithFallback(secVal, div, raw, true)
+            val minutes = db[minutesKey(habitName)]?.get(dateStr) ?: 0
+            return effectivePointsWithFallback(minutes, div, raw, true)
         }
         if (habitName !in secondaryValueFallbackHabits) return applyDivider(raw, div)
-        return effectivePointsWithFallback(raw, div, secVal, true)
+        val fallbackVal = db[com.example.tail.data.fallbackSlotKey(
+            habitName, secondaryValueHabits, db
+        )]?.get(dateStr) ?: 0
+        return effectivePointsWithFallback(raw, div, fallbackVal, true)
     }
 
     val today = LocalDate.now()
@@ -1202,8 +1211,8 @@ private fun computeAppStats(
         var totalPoints = 0
         var habitsCount = 0
         for ((habitName, entries) in db) {
-            // Skip secondary-value storage entries and habits that don't affect points
-            if (isSecondaryValueKey(habitName)) continue
+            // Skip internal value-slot storage entries and habits that don't affect points
+            if (isInternalValueKey(habitName)) continue
             if (habitName in noPointsHabits) continue
             val raw = entries[dateStr] ?: 0
             val points = effPts(habitName, raw, dateStr)
@@ -1215,8 +1224,8 @@ private fun computeAppStats(
     }
 
     // ── Overview ──────────────────────────────────────────────────────────
-    val totalHabits = db.keys.count { !isSecondaryValueKey(it) }
-    val allHabitsList = db.keys.filter { !isSecondaryValueKey(it) }.sorted().map { name ->
+    val totalHabits = db.keys.count { !isInternalValueKey(it) }
+    val allHabitsList = db.keys.filter { !isInternalValueKey(it) }.sorted().map { name ->
         val total = db[name]?.entries?.sumOf { (dateStr, raw) ->
             effPts(name, raw, dateStr).toLong()
         } ?: 0L
@@ -1224,7 +1233,7 @@ private fun computeAppStats(
     }
     
     // Filter out no-points habits from habit stats calculations
-    val pointHabits = db.keys.filter { it !in noPointsHabits && !isSecondaryValueKey(it) }
+    val pointHabits = db.keys.filter { it !in noPointsHabits && !isInternalValueKey(it) }
 
     // Days with data = days where total points > 0 (excludes zero-point days)
     val daysWithPointsSet = dailyTotals.filter { it.value > 0 }.keys
@@ -1414,18 +1423,24 @@ private fun computeAppStats(
         val singleDayHighDate: String
     )
 
-    val habitStats = db.filterKeys { !isSecondaryValueKey(it) }.map { (habitName, entries) ->
+    val habitStats = db.filterKeys { !isInternalValueKey(it) }.map { (habitName, entries) ->
         val divider = dividers[habitName] ?: 1
         val minutesPrimary = habitName in timerMinutesPrimaryHabits
         val useFallback = minutesPrimary || habitName in secondaryValueFallbackHabits
-        val secEntries = if (useFallback) db[secondaryValueKey(habitName)] ?: emptyMap() else emptyMap()
-        // Merge secondary values so dates with only secondary data are included.
-        // For minutes-primary habits the roles swap: minutes are primary,
-        // sessions are the fallback.
+        val altEntries = when {
+            minutesPrimary -> db[minutesKey(habitName)] ?: emptyMap()
+            useFallback -> db[com.example.tail.data.fallbackSlotKey(
+                habitName, secondaryValueHabits, db
+            )] ?: emptyMap()
+            else -> emptyMap()
+        }
+        // Merge the alternate-slot values so dates with only that data are
+        // included. For minutes-primary habits the roles swap: minutes are
+        // primary, sessions are the fallback.
         val mergedEntries = if (minutesPrimary) {
-            effectiveEntriesWithFallback(secEntries, entries, true)
+            effectiveEntriesWithFallback(altEntries, entries, true)
         } else if (useFallback) {
-            effectiveEntriesWithFallback(entries, secEntries, true)
+            effectiveEntriesWithFallback(entries, altEntries, true)
         } else entries
 
         var total = 0L
@@ -1497,15 +1512,20 @@ private fun computeAppStats(
     val parsedDates = sortedDatesList.map { parseDate(it) }
 
     for ((habitName, entries) in db) {
-        // Skip secondary-value storage entries and disabled habits
-        if (isSecondaryValueKey(habitName)) continue
+        // Skip internal value-slot storage entries and disabled habits
+        if (isInternalValueKey(habitName)) continue
         if (habitName in disabledHabits) continue
         val divider = dividers[habitName] ?: 1
         val habitFirstDate = run {
             val primFirst = entries.keys.minOrNull()
-            if (habitName in secondaryValueFallbackHabits) {
-                val secFirst = db[secondaryValueKey(habitName)]?.keys?.minOrNull()
-                listOfNotNull(primFirst, secFirst).minOrNull()
+            if (habitName in timerMinutesPrimaryHabits || habitName in secondaryValueFallbackHabits) {
+                val altKey = if (habitName in timerMinutesPrimaryHabits) {
+                    minutesKey(habitName)
+                } else {
+                    com.example.tail.data.fallbackSlotKey(habitName, secondaryValueHabits, db)
+                }
+                val altFirst = db[altKey]?.keys?.minOrNull()
+                listOfNotNull(primFirst, altFirst).minOrNull()
             } else primFirst
         }
         // Track the last date this habit had a non-zero value
@@ -1615,7 +1635,7 @@ private fun computeAppStats(
     val habitsDoneTodayList = mutableListOf<Pair<String, String>>()
     val habitsNotDoneTodayList = mutableListOf<Pair<String, String>>()
     for ((habitName, entries) in db) {
-        if (isSecondaryValueKey(habitName)) continue
+        if (isInternalValueKey(habitName)) continue
         val raw = entries[todayStr] ?: 0
         val pts = effPts(habitName, raw, todayStr)
         if (pts > 0) {

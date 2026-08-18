@@ -89,6 +89,7 @@ data class BackupBundle(
 data class SettingsSection(
     val fileUri: String = "",
     val screensRelayFileUri: String = "",
+    val pcWidgetHabits: List<String> = emptyList(),
     val customInputHabits: List<String> = emptyList(),
     val habitOrder: List<String> = emptyList(),
     val habitScreens: List<HabitScreenBackup> = emptyList(),

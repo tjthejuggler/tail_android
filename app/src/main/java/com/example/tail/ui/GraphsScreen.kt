@@ -843,6 +843,7 @@ private fun displayValueForMetric(
     // primary value's history.
     com.example.tail.data.GRAPH_METRIC_VALUE2 -> dp.secondaryValue ?: 0
     com.example.tail.data.GRAPH_METRIC_VALUE3 -> dp.tertiaryValue ?: 0
+    com.example.tail.data.GRAPH_METRIC_MINUTES -> dp.minutesValue ?: 0
     com.example.tail.data.GRAPH_METRIC_IMDB -> dp.secondaryValue ?: 0
     com.example.tail.data.GRAPH_METRIC_RUNTIME -> dp.movieRuntimeMinutes ?: 0
     com.example.tail.data.GRAPH_METRIC_CALORIES -> dp.mealCalories ?: 0
@@ -892,6 +893,7 @@ fun metricLabel(metric: String): String = when (metric) {
     com.example.tail.data.GRAPH_METRIC_VALUE1 -> "Value 1"
     com.example.tail.data.GRAPH_METRIC_VALUE2 -> "Value 2"
     com.example.tail.data.GRAPH_METRIC_VALUE3 -> "Value 3"
+    com.example.tail.data.GRAPH_METRIC_MINUTES -> "Minutes"
     com.example.tail.data.GRAPH_METRIC_IMDB -> "IMDb Avg"
     com.example.tail.data.GRAPH_METRIC_RUNTIME -> "Runtime"
     com.example.tail.data.GRAPH_METRIC_CALORIES -> "Calories"

@@ -475,27 +475,33 @@ fun computeTaskerStats(
     today: LocalDate = LocalDate.now(),
     secondaryValueFallbackHabits: Set<String> = emptySet(),
     timerMinutesPrimaryHabits: Set<String> = emptySet(),
-    invertedBinaryHabits: Set<String> = emptySet()
+    invertedBinaryHabits: Set<String> = emptySet(),
+    secondaryValueHabits: Set<String> = emptySet()
 ): TaskerStats {
     fun dayTotal(date: LocalDate): Int {
         val ds = dateString(date)
         return db.entries.sumOf { (habitName, entries) ->
             if (habitName in noPointsHabits) return@sumOf 0
-            if (isSecondaryValueKey(habitName)) return@sumOf 0
+            if (isInternalValueKey(habitName)) return@sumOf 0
             // Inverted-binary habits contribute 1 point on not-done days
             if (habitName in invertedBinaryHabits) {
                 return@sumOf invertedBinaryPoints(entries[ds] ?: 0)
             }
             if (habitName in timerMinutesPrimaryHabits) {
-                // Minutes (secondary slot) is primary; sessions are the fallback
-                val minutes = db[secondaryValueKey(habitName)]?.get(ds) ?: 0
+                // Minutes (first-class minutes slot) is primary; sessions are the fallback
+                val minutes = db[minutesKey(habitName)]?.get(ds) ?: 0
                 effectivePointsWithFallback(
                     minutes, dividers[habitName] ?: 1, entries[ds] ?: 0, true
                 )
             } else {
                 val useFallback = habitName in secondaryValueFallbackHabits
+                // Fallback source: the legacy generic secondary slot when the
+                // habit uses it or has data there (Meditations/Apnea/Resonance
+                // sessions, chess.com games, JugCoach seconds), otherwise the
+                // first-class minutes slot.
+                val fallbackKey = fallbackSlotKey(habitName, secondaryValueHabits, db)
                 val secVal = if (useFallback) {
-                    db[secondaryValueKey(habitName)]?.get(ds) ?: 0
+                    db[fallbackKey]?.get(ds) ?: 0
                 } else 0
                 effectivePointsWithFallback(
                     entries[ds] ?: 0, dividers[habitName] ?: 1, secVal, useFallback

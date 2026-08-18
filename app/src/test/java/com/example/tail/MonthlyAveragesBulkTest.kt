@@ -5,7 +5,9 @@ import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
 import com.example.tail.data.effectivePointsWithFallback
+import com.example.tail.data.fallbackSlotKey
 import com.example.tail.data.invertedBinaryPoints
+import com.example.tail.data.minutesKey
 import com.example.tail.data.monthlyAveragesBulk
 import com.example.tail.data.secondaryValueKey
 import org.junit.Assert.assertEquals
@@ -34,12 +36,18 @@ class MonthlyAveragesBulkTest {
         val divider = settings.habitDividers[name] ?: 1
         return when {
             name in settings.invertedBinaryHabits -> invertedBinaryPoints(raw)
+            // Minutes-primary: minutes live in the first-class `minutes:` slot;
+            // sessions (the habit's own slot) are the fallback.
             name in settings.widgetTimerMinutesPrimary -> effectivePointsWithFallback(
-                db[secondaryValueKey(name)]?.get(dateStr) ?: 0, divider, raw, true
+                db[minutesKey(name)]?.get(dateStr) ?: 0, divider, raw, true
             )
             name !in settings.secondaryValueFallbackHabits -> applyDivider(raw, divider)
+            // Sessions-primary fallback: the legacy generic secondary slot
+            // when the habit uses it or has data there, else the minutes slot.
             else -> effectivePointsWithFallback(
-                raw, divider, db[secondaryValueKey(name)]?.get(dateStr) ?: 0, true
+                raw, divider,
+                db[fallbackSlotKey(name, settings.secondaryValueHabits, db)]?.get(dateStr) ?: 0,
+                true
             )
         }
     }
@@ -128,13 +136,13 @@ class MonthlyAveragesBulkTest {
 
     @Test
     fun `bulk matches naive for widget timer minutes-primary habits`() {
-        // Minutes (secondary slot) drive points; sessions are the fallback.
+        // Minutes (first-class `minutes:` slot) drive points; sessions are the fallback.
         val base = LocalDate.of(2026, 2, 1)
         val sessions = (0 until 45).associate { dateString(base.plusDays(it.toLong())) to if (it % 3 == 0) 1 else 0 }
         val minutes = (0 until 45).associate { dateString(base.plusDays(it.toLong())) to if (it % 4 == 0) 25 else 0 }
         val db: HabitsDatabase = mapOf(
             "Meditations" to sessions,
-            secondaryValueKey("Meditations") to minutes
+            minutesKey("Meditations") to minutes
         )
         val settings = AppSettings(widgetTimerMinutesPrimary = setOf("Meditations"))
         val dates = (0 until 45).map { base.plusDays(it.toLong()) }
@@ -142,7 +150,9 @@ class MonthlyAveragesBulkTest {
     }
 
     @Test
-    fun `bulk matches naive for secondary value fallback habits`() {
+    fun `bulk matches naive for legacy secondary value fallback habits`() {
+        // Legacy habits (Wags-fed): sessions/counts live in the generic
+        // secondary_value: slot and are the fallback for the primary value.
         val base = LocalDate.of(2026, 4, 1)
         val primary = (0 until 50).associate { dateString(base.plusDays(it.toLong())) to if (it % 6 == 0) 1 else 0 }
         val secondary = (0 until 50).associate { dateString(base.plusDays(it.toLong())) to if (it % 2 == 0) 40 else 0 }
@@ -150,9 +160,48 @@ class MonthlyAveragesBulkTest {
             "Apnea" to primary,
             secondaryValueKey("Apnea") to secondary
         )
-        val settings = AppSettings(secondaryValueFallbackHabits = setOf("Apnea"))
+        val settings = AppSettings(
+            secondaryValueHabits = setOf("Apnea"),
+            secondaryValueFallbackHabits = setOf("Apnea")
+        )
         val dates = (0 until 50).map { base.plusDays(it.toLong()) }
         assertParity(db, setOf("Apnea"), settings, dates)
+    }
+
+    @Test
+    fun `bulk matches naive for minutes-fallback habits`() {
+        // Sessions-primary habit (NOT in secondaryValueHabits) with minutes
+        // fallback: the fallback value comes from the `minutes:` slot.
+        val base = LocalDate.of(2026, 6, 1)
+        val sessions = (0 until 50).associate { dateString(base.plusDays(it.toLong())) to if (it % 6 == 0) 1 else 0 }
+        val minutes = (0 until 50).associate { dateString(base.plusDays(it.toLong())) to if (it % 2 == 0) 30 else 0 }
+        val db: HabitsDatabase = mapOf(
+            "Good Posture" to sessions,
+            minutesKey("Good Posture") to minutes
+        )
+        val settings = AppSettings(secondaryValueFallbackHabits = setOf("Good Posture"))
+        val dates = (0 until 50).map { base.plusDays(it.toLong()) }
+        assertParity(db, setOf("Good Posture"), settings, dates)
+    }
+
+    @Test
+    fun `bulk matches naive for chess-style legacy slot data without membership`() {
+        // chess.com habits keep games in secondary_value: WITHOUT being
+        // secondaryValueHabits members; the fallback must still read that
+        // legacy data (data-driven slot resolution).
+        val base = LocalDate.of(2026, 7, 1)
+        val minutes = (0 until 50).associate { dateString(base.plusDays(it.toLong())) to if (it % 3 == 0) 25 else 0 }
+        val games = (0 until 50).associate { dateString(base.plusDays(it.toLong())) to if (it % 3 == 0) (it % 3) + 1 else 0 }
+        val db: HabitsDatabase = mapOf(
+            "Blitz" to minutes,
+            secondaryValueKey("Blitz") to games
+        )
+        val settings = AppSettings(
+            habitDividers = mapOf("Blitz" to 10),
+            secondaryValueFallbackHabits = setOf("Blitz")
+        )
+        val dates = (0 until 50).map { base.plusDays(it.toLong()) }
+        assertParity(db, setOf("Blitz"), settings, dates)
     }
 
     @Test
@@ -178,7 +227,7 @@ class MonthlyAveragesBulkTest {
             "Pushups" to plain,
             "No Alcohol" to invertedDone,
             "Meditations" to sessions,
-            secondaryValueKey("Meditations") to minutes
+            minutesKey("Meditations") to minutes
         )
         val settings = AppSettings(
             habitDividers = mapOf("Pushups" to 3),

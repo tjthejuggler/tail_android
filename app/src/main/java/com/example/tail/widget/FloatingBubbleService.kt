@@ -17,6 +17,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -31,6 +32,7 @@ import android.widget.Toast
 import com.example.tail.MainActivity
 import com.example.tail.R
 import com.example.tail.data.HabitsRepository
+import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.dateString
 import com.example.tail.data.secondaryValueKey
@@ -171,6 +173,30 @@ class FloatingBubbleService : Service() {
     private val settingsRepo by lazy { SettingsRepository(applicationContext) }
     private val habitsRepo by lazy { HabitsRepository() }
 
+    // ── PC widget event queue poll ────────────────────────────────────────
+    // The PC bubble widget appends habit events to pc_habit_events.json in
+    // the Syncthing-synced noteVault/tail/ folder. While this service runs
+    // we periodically drain that queue into the phone DB (acking what we
+    // applied), so PC sessions are recorded even when the Tail app itself
+    // is not open. No-op when no Tail Bridge connection is configured.
+    private val pcEventPollIntervalMs = 45_000L
+    private val pcEventPollRunnable = Runnable { pollPcEventQueue() }
+
+    private fun pollPcEventQueue() {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val settings = settingsRepo.settingsFlow.first()
+                if (settings.garminProxyUrl.isNotEmpty()) {
+                    PcEventQueueProcessor(applicationContext).processOnce()
+                }
+            } catch (e: Exception) {
+                Log.w("FloatingBubbleService", "PC event poll failed: ${e.message}")
+            } finally {
+                handler.postDelayed(pcEventPollRunnable, pcEventPollIntervalMs)
+            }
+        }
+    }
+
     // Bubble layout params (positioned on screen)
     private lateinit var bubbleParams: WindowManager.LayoutParams
 
@@ -188,6 +214,9 @@ class FloatingBubbleService : Service() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
+        // Start the PC widget event queue poll (short first delay so a
+        // freshly-started bubble picks up queued events quickly).
+        handler.postDelayed(pcEventPollRunnable, 5_000L)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -266,6 +295,7 @@ class FloatingBubbleService : Service() {
         hideTimerChip()
         hideHabitPickerMenu()
         hideIncrementFlash()
+        handler.removeCallbacks(pcEventPollRunnable)
         serviceScope.cancel()
     }
 
