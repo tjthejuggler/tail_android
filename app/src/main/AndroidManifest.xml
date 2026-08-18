@@ -37,6 +37,14 @@
     <!-- Required so the widget watchdog can revive the monitor after reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Required for habit-ask notifications (system notifications with
+         Yes/No actions) on Android 13+. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Required for the daily scheduled habit asks. Falls back to an
+         inexact allow-while-idle alarm when the exact-alarm grant is absent. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
     <!--
         Custom signature permission for IPC.
         Only apps signed with the same keystore can use the ContentProvider or
@@ -421,6 +429,29 @@
         -->
         <receiver
             android:name=".widget.WidgetWatchdogReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            NotificationActionReceiver: handles the Yes/No action buttons on
+            habit-ask system notifications. Answering anywhere (system
+            notification, in-app notification center or bottom flash)
+            dismisses the ask everywhere at once.
+        -->
+        <receiver
+            android:name=".notify.NotificationActionReceiver"
+            android:exported="false" />
+
+        <!--
+            HabitAlarmReceiver: fires the daily scheduled habit asks
+            (store record + system notification) and re-registers all
+            alarms after a reboot — exact alarms do not survive one.
+        -->
+        <receiver
+            android:name=".notify.HabitAlarmReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

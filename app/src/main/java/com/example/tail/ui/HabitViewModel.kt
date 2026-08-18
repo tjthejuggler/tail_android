@@ -27,6 +27,8 @@ import com.example.tail.data.GitHubRateLimitException
 import com.example.tail.data.GitHubRepository
 import com.example.tail.data.ImportResult
 import com.example.tail.data.MovieBridgeService
+import com.example.tail.data.HabitNotification
+import com.example.tail.data.NotificationStore
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.DayStats
 import com.example.tail.data.HabitTimestampRepository
@@ -96,6 +98,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -182,6 +185,14 @@ class HabitViewModel(
 
     /** Repository for recording habit increment timestamps (internal storage). */
     val timestampRepo = HabitTimestampRepository(context)
+
+    // ── Habit-ask notifications (system + in-app center + one-time flash) ───
+    /** Single source of truth for pending asks; system notifications mirror it. */
+    val notificationStore = NotificationStore(context)
+
+    /** Pending asks, oldest first. Mirrored from [notificationStore]. */
+    private val _notifications = MutableStateFlow<List<HabitNotification>>(emptyList())
+    val notifications: StateFlow<List<HabitNotification>> = _notifications.asStateFlow()
 
     // ── Meal Habit Engine ─────────────────────────────────────────────────
     /** Repository for meal log entries and images (internal storage). */
@@ -583,6 +594,19 @@ class HabitViewModel(
     fun getCachedDatabase(): HabitsDatabase = cachedPhoneDb
 
     init {
+        // Mirror the pending habit-ask notifications into UI state. Answers
+        // from ANY surface (flash, in-app center, system notification) remove
+        // the record here, so every surface updates automatically.
+        viewModelScope.launch {
+            try {
+                notificationStore.notificationsFlow.collect { asks ->
+                    _notifications.value = asks
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to collect notifications: ${e.message}")
+            }
+        }
+
         // Load AI icons from disk on startup
         refreshAiIcons()
 
@@ -5988,6 +6012,25 @@ class HabitViewModel(
                 _selectedDate.value = today
             }
         }
+        // Scheduled-ask catch-up: refresh the alarms and, for any habit whose
+        // ask time already passed today but never fired (phone off, process
+        // killed), create the ask now. fireScheduledAsk is once-per-day-per-
+        // habit, so this is safe on every ON_START.
+        viewModelScope.launch {
+            try {
+                val s = _settings.value
+                if (s.habitScheduleTimes.isEmpty()) return@launch
+                com.example.tail.notify.HabitAlarmReceiver.rescheduleAll(context)
+                val now = System.currentTimeMillis()
+                s.habitScheduleTimes.forEach { (habit, time) ->
+                    if (com.example.tail.data.HabitSchedule.passedToday(time, now)) {
+                        com.example.tail.notify.HabitAsks.fireScheduledAsk(context, habit, now)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Scheduled-ask catch-up failed: ${e.message}")
+            }
+        }
     }
 
     /**
@@ -7807,18 +7850,22 @@ class HabitViewModel(
                         if (titleLogged(movie.title, watchDayEntries)) {
                             onResult(null)
                         } else {
-                            finishMoviePromptCheck(movie, onResult)
+                            finishMoviePromptCheck(habitName, movie, onResult)
                         }
                     }
                 } else {
-                    finishMoviePromptCheck(movie, onResult)
+                    finishMoviePromptCheck(habitName, movie, onResult)
                 }
             }
         }
     }
 
     /** Final gate: already-handled marker and recency window. */
-    private fun finishMoviePromptCheck(movie: BridgeMovie, onResult: (BridgeMovie?) -> Unit) {
+    private fun finishMoviePromptCheck(
+        habitName: String,
+        movie: BridgeMovie,
+        onResult: (BridgeMovie?) -> Unit
+    ) {
         viewModelScope.launch {
             val handled = try {
                 settingsRepo.getMoviePromptHandled()
@@ -7829,8 +7876,37 @@ class HabitViewModel(
             if (moviePromptMarker(movie) in handled || !isMoviePromptRecent(movie)) {
                 onResult(null)
             } else {
+                // Register the ask in the notification system (in-app center +
+                // system notification) BEFORE showing the flash, so an
+                // unanswered flash is preserved as a pending notification.
+                registerMovieAsk(habitName, movie)
                 onResult(movie)
             }
+        }
+    }
+
+    /**
+     * Adds the movie ask to the [NotificationStore] and posts the matching
+     * system notification. Idempotent — an ask with the same id is not
+     * duplicated.
+     */
+    private suspend fun registerMovieAsk(habitName: String, movie: BridgeMovie) {
+        try {
+            val entryTime = moviePromptEntryTime(movie)
+                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+            val ask = HabitNotification(
+                id = com.example.tail.notify.HabitAsks.movieAskId(moviePromptMarker(movie)),
+                habitName = habitName,
+                type = HabitNotification.TYPE_MOVIE,
+                title = movie.title,
+                question = "Watched this?",
+                createdAtMillis = System.currentTimeMillis(),
+                payload = entryTime
+            )
+            notificationStore.add(ask)
+            com.example.tail.notify.HabitNotifier.postAsk(context, ask)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register movie ask: ${e.message}")
         }
     }
 
@@ -7881,6 +7957,104 @@ class HabitViewModel(
                 settingsRepo.saveMoviePromptHandled(current + moviePromptMarker(movie))
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to save movie prompt marker: ${e.message}")
+            }
+        }
+    }
+
+    /** Persists a raw handled marker (used when answering from a stored ask). */
+    private fun markMovieMarkerHandled(marker: String) {
+        viewModelScope.launch {
+            try {
+                val current = settingsRepo.getMoviePromptHandled()
+                settingsRepo.saveMoviePromptHandled(current + marker)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to save movie prompt marker: ${e.message}")
+            }
+        }
+    }
+
+    // ── Habit-ask notification answers (in-app surfaces) ────────────────────
+
+    /**
+     * Answers a pending ask from an in-app surface (bottom flash or the
+     * notification center). Applies the effect, removes the record from the
+     * store and cancels the system notification — the answer takes effect
+     * everywhere at once.
+     *
+     * @param onEntryLogged For a movie answered Yes: the "HH:mm:ss" entry time
+     *                      used, so the caller can show the increment toast.
+     */
+    fun answerNotification(
+        ask: HabitNotification,
+        yes: Boolean,
+        onEntryLogged: (String?) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                if (ask.type == HabitNotification.TYPE_MOVIE) {
+                    markMovieMarkerHandled(ask.id.removePrefix("movie:"))
+                    if (yes) {
+                        val time = ask.payload.takeIf { it.isNotBlank() }?.let {
+                            try {
+                                java.time.LocalTime.parse(it)
+                            } catch (e: Exception) {
+                                java.time.LocalTime.now()
+                            }
+                        } ?: java.time.LocalTime.now()
+                        saveTextEntries(ask.habitName, listOf(ask.title), null, time)
+                        onEntryLogged(time.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
+                    } else {
+                        onEntryLogged(null)
+                    }
+                } else if (yes) {
+                    incrementHabit(ask.habitName)
+                    onEntryLogged(null)
+                } else {
+                    onEntryLogged(null)
+                }
+                notificationStore.remove(ask.id)
+                com.example.tail.notify.HabitNotifier.cancelAsk(context, ask.id)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to answer notification '${ask.id}': ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Returns the oldest ask whose one-time flash has not been shown yet and
+     * marks it as flashed, so each ask flashes exactly once (on the first app
+     * open after it was created).
+     */
+    fun consumeUnseenAskForFlash(onAsk: (HabitNotification?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val unseen = notificationStore.notificationsFlow.first()
+                    .firstOrNull { !it.flashShown }
+                if (unseen != null) {
+                    notificationStore.markFlashShown(unseen.id)
+                }
+                onAsk(unseen)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to consume unseen ask: ${e.message}")
+                onAsk(null)
+            }
+        }
+    }
+
+    /**
+     * Sets (or removes with null) the daily "HH:mm" ask time for a habit and
+     * keeps the alarm in sync.
+     */
+    fun setHabitScheduleTime(habitName: String, time: String?) {
+        viewModelScope.launch {
+            val current = _settings.value.habitScheduleTimes.toMutableMap()
+            if (time == null) current.remove(habitName) else current[habitName] = time
+            settingsRepo.saveHabitScheduleTimes(current)
+            _settings.value = _settings.value.copy(habitScheduleTimes = current)
+            if (time == null) {
+                com.example.tail.notify.HabitAlarmReceiver.cancel(context, habitName)
+            } else {
+                com.example.tail.notify.HabitAlarmReceiver.schedule(context, habitName, time)
             }
         }
     }

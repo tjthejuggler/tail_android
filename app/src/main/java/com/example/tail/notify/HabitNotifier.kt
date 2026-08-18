@@ -1,0 +1,98 @@
+package com.example.tail.notify
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import com.example.tail.MainActivity
+import com.example.tail.R
+import com.example.tail.data.HabitNotification
+
+/**
+ * Posts and cancels the Android system notifications for pending habit asks.
+ *
+ * The system notification is a *view* of the [com.example.tail.data.NotificationStore]
+ * record — it carries the ask id so [NotificationActionReceiver] can route the
+ * Yes/No answer back to the store (answer-anywhere → dismiss-everywhere).
+ */
+object HabitNotifier {
+
+    const val CHANNEL_ID = "habit_asks"
+
+    /** Stable system notification id derived from the ask id string. */
+    fun systemNotificationId(askId: String): Int = askId.hashCode()
+
+    /** Creates the channel (no-op below O / when already created). */
+    fun ensureChannel(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Habit confirmations",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Asks whether you did a habit, waiting for a Yes/No answer"
+        }
+        nm.createNotificationChannel(channel)
+    }
+
+    /**
+     * Posts (or updates) the system notification for [ask] with Yes/No actions.
+     * Safe to call when permission is not granted — the ask still lives in the
+     * in-app notification center.
+     */
+    fun postAsk(context: Context, ask: HabitNotification) {
+        ensureChannel(context)
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            ask.id.hashCode(),
+            Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val yesIntent = PendingIntent.getBroadcast(
+            context,
+            (ask.id + ":yes").hashCode(),
+            NotificationActionReceiver.answerIntent(context, ask.id, answer = true),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val noIntent = PendingIntent.getBroadcast(
+            context,
+            (ask.id + ":no").hashCode(),
+            NotificationActionReceiver.answerIntent(context, ask.id, answer = false),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val emoji = if (ask.type == HabitNotification.TYPE_MOVIE) "🎬" else "❓"
+        val notification = Notification.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_bubble_notification)
+            .setContentTitle("$emoji ${ask.title}")
+            .setContentText(ask.question)
+            .setStyle(Notification.BigTextStyle().bigText(ask.question))
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .addAction(Notification.Action.Builder(null, "✓ Yes", yesIntent).build())
+            .addAction(Notification.Action.Builder(null, "✗ No", noIntent).build())
+            .build()
+
+        try {
+            nm.notify(systemNotificationId(ask.id), notification)
+        } catch (e: SecurityException) {
+            // POST_NOTIFICATIONS not granted — the ask remains in the in-app center.
+        }
+    }
+
+    /** Cancels the system notification for [askId] (no-op when not shown). */
+    fun cancelAsk(context: Context, askId: String) {
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        nm.cancel(systemNotificationId(askId))
+    }
+}

@@ -61,9 +61,12 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -102,6 +105,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.onFocusChanged
@@ -116,6 +120,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconRepository
+import com.example.tail.data.HabitNotification
 import com.example.tail.data.AppIconInfo
 import com.example.tail.data.ACTIVITY_ID_PREFIX
 import com.example.tail.data.AppIconRepository
@@ -212,6 +217,8 @@ fun HabitGridScreen(
     val garminMonthlyData by viewModel.garminMonthlyData.collectAsState()
     val githubSyncStatus by viewModel.githubSyncStatus.collectAsState()
     val highlightedHabit by viewModel.highlightedHabit.collectAsState()
+    val notifications by viewModel.notifications.collectAsState()
+    val pendingNotifications = notifications.size
     val context = LocalContext.current
 
     val today = LocalDate.now()
@@ -256,6 +263,9 @@ fun HabitGridScreen(
     // Global search dialog state (query/filters/results live in the ViewModel,
     // so closing the dialog preserves its exact state for the next open)
     var showSearchDialog by remember { mutableStateOf(false) }
+
+    // In-app notification center dialog state
+    var showNotificationsDialog by remember { mutableStateOf(false) }
 
     // Location edit dialog state
     var showLocationEditDialog by remember { mutableStateOf(false) }
@@ -355,9 +365,11 @@ fun HabitGridScreen(
 
     // Movie confirmation flash state — asks "did you watch X?" once per
     // desktop-detected movie when the app is opened (movie bridge feature).
-    var movieConfirmMovie by remember { mutableStateOf<com.example.tail.data.BridgeMovie?>(null) }
-    var movieConfirmHabit by remember { mutableStateOf("") }
     var moviePromptChecked by remember { mutableStateOf(false) }
+    // Pending ask currently shown in the one-time bottom flash (null = none)
+    var flashAsk by remember { mutableStateOf<HabitNotification?>(null) }
+    // Bumped to re-check for unseen asks after a flash is closed unanswered
+    var flashCycle by remember { mutableIntStateOf(0) }
 
     // File picker for per-habit text log files (used from EditModeControlBar)
     var textInputPickerHabit by remember { mutableStateOf<String?>(null) }
@@ -489,41 +501,98 @@ fun HabitGridScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
-                    // Edit mode toggle button
-                    IconButton(
-                        onClick = { viewModel.toggleEditMode() },
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = if (editMode) Color(0xFF4A2A00) else Color.Transparent
-                        )
+                    // Five compact actions (edit, graph, notifications, search,
+                    // settings) — sized down and tightly packed so all five fit
+                    // in the space the original four occupied. Each icon keeps
+                    // a very slight tint of its accent colour.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(0.dp)
                     ) {
-                        Icon(
-                            Icons.Default.Edit,
-                            contentDescription = if (editMode) "Edit mode ON" else "Edit mode OFF",
-                            tint = if (editMode) Color(0xFFFFAA00) else Color.White
-                        )
-                    }
-                    // Graph mode toggle button
-                    IconButton(
-                        onClick = { viewModel.toggleGraphMode() },
-                        colors = IconButtonDefaults.iconButtonColors(
-                            containerColor = if (graphMode) Color(0xFF0A2A0A) else Color.Transparent
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.BarChart,
-                            contentDescription = if (graphMode) "Graph mode ON" else "Graph mode OFF",
-                            tint = if (graphMode) Color(0xFF66DD66) else Color.White
-                        )
-                    }
-                    // Global search button — opens the cross-habit text search
-                    IconButton(onClick = {
-                        viewModel.refreshSearchableHabits()
-                        showSearchDialog = true
-                    }) {
-                        Icon(Icons.Default.Search, contentDescription = "Search")
-                    }
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        // Edit mode toggle — slight orange tint
+                        IconButton(
+                            onClick = { viewModel.toggleEditMode() },
+                            modifier = Modifier.size(38.dp),
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = if (editMode) Color(0xFF4A2A00) else Color.Transparent
+                            )
+                        ) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = if (editMode) "Edit mode ON" else "Edit mode OFF",
+                                tint = if (editMode) Color(0xFFFFAA00)
+                                else lerp(Color.White, Color(0xFFFFAA00), 0.18f),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        // Graph mode toggle — slight green tint
+                        IconButton(
+                            onClick = { viewModel.toggleGraphMode() },
+                            modifier = Modifier.size(38.dp),
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = if (graphMode) Color(0xFF0A2A0A) else Color.Transparent
+                            )
+                        ) {
+                            Icon(
+                                Icons.Default.BarChart,
+                                contentDescription = if (graphMode) "Graph mode ON" else "Graph mode OFF",
+                                tint = if (graphMode) Color(0xFF66DD66)
+                                else lerp(Color.White, Color(0xFF66DD66), 0.18f),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        // Notifications — slight blue tint; highlighted while
+                        // asks are waiting for an answer
+                        IconButton(
+                            onClick = { showNotificationsDialog = true },
+                            modifier = Modifier.size(38.dp),
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = if (pendingNotifications > 0) Color(0xFF0A2A3A) else Color.Transparent
+                            )
+                        ) {
+                            BadgedBox(
+                                badge = {
+                                    if (pendingNotifications > 0) {
+                                        Badge { Text("$pendingNotifications", fontSize = 9.sp) }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Default.Notifications,
+                                    contentDescription = "Notifications",
+                                    tint = if (pendingNotifications > 0) Color(0xFF66CCFF)
+                                    else lerp(Color.White, Color(0xFF66CCFF), 0.18f),
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
+                        // Global search — slight pink tint
+                        IconButton(
+                            onClick = {
+                                viewModel.refreshSearchableHabits()
+                                showSearchDialog = true
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = "Search",
+                                tint = lerp(Color.White, Color(0xFFFF69B4), 0.18f),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        // Settings — slight yellow tint
+                        IconButton(
+                            onClick = onNavigateToSettings,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = lerp(Color.White, Color(0xFFFFD700), 0.18f),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
                     }
                 }
             )
@@ -1248,6 +1317,10 @@ fun HabitGridScreen(
                         habitNotes = settings.habitNotes,
                         onSetHabitNote = { name, note -> viewModel.setHabitNote(name, note) },
                         onToggleRollForward = { name -> viewModel.toggleRollForward(name) },
+                        habitScheduleTimes = settings.habitScheduleTimes,
+                        onSetHabitScheduleTime = { name, time ->
+                            viewModel.setHabitScheduleTime(name, time)
+                        },
                         onRestoreFromBackup = {
                             val name = editHabitName
                             if (name != null) {
@@ -1317,53 +1390,56 @@ fun HabitGridScreen(
         }
     }
 
-    // Movie confirmation flash overlay at bottom of screen (movie bridge).
-    // Same style/position as the increment toast; doing nothing for the
-    // timeout auto-confirms the movie as watched.
-    movieConfirmMovie?.let { movie ->
-        val confirmWatched: () -> Unit = {
-            val habit = movieConfirmHabit
-            movieConfirmMovie = null
-            if (habit.isNotBlank()) {
-                viewModel.confirmMoviePrompt(habit, movie) { entryTime ->
-                    // Show the standard increment toast so the time can still
-                    // be edited / made timeless, exactly like a manual entry.
-                    incrementToastVersion++
-                    incrementToastHabit = habit
-                    incrementToastIsTimeless = false
-                    incrementToastOriginalTime = entryTime
-                    val currentVersion = incrementToastVersion
-                    toastScope.launch {
-                        delay(3500)
-                        if (incrementToastVersion == currentVersion) {
-                            incrementToastHabit = null
-                        }
-                    }
-                }
-            }
-        }
+    // Habit-ask flash overlay at bottom of screen. Shows the oldest ask that
+    // has not flashed yet (movie-bridge or scheduled) exactly once; there is
+    // NO auto-confirm — an unanswered ask keeps waiting in the notification
+    // center (bell icon) and as a system notification until answered.
+    flashAsk?.let { ask ->
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 48.dp)
         ) {
-            // Inactivity timeout — auto-confirm as watched
-            LaunchedEffect(movie.title, movie.lastWatched) {
-                delay(MOVIE_FLASH_AUTO_CONFIRM_SECONDS * 1000L)
-                if (movieConfirmMovie?.title == movie.title &&
-                    movieConfirmMovie?.lastWatched == movie.lastWatched
-                ) {
-                    confirmWatched()
-                }
-            }
-            MovieConfirmFlash(
-                title = movie.title,
-                durationLabel = movie.durationLabel,
+            HabitAskFlash(
+                title = ask.title,
+                question = ask.question,
+                metaLabel = when {
+                    ask.type == HabitNotification.TYPE_MOVIE && ask.payload.isNotBlank() ->
+                        "at ${ask.payload}"
+                    else -> ask.habitName
+                },
                 visible = true,
-                onConfirm = confirmWatched,
+                onConfirm = {
+                    flashAsk = null
+                    flashCycle++
+                    viewModel.answerNotification(ask, yes = true) { entryTime ->
+                        if (ask.type == HabitNotification.TYPE_MOVIE && entryTime != null) {
+                            // Show the standard increment toast so the time can
+                            // still be edited / made timeless, like a manual entry.
+                            incrementToastVersion++
+                            incrementToastHabit = ask.habitName
+                            incrementToastIsTimeless = false
+                            incrementToastOriginalTime = entryTime
+                            val currentVersion = incrementToastVersion
+                            toastScope.launch {
+                                delay(3500)
+                                if (incrementToastVersion == currentVersion) {
+                                    incrementToastHabit = null
+                                }
+                            }
+                        }
+                    }
+                },
                 onDismiss = {
-                    movieConfirmMovie = null
-                    viewModel.dismissMoviePrompt(movie)
+                    flashAsk = null
+                    flashCycle++
+                    viewModel.answerNotification(ask, yes = false)
+                },
+                onHide = {
+                    // Timeout — hide without answering; the ask keeps waiting
+                    // in the notification center and as a system notification.
+                    flashAsk = null
+                    flashCycle++
                 }
             )
         }
@@ -1381,19 +1457,27 @@ fun HabitGridScreen(
     }
     } // end Box
 
-    // Movie-bridge flash: once per session, when the bridge is enabled and a
-    // linked movie habit exists, check for an unconfirmed recently-watched
-    // desktop movie and ask about it via the bottom flash.
+    // Movie-bridge detection: once per session, when the bridge is enabled
+    // and a linked movie habit exists, check for an unconfirmed
+    // recently-watched desktop movie. The ViewModel registers it as a
+    // persistent ask (notification store + system notification); the flash
+    // effect below then picks it up via consumeUnseenAskForFlash.
     LaunchedEffect(settings.bridgeEnabled, settings.bridgeMovieHabits, isLoading, moviePromptChecked) {
         if (moviePromptChecked || isLoading || !settings.bridgeEnabled) return@LaunchedEffect
         val habitName = settings.bridgeMovieHabits.firstOrNull {
             it in settings.textInputHabits
         } ?: return@LaunchedEffect
         moviePromptChecked = true
-        viewModel.prepareMoviePrompt(habitName, today) { movie ->
-            if (movie != null && movieConfirmMovie == null) {
-                movieConfirmHabit = habitName
-                movieConfirmMovie = movie
+        viewModel.prepareMoviePrompt(habitName, today) { }
+    }
+
+    // One-time ask flash: consume the oldest ask whose flash has not been
+    // shown yet (registered by the movie bridge or a scheduled alarm).
+    // Re-runs whenever the pending set changes or a flash was closed.
+    LaunchedEffect(notifications, flashCycle) {
+        if (flashAsk == null && notifications.isNotEmpty()) {
+            viewModel.consumeUnseenAskForFlash { ask ->
+                if (ask != null) flashAsk = ask
             }
         }
     }
@@ -2076,6 +2160,16 @@ fun HabitGridScreen(
                 if (screenIdx >= 0) viewModel.switchScreen(screenIdx)
                 viewModel.highlightHabit(result.habitName)
             }
+        )
+    }
+
+    // In-app notification center — lists every pending ask (movie-bridge
+    // and scheduled). Answering here applies the effect everywhere at once.
+    if (showNotificationsDialog) {
+        NotificationsDialog(
+            notifications = notifications,
+            onAnswer = { ask, yes -> viewModel.answerNotification(ask, yes) },
+            onDismiss = { showNotificationsDialog = false }
         )
     }
 }
@@ -3589,6 +3683,80 @@ private fun SharableTextToggle(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HabitScheduleSection — daily "ask me about this habit" time setting
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Edit-mode row configuring the daily scheduled ask for a habit. When a
+ * time is set, the habit fires a redundant ask every day at that time
+ * (system notification + in-app notification + one-time flash on the next
+ * app open). Tapping the row opens an inline wheel picker; "✕" clears it.
+ */
+@Composable
+private fun HabitScheduleSection(
+    habitName: String,
+    scheduleTimes: Map<String, String>,
+    onSetScheduleTime: (String, String?) -> Unit
+) {
+    val currentTime = scheduleTimes[habitName]
+    var showPicker by remember(habitName) { mutableStateOf(false) }
+
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { showPicker = !showPicker }
+                .padding(vertical = 4.dp)
+        ) {
+            Text("🔔", fontSize = 13.sp)
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = if (currentTime != null) "Ask daily at $currentTime" else "Ask daily…",
+                fontSize = 11.sp,
+                color = if (currentTime != null) Color(0xFF66CCFF) else Color(0xFF999999)
+            )
+            if (currentTime != null) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "✕",
+                    fontSize = 12.sp,
+                    color = Color(0xFF888888),
+                    modifier = Modifier
+                        .clickable { onSetScheduleTime(habitName, null) }
+                        .padding(horizontal = 4.dp)
+                )
+            }
+        }
+        if (showPicker) {
+            var hour24 by remember(habitName) {
+                mutableIntStateOf(currentTime?.substringBefore(':')?.toIntOrNull() ?: 20)
+            }
+            var minute by remember(habitName) {
+                mutableIntStateOf(currentTime?.substringAfter(':')?.toIntOrNull() ?: 0)
+            }
+            TimeWheelPicker(
+                hour24 = hour24,
+                minute = minute,
+                onTimeChange = { h, m -> hour24 = h; minute = m },
+                compact = true
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { showPicker = false }) {
+                    Text("Cancel", fontSize = 12.sp)
+                }
+                TextButton(onClick = {
+                    onSetScheduleTime(habitName, String.format("%02d:%02d", hour24, minute))
+                    showPicker = false
+                }) {
+                    Text("Save", fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun EditModeControlBar(
     selectedIndex: Int,
@@ -3746,6 +3914,11 @@ private fun EditModeControlBar(
     onToggleRollForward: (String) -> Unit = {},
     /** Called when the user taps "Restore from Backup" for the selected habit. */
     onRestoreFromBackup: () -> Unit = {},
+    // ── Scheduled ask (daily notification) parameters ──────────────────────
+    /** Map of habit name → daily "HH:mm" ask time. */
+    habitScheduleTimes: Map<String, String> = emptyMap(),
+    /** Called when the user sets (time non-null) or removes (null) the daily ask time. */
+    onSetHabitScheduleTime: (String, String?) -> Unit = { _, _ -> },
     // ── Habit App Association parameters ───────────────────────────────────
     /** Map of habit name → ordered list of associated app package names. */
     habitAppAssociations: Map<String, List<String>> = emptyMap(),
@@ -5217,6 +5390,17 @@ private fun EditModeControlBar(
                         onRequestUsageAccess = onRequestUsageAccess,
                         widgetTimerMinutesPrimary = widgetTimerMinutesPrimary,
                         onSetTimerPrimaryValue = onSetTimerPrimaryValue
+                    )
+
+                    // ── Daily ask (scheduled notification) ─────────────────
+                    // Asks about this habit at the same time every day via a
+                    // system notification + in-app notification + one-time
+                    // flash on the next app open.
+                    Spacer(modifier = Modifier.height(6.dp))
+                    HabitScheduleSection(
+                        habitName = selectedHabitName,
+                        scheduleTimes = habitScheduleTimes,
+                        onSetScheduleTime = onSetHabitScheduleTime
                     )
 
                     // ── Special habit types (collapsible) ──────────────────────

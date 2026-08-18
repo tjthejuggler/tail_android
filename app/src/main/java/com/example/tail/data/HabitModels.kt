@@ -907,6 +907,15 @@ data class AppSettings(
      */
     val omdbApiKey: String = "",
 
+    // ── Scheduled habit-ask notifications ──────────────────────────────────
+    /**
+     * Maps habit name → daily "HH:mm" ask time. At that time each day the app
+     * asks "did you do this habit?" via a system notification, the in-app
+     * notification center, and a one-time flash on the next app open.
+     * Configured per-habit in the edit mode panel.
+     */
+    val habitScheduleTimes: Map<String, String> = emptyMap(),
+
     // ── Custom Point Ranges settings ────────────────────────────────────────
     /**
      * Habits that have custom point ranges enabled.

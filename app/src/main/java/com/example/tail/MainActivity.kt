@@ -54,6 +54,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Habit-ask notifications (movie bridge + scheduled asks) need the
+        // runtime POST_NOTIFICATIONS permission on Android 13+; request it
+        // once on first launch.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            androidx.core.app.ActivityCompat.requestPermissions(
+                this,
+                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                1001
+            )
+        }
+
         // Revive the always-on-top stats overlay if the user enabled it but it
         // died (process kill, APK update, OEM cleanup). No-op when off/running.
         com.example.tail.widget.StatsOverlayService.ensureRunning(applicationContext)

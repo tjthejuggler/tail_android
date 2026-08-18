@@ -103,6 +103,8 @@ private val KEY_BRIDGE_TOKEN = stringPreferencesKey("bridge_token")
 private val KEY_BRIDGE_MOVIE_HABITS = stringSetPreferencesKey("bridge_movie_habits")
 // Movie confirmation flash: "title@lastWatched" markers of prompts already shown/handled
 private val KEY_MOVIE_PROMPT_HANDLED = stringSetPreferencesKey("movie_prompt_handled")
+// Scheduled habit asks: habit name → daily "HH:mm" ask time
+private val KEY_HABIT_SCHEDULE_TIMES = stringPreferencesKey("habit_schedule_times")
 // OMDb API key for IMDb ratings
 private val KEY_OMDB_API_KEY = stringPreferencesKey("omdb_api_key")
 // Voice trigger feature keys
@@ -858,6 +860,7 @@ class SettingsRepository(private val context: Context) {
             bridgeToken = prefs[KEY_BRIDGE_TOKEN] ?: "",
             bridgeMovieHabits = prefs[KEY_BRIDGE_MOVIE_HABITS] ?: emptySet(),
             omdbApiKey = prefs[KEY_OMDB_API_KEY] ?: "",
+            habitScheduleTimes = decodeFileUriMap(prefs[KEY_HABIT_SCHEDULE_TIMES] ?: ""),
             customPointRangesHabits = prefs[KEY_CUSTOM_POINT_RANGES_HABITS] ?: emptySet(),
             customPointRanges = decodePointRangesMap(customPointRangesRaw),
             graphValueModeHabits = decodeIntMap(graphValueModeHabitsRaw),
@@ -1286,6 +1289,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits linked to the movie bridge. */
     suspend fun saveBridgeMovieHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_BRIDGE_MOVIE_HABITS] = habits }
+    }
+
+    /** Saves the habit name → daily "HH:mm" ask-time map for scheduled asks. */
+    suspend fun saveHabitScheduleTimes(times: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_HABIT_SCHEDULE_TIMES] = encodeFileUriMap(times) }
     }
 
     /** Returns the "title@lastWatched" markers of movie prompts already handled. */
