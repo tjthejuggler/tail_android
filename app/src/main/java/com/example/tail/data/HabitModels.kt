@@ -307,6 +307,24 @@ fun conditionalCappedFeedAmount(sourceStoredToday: Int, amount: Int): Int = when
     else -> amount.coerceAtMost(1)
 }
 
+/**
+ * Computes the conditional feed amount for sync-driven writes (e.g. the Garmin
+ * path in applyGarminData), where the source habit's stored count for a day
+ * changes by [delta] from a previous stored value of [sourceStoredBefore].
+ *
+ * Unlike manual increments, downward corrections (delta <= 0) never feed:
+ * sync pipelines rewrite absolute values, so a Garmin correction must not
+ * un-feed a linked habit (run the conditional backfill on the linked habit
+ * to true-up after a correction). Positive deltas feed the full amount, or
+ * at most 1 point per day when the source has the "feed max1" cap enabled
+ * ([feedMaxOne]) — mirroring the manual increment path's semantics.
+ */
+fun conditionalSyncFeedAmount(sourceStoredBefore: Int, delta: Int, feedMaxOne: Boolean): Int = when {
+    delta <= 0 -> 0
+    feedMaxOne -> conditionalCappedFeedAmount(sourceStoredBefore, delta)
+    else -> delta
+}
+
 // ── Display-label helpers (UI-only overrides) ────────────────────────────────
 /**
  * Returns the **default** human-readable label for a value/metric key when no

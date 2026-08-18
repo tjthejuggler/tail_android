@@ -52,6 +52,7 @@ import com.example.tail.data.secondaryValue2Key
 import com.example.tail.data.secondaryValueSlotKey
 import com.example.tail.data.conditionalCappedFeedAmount
 import com.example.tail.data.conditionalLinkStorageKey
+import com.example.tail.data.conditionalSyncFeedAmount
 import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.DailyStatsMap
 import com.example.tail.data.GRAPH_METRIC_POINTS
@@ -7378,9 +7379,11 @@ class HabitViewModel(
             }
         }
 
-        val mutableDb = cachedPhoneDb.toMutableMap()
+        var mutableDb = cachedPhoneDb.toMutableMap()
         var dbChanged = false
         val todayDeltas = mutableMapOf<String, Int>()
+        // Today's conditional-feed deltas per linked habit (for timestamps)
+        val linkedTodayDeltas = mutableMapOf<String, Int>()
 
         for ((habitName, garminTypeStr) in linkedHabits) {
             val garminType = GarminType.fromKey(garminTypeStr) ?: continue
@@ -7450,6 +7453,8 @@ class HabitViewModel(
 
             val habitData = mutableDb[habitName]!!.toMutableMap()
             var appliedCount = 0
+            // Positive per-day changes of this habit: (date, storedBefore, delta)
+            val positiveDayDeltas = mutableListOf<Triple<String, Int, Int>>()
             for ((date, value) in dailyValues) {
                 // Compute the points for this date DETERMINISTICALLY from the current
                 // (read-only) Garmin value. We always write the computed result —
@@ -7467,19 +7472,73 @@ class HabitViewModel(
                     habitData[date] = newValue
                     dbChanged = true
                     appliedCount++
+                    val delta = newValue - existing
 
                     // Track delta for today (for timestamp recording)
                     val today = LocalDate.now().toString()
-                    if (date == today) {
-                        val delta = newValue - existing
-                        if (delta > 0) {
-                            todayDeltas[habitName] = (todayDeltas[habitName] ?: 0) + delta
-                        }
+                    if (date == today && delta > 0) {
+                        todayDeltas[habitName] = (todayDeltas[habitName] ?: 0) + delta
+                    }
+                    // Remember positive day deltas (with the pre-change stored
+                    // value) so conditional feeds can mirror them onto linked
+                    // habits after this habit's values are written.
+                    if (delta > 0) {
+                        positiveDayDeltas.add(Triple(date, existing, delta))
                     }
                 }
             }
             Log.d(TAG, "Applied $appliedCount values for habit '$habitName'")
             mutableDb[habitName] = habitData
+
+            // Conditional feeds: a Garmin-linked habit with the Conditional
+            // type feeds its linked habits, mirroring Step 2c of the manual
+            // incrementHabit path (value-slot resolution, feed-max-1 cap and
+            // max-one targets included). Feeds fire only for POSITIVE day
+            // deltas — a new or raised Garmin value. Downward corrections
+            // never un-feed; run the conditional backfill on the linked habit
+            // to true-up after a correction.
+            if (habitName in settings.conditionalHabits && positiveDayDeltas.isNotEmpty()) {
+                val linkedNames = settings.conditionalLinkedHabits[habitName] ?: emptySet()
+                val feedMaxOne = habitName in settings.conditionalFeedMaxOneHabits
+                val todayStr = LocalDate.now().toString()
+                for (linkedName in linkedNames) {
+                    val valueKey = effectiveConditionalLinkValueKey(
+                        settings.conditionalLinkValues,
+                        settings.secondaryValueHabits,
+                        settings.chessComHabitLinks,
+                        habitName, linkedName
+                    )
+                    val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
+                    for ((date, storedBefore, delta) in positiveDayDeltas) {
+                        // Points slot: respect the feed-max-1 cap. Raw secondary
+                        // slots (Value2/Value3) are never capped, like the manual path.
+                        val feedAmount = if (targetKey == linkedName) {
+                            conditionalSyncFeedAmount(storedBefore, delta, feedMaxOne)
+                        } else delta
+                        if (feedAmount == 0) continue
+
+                        if (targetKey == linkedName) {
+                            val linkedEntries = mutableDb[targetKey] ?: emptyMap()
+                            val linkedRaw = (linkedEntries[date] ?: 0) + feedAmount
+                            val linkedClamped = if (linkedName in settings.maxOneHabits)
+                                linkedRaw.coerceAtMost(1) else linkedRaw
+                            // Max-one target already fed today — nothing changes.
+                            if (linkedClamped == (linkedEntries[date] ?: 0)) continue
+                        }
+
+                        mutableDb = habitsRepo.applyIncrementToDb(
+                            mutableDb, targetKey, feedAmount, LocalDate.parse(date)
+                        ).toMutableMap()
+                        dbChanged = true
+                        Log.d(TAG, "Conditional feed: '$habitName' +$delta on $date → " +
+                            "'$targetKey' +$feedAmount")
+                        if (date == todayStr) {
+                            linkedTodayDeltas[linkedName] =
+                                (linkedTodayDeltas[linkedName] ?: 0) + feedAmount
+                        }
+                    }
+                }
+            }
         }
 
         if (dbChanged) {
@@ -7497,6 +7556,15 @@ class HabitViewModel(
                 val today = LocalDate.now()
                 for ((habitName, delta) in todayDeltas) {
                     timestampRepo.addTimestamps(habitName, delta, today, now)
+                }
+            }
+
+            // Timestamps for linked habits fed by today's Garmin deltas
+            if (linkedTodayDeltas.isNotEmpty()) {
+                val now = HabitTimestampRepository.nowTime()
+                val today = LocalDate.now()
+                for ((linkedName, delta) in linkedTodayDeltas) {
+                    timestampRepo.addTimestamps(linkedName, delta, today, now)
                 }
             }
 
