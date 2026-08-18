@@ -250,11 +250,15 @@ object ChessReadinessEngine {
         val validUntil: Long
     )
 
-    /** Why a test cannot be run right now (rate limiting). */
-    sealed class GateError(val message: String) {
-        class MaxDailyTests(message: String) : GateError(message)
-        class CooldownActive(message: String) : GateError(message)
-        class RestPeriodActive(message: String) : GateError(message)
+    /**
+     * Why a test cannot be run right now (rate limiting). [retryAt] is the
+     * epoch-ms timestamp at which the block lifts (0 = unknown) — the UI
+     * renders it as a clock time / remaining wait.
+     */
+    sealed class GateError(val message: String, val retryAt: Long) {
+        class MaxDailyTests(message: String, retryAt: Long) : GateError(message, retryAt)
+        class CooldownActive(message: String, retryAt: Long) : GateError(message, retryAt)
+        class RestPeriodActive(message: String, retryAt: Long) : GateError(message, retryAt)
     }
 
     /** Outcome of the pre-flight rate-limit check. */
@@ -275,10 +279,14 @@ object ChessReadinessEngine {
     fun checkGate(history: List<ReadinessTest>, now: Long): GateStatus {
         val testsLast24h = history.filter { now - it.timestamp < 24L * 60 * 60 * 1000 }
         if (testsLast24h.size >= MAX_DAILY_TESTS) {
+            // The oldest test inside the rolling 24 h window ages out first —
+            // that moment is the earliest the cap can lift.
+            val retryAt = testsLast24h.minOf { it.timestamp } + 24L * 60 * 60 * 1000
             return GateStatus.Blocked(
                 GateError.MaxDailyTests(
                     "Maximum of $MAX_DAILY_TESTS readiness tests allowed per 24 hours " +
-                        "to prevent test fatigue."
+                        "to prevent test fatigue. Next test in ${formatWait(retryAt - now)}.",
+                    retryAt
                 )
             )
         }
@@ -288,26 +296,38 @@ object ChessReadinessEngine {
 
         return if (lastTest.ccrs >= 70) {
             if (timeSinceLast < COOLDOWN_MS) {
+                val retryAt = lastTest.timestamp + COOLDOWN_MS
                 val minsRemaining = ((COOLDOWN_MS - timeSinceLast) / 60000L).toInt() + 1
                 GateStatus.Blocked(
                     GateError.CooldownActive(
                         "Session active or cool-down in progress. Please wait " +
-                            "$minsRemaining more minute(s)."
+                            "$minsRemaining more minute(s).",
+                        retryAt
                     )
                 )
             } else GateStatus.Allowed(testsLast24h.size)
         } else {
             val restMs = restPeriodForScore(lastTest.ccrs)
             if (timeSinceLast < restMs) {
+                val retryAt = lastTest.timestamp + restMs
                 val minsRemaining = ((restMs - timeSinceLast) / 60000L).toInt() + 1
                 GateStatus.Blocked(
                     GateError.RestPeriodActive(
                         "Failed test (score ${lastTest.ccrs}) — recovery lock. " +
-                            "Re-test in $minsRemaining more minute(s)."
+                            "Re-test in $minsRemaining more minute(s).",
+                        retryAt
                     )
                 )
             } else GateStatus.Allowed(testsLast24h.size)
         }
+    }
+
+    /** "1 h 23 min" / "42 min" (rounded up) — used inside block messages. */
+    private fun formatWait(ms: Long): String {
+        val totalMin = ((ms + 59999L) / 60000L).toInt().coerceAtLeast(1)
+        val h = totalMin / 60
+        val m = totalMin % 60
+        return if (h > 0) "$h h $m min" else "$m min"
     }
 
     /**

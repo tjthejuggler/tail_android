@@ -235,6 +235,11 @@ class ChessReadinessEngineTest {
             (status as ChessReadinessEngine.GateStatus.Blocked).error
                 is ChessReadinessEngine.GateError.CooldownActive
         )
+        // retryAt = last test + 60 min → 30 min from NOW
+        assertEquals(
+            NOW + 30L * 60 * 1000,
+            status.error.retryAt
+        )
     }
 
     @Test
@@ -320,6 +325,11 @@ class ChessReadinessEngineTest {
         assertTrue(
             (status as ChessReadinessEngine.GateStatus.Blocked).error
                 is ChessReadinessEngine.GateError.MaxDailyTests
+        )
+        // retryAt = oldest test in the window + 24 h → NOW - 4 h + 24 h
+        assertEquals(
+            NOW + 20L * 60 * 60 * 1000,
+            status.error.retryAt
         )
     }
 

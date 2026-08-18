@@ -53,6 +53,7 @@ class ChessReadinessOverlay(service: Context) {
     // ── Wizard state ────────────────────────────────────────────────────────
     private var phase = Phase.LOADING
     private var blockedMessage = ""
+    private var blockedRetryAt = 0L
 
     private var garminSleepScore: Int? = null
     private var rushAth = 0
@@ -145,6 +146,7 @@ class ChessReadinessOverlay(service: Context) {
                     ChessReadinessEngine.checkGate(history, System.currentTimeMillis())) {
                     is ChessReadinessEngine.GateStatus.Blocked -> {
                         blockedMessage = gate.error.message
+                        blockedRetryAt = gate.error.retryAt
                         ChessReadinessLogStore.logBlockedAttempt(context, gate.error.message)
                         phase = Phase.BLOCKED
                     }
@@ -205,8 +207,30 @@ class ChessReadinessOverlay(service: Context) {
     private fun renderBlocked() {
         dialog.setContent("♟ Chess Readiness", "Test unavailable") {
             body(blockedMessage)
+            if (blockedRetryAt > 0L) {
+                spacer(8)
+                body(
+                    "Next test: ${formatRetryClock(blockedRetryAt)} " +
+                        "(in ${formatRetryRemaining(blockedRetryAt)})",
+                    color = 0xFF66CCFF.toInt(), size = 15, bold = true
+                )
+            }
             primaryButton("Close") { dismiss() }
         }
+    }
+
+    /** "14:37" — local clock time at which the rate-limit block lifts. */
+    private fun formatRetryClock(retryAt: Long): String =
+        Instant.ofEpochMilli(retryAt).atZone(ZoneId.systemDefault())
+            .format(DateTimeFormatter.ofPattern("HH:mm"))
+
+    /** "1 h 23 min" / "42 min" (rounded up) — wait left until [retryAt]. */
+    private fun formatRetryRemaining(retryAt: Long): String {
+        val totalMin = (((retryAt - System.currentTimeMillis()) + 59999L) / 60000L)
+            .toInt().coerceAtLeast(1)
+        val h = totalMin / 60
+        val m = totalMin % 60
+        return if (h > 0) "$h h $m min" else "$m min"
     }
 
     private fun renderSleep() {
@@ -396,6 +420,7 @@ class ChessReadinessOverlay(service: Context) {
         when (val gate = ChessReadinessEngine.checkGate(history, now)) {
             is ChessReadinessEngine.GateStatus.Blocked -> {
                 blockedMessage = gate.error.message
+                blockedRetryAt = gate.error.retryAt
                 ChessReadinessLogStore.logBlockedAttempt(context, gate.error.message)
                 ChessReadinessStore.clearSession(context)
                 phase = Phase.BLOCKED
