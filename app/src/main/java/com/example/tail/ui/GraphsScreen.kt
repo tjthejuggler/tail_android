@@ -349,32 +349,83 @@ fun GraphsPanel(
                 }
             }
 
-            // Long-press popup: per-metric "Interp 0s" toggle
+            // Long-press popup: per-metric "Interp 0s" toggle + a chooser for
+            // which value IS the habit's value (generic/named count vs the
+            // minutes slot). Choosing minutes transitions legacy single-value
+            // habits: their value-1 history moves into the minutes slot and
+            // minutes becomes the primary value (see
+            // migrateValue1ToMinutesPrimary).
             interpMenuMetric?.let { metricKey ->
+                val minutesPrimary = viewModel.isMinutesPrimaryHabit(selectedHabit)
                 Popup(
                     alignment = Alignment.TopCenter,
                     properties = PopupProperties(focusable = true, dismissOnClickOutside = true),
                     onDismissRequest = { interpMenuMetric = null }
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .background(Color(0xFF0D1A0D), RoundedCornerShape(8.dp))
                             .border(1.dp, Color(0xFF3A5A3A), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
-                        Checkbox(
-                            checked = viewModel.isGraphInterpolateZeroEnabled(selectedHabit, metricKey),
-                            onCheckedChange = { enabled ->
-                                viewModel.setGraphInterpolateZero(selectedHabit, metricKey, enabled)
-                            }
-                        )
-                        Text(
-                            text = "Interp 0s",
-                            color = Color(0xFFCCEECC),
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(start = 4.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = viewModel.isGraphInterpolateZeroEnabled(selectedHabit, metricKey),
+                                onCheckedChange = { enabled ->
+                                    viewModel.setGraphInterpolateZero(selectedHabit, metricKey, enabled)
+                                }
+                            )
+                            Text(
+                                text = "Interp 0s",
+                                color = Color(0xFFCCEECC),
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(start = 4.dp)
+                            )
+                        }
+                        // Primary-value chooser — hidden for max-1 habits
+                        // (a binary habit's only value is its generic count).
+                        if (!viewModel.isMaxOneHabit(selectedHabit)) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            HorizontalDivider(color = Color(0xFF3A5A3A))
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Set as the habit's value:",
+                                color = Color(0xFF88CC88),
+                                fontSize = 10.sp
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            // The generic count slot — shown under the name
+                            // the user gave it (if any) instead of "Generic".
+                            GraphPrimaryValueOption(
+                                label = viewModel.customValueLabel(
+                                    selectedHabit,
+                                    com.example.tail.data.GRAPH_METRIC_VALUE1
+                                ) ?: "Generic value",
+                                selected = !minutesPrimary,
+                                onClick = {
+                                    viewModel.setWidgetTimerPrimaryValue(selectedHabit, false)
+                                    interpMenuMetric = null
+                                }
+                            )
+                            GraphPrimaryValueOption(
+                                label = viewModel.customValueLabel(
+                                    selectedHabit,
+                                    com.example.tail.data.GRAPH_METRIC_MINUTES
+                                ) ?: "Minutes value",
+                                selected = minutesPrimary,
+                                onClick = {
+                                    // Selecting minutes carries legacy value-1
+                                    // history into the minutes slot (when that
+                                    // slot is empty) and makes minutes the
+                                    // primary value; the minutes toggle turns
+                                    // on with it.
+                                    viewModel.migrateValue1ToMinutesPrimary(selectedHabit)
+                                    interpMenuMetric = null
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -874,6 +925,42 @@ fun formatTooltipValue(value: Int, metric: String): String {
         metric == com.example.tail.data.GRAPH_METRIC_RUNTIME && value > 0 ->
             formatRuntimeMinutes(value)
         else -> value.toString()
+    }
+}
+
+/**
+ * One selectable row of the graph long-press "Set as the habit's value"
+ * chooser: a radio-style dot + the value's (custom or default) name.
+ */
+@Composable
+private fun GraphPrimaryValueOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                onClick = onClick,
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            )
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .background(if (selected) Color(0xFF66DD66) else Color.Transparent, CircleShape)
+                .border(1.dp, if (selected) Color(0xFF66DD66) else Color(0xFF557755), CircleShape)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            color = if (selected) Color(0xFF66DD66) else Color(0xFFCCEECC),
+            fontSize = 12.sp
+        )
     }
 }
 

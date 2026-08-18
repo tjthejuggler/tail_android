@@ -96,6 +96,8 @@ data class SettingsSection(
     val activeScreenIndex: Int = 0,
     val maxOneHabits: List<String> = emptyList(),
     val invertedBinaryHabits: List<String> = emptyList(),
+    val minutesEnabledHabits: List<String> = emptyList(),
+    val minutesPrimaryFallbacks: Map<String, String> = emptyMap(),
     val textInputHabits: List<String> = emptyList(),
     val textInputOptionsHabits: List<String> = emptyList(),
     val textInputFileUris: Map<String, String> = emptyMap(),

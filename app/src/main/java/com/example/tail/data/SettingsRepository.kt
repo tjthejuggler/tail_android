@@ -177,6 +177,11 @@ private val KEY_MIGRATION_RESONANCE_SECONDARY_DONE = booleanPreferencesKey("migr
 // Migration flag — set to true after the one-time move of timer minutes from
 // the generic secondary_value: slot to the first-class minutes: slot.
 private val KEY_MIGRATION_MINUTES_SLOT_DONE = booleanPreferencesKey("migration_minutes_slot_done")
+// One-time initialisation of the per-habit minutes-enabled set (derives it
+// from widget connections, minutes-primary flags and existing minutes data).
+private val KEY_MIGRATION_MINUTES_TOGGLE_INIT = booleanPreferencesKey("migration_minutes_toggle_init")
+// True after the one-time widget/media/movie minutes backfill has run.
+private val KEY_MIGRATION_MINUTES_WIDGET_BACKFILL = booleanPreferencesKey("migration_minutes_widget_backfill")
 
 // One-time cleanup: chess.com sync used to record one timestamp per MINUTE;
 // trim chess.com-linked habits' daily timestamps to one per game.
@@ -210,6 +215,11 @@ private val KEY_WIDGET_TRIGGER_HABITS = stringSetPreferencesKey("widget_trigger_
 private val KEY_WIDGET_TRIGGER_APPS = stringPreferencesKey("widget_trigger_apps")
 // Widget-timer habits where minutes (not sessions) is the primary value
 private val KEY_WIDGET_TIMER_MINUTES_PRIMARY = stringSetPreferencesKey("widget_timer_minutes_primary")
+// Habits with the first-class minutes value explicitly enabled (opt-in toggle)
+private val KEY_MINUTES_ENABLED_HABITS = stringSetPreferencesKey("minutes_enabled_habits")
+// Per-habit fallback source for minutes-primary habits (habit → none/sessions/value2),
+// stored as an encoded "habitName\x00source" kv string.
+private val KEY_MINUTES_PRIMARY_FALLBACKS = stringPreferencesKey("minutes_primary_fallbacks")
 // Media habit feature keys (podcasts, Spotify, any audio app).
 // The serialized key strings are kept from the original podcast-only
 // implementation so existing user configs load unchanged after the rename.
@@ -765,6 +775,24 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[KEY_MIGRATION_MINUTES_SLOT_DONE] = true }
     }
 
+    /** True after the one-time minutes-enabled set initialisation has run. */
+    suspend fun isMinutesToggleInitDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_MINUTES_TOGGLE_INIT] ?: false }.first()
+    }
+
+    suspend fun setMinutesToggleInitDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_MINUTES_TOGGLE_INIT] = true }
+    }
+
+    /** True after the one-time widget/media/movie minutes backfill has run. */
+    suspend fun isMinutesWidgetBackfillDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_MINUTES_WIDGET_BACKFILL] ?: false }.first()
+    }
+
+    suspend fun setMinutesWidgetBackfillDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_MINUTES_WIDGET_BACKFILL] = true }
+    }
+
     suspend fun isChessTimestampsTrimDone(): Boolean {
         return context.dataStore.data.map { it[KEY_CHESS_TIMESTAMPS_TRIMMED] ?: false }.first()
     }
@@ -911,6 +939,8 @@ class SettingsRepository(private val context: Context) {
             widgetTriggerHabits = prefs[KEY_WIDGET_TRIGGER_HABITS] ?: emptySet(),
             widgetTriggerApps = decodeFileUriMap(prefs[KEY_WIDGET_TRIGGER_APPS] ?: ""),
             widgetTimerMinutesPrimary = prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] ?: emptySet(),
+            minutesEnabledHabits = prefs[KEY_MINUTES_ENABLED_HABITS] ?: emptySet(),
+            minutesPrimaryFallbacks = decodeFileUriMap(prefs[KEY_MINUTES_PRIMARY_FALLBACKS] ?: ""),
             mediaHabits = prefs[KEY_MEDIA_HABITS] ?: emptySet(),
             mediaApps = decodeFileUriMap(prefs[KEY_MEDIA_APPS] ?: ""),
             chessReadinessEnabled = prefs[KEY_CHESS_READINESS_ENABLED] ?: false,
@@ -1543,6 +1573,18 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of widget-timer habits where minutes is the primary value. */
     suspend fun saveWidgetTimerMinutesPrimary(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] = habits }
+    }
+
+    /** Saves the set of habits with the minutes value explicitly enabled. */
+    suspend fun saveMinutesEnabledHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_MINUTES_ENABLED_HABITS] = habits }
+    }
+
+    /** Saves the per-habit fallback source for minutes-primary habits. */
+    suspend fun saveMinutesPrimaryFallbacks(map: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_MINUTES_PRIMARY_FALLBACKS] = encodeFileUriMap(map)
+        }
     }
 
     /** Saves the set of habits that have the "Media" type enabled. */

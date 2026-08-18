@@ -1122,6 +1122,10 @@ fun HabitGridScreen(
                         } ?: 0,
                         minutesFallbackHabits = settings.secondaryValueFallbackHabits,
                         onToggleMinutesFallback = { name -> viewModel.toggleMinutesFallbackHabit(name) },
+                        minutesPrimaryFallbacks = settings.minutesPrimaryFallbacks,
+                        onSetMinutesPrimaryFallback = { name, source ->
+                            viewModel.setMinutesPrimaryFallback(name, source)
+                        },
                         onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
                         onToggleConditional = { name -> viewModel.toggleConditional(name) },
                         onToggleConditionalFeedMaxOne = { name -> viewModel.toggleConditionalFeedMaxOne(name) },
@@ -1354,6 +1358,13 @@ fun HabitGridScreen(
                         onSetTimerPrimaryValue = { name, minutesPrimary ->
                             viewModel.setWidgetTimerPrimaryValue(name, minutesPrimary)
                         },
+                        minutesEnabled = selectedHabitName?.let {
+                            viewModel.isMinutesEnabled(it)
+                        } ?: false,
+                        minutesForcedByWidget = selectedHabitName?.let {
+                            viewModel.isMinutesForcedByWidget(it)
+                        } ?: false,
+                        onToggleMinutesEnabled = { name -> viewModel.toggleMinutesEnabled(name) },
                         mediaHabits = settings.mediaHabits,
                         mediaApps = settings.mediaApps,
                         onToggleMedia = { name -> viewModel.toggleMediaHabit(name) },
@@ -3453,10 +3464,10 @@ private fun HabitToggleSection(
  * Universal per-habit "Primary value" selector for the first-class minutes
  * model. Every habit implicitly has a minutes slot (`minutes:<habit>`);
  * this section picks which value drives points and spells out the fallback
- * semantics. Shown for every habit — with secondary values enabled the
- * wording adapts (the second value is tracked alongside the primary) and
- * the fallback switch defers to the "Fallback to secondary" toggle so the
- * two never compete.
+ * semantics. With minutes primary the fallback direction flips: pills pick
+ * which OTHER value (sessions, the second value, or none) covers points on
+ * 0-minute days. With sessions primary the "Fallback to minutes" switch
+ * applies; secondary-value habits keep their dedicated toggle above.
  */
 @Composable
 private fun PrimaryValueSection(
@@ -3465,7 +3476,10 @@ private fun PrimaryValueSection(
     minutesPrimary: Boolean,
     onSetPrimaryValue: (String, Boolean) -> Unit,
     minutesFallback: Boolean,
-    onToggleMinutesFallback: (String) -> Unit
+    onToggleMinutesFallback: (String) -> Unit,
+    minutesPrimaryFallback: String = com.example.tail.data.MINUTES_PRIMARY_FALLBACK_SESSIONS,
+    onSetMinutesPrimaryFallback: (String, String) -> Unit = { _, _ -> },
+    secondValueLabel: String? = null
 ) {
     Spacer(modifier = Modifier.height(6.dp))
     Text(
@@ -3493,7 +3507,13 @@ private fun PrimaryValueSection(
                 "Minutes drive points; second value tracked alongside"
             isSecondaryValue ->
                 "Sessions drive points; second value tracked alongside"
-            minutesPrimary -> "Minutes drive points; sessions are the fallback on 0-minute days"
+            minutesPrimary -> when {
+                minutesPrimaryFallback == com.example.tail.data.MINUTES_PRIMARY_FALLBACK_NONE ->
+                    "Minutes drive points; no fallback"
+                minutesPrimaryFallback == com.example.tail.data.MINUTES_PRIMARY_FALLBACK_VALUE2 ->
+                    "Minutes drive points; ${secondValueLabel ?: "second value"} is the fallback on 0-minute days"
+                else -> "Minutes drive points; sessions are the fallback on 0-minute days"
+            }
             minutesFallback -> "Sessions drive points; minutes are the fallback on 0-session days"
             else -> "Sessions drive points"
         },
@@ -3501,9 +3521,42 @@ private fun PrimaryValueSection(
         fontSize = 10.sp
     )
 
-    // Secondary-value habits use the "Fallback to secondary" toggle above
-    // instead — avoid two competing fallback switches.
-    if (!minutesPrimary && !isSecondaryValue) {
+    if (minutesPrimary) {
+        // Minutes-primary habits pick which OTHER value covers points on
+        // 0-minute days — the fallback direction is reversed.
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Fallback on 0-minute days",
+            color = Color(0xFFCCCCCC),
+            fontSize = 12.sp
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PrimaryValuePill(
+                text = "None",
+                selected = minutesPrimaryFallback == com.example.tail.data.MINUTES_PRIMARY_FALLBACK_NONE,
+                onClick = {
+                    onSetMinutesPrimaryFallback(habitName, com.example.tail.data.MINUTES_PRIMARY_FALLBACK_NONE)
+                }
+            )
+            PrimaryValuePill(
+                text = "Sessions",
+                selected = minutesPrimaryFallback == com.example.tail.data.MINUTES_PRIMARY_FALLBACK_SESSIONS,
+                onClick = {
+                    onSetMinutesPrimaryFallback(habitName, com.example.tail.data.MINUTES_PRIMARY_FALLBACK_SESSIONS)
+                }
+            )
+            if (isSecondaryValue) {
+                PrimaryValuePill(
+                    text = secondValueLabel ?: "Second value",
+                    selected = minutesPrimaryFallback == com.example.tail.data.MINUTES_PRIMARY_FALLBACK_VALUE2,
+                    onClick = {
+                        onSetMinutesPrimaryFallback(habitName, com.example.tail.data.MINUTES_PRIMARY_FALLBACK_VALUE2)
+                    }
+                )
+            }
+        }
+    } else if (!isSecondaryValue) {
         Spacer(modifier = Modifier.height(4.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -3530,6 +3583,56 @@ private fun PrimaryValueSection(
                 )
             )
         }
+    }
+}
+
+/**
+ * Per-habit toggle for the first-class minutes value (`minutes:<habit>`).
+ *
+ * OFF: the habit has no minutes at all — no minutes input in the edit bar,
+ * no Minutes graph metric, no minutes fallback/primary options.
+ * ON: the minutes value exists and can be edited, graphed and made primary.
+ *
+ * Locked ON for habits connected to a timer widget (PC widget, phone
+ * bubble, media tracker) — their timer feeds the minutes slot. Hidden for
+ * max-1 habits (a binary habit never has minutes).
+ */
+@Composable
+private fun MinutesToggleSection(
+    habitName: String,
+    minutesEnabled: Boolean,
+    forcedByWidget: Boolean,
+    onToggleMinutesEnabled: (String) -> Unit
+) {
+    Spacer(modifier = Modifier.height(6.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "⏱ Minutes value", color = Color(0xFFAA88FF), fontSize = 11.sp)
+            Text(
+                text = when {
+                    forcedByWidget -> "Always on — widget timer / media / movies feed minutes"
+                    minutesEnabled -> "Minutes tracked alongside the count"
+                    else -> "No minutes value for this habit"
+                },
+                color = if (minutesEnabled) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = minutesEnabled,
+            onCheckedChange = { if (!forcedByWidget) onToggleMinutesEnabled(habitName) },
+            enabled = !forcedByWidget,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66BB6A),
+                checkedTrackColor = Color(0xFF2E7D32),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
     }
 }
 
@@ -3846,6 +3949,10 @@ private fun EditModeControlBar(
     minutesFallbackHabits: Set<String> = emptySet(),
     /** Called when the user toggles the minutes fallback for a habit. */
     onToggleMinutesFallback: (String) -> Unit = {},
+    /** Per-habit fallback source for minutes-primary habits (none/sessions/value2). */
+    minutesPrimaryFallbacks: Map<String, String> = emptyMap(),
+    /** Called when the user picks the fallback source for a minutes-primary habit. */
+    onSetMinutesPrimaryFallback: (String, String) -> Unit = { _, _ -> },
     onSetDivider: (String, Int) -> Unit,
     onToggleConditional: (String) -> Unit,
     onSetConditionalLinks: (String) -> Unit,
@@ -3963,6 +4070,12 @@ private fun EditModeControlBar(
     widgetTimerMinutesPrimary: Set<String> = emptySet(),
     /** Called when the user changes which value is primary (true = minutes). */
     onSetTimerPrimaryValue: (String, Boolean) -> Unit = { _, _ -> },
+    /** Effective minutes-enabled state for the selected habit. */
+    minutesEnabled: Boolean = false,
+    /** Minutes forced ON by a timer-widget connection (locked toggle). */
+    minutesForcedByWidget: Boolean = false,
+    /** Called when the user toggles the per-habit minutes value on/off. */
+    onToggleMinutesEnabled: (String) -> Unit = {},
     // ── Media type parameters ─────────────────────────────────────────────
     /** Habits that have the "Media" type enabled. */
     mediaHabits: Set<String> = emptySet(),
@@ -3995,10 +4108,6 @@ private fun EditModeControlBar(
         habitScreens.indices.filter { it != currentScreen }
     } else emptyList()
 
-    var moveToScreenExpanded by remember { mutableStateOf(false) }
-    var showSetCountDialog by remember { mutableStateOf(false) }
-    var showRenameDialog by remember { mutableStateOf(false) }
-    var pendingCountDelta by remember { mutableStateOf(0) } // 0 = no pending change, 1 = increment, -1 = decrement
 
     Column(
         modifier = Modifier
@@ -4160,143 +4269,16 @@ private fun EditModeControlBar(
 
             // ── Habit selected ────────────────────────────────────────────
             else -> {
-                // Header row: name + inline count adjuster
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = selectedHabitName ?: "",
-                        color = Color(0xFFFFAA00),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (selectedHabitName != null) {
-                        // Count adjuster: [−] points [+]
-                        // Shows the divided points value; for divider habits the raw value
-                        // is editable in the "true value" field below.
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = "today:",
-                                color = Color(0xFF888888),
-                                fontSize = 10.sp
-                            )
-                            Button(
-                                onClick = {
-                                    // Check if this is a roll forward habit and we're viewing a past date
-                                    if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
-                                        // Set pending delta and show roll forward confirmation dialog
-                                        pendingCountDelta = -1
-                                        showSetCountDialog = true
-                                    } else {
-                                        // Normal decrement without roll forward
-                                        onSetCount(selectedHabitName, selectedHabitRawTodayCount - 1)
-                                    }
-                                },
-                                enabled = selectedHabitRawTodayCount > 0,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF3A1A00),
-                                    disabledContainerColor = Color(0xFF1A1A1A)
-                                ),
-                                modifier = Modifier.size(28.dp),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                            ) {
-                                Text("−", fontSize = 14.sp, color = if (selectedHabitRawTodayCount > 0) Color(0xFFFFAA00) else Color(0xFF555555))
-                            }
-                            Text(
-                                text = selectedHabitTodayCount.toString(),
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .width(28.dp)
-                                    .clickable(
-                                        indication = null,
-                                        interactionSource = remember { MutableInteractionSource() }
-                                    ) { showSetCountDialog = true },
-                                textAlign = TextAlign.Center
-                            )
-                            Button(
-                                onClick = {
-                                    // Check if this is a roll forward habit and we're viewing a past date
-                                    if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
-                                        // Set pending delta and show roll forward confirmation dialog
-                                        pendingCountDelta = 1
-                                        showSetCountDialog = true
-                                    } else {
-                                        // Normal increment without roll forward
-                                        onSetCount(selectedHabitName, selectedHabitRawTodayCount + 1)
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A00)),
-                                modifier = Modifier.size(28.dp),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                            ) {
-                                Text("+", fontSize = 14.sp, color = Color(0xFF88FF88))
-                            }
-                        }
-                    }
-                    // Set-count dialog — opened by tapping the count number or +/- buttons
-                    if (showSetCountDialog && selectedHabitName != null) {
-                        // Check if this is a roll forward habit and we're viewing a past date
-                        if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
-                            // Find the next manual date
-                            val nextManualDate = rollForwardManualDates[selectedHabitName]?.mapNotNull { dateStr ->
-                                com.example.tail.data.parseDate(dateStr)
-                            }?.sorted()?.firstOrNull { date -> date > selectedDate }
-                            
-                            val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
-                            
-                            // Show roll forward confirmation dialog
-                            RollForwardConfirmDialog(
-                                habitName = selectedHabitName,
-                                actionType = "increment",
-                                startDate = selectedDate,
-                                initialEndDate = endDate,
-                                onConfirm = { confirmedEndDate ->
-                                    // Use pending delta if available, otherwise use current count
-                                    val newCount = if (pendingCountDelta != 0) {
-                                        selectedHabitRawTodayCount + pendingCountDelta
-                                    } else {
-                                        selectedHabitRawTodayCount
-                                    }
-                                    onSetCountWithRollForward(selectedHabitName, newCount, confirmedEndDate)
-                                    showSetCountDialog = false
-                                    pendingCountDelta = 0
-                                },
-                                onDismiss = {
-                                    showSetCountDialog = false
-                                    pendingCountDelta = 0
-                                }
-                            )
-                        } else {
-                            // Normal set count dialog without roll forward
-                            // Use pending delta if available, otherwise show the dialog
-                            if (pendingCountDelta != 0) {
-                                // Apply the delta directly without showing the dialog
-                                onSetCount(selectedHabitName, selectedHabitRawTodayCount + pendingCountDelta)
-                                showSetCountDialog = false
-                                pendingCountDelta = 0
-                            } else {
-                                // Show the normal set count dialog
-                                SetCountDialog(
-                                    habitName = selectedHabitName,
-                                    currentCount = selectedHabitRawTodayCount,
-                                    onConfirm = { newCount ->
-                                        onSetCount(selectedHabitName, newCount)
-                                        showSetCountDialog = false
-                                    },
-                                    onDismiss = { showSetCountDialog = false }
-                                )
-                            }
-                        }
-                    }
-                }
+                EditModeHabitHeaderRow(
+                    selectedHabitName = selectedHabitName,
+                    selectedHabitTodayCount = selectedHabitTodayCount,
+                    selectedHabitRawTodayCount = selectedHabitRawTodayCount,
+                    rollForwardHabits = rollForwardHabits,
+                    rollForwardManualDates = rollForwardManualDates,
+                    selectedDate = selectedDate,
+                    onSetCount = onSetCount,
+                    onSetCountWithRollForward = onSetCountWithRollForward
+                )
                 // Value editor row — for timer habits (two value tracks:
                 // sessions + minutes) a dropdown picks which value to edit,
                 // defaulting to the habit's PRIMARY value. Single-track
@@ -4314,21 +4296,26 @@ private fun EditModeControlBar(
                     widgetTriggerApps = widgetTriggerApps,
                     widgetTimerMinutesPrimary = widgetTimerMinutesPrimary,
                     mediaHabits = mediaHabits,
+                    minutesEnabled = minutesEnabled,
                     rawTodayCount = selectedHabitRawTodayCount,
                     minutesTodayCount = selectedHabitMinutesTodayCount,
                     onSetCount = onSetCount,
                     onSetMinutesCount = onSetMinutesCount
                 )
-                // Minutes — direct editor for the first-class `minutes:<habit>`
-                // slot, at the top beside the value editor. Skipped when the
-                // editor above already covers minutes (timer dropdown, media
-                // habits) or when the habit's values live elsewhere (Garmin
-                // sync, secondary-value track).
+                // Standalone minutes editor — ONLY for habits whose value
+                // editor above does not already cover minutes AND that have
+                // a single value track (plain habits). A minutes input is
+                // never stacked above a true-value input: any habit with
+                // more than one editable value (timer habits, divider
+                // habits with minutes on) uses the Sessions/Minutes
+                // dropdown inside the value editor instead.
                 if (selectedHabitName != null &&
+                    minutesEnabled &&
                     selectedHabitName !in garminHabitLinks &&
                     selectedHabitName !in mediaHabits &&
                     widgetTriggerApps[selectedHabitName].isNullOrBlank() &&
-                    selectedHabitName !in secondaryValueSettings.habits
+                    selectedHabitName !in secondaryValueSettings.habits &&
+                    (habitDividers[selectedHabitName] ?: 1) <= 1
                 ) {
                     EditModeMinutesEditorRow(
                         habitName = selectedHabitName,
@@ -4357,91 +4344,16 @@ private fun EditModeControlBar(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // MOVE button — tap to enter move-pending mode
-                    Button(
-                        onClick = onStartMove,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004A4A)),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Text("↕ Move", fontSize = 11.sp, color = Color(0xFF44FFFF))
-                    }
-
-                    // Screen dropdown — move habit to another screen
-                    if (otherScreenIndices.isNotEmpty()) {
-                        Box {
-                            Button(
-                                onClick = { moveToScreenExpanded = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Text("→ Screen ▾", fontSize = 11.sp, color = Color(0xFF88CCFF))
-                            }
-                            DropdownMenu(
-                                expanded = moveToScreenExpanded,
-                                onDismissRequest = { moveToScreenExpanded = false }
-                            ) {
-                                otherScreenIndices.forEach { screenIdx ->
-                                    DropdownMenuItem(
-                                        text = { Text(habitScreens[screenIdx].name, fontSize = 13.sp) },
-                                        onClick = {
-                                            moveToScreenExpanded = false
-                                            onMoveToScreen(screenIdx)
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // ACTIONS section (Delete + Change Icon)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (selectedHabitName != null) {
-                        Button(
-                            onClick = { onDeleteHabit(selectedHabitName) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A0000)),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text("🗑 Delete", fontSize = 11.sp, color = Color(0xFFFF8888))
-                        }
-                        Button(
-                            onClick = { onChangeIcon(selectedHabitName) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A3A)),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text("🎨 Icon", fontSize = 11.sp, color = Color(0xFF88FFFF))
-                        }
-                        Button(
-                            onClick = { showRenameDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A00)),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text("✎ Rename", fontSize = 11.sp, color = Color(0xFFFFCC44))
-                        }
-                    }
-                }
-                
-                // Rename habit dialog
-                if (showRenameDialog && selectedHabitName != null) {
-                    RenameHabitDialog(
-                        currentName = selectedHabitName,
-                        onConfirm = { newName ->
-                            onRenameHabit(selectedHabitName, newName)
-                            showRenameDialog = false
-                        },
-                        onDismiss = { showRenameDialog = false }
-                    )
-                }
+                EditModeHabitActionRows(
+                    selectedHabitName = selectedHabitName,
+                    otherScreenIndices = otherScreenIndices,
+                    habitScreens = habitScreens,
+                    onStartMove = onStartMove,
+                    onMoveToScreen = onMoveToScreen,
+                    onDeleteHabit = onDeleteHabit,
+                    onChangeIcon = onChangeIcon,
+                    onRenameHabit = onRenameHabit
+                )
 
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = Color(0xFF333300), thickness = 1.dp)
@@ -5055,19 +4967,38 @@ private fun EditModeControlBar(
                         onToggleSecondaryValueFallback = secondaryValueSettings.onToggleSecondaryValueFallback
                     )
 
+                    // ── Minutes value on/off — first-class minutes toggle ──
+                    // Hidden for max-1 habits (a binary habit never has
+                    // minutes); locked ON for timer-widget habits (the
+                    // widget timer feeds the minutes slot).
+                    if (selectedHabitName !in maxOneHabits) {
+                        MinutesToggleSection(
+                            habitName = selectedHabitName,
+                            minutesEnabled = minutesEnabled,
+                            forcedByWidget = minutesForcedByWidget,
+                            onToggleMinutesEnabled = onToggleMinutesEnabled
+                        )
+                    }
+
                     // ── Primary value (Sessions vs Minutes) — first-class minutes ──
-                    // Every habit has a minutes slot (`minutes:<habit>`). Shown
-                    // for ALL habits — with secondary values on, the wording
-                    // adapts and the fallback switch defers to the
-                    // "Fallback to secondary" toggle above.
-                    PrimaryValueSection(
-                        habitName = selectedHabitName,
-                        isSecondaryValue = selectedHabitName in secondaryValueSettings.habits,
-                        minutesPrimary = selectedHabitName in widgetTimerMinutesPrimary,
-                        onSetPrimaryValue = onSetTimerPrimaryValue,
-                        minutesFallback = selectedHabitName in minutesFallbackHabits,
-                        onToggleMinutesFallback = onToggleMinutesFallback
-                    )
+                    // Only meaningful while the minutes value exists; with
+                    // minutes off, sessions are the one and only value.
+                    if (minutesEnabled) {
+                        PrimaryValueSection(
+                            habitName = selectedHabitName,
+                            isSecondaryValue = selectedHabitName in secondaryValueSettings.habits,
+                            minutesPrimary = selectedHabitName in widgetTimerMinutesPrimary,
+                            onSetPrimaryValue = onSetTimerPrimaryValue,
+                            minutesFallback = selectedHabitName in minutesFallbackHabits,
+                            onToggleMinutesFallback = onToggleMinutesFallback,
+                            minutesPrimaryFallback = minutesPrimaryFallbacks[selectedHabitName]
+                                ?: com.example.tail.data.MINUTES_PRIMARY_FALLBACK_SESSIONS,
+                            onSetMinutesPrimaryFallback = onSetMinutesPrimaryFallback,
+                            secondValueLabel = valueDisplayLabels[selectedHabitName]
+                                ?.get(com.example.tail.data.GRAPH_METRIC_VALUE2)
+                                ?.takeIf { it.isNotBlank() }
+                        )
+                    }
 
                     // ── Value Labels (display-only override) ───────────────────
                     ValueLabelsSection(
@@ -5521,6 +5452,278 @@ private fun EditModeControlBar(
 }
 
 /**
+ * Edit-mode header for the selected habit: name plus the inline
+ * [-]/count/[+] adjuster, with the set-count and roll-forward
+ * confirmation dialogs.
+ *
+ * Extracted from EditModeControlBar to keep it under the JVM 64KB
+ * method-size limit (hit a MethodTooLargeException after adding the
+ * minutes-toggle parameters).
+ */
+@Composable
+private fun EditModeHabitHeaderRow(
+    selectedHabitName: String?,
+    selectedHabitTodayCount: Int,
+    selectedHabitRawTodayCount: Int,
+    rollForwardHabits: Set<String>,
+    rollForwardManualDates: Map<String, Set<String>>,
+    selectedDate: java.time.LocalDate,
+    onSetCount: (String, Int) -> Unit,
+    onSetCountWithRollForward: (String, Int, java.time.LocalDate) -> Unit
+) {
+    var showSetCountDialog by remember { mutableStateOf(false) }
+    var pendingCountDelta by remember { mutableStateOf(0) } // 0 = no pending change, 1 = increment, -1 = decrement
+
+    // Header row: name + inline count adjuster
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = selectedHabitName ?: "",
+            color = Color(0xFFFFAA00),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
+        if (selectedHabitName != null) {
+            // Count adjuster: [−] points [+]
+            // Shows the divided points value; for divider habits the raw value
+            // is editable in the "true value" field below.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "today:",
+                    color = Color(0xFF888888),
+                    fontSize = 10.sp
+                )
+                Button(
+                    onClick = {
+                        // Check if this is a roll forward habit and we're viewing a past date
+                        if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+                            // Set pending delta and show roll forward confirmation dialog
+                            pendingCountDelta = -1
+                            showSetCountDialog = true
+                        } else {
+                            // Normal decrement without roll forward
+                            onSetCount(selectedHabitName, selectedHabitRawTodayCount - 1)
+                        }
+                    },
+                    enabled = selectedHabitRawTodayCount > 0,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF3A1A00),
+                        disabledContainerColor = Color(0xFF1A1A1A)
+                    ),
+                    modifier = Modifier.size(28.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                ) {
+                    Text("−", fontSize = 14.sp, color = if (selectedHabitRawTodayCount > 0) Color(0xFFFFAA00) else Color(0xFF555555))
+                }
+                Text(
+                    text = selectedHabitTodayCount.toString(),
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .width(28.dp)
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { showSetCountDialog = true },
+                    textAlign = TextAlign.Center
+                )
+                Button(
+                    onClick = {
+                        // Check if this is a roll forward habit and we're viewing a past date
+                        if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+                            // Set pending delta and show roll forward confirmation dialog
+                            pendingCountDelta = 1
+                            showSetCountDialog = true
+                        } else {
+                            // Normal increment without roll forward
+                            onSetCount(selectedHabitName, selectedHabitRawTodayCount + 1)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A00)),
+                    modifier = Modifier.size(28.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                ) {
+                    Text("+", fontSize = 14.sp, color = Color(0xFF88FF88))
+                }
+            }
+        }
+        // Set-count dialog — opened by tapping the count number or +/- buttons
+        if (showSetCountDialog && selectedHabitName != null) {
+            // Check if this is a roll forward habit and we're viewing a past date
+            if (selectedHabitName in rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+                // Find the next manual date
+                val nextManualDate = rollForwardManualDates[selectedHabitName]?.mapNotNull { dateStr ->
+                    com.example.tail.data.parseDate(dateStr)
+                }?.sorted()?.firstOrNull { date -> date > selectedDate }
+
+                val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+
+                // Show roll forward confirmation dialog
+                RollForwardConfirmDialog(
+                    habitName = selectedHabitName,
+                    actionType = "increment",
+                    startDate = selectedDate,
+                    initialEndDate = endDate,
+                    onConfirm = { confirmedEndDate ->
+                        // Use pending delta if available, otherwise use current count
+                        val newCount = if (pendingCountDelta != 0) {
+                            selectedHabitRawTodayCount + pendingCountDelta
+                        } else {
+                            selectedHabitRawTodayCount
+                        }
+                        onSetCountWithRollForward(selectedHabitName, newCount, confirmedEndDate)
+                        showSetCountDialog = false
+                        pendingCountDelta = 0
+                    },
+                    onDismiss = {
+                        showSetCountDialog = false
+                        pendingCountDelta = 0
+                    }
+                )
+            } else {
+                // Normal set count dialog without roll forward
+                // Use pending delta if available, otherwise show the dialog
+                if (pendingCountDelta != 0) {
+                    // Apply the delta directly without showing the dialog
+                    onSetCount(selectedHabitName, selectedHabitRawTodayCount + pendingCountDelta)
+                    showSetCountDialog = false
+                    pendingCountDelta = 0
+                } else {
+                    // Show the normal set count dialog
+                    SetCountDialog(
+                        habitName = selectedHabitName,
+                        currentCount = selectedHabitRawTodayCount,
+                        onConfirm = { newCount ->
+                            onSetCount(selectedHabitName, newCount)
+                            showSetCountDialog = false
+                        },
+                        onDismiss = { showSetCountDialog = false }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Edit-mode action rows for the selected habit: the Move button with
+ * the move-to-screen dropdown, and the Delete / Icon / Rename buttons
+ * with the rename dialog.
+ *
+ * Extracted from EditModeControlBar to keep it under the JVM 64KB
+ * method-size limit (hit a MethodTooLargeException after adding the
+ * minutes-toggle parameters).
+ */
+@Composable
+private fun EditModeHabitActionRows(
+    selectedHabitName: String?,
+    otherScreenIndices: List<Int>,
+    habitScreens: List<HabitScreen>,
+    onStartMove: () -> Unit,
+    onMoveToScreen: (Int) -> Unit,
+    onDeleteHabit: (String) -> Unit,
+    onChangeIcon: (String) -> Unit,
+    onRenameHabit: (String, String) -> Unit
+) {
+    var moveToScreenExpanded by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // MOVE button — tap to enter move-pending mode
+        Button(
+            onClick = onStartMove,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004A4A)),
+            modifier = Modifier.height(32.dp)
+        ) {
+            Text("↕ Move", fontSize = 11.sp, color = Color(0xFF44FFFF))
+        }
+
+        // Screen dropdown — move habit to another screen
+        if (otherScreenIndices.isNotEmpty()) {
+            Box {
+                Button(
+                    onClick = { moveToScreenExpanded = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("→ Screen ▾", fontSize = 11.sp, color = Color(0xFF88CCFF))
+                }
+                DropdownMenu(
+                    expanded = moveToScreenExpanded,
+                    onDismissRequest = { moveToScreenExpanded = false }
+                ) {
+                    otherScreenIndices.forEach { screenIdx ->
+                        DropdownMenuItem(
+                            text = { Text(habitScreens[screenIdx].name, fontSize = 13.sp) },
+                            onClick = {
+                                moveToScreenExpanded = false
+                                onMoveToScreen(screenIdx)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    // ACTIONS section (Delete + Change Icon)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (selectedHabitName != null) {
+            Button(
+                onClick = { onDeleteHabit(selectedHabitName) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A0000)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("🗑 Delete", fontSize = 11.sp, color = Color(0xFFFF8888))
+            }
+            Button(
+                onClick = { onChangeIcon(selectedHabitName) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A3A)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("🎨 Icon", fontSize = 11.sp, color = Color(0xFF88FFFF))
+            }
+            Button(
+                onClick = { showRenameDialog = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A00)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("✎ Rename", fontSize = 11.sp, color = Color(0xFFFFCC44))
+            }
+        }
+    }
+
+    // Rename habit dialog
+    if (showRenameDialog && selectedHabitName != null) {
+        RenameHabitDialog(
+            currentName = selectedHabitName,
+            onConfirm = { newName ->
+                onRenameHabit(selectedHabitName, newName)
+                showRenameDialog = false
+            },
+            onDismiss = { showRenameDialog = false }
+        )
+    }
+}
+
+/**
  * Edit-mode rows for the selected habit's note, "1 max" daily cap, custom
  * input increment amounts, and text-input features (options sub-toggle,
  * sharable text, log-file picker).
@@ -5849,10 +6052,13 @@ private fun HabitInputModesSection(
 /**
  * Edit-mode row for setting a habit's "true value" for the selected date.
  *
- * - Timer habits (widget trigger app configured) track TWO values — sessions
- *   (the habit's own slot) and minutes (the first-class `minutes:<habit>`
- *   slot) — so they get a dropdown that picks which value to edit. The
- *   default selection is the habit's PRIMARY value (per [widgetTimerMinutesPrimary]).
+ * - Multi-value habits — timer habits (widget trigger app configured) and
+ *   divider habits with the minutes value enabled — track TWO values:
+ *   sessions (the habit's own slot) and minutes (the first-class
+ *   `minutes:<habit>` slot). They get a dropdown that picks which value to
+ *   edit; the default selection is the habit's PRIMARY value (per
+ *   [widgetTimerMinutesPrimary]). A minutes input is NEVER shown stacked
+ *   above the true-value input — the dropdown replaces both.
  * - Garmin-linked habits show a read-only label with the derived Garmin
  *   metric value.
  * - Media habits edit their MINUTES (the `minutes:<habit>` slot the media
@@ -5873,6 +6079,7 @@ private fun EditModeValueEditorRow(
     widgetTriggerApps: Map<String, String>,
     widgetTimerMinutesPrimary: Set<String>,
     mediaHabits: Set<String> = emptySet(),
+    minutesEnabled: Boolean = false,
     rawTodayCount: Int,
     minutesTodayCount: Int,
     onSetCount: (String, Int) -> Unit,
@@ -5960,7 +6167,7 @@ private fun EditModeValueEditorRow(
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (isTimerHabit && !isGarminLinked) {
+        if ((isTimerHabit || (isDivider && minutesEnabled)) && !isGarminLinked) {
             // Multi-value habit: dropdown choosing which
             // value to set (default = primary value).
             Box {
@@ -5981,7 +6188,7 @@ private fun EditModeValueEditorRow(
                     onDismissRequest = { valuePickerExpanded = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Minutes (timer)", fontSize = 13.sp) },
+                        text = { Text("Minutes", fontSize = 13.sp) },
                         onClick = {
                             valuePickerExpanded = false
                             editingMinutes = true

@@ -58,6 +58,8 @@ import com.example.tail.data.conditionalCappedFeedAmount
 import com.example.tail.data.conditionalLinkStorageKey
 import com.example.tail.data.conditionalSyncFeedAmount
 import com.example.tail.data.effectiveConditionalLinkValueKey
+import com.example.tail.data.effectiveMinutesEnabled
+import com.example.tail.data.minutesHabitName
 import com.example.tail.data.DailyStatsMap
 import com.example.tail.data.GRAPH_METRIC_POINTS
 import com.example.tail.data.GRAPH_METRIC_VALUE1
@@ -1092,6 +1094,69 @@ class HabitViewModel(
     }
 
     /**
+     * One-time initialisation of the per-habit minutes-enabled set
+     * ([com.example.tail.data.AppSettings.minutesEnabledHabits]).
+     *
+     * Before the minutes toggle existed, every habit implicitly had minutes.
+     * To keep the effective state identical on day one, the explicit set is
+     * seeded with every habit that is connected to a timer feature (PC
+     * widget, phone bubble trigger, media tracker), is minutes-primary, or
+     * already has data in its `minutes:` slot — minus max-1 habits, which
+     * never have minutes. Habits with no minutes data and no timer
+     * connection start with minutes OFF (the new default).
+     */
+    private suspend fun performMinutesToggleInit() {
+        try {
+            val s = _settings.value
+            val withData = cachedPhoneDb.keys
+                .filter { com.example.tail.data.isMinutesKey(it) }
+                .mapNotNull { minutesHabitName(it) }
+                .filter { !cachedPhoneDb[minutesKey(it)].isNullOrEmpty() }
+            val derived = (
+                s.widgetTimerMinutesPrimary +
+                    s.pcWidgetHabits +
+                    s.widgetTriggerHabits +
+                    s.mediaHabits +
+                    s.bridgeMovieHabits +
+                    withData
+                ) - s.maxOneHabits
+            settingsRepo.saveMinutesEnabledHabits(derived)
+            _settings.value = _settings.value.copy(minutesEnabledHabits = derived)
+            settingsRepo.setMinutesToggleInitDone()
+            Log.i(TAG, "performMinutesToggleInit: ${derived.size} habits start with minutes enabled")
+        } catch (e: Exception) {
+            Log.e(TAG, "performMinutesToggleInit failed (will retry next load): ${e.message}")
+        }
+    }
+
+    /**
+     * One-time backfill: every habit connected to a timer widget (PC widget,
+     * phone bubble trigger), a media tracker, the movie bridge, or using
+     * minutes as its primary value gets its EXPLICIT minutes toggle turned
+     * ON. Runs after [performMinutesToggleInit] so habits connected after
+     * the initial seeding are also covered.
+     */
+    private suspend fun performMinutesWidgetBackfill() {
+        try {
+            val s = _settings.value
+            val forced = (
+                s.pcWidgetHabits +
+                    s.widgetTriggerHabits +
+                    s.mediaHabits +
+                    s.bridgeMovieHabits +
+                    s.widgetTimerMinutesPrimary
+                ) - s.maxOneHabits
+            val merged = s.minutesEnabledHabits + forced
+            settingsRepo.saveMinutesEnabledHabits(merged)
+            _settings.value = _settings.value.copy(minutesEnabledHabits = merged)
+            settingsRepo.setMinutesWidgetBackfillDone()
+            Log.i(TAG, "performMinutesWidgetBackfill: ${merged.size} habits now have minutes enabled")
+        } catch (e: Exception) {
+            Log.e(TAG, "performMinutesWidgetBackfill failed (will retry next load): ${e.message}")
+        }
+    }
+
+    /**
      * One-time cleanup: the chess.com sync used to record one timestamp per
      * MINUTE played (the minutes delta was passed to addTimestamps). Trims
      * each chess.com-linked habit's daily timestamp lists down to that day's
@@ -1161,6 +1226,19 @@ class HabitViewModel(
             // slot; move them to the dedicated minutes: slot.
             if (!settingsRepo.isMinutesSlotMigrationDone()) {
                 performMinutesSlotMigration(uri)
+            }
+
+            // ── One-time minutes-enabled set initialisation ────────────────
+            // Seed the explicit per-habit minutes toggle so the state after
+            // the toggle feature ships matches what the user had before.
+            if (!settingsRepo.isMinutesToggleInitDone()) {
+                performMinutesToggleInit()
+            }
+            // Backfill: habits already connected to a timer widget, media
+            // tracker or the movie bridge get their explicit minutes toggle
+            // turned ON (covers habits connected after the init seeding).
+            if (!settingsRepo.isMinutesWidgetBackfillDone()) {
+                performMinutesWidgetBackfill()
             }
 
             // ── One-time chess.com timestamp trim ──────────────────────────
@@ -1408,9 +1486,20 @@ class HabitViewModel(
     fun togglePcWidgetHabit(habitName: String) {
         viewModelScope.launch {
             val current = _settings.value.pcWidgetHabits.toMutableSet()
+            val wasEnabled = habitName in current
             if (habitName in current) current.remove(habitName) else current.add(habitName)
             settingsRepo.savePcWidgetHabits(current)
-            _settings.value = _settings.value.copy(pcWidgetHabits = current)
+            // Connecting a habit to the PC widget forces minutes ON — the
+            // widget timer feeds the habit's `minutes:` slot.
+            var minutes = _settings.value.minutesEnabledHabits
+            if (!wasEnabled && habitName in current && habitName !in minutes && habitName !in _settings.value.maxOneHabits) {
+                minutes = minutes + habitName
+                settingsRepo.saveMinutesEnabledHabits(minutes)
+            }
+            _settings.value = _settings.value.copy(
+                pcWidgetHabits = current,
+                minutesEnabledHabits = minutes
+            )
             pushPcWidgetConfig()
         }
     }
@@ -2400,9 +2489,40 @@ class HabitViewModel(
     fun toggleMaxOne(habitName: String) {
         viewModelScope.launch {
             val current = _settings.value.maxOneHabits.toMutableSet()
+            val wasMaxOne = habitName in current
             if (habitName in current) current.remove(habitName) else current.add(habitName)
             settingsRepo.saveMaxOneHabits(current)
-            _settings.value = _settings.value.copy(maxOneHabits = current)
+            // Enabling max-1 turns minutes OFF: a binary done/not-done habit
+            // has no duration, so the minutes slot, minutes-primary role and
+            // a minutes-sourced points fallback all stop making sense.
+            var newSettings = _settings.value.copy(maxOneHabits = current)
+            if (!wasMaxOne && habitName in current) {
+                var primary = newSettings.widgetTimerMinutesPrimary
+                var fallback = newSettings.secondaryValueFallbackHabits
+                var minutes = newSettings.minutesEnabledHabits
+                if (habitName in primary) primary = primary - habitName
+                if (habitName in minutes) minutes = minutes - habitName
+                // Only drop the fallback flag when its source is the minutes
+                // slot (a legacy secondary_value: fallback keeps working).
+                val legacyFallbackSource = habitName in newSettings.secondaryValueHabits ||
+                    !cachedPhoneDb[secondaryValueKey(habitName)].isNullOrEmpty()
+                if (habitName in fallback && !legacyFallbackSource) fallback = fallback - habitName
+                if (primary != newSettings.widgetTimerMinutesPrimary) {
+                    settingsRepo.saveWidgetTimerMinutesPrimary(primary)
+                }
+                if (fallback != newSettings.secondaryValueFallbackHabits) {
+                    settingsRepo.saveSecondaryValueFallbackHabits(fallback)
+                }
+                if (minutes != newSettings.minutesEnabledHabits) {
+                    settingsRepo.saveMinutesEnabledHabits(minutes)
+                }
+                newSettings = newSettings.copy(
+                    widgetTimerMinutesPrimary = primary,
+                    secondaryValueFallbackHabits = fallback,
+                    minutesEnabledHabits = minutes
+                )
+            }
+            _settings.value = newSettings
         }
     }
 
@@ -3379,7 +3499,20 @@ class HabitViewModel(
         }
         if (habitName in _settings.value.widgetTimerMinutesPrimary) {
             val minutes = cachedPhoneDb[minutesKey(habitName)]?.get(dateStr) ?: 0
-            return com.example.tail.data.effectivePointsWithFallback(minutes, divider, rawCount, true)
+            // Minutes-primary: which value covers points on 0-minute days is
+            // configurable — sessions (the default), the second value, or none.
+            return when (
+                _settings.value.minutesPrimaryFallbacks[habitName]
+                    ?: com.example.tail.data.MINUTES_PRIMARY_FALLBACK_SESSIONS
+            ) {
+                com.example.tail.data.MINUTES_PRIMARY_FALLBACK_NONE ->
+                    applyDivider(minutes, divider)
+                com.example.tail.data.MINUTES_PRIMARY_FALLBACK_VALUE2 -> {
+                    val v2 = cachedPhoneDb[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+                    com.example.tail.data.effectivePointsWithFallback(minutes, divider, v2, true)
+                }
+                else -> com.example.tail.data.effectivePointsWithFallback(minutes, divider, rawCount, true)
+            }
         }
         val useFallback = habitName in _settings.value.secondaryValueFallbackHabits
         if (!useFallback) return applyDivider(rawCount, divider)
@@ -3450,6 +3583,134 @@ class HabitViewModel(
             rebuildHabitList()
         }
     }
+
+    /** The fallback source a minutes-primary habit uses on 0-minute days. */
+    fun getMinutesPrimaryFallback(habitName: String): String =
+        _settings.value.minutesPrimaryFallbacks[habitName]
+            ?: com.example.tail.data.MINUTES_PRIMARY_FALLBACK_SESSIONS
+
+    /**
+     * Sets which value covers points on 0-minute days for a MINUTES-PRIMARY
+     * habit: none, the sessions value (the default), or the second value.
+     * Only non-default choices are stored, so absent = sessions.
+     */
+    fun setMinutesPrimaryFallback(habitName: String, source: String) {
+        viewModelScope.launch {
+            val current = _settings.value.minutesPrimaryFallbacks
+            val updated = if (source == com.example.tail.data.MINUTES_PRIMARY_FALLBACK_SESSIONS) {
+                current - habitName
+            } else {
+                current + (habitName to source)
+            }
+            if (updated == current) return@launch
+            settingsRepo.saveMinutesPrimaryFallbacks(updated)
+            _settings.value = _settings.value.copy(minutesPrimaryFallbacks = updated)
+            rebuildHabitList()
+        }
+    }
+
+    /**
+     * The EFFECTIVE minutes-enabled state for [habitName]: the explicit
+     * toggle OR any timer-widget connection (which forces minutes on),
+     * minus max-1 habits (which force minutes off). See
+     * [com.example.tail.data.effectiveMinutesEnabled].
+     */
+    fun isMinutesEnabled(habitName: String): Boolean {
+        val s = _settings.value
+        return effectiveMinutesEnabled(
+            habitName,
+            s.minutesEnabledHabits,
+            s.pcWidgetHabits,
+            s.widgetTriggerHabits,
+            s.mediaHabits,
+            s.bridgeMovieHabits,
+            s.widgetTimerMinutesPrimary,
+            s.maxOneHabits
+        )
+    }
+
+    /**
+     * True when minutes is forced ON by a timer-widget connection (PC
+     * widget, phone bubble trigger), a media tracker, or the movie bridge —
+     * the edit panel shows the minutes toggle as locked-on for these habits.
+     */
+    fun isMinutesForcedByWidget(habitName: String): Boolean {
+        val s = _settings.value
+        return habitName in s.pcWidgetHabits ||
+            habitName in s.widgetTriggerHabits ||
+            habitName in s.mediaHabits ||
+            habitName in s.bridgeMovieHabits
+    }
+
+    /**
+     * Toggles the per-habit minutes value on/off.
+     *
+     * Refuses to change habits whose minutes state is forced: max-1 habits
+     * (never minutes) and timer-widget/media/movie-connected habits (always
+     * minutes). Turning minutes OFF also clears the minutes-primary role,
+     * its fallback choice and a minutes-sourced points fallback, since none
+     * can work without the minutes value. Stored minutes DATA is never
+     * deleted — only the feature flags change.
+     */
+    fun toggleMinutesEnabled(habitName: String) {
+        viewModelScope.launch {
+            val s = _settings.value
+            if (habitName in s.maxOneHabits) return@launch
+            if (isMinutesForcedByWidget(habitName)) return@launch
+            val enabling = habitName !in s.minutesEnabledHabits
+            val minutes = if (enabling) s.minutesEnabledHabits + habitName else s.minutesEnabledHabits - habitName
+            var primary = s.widgetTimerMinutesPrimary
+            var fallback = s.secondaryValueFallbackHabits
+            var mpFallbacks = s.minutesPrimaryFallbacks
+            if (!enabling) {
+                if (habitName in primary) primary = primary - habitName
+                if (habitName in mpFallbacks) mpFallbacks = mpFallbacks - habitName
+                // Only drop the fallback flag when its source is the minutes
+                // slot; a legacy secondary_value: fallback keeps working.
+                val legacyFallbackSource = habitName in s.secondaryValueHabits ||
+                    !cachedPhoneDb[secondaryValueKey(habitName)].isNullOrEmpty()
+                if (habitName in fallback && !legacyFallbackSource) fallback = fallback - habitName
+            }
+            settingsRepo.saveMinutesEnabledHabits(minutes)
+            if (primary != s.widgetTimerMinutesPrimary) {
+                settingsRepo.saveWidgetTimerMinutesPrimary(primary)
+            }
+            if (fallback != s.secondaryValueFallbackHabits) {
+                settingsRepo.saveSecondaryValueFallbackHabits(fallback)
+            }
+            if (mpFallbacks != s.minutesPrimaryFallbacks) {
+                settingsRepo.saveMinutesPrimaryFallbacks(mpFallbacks)
+            }
+            _settings.value = s.copy(
+                minutesEnabledHabits = minutes,
+                widgetTimerMinutesPrimary = primary,
+                secondaryValueFallbackHabits = fallback,
+                minutesPrimaryFallbacks = mpFallbacks
+            )
+            rebuildHabitList()
+        }
+    }
+
+    /** True when minutes (not sessions) is the habit's primary value. */
+    fun isMinutesPrimaryHabit(habitName: String): Boolean =
+        habitName in _settings.value.widgetTimerMinutesPrimary
+
+    /**
+     * Resolves the user-facing display label for a habit's value key,
+     * honouring custom labels ([AppSettings.valueDisplayLabels]).
+     */
+    fun valueDisplayLabel(habitName: String, valueKey: String): String =
+        com.example.tail.data.displayLabelForValue(
+            habitName, valueKey, _settings.value.valueDisplayLabels
+        )
+
+    /** The user's CUSTOM label for a value key, or null when none is set. */
+    fun customValueLabel(habitName: String, valueKey: String): String? =
+        _settings.value.valueDisplayLabels[habitName]?.get(valueKey)?.takeIf { it.isNotBlank() }
+
+    /** True when the habit has the "1 max" daily cap enabled. */
+    fun isMaxOneHabit(habitName: String): Boolean =
+        habitName in _settings.value.maxOneHabits
 
     /**
      * Moves the currently selected habit to [targetScreenIndex].
@@ -3769,9 +4030,19 @@ class HabitViewModel(
 
             settingsRepo.saveWidgetTriggerHabits(newHabits)
             settingsRepo.saveWidgetTriggerApps(newApps)
+            // Connecting a habit to the phone bubble timer forces minutes ON
+            // — the bubble timer feeds the habit's `minutes:` slot.
+            var minutes = _settings.value.minutesEnabledHabits
+            if (habitName in newHabits && habitName !in current &&
+                habitName !in minutes && habitName !in _settings.value.maxOneHabits
+            ) {
+                minutes = minutes + habitName
+                settingsRepo.saveMinutesEnabledHabits(minutes)
+            }
             _settings.value = _settings.value.copy(
                 widgetTriggerHabits = newHabits,
-                widgetTriggerApps = newApps
+                widgetTriggerApps = newApps,
+                minutesEnabledHabits = minutes
             )
 
             updateWidgetTriggerService()
@@ -3787,11 +4058,19 @@ class HabitViewModel(
             val apps = _settings.value.widgetTriggerApps.toMutableMap()
             apps[habitName] = packageName
             settingsRepo.saveWidgetTriggerApps(apps)
-            _settings.value = _settings.value.copy(widgetTriggerApps = apps)
-
-            // No value-setup needed anymore: every habit has a first-class
-            // minutes slot automatically, and which value is primary is a
-            // single explicit toggle in the edit panel.
+            // Configuring the trigger app connects the bubble timer, which
+            // feeds the habit's `minutes:` slot — minutes turn ON.
+            var minutes = _settings.value.minutesEnabledHabits
+            if (packageName.isNotBlank() && habitName !in minutes &&
+                habitName !in _settings.value.maxOneHabits
+            ) {
+                minutes = minutes + habitName
+                settingsRepo.saveMinutesEnabledHabits(minutes)
+            }
+            _settings.value = _settings.value.copy(
+                widgetTriggerApps = apps,
+                minutesEnabledHabits = minutes
+            )
 
             updateWidgetTriggerService()
         }
@@ -3808,13 +4087,82 @@ class HabitViewModel(
             val current = _settings.value.widgetTimerMinutesPrimary
             val updated = if (minutesPrimary) current + habitName else current - habitName
             settingsRepo.saveWidgetTimerMinutesPrimary(updated)
-            _settings.value = _settings.value.copy(widgetTimerMinutesPrimary = updated)
+            // Making minutes the primary value requires minutes to exist:
+            // the minutes toggle turns ON together with this (also covers
+            // the graph screen's long-press "set as minutes value" action).
+            var minutes = _settings.value.minutesEnabledHabits
+            if (minutesPrimary && habitName !in minutes &&
+                habitName !in _settings.value.maxOneHabits
+            ) {
+                minutes = minutes + habitName
+                settingsRepo.saveMinutesEnabledHabits(minutes)
+            }
+            _settings.value = _settings.value.copy(
+                widgetTimerMinutesPrimary = updated,
+                minutesEnabledHabits = minutes
+            )
             rebuildHabitList()
             // The PC widget config carries the minutes-primary flag — refresh it
             // when a PC-widget habit's primary value changes.
             if (habitName in _settings.value.pcWidgetHabits) {
                 pushPcWidgetConfig()
             }
+        }
+    }
+
+    /**
+     * Transitions a legacy single-value habit to minutes-primary, carrying the
+     * historical data over. Such habits had a single generic count that was
+     * minutes all along, so choosing "Minutes value" in the graph's long-press
+     * chooser MOVES that history from the value-1 slot into the habit's
+     * minutes slot, empties the value-1 slot, and makes minutes the primary
+     * value (the minutes toggle turns on with it).
+     *
+     * The data move only happens while the minutes slot is empty — a habit
+     * with real (timer-fed) minutes data keeps it and only the primary flag
+     * flips. The habit's graph metric selection swaps value1 → minutes so the
+     * migrated history is visible immediately.
+     */
+    fun migrateValue1ToMinutesPrimary(habitName: String) {
+        val uriStr = _settings.value.fileUri
+        if (uriStr.isEmpty()) {
+            Log.w(TAG, "migrateValue1ToMinutesPrimary: no habits file configured — flag only")
+            setWidgetTimerPrimaryValue(habitName, true)
+            return
+        }
+        viewModelScope.launch {
+            val minKey = minutesKey(habitName)
+            val existingMinutes = cachedPhoneDb[minKey]
+            val minutesEmpty = existingMinutes == null || existingMinutes.values.all { it == 0 }
+            val value1Data = cachedPhoneDb[habitName]
+            if (minutesEmpty && !value1Data.isNullOrEmpty() && dbLoaded) {
+                val mutableDb = cachedPhoneDb.toMutableMap()
+                mutableDb[minKey] = value1Data
+                mutableDb.remove(habitName)
+                cachedPhoneDb = mutableDb
+                withContext(Dispatchers.IO) {
+                    habitsRepo.persistDatabase(Uri.parse(uriStr), context, mutableDb)
+                }
+                HabitsDataChangedBus.emit()
+                Log.i(
+                    TAG,
+                    "migrateValue1ToMinutesPrimary: moved ${value1Data.size} days " +
+                        "of value-1 data to minutes for '$habitName'"
+                )
+            }
+            // Swap the graph selection value1 → minutes so the migrated
+            // history shows immediately (also refreshes cached series).
+            val selection = _settings.value.graphMetricSelection.toMutableMap()
+            val currentSet = getSelectedMetrics(habitName).toMutableSet()
+            val hadValue1 = currentSet.remove(GRAPH_METRIC_VALUE1)
+            val addedMinutes = currentSet.add(GRAPH_METRIC_MINUTES)
+            if (hadValue1 || addedMinutes) {
+                selection[habitName] = currentSet
+                settingsRepo.saveGraphMetricSelection(selection)
+                _settings.value = _settings.value.copy(graphMetricSelection = selection)
+            }
+            // Minutes becomes the primary value (enables the minutes toggle).
+            setWidgetTimerPrimaryValue(habitName, true)
         }
     }
 
@@ -3842,9 +4190,19 @@ class HabitViewModel(
             }
             settingsRepo.saveMediaHabits(newHabits)
             settingsRepo.saveMediaApps(newApps)
+            // Media habits track listening minutes in the `minutes:` slot —
+            // enabling the type turns minutes ON.
+            var minutes = _settings.value.minutesEnabledHabits
+            if (habitName in newHabits && habitName !in current &&
+                habitName !in minutes && habitName !in _settings.value.maxOneHabits
+            ) {
+                minutes = minutes + habitName
+                settingsRepo.saveMinutesEnabledHabits(minutes)
+            }
             _settings.value = _settings.value.copy(
                 mediaHabits = newHabits,
-                mediaApps = newApps
+                mediaApps = newApps,
+                minutesEnabledHabits = minutes
             )
             updateWidgetTriggerService()
         }
@@ -4426,6 +4784,8 @@ class HabitViewModel(
                     widgetTriggerHabits = settings.widgetTriggerHabits.replaceElement(oldName, newName),
                     widgetTriggerApps = settings.widgetTriggerApps.replaceKey(oldName, newName),
                     widgetTimerMinutesPrimary = settings.widgetTimerMinutesPrimary.replaceElement(oldName, newName),
+                    minutesEnabledHabits = settings.minutesEnabledHabits.replaceElement(oldName, newName),
+                    minutesPrimaryFallbacks = settings.minutesPrimaryFallbacks.replaceKey(oldName, newName),
                     mapMainHabit = if (settings.mapMainHabit == oldName) newName else settings.mapMainHabit
                 )
                 
@@ -4490,6 +4850,9 @@ class HabitViewModel(
                 settingsRepo.saveHabitLongPressUrlApps(newSettings.habitLongPressUrlApps)
                 settingsRepo.saveWidgetTriggerHabits(newSettings.widgetTriggerHabits)
                 settingsRepo.saveWidgetTriggerApps(newSettings.widgetTriggerApps)
+                settingsRepo.saveWidgetTimerMinutesPrimary(newSettings.widgetTimerMinutesPrimary)
+                settingsRepo.saveMinutesEnabledHabits(newSettings.minutesEnabledHabits)
+                settingsRepo.saveMinutesPrimaryFallbacks(newSettings.minutesPrimaryFallbacks)
                 settingsRepo.saveMapMainHabit(newSettings.mapMainHabit)
                 
                 // Rename in the internal timestamp file so historical timestamps survive
@@ -5261,11 +5624,10 @@ class HabitViewModel(
                 if (hasV2) metrics.add(v2)
             }
         }
-        // First-class minutes slot — available for every habit once any
-        // timer-based feature has written minutes (or always for
-        // minutes-primary habits).
-        val hasMinutes = habitName in _settings.value.widgetTimerMinutesPrimary ||
-            !cachedPhoneDb[minutesKey(habitName)].isNullOrEmpty()
+        // First-class minutes slot — shown only when the habit's minutes
+        // value is enabled (explicit toggle, or forced on by a timer-widget
+        // connection / minutes-primary role; max-1 forces it off).
+        val hasMinutes = isMinutesEnabled(habitName)
         if (hasMinutes) {
             metrics.add(GraphMetricOption(com.example.tail.data.GRAPH_METRIC_MINUTES, com.example.tail.data.displayLabelForValue(habitName, com.example.tail.data.GRAPH_METRIC_MINUTES, labels)))
         }
@@ -8036,7 +8398,20 @@ class HabitViewModel(
             val current = _settings.value.bridgeMovieHabits.toMutableSet()
             if (habitName in current) current.remove(habitName) else current.add(habitName)
             settingsRepo.saveBridgeMovieHabits(current)
-            _settings.value = _settings.value.copy(bridgeMovieHabits = current)
+            // Movie habits track runtime minutes in the `minutes:` slot —
+            // enabling the type turns minutes ON.
+            var minutes = _settings.value.minutesEnabledHabits
+            if (habitName in current &&
+                habitName !in minutes &&
+                habitName !in _settings.value.maxOneHabits
+            ) {
+                minutes = minutes + habitName
+                settingsRepo.saveMinutesEnabledHabits(minutes)
+            }
+            _settings.value = _settings.value.copy(
+                bridgeMovieHabits = current,
+                minutesEnabledHabits = minutes
+            )
         }
     }
 
@@ -9500,9 +9875,12 @@ class HabitViewModel(
         val timerMinutesPrimary = _settings.value.widgetTimerMinutesPrimary
         for (name in tracked) {
             val rawEntries = db[name] ?: continue
-            // Widget-timer habits with minutes primary: swap the roles so minutes
-            // drive the streak and sessions are the fallback.
+            // Widget-timer habits with minutes primary: swap the roles so
+            // minutes drive the streak; the fallback on 0-minute days is
+            // configurable (sessions by default, the second value, or none).
             val swapped = name in timerMinutesPrimary
+            val mpFallback = _settings.value.minutesPrimaryFallbacks[name]
+                ?: com.example.tail.data.MINUTES_PRIMARY_FALLBACK_SESSIONS
             val useFallback = name in fallbackHabits || swapped
             // Fallback source: minutes slot for minutes-primary habits; the
             // legacy secondary slot for habits that use it or have data there
@@ -9517,8 +9895,19 @@ class HabitViewModel(
             // Apply the fallback so days with 0 primary but non-zero fallback
             // count as "done" for streak purposes.
             val secEntries = if (useFallback) db[fallbackKey] ?: emptyMap() else emptyMap()
+            // The fallback VALUE for minutes-primary habits: sessions (the
+            // default), the second value, or none.
+            val swappedFbEntries = when {
+                !swapped -> rawEntries
+                mpFallback == com.example.tail.data.MINUTES_PRIMARY_FALLBACK_NONE -> emptyMap()
+                mpFallback == com.example.tail.data.MINUTES_PRIMARY_FALLBACK_VALUE2 ->
+                    db[secondaryValueKey(name)] ?: emptyMap()
+                else -> rawEntries
+            }
+            val swappedUseFb = swapped &&
+                mpFallback != com.example.tail.data.MINUTES_PRIMARY_FALLBACK_NONE
             val entries = if (swapped) {
-                com.example.tail.data.effectiveEntriesWithFallback(secEntries, rawEntries, true)
+                com.example.tail.data.effectiveEntriesWithFallback(secEntries, swappedFbEntries, swappedUseFb)
             } else {
                 com.example.tail.data.effectiveEntriesWithFallback(rawEntries, secEntries, useFallback)
             }
@@ -9536,7 +9925,8 @@ class HabitViewModel(
                 val rawPrimary = rawEntries[entry.key] ?: 0
                 val secVal = if (useFallback) secEntries[entry.key] ?: 0 else 0
                 val pts = if (swapped) {
-                    com.example.tail.data.effectivePointsWithFallback(secVal, divider, rawPrimary, true)
+                    val fbVal = if (swappedUseFb) swappedFbEntries[entry.key] ?: 0 else 0
+                    com.example.tail.data.effectivePointsWithFallback(secVal, divider, fbVal, swappedUseFb)
                 } else {
                     com.example.tail.data.effectivePointsWithFallback(rawPrimary, divider, secVal, useFallback)
                 }
@@ -9547,7 +9937,8 @@ class HabitViewModel(
                 val rawPrimary = rawEntries[entry.key] ?: 0
                 val secVal = if (useFallback) secEntries[entry.key] ?: 0 else 0
                 val pts = if (swapped) {
-                    com.example.tail.data.effectivePointsWithFallback(secVal, divider, rawPrimary, true)
+                    val fbVal = if (swappedUseFb) swappedFbEntries[entry.key] ?: 0 else 0
+                    com.example.tail.data.effectivePointsWithFallback(secVal, divider, fbVal, swappedUseFb)
                 } else {
                     com.example.tail.data.effectivePointsWithFallback(rawPrimary, divider, secVal, useFallback)
                 }

@@ -1197,6 +1197,32 @@ data class AppSettings(
      */
     val widgetTimerMinutesPrimary: Set<String> = emptySet(),
 
+    /**
+     * Habits that have the first-class minutes value (`minutes:<habit>`)
+     * ENABLED. Minutes is opt-in per habit: habits that never need a duration
+     * stay out of this set and get no minutes input anywhere (edit bar,
+     * graph metric, fallback options).
+     *
+     * The EFFECTIVE state also honours two invariants (see
+     * [effectiveMinutesEnabled]):
+     *  - max-1 habits ([maxOneHabits]) NEVER have minutes (a binary habit
+     *    has no duration) — enabling max-1 strips the minutes flags;
+     *  - habits connected to a timer widget ([pcWidgetHabits] PC widget,
+     *    [widgetTriggerHabits] phone bubble, [mediaHabits] media tracker)
+     *    ALWAYS have minutes — the widget timer feeds the `minutes:` slot —
+     *    and connecting one auto-enables minutes.
+     */
+    val minutesEnabledHabits: Set<String> = emptySet(),
+
+    /**
+     * Per-habit fallback source for MINUTES-PRIMARY habits (minutes drive
+     * points): which value covers points on 0-minute days. Values are the
+     * [MINUTES_PRIMARY_FALLBACK_NONE] / [MINUTES_PRIMARY_FALLBACK_SESSIONS] /
+     * [MINUTES_PRIMARY_FALLBACK_VALUE2] constants. Absent entry = sessions
+     * (the default), so only non-default choices are stored.
+     */
+    val minutesPrimaryFallbacks: Map<String, String> = emptyMap(),
+
     // ── Media habit settings ──────────────────────────────────────────────
     /**
      * Habits that have the "Media" type enabled.
@@ -1234,6 +1260,43 @@ data class AppSettings(
     /** ISO date ("YYYY-MM-DD") of the most recent successful Drive auto-backup. */
     val gdriveLastBackupDate: String = ""
 )
+
+/** Fallback source for minutes-primary habits: no fallback on 0-minute days. */
+const val MINUTES_PRIMARY_FALLBACK_NONE = "none"
+/** Fallback source for minutes-primary habits: the sessions/raw value (the default). */
+const val MINUTES_PRIMARY_FALLBACK_SESSIONS = "sessions"
+/** Fallback source for minutes-primary habits: the second value (`secondary_value:` slot). */
+const val MINUTES_PRIMARY_FALLBACK_VALUE2 = "value2"
+
+/**
+ * Computes the EFFECTIVE minutes-enabled state for a habit, applying the
+ * minutes invariants on top of the user's explicit [AppSettings.minutesEnabledHabits] choice:
+ *
+ * 1. Max-1 habits NEVER have minutes — a binary done/not-done habit has no
+ *    duration, so the cap wins over everything else.
+ * 2. Habits connected to a timer widget (PC widget, phone bubble trigger),
+ *    a media tracker, the movie bridge, or with minutes set as their PRIMARY
+ *    value ALWAYS have minutes — those features feed the `minutes:<habit>` slot.
+ * 3. Otherwise the explicit [AppSettings.minutesEnabledHabits] membership decides.
+ */
+fun effectiveMinutesEnabled(
+    habitName: String,
+    minutesEnabledHabits: Set<String>,
+    pcWidgetHabits: Set<String>,
+    widgetTriggerHabits: Set<String>,
+    mediaHabits: Set<String>,
+    movieBridgeHabits: Set<String>,
+    minutesPrimaryHabits: Set<String>,
+    maxOneHabits: Set<String>
+): Boolean {
+    if (habitName in maxOneHabits) return false
+    return habitName in minutesEnabledHabits ||
+        habitName in pcWidgetHabits ||
+        habitName in widgetTriggerHabits ||
+        habitName in mediaHabits ||
+        habitName in movieBridgeHabits ||
+        habitName in minutesPrimaryHabits
+}
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */
 val DEFAULT_CUSTOM_INPUT_AMOUNTS: List<Int> = listOf(1, 5, 10, 30, 50)

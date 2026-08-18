@@ -94,7 +94,37 @@ object HabitAsks {
                 Log.i(TAG, "Logged movie '${ask.title}' for '${ask.habitName}' from system notification")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to log movie answer: ${e.message}", e)
+                return
             }
+            // Mirror the in-app confirm path (HabitViewModel.saveTextEntry):
+            // a confirmed movie also increments the habit count so the day
+            // registers as watched, records the increment timestamp and
+            // notifies any running UI. IMDb rating/runtime enrichment can be
+            // filled in afterwards via the IMDb backlog buttons in settings.
+            val habitsUriStr = settings.fileUri
+            if (habitsUriStr.isEmpty()) {
+                Log.w(TAG, "No habits file URI configured — cannot increment '${ask.habitName}'")
+                return
+            }
+            val habitsUri = Uri.parse(habitsUriStr)
+            val habitsRepo = HabitsRepository()
+            // Respect the "max 1" cap: skip when already done today.
+            if (ask.habitName in settings.maxOneHabits) {
+                val db = habitsRepo.loadDatabase(habitsUri, appContext)
+                val todayCount = db[ask.habitName]?.get(LocalDate.now().toString()) ?: 0
+                if (todayCount >= 1) {
+                    Log.i(TAG, "Skipping movie increment for '${ask.habitName}' — already at max 1 today")
+                    return
+                }
+            }
+            habitsRepo.incrementHabit(habitsUri, appContext, ask.habitName, 1)
+            HabitIncrementBus.emit(ask.habitName)
+            try {
+                HabitTimestampRepository(appContext).addTimestamp(ask.habitName)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to record timestamp for '${ask.habitName}': ${e.message}")
+            }
+            Log.i(TAG, "Incremented '${ask.habitName}' for confirmed movie")
             return
         }
 

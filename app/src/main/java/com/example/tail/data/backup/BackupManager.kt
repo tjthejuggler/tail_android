@@ -721,6 +721,8 @@ class BackupManager(
 
         settingsRepo.saveMaxOneHabits(s.maxOneHabits.toSet())
         settingsRepo.saveInvertedBinaryHabits(s.invertedBinaryHabits.toSet())
+        settingsRepo.saveMinutesEnabledHabits(s.minutesEnabledHabits.toSet())
+        settingsRepo.saveMinutesPrimaryFallbacks(s.minutesPrimaryFallbacks)
         settingsRepo.saveTextInputHabits(s.textInputHabits.toSet())
         settingsRepo.saveTextInputOptionsHabits(s.textInputOptionsHabits.toSet())
         settingsRepo.saveTextInputFileUris(s.textInputFileUris)
@@ -1105,6 +1107,8 @@ class BackupManager(
         activeScreenIndex = s.activeScreenIndex,
         maxOneHabits = s.maxOneHabits.toList(),
         invertedBinaryHabits = s.invertedBinaryHabits.toList(),
+        minutesEnabledHabits = s.minutesEnabledHabits.toList(),
+        minutesPrimaryFallbacks = s.minutesPrimaryFallbacks,
         textInputHabits = s.textInputHabits.toList(),
         textInputOptionsHabits = s.textInputOptionsHabits.toList(),
         textInputFileUris = s.textInputFileUris,
