@@ -84,7 +84,8 @@ private val DISPLAY_FMT = DateTimeFormatter.ofPattern("EEE, MMM d yyyy")
 fun AppStatsScreen(
     viewModel: HabitViewModel,
     onNavigateBack: () -> Unit,
-    onNavigateToDate: (LocalDate) -> Unit
+    onNavigateToDate: (LocalDate) -> Unit,
+    onNavigateToChessReadinessStats: () -> Unit = {}
 ) {
     val settings by viewModel.settings.collectAsState()
     val dividers = settings.habitDividers
@@ -208,6 +209,39 @@ fun AppStatsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
+            // ── Chess Readiness link ────────────────────────────────────────
+            // Always visible: the readiness log is independent of the habits DB.
+            Spacer(modifier = Modifier.height(8.dp))
+            StatsSection(title = "♟ Chess Readiness") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { onNavigateToChessReadinessStats() },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Detailed readiness logs — ratings over time, time of day,\n" +
+                            "games played while authorized, win rates, and more",
+                        color = LabelColor,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "Open →",
+                        color = DateLinkColor,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        textDecoration = TextDecoration.Underline
+                    )
+                }
+            }
+
             if (db.isEmpty()) {
                 Box(
                     modifier = Modifier

@@ -31,6 +31,7 @@ import com.example.tail.data.parseDate
 import com.example.tail.ui.AdviceViewModel
 import com.example.tail.ui.AdviceViewModelFactory
 import com.example.tail.ui.AppStatsScreen
+import com.example.tail.ui.ChessReadinessStatsScreen
 import com.example.tail.ui.HabitGridScreen
 import com.example.tail.ui.HabitViewModel
 import com.example.tail.ui.HabitViewModelFactory
@@ -44,6 +45,7 @@ import kotlinx.coroutines.launch
 private const val ROUTE_GRID = "grid"
 private const val ROUTE_SETTINGS = "settings"
 private const val ROUTE_APP_STATS = "app_stats"
+private const val ROUTE_CHESS_READINESS_STATS = "chess_readiness_stats"
 private const val ROUTE_MAP = "map"
 private const val ROUTE_MAP_STATS = "map_stats"
 
@@ -235,7 +237,15 @@ private fun TailApp(
                         // Navigate to the date on the main grid, popping back to grid first
                         viewModel.navigateToDate(date)
                         navController.popBackStack(ROUTE_GRID, inclusive = false)
+                    },
+                    onNavigateToChessReadinessStats = {
+                        navController.navigate(ROUTE_CHESS_READINESS_STATS)
                     }
+                )
+            }
+            composable(ROUTE_CHESS_READINESS_STATS) {
+                ChessReadinessStatsScreen(
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
         }

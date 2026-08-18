@@ -29,7 +29,15 @@ data class ChessComGame(
     /** Result string for the white player, e.g. "win", "checkmated", "agreed" */
     val whiteResult: String = "",
     /** Result string for the black player, e.g. "win", "checkmated", "agreed" */
-    val blackResult: String = ""
+    val blackResult: String = "",
+    /** True for rating-affecting games. */
+    val rated: Boolean = true,
+    /** Rules variant, e.g. "chess", "chess960". */
+    val rules: String = "chess",
+    /** White's rating after the game (0 = unknown). */
+    val whiteRating: Int = 0,
+    /** Black's rating after the game (0 = unknown). */
+    val blackRating: Int = 0
 )
 
 /** chess.com result string for a won game (any other value is a loss or draw). */
@@ -259,6 +267,10 @@ class ChessComService {
                 val blackUsername = black?.optString("username", "") ?: ""
                 val whiteResult = white?.optString("result", "") ?: ""
                 val blackResult = black?.optString("result", "") ?: ""
+                val rated = g.optBoolean("rated", true)
+                val rules = g.optString("rules", "chess")
+                val whiteRating = white?.optInt("rating", 0) ?: 0
+                val blackRating = black?.optInt("rating", 0) ?: 0
 
                 if (timeClass.isNotEmpty() && endTime > 0) {
                     games.add(
@@ -269,7 +281,11 @@ class ChessComService {
                             whiteUsername = whiteUsername,
                             blackUsername = blackUsername,
                             whiteResult = whiteResult,
-                            blackResult = blackResult
+                            blackResult = blackResult,
+                            rated = rated,
+                            rules = rules,
+                            whiteRating = whiteRating,
+                            blackRating = blackRating
                         )
                     )
                 }

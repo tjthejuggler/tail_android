@@ -1,0 +1,969 @@
+package com.example.tail.ui
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.tail.data.ComplianceDay
+import com.example.tail.data.RatingHistoryPoint
+import com.example.tail.data.RatingHistorySeries
+import com.example.tail.data.RatingPoolStats
+import com.example.tail.data.ReadinessGameRecord
+import com.example.tail.data.ReadinessStats
+import com.example.tail.data.ReadinessTestRecord
+import com.example.tail.data.computeComplianceSeries
+import com.example.tail.data.computeRatingHistory
+import com.example.tail.data.computeRatingStats
+import com.example.tail.data.computeReadinessStats
+import com.example.tail.widget.ChessReadinessEngine
+import com.example.tail.widget.ChessReadinessLogStore
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+// ── Palette (matches AppStatsScreen) ─────────────────────────────────────────
+private val SectionTitleColor = Color(0xFFFFD700)
+private val LabelColor = Color(0xFFADD8E6)
+private val ValueColor = Color.White
+private val DimColor = Color(0xFF888888)
+private val SectionBg = Color(0xFF1A1A2E)
+private val DividerColor = Color(0xFF333344)
+private val GreenValue = Color(0xFF80FF80)
+private val RedValue = Color(0xFFFF8080)
+private val YellowValue = Color(0xFFEAB308)
+private val GoldValue = Color(0xFFFFD700)
+private val LinkColor = Color(0xFF66CCFF)
+
+private val EVENT_FMT = DateTimeFormatter.ofPattern("EEE d MMM · HH:mm")
+
+private fun stateColor(state: String?): Color = when (state) {
+    ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name -> Color(0xFF22C55E)
+    ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name -> YellowValue
+    ChessReadinessEngine.ReadinessState.RED_LIGHT.name -> Color(0xFFEF4444)
+    else -> DimColor
+}
+
+private fun stateLabel(state: String?): String = when (state) {
+    ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name -> "GREEN"
+    ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name -> "YELLOW"
+    ChessReadinessEngine.ReadinessState.RED_LIGHT.name -> "RED"
+    else -> "—"
+}
+
+/**
+ * ♟ Chess Readiness Stats — the special screen fed by the detailed
+ * readiness activity log ([ChessReadinessLogStore]):
+ *
+ *  - readiness ratings over time (per-day average CCRS chart)
+ *  - readiness by time of day (6 × 4-hour buckets)
+ *  - games played inside valid GREEN authorization windows vs. without
+ *    authorization, win rates in each case, and games per authorized session
+ *
+ * Reached from the App Stats screen (Settings → App Stats → Chess Readiness).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChessReadinessStatsScreen(
+    onNavigateBack: () -> Unit
+) {
+    val context = LocalContext.current
+    var stats by remember { mutableStateOf<ReadinessStats?>(null) }
+    var tests by remember { mutableStateOf<List<ReadinessTestRecord>>(emptyList()) }
+    var games by remember { mutableStateOf<List<ReadinessGameRecord>>(emptyList()) }
+    var complianceDays by remember { mutableStateOf<List<ComplianceDay>>(emptyList()) }
+    var ratingHistory by remember { mutableStateOf<List<RatingHistorySeries>>(emptyList()) }
+    var ratingPools by remember { mutableStateOf<List<RatingPoolStats>>(emptyList()) }
+    var systemStartMs by remember { mutableStateOf<Long?>(null) }
+    var showChart by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            // One-time import of the legacy capped test history, so the
+            // compliance chart knows when the system was adopted and
+            // historical games get an accurate readiness context.
+            ChessReadinessLogStore.ensureSeeded(context)
+            val t = ChessReadinessLogStore.loadTests(context)
+            val g = ChessReadinessLogStore.loadGames(context)
+            val b = ChessReadinessLogStore.loadBlocked(context)
+            tests = t
+            games = g
+            val start = t.minOfOrNull { it.timestamp }
+            systemStartMs = start
+            complianceDays = computeComplianceSeries(g, t, start ?: 0L, ZoneId.systemDefault())
+            ratingPools = computeRatingStats(g, t, start ?: 0L)
+            ratingHistory = computeRatingHistory(g)
+            stats = computeReadinessStats(t, g, b, ZoneId.systemDefault())
+        }
+    }
+
+    Scaffold(
+        containerColor = Color(0xFF0F0F1E),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "♟ Chess Readiness Stats",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
+                        )
+                    }
+                },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color(0xFF16162B)
+                )
+            )
+        }
+    ) { paddingValues ->
+        val s = stats
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+        ) {
+            if (s == null) {
+                Spacer(modifier = Modifier.height(48.dp))
+                Text(
+                    "Loading readiness log…",
+                    color = DimColor,
+                    fontSize = 14.sp,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            } else if (s.totalTests == 0 && s.totalGames == 0) {
+                Spacer(modifier = Modifier.height(32.dp))
+                StatsSection(title = "♟ Chess Readiness") {
+                    Text(
+                        "No readiness activity logged yet.\n\n" +
+                            "Every readiness test (with full telemetry), every chess.com " +
+                            "game with its readiness context, and every blocked test " +
+                            "attempt is logged automatically once you use the feature.",
+                        color = DimColor,
+                        fontSize = 13.sp
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // ── Overview ──────────────────────────────────────────────
+                StatsSection(title = "📊 Readiness Overview") {
+                    StatRow("Tests logged", s.totalTests.toString())
+                    StatRow("Average CCRS", "%.1f".format(s.avgCcrs), valueColor = GoldValue)
+                    StatRow(
+                        "Best score",
+                        "${s.bestCcrs} (${fmtTime(s.bestTestAt)})",
+                        valueColor = GreenValue
+                    )
+                    StatRow(
+                        "Worst score",
+                        "${s.worstCcrs} (${fmtTime(s.worstTestAt)})",
+                        valueColor = RedValue
+                    )
+                    StatRow("🟢 Green authorizations", s.greenCount.toString(), valueColor = GreenValue)
+                    StatRow("🟡 Yellow (casual only)", s.yellowCount.toString(), valueColor = YellowValue)
+                    StatRow("🔴 Red (all prohibited)", s.redCount.toString(), valueColor = RedValue)
+                    StatRow("Blocked test attempts", s.blockedAttempts.toString(), valueColor = DimColor)
+                    if (s.totalTests > 0) {
+                        StatRow("Avg test duration", "%.1f min".format(s.avgTestDurationMin))
+                        StatRow("First test", fmtTime(s.firstTestAt))
+                        StatRow("Last test", fmtTime(s.lastTestAt))
+                    }
+                }
+
+                // ── Readiness over time ───────────────────────────────────
+                if (s.dailyAvgCcrs.size > 1) {
+                    StatsSection(title = "📈 Readiness Over Time") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() }
+                                ) { showChart = true },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Average CCRS per day",
+                                color = LabelColor,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "${s.dailyAvgCcrs.size} days 📈",
+                                color = LinkColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                textDecoration = TextDecoration.Underline
+                            )
+                        }
+                        Text(
+                            "Tap to open the full chart of daily average readiness.",
+                            color = DimColor,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                // ── Time of day ───────────────────────────────────────────
+                if (s.totalTests > 0) {
+                    StatsSection(title = "🕐 Readiness by Time of Day") {
+                        s.timeBuckets.forEach { b ->
+                            val isBest = b.testCount > 0 && b.label == s.bestBucketLabel
+                            val isWorst = b.testCount > 0 && b.label == s.worstBucketLabel &&
+                                s.bestBucketLabel != s.worstBucketLabel
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    b.label + if (isBest) " ⭐" else if (isWorst) " ▼" else "",
+                                    color = LabelColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isBest || isWorst) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.width(56.dp)
+                                )
+                                Text(
+                                    if (b.testCount > 0) "%.1f".format(b.avgCcrs) else "—",
+                                    color = when {
+                                        isBest -> GoldValue
+                                        isWorst -> RedValue
+                                        else -> ValueColor
+                                    },
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.width(44.dp)
+                                )
+                                Text(
+                                    "${b.testCount} tests",
+                                    color = DimColor,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    "${b.gamesPlayed} games" +
+                                        if (b.gamesPlayed > 0) " · ${b.gamesWon * 100 / b.gamesPlayed}% win" else "",
+                                    color = DimColor,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                        if (s.bestBucketLabel != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            StatRow("Best time of day", s.bestBucketLabel ?: "—", valueColor = GoldValue)
+                            StatRow("Worst time of day", s.worstBucketLabel ?: "—", valueColor = RedValue)
+                        }
+                    }
+                }
+
+                // ── Games vs readiness ────────────────────────────────────
+                if (s.totalGames > 0) {
+                    StatsSection(title = "🎮 Games vs Authorization") {
+                        StatRow("Games logged", s.totalGames.toString())
+                        StatRow(
+                            "Played while authorized (Green)",
+                            s.gamesAuthorized.toString(),
+                            valueColor = GreenValue
+                        )
+                        StatRow(
+                            "Played WITHOUT authorization",
+                            s.gamesUnauthorized.toString(),
+                            valueColor = if (s.gamesUnauthorized > 0) RedValue else DimColor
+                        )
+                        StatRow(
+                            "Played before any test existed",
+                            s.gamesNoTest.toString(),
+                            valueColor = DimColor
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        StatRow(
+                            "Protocol compliance",
+                            "%.0f%%".format(s.complianceRate),
+                            valueColor = when {
+                                s.complianceRate >= 90 -> GreenValue
+                                s.complianceRate >= 60 -> YellowValue
+                                else -> RedValue
+                            }
+                        )
+                        StatRow(
+                            "Win rate (authorized)",
+                            "%.1f%%".format(s.winRateAuthorized),
+                            valueColor = GreenValue
+                        )
+                        if (s.gamesUnauthorized > 0) {
+                            StatRow(
+                                "Win rate (unauthorized)",
+                                "%.1f%%".format(s.winRateUnauthorized),
+                                valueColor = RedValue
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        StatRow("Green sessions used for play", s.greenSessions.toString())
+                        StatRow(
+                            "Avg games per authorized session",
+                            "%.1f".format(s.avgGamesPerGreenSession)
+                        )
+                        StatRow(
+                            "Most games in one session",
+                            s.maxGamesInOneGreenSession.toString(),
+                            valueColor = GoldValue
+                        )
+                    }
+                }
+
+                // ── Compliance over time ─────────────────────────────────
+                val start = systemStartMs
+                if (start != null) {
+                    StatsSection(title = "⚖️ Compliance Over Time") {
+                        Text(
+                            "Games per day since the readiness system was adopted " +
+                                "(${fmtDate(start)}). Green = played while authorized; " +
+                                "red = violation. Games from before the system " +
+                                "existed are excluded.",
+                            color = DimColor,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (complianceDays.isEmpty()) {
+                            Text(
+                                "No games played since the first readiness test.",
+                                color = DimColor,
+                                fontSize = 12.sp
+                            )
+                        } else {
+                            ComplianceBarChart(complianceDays)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            ComplianceLegend()
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            val auth = complianceDays.sumOf { it.authorized }
+                            val denied = complianceDays.sumOf { it.violationDenied }
+                            val noTest = complianceDays.sumOf { it.violationNoTest }
+                            val totalPost = auth + denied + noTest
+                            val pct = if (totalPost > 0) auth * 100.0 / totalPost else 100.0
+                            StatRow(
+                                "Compliance since adoption",
+                                "%.0f%%".format(pct),
+                                valueColor = when {
+                                    pct >= 90 -> GreenValue
+                                    pct >= 60 -> YellowValue
+                                    else -> RedValue
+                                }
+                            )
+                            StatRow("Authorized play", auth.toString(), valueColor = GreenValue)
+                            StatRow(
+                                "Played despite a blocking test",
+                                denied.toString(),
+                                valueColor = if (denied > 0) RedValue else DimColor
+                            )
+                            StatRow(
+                                "Played without a fresh test",
+                                noTest.toString(),
+                                valueColor = if (noTest > 0) RedValue else DimColor
+                            )
+                        }
+                    }
+                }
+
+                // ── Rating history (entire history) ──────────────────────
+                if (ratingHistory.any { it.points.size >= 2 }) {
+                    StatsSection(title = "📜 Rating History — Entire History") {
+                        Text(
+                            "Rating over time from every rated game on chess.com, per pool " +
+                                "(variant × speed). The gold dashed line marks when the " +
+                                "readiness test system was devised.",
+                            color = DimColor,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val markers = systemStartMs
+                            ?.let { listOf(it to "♟ system") }
+                            ?: emptyList()
+                        ratingHistory.forEach { s ->
+                            if (s.points.size < 2) return@forEach
+                            Text(
+                                "${s.label} — ${s.points.size} rated games",
+                                color = ValueColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                            RatingHistoryChart(s.points, markers)
+                            StatRow("Start → Now", "${s.startRating} → ${s.endRating}")
+                            StatRow(
+                                "Peak / Low",
+                                "${s.peakRating} / ${s.lowRating}",
+                                valueColor = GoldValue
+                            )
+                        }
+                    }
+                }
+
+                // ── Rating impact (compliant vs not) ─────────────────────
+                if (ratingPools.isNotEmpty()) {
+                    StatsSection(title = "🏆 Rating Impact — Compliant vs Not") {
+                        Text(
+                            "Average rating change per game, split by compliance. Each pair " +
+                                "of bars is one rating pool (variant × speed — Chess960 is " +
+                                "separate from Standard). Bars extend right for gains, left " +
+                                "for losses.",
+                            color = DimColor,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        RatingDeltaChart(ratingPools)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            LegendSwatch(BarGreen, "Authorized")
+                            LegendSwatch(BarRed, "Violations")
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        ratingPools.forEach { p ->
+                            Text(
+                                "${p.label} — ${p.ratedGames} rated · now ${p.currentRating ?: "—"}",
+                                color = ValueColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                            StatRow("✓ Authorized games", fmtRatingDelta(p.authorized), valueColor = GreenValue)
+                            StatRow("✗ Violation games", fmtRatingDelta(p.violations), valueColor = RedValue)
+                        }
+                        val aGames = ratingPools.sumOf { it.authorized.games }
+                        val vGames = ratingPools.sumOf { it.violations.games }
+                        if (aGames > 0 && vGames > 0) {
+                            val aAvg = ratingPools.sumOf { it.authorized.totalDelta }.toDouble() / aGames
+                            val vAvg = ratingPools.sumOf { it.violations.totalDelta }.toDouble() / vGames
+                            Spacer(modifier = Modifier.height(4.dp))
+                            HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            StatRow(
+                                "All pools — avg/game authorized",
+                                "%+.1f pts".format(aAvg),
+                                valueColor = GreenValue
+                            )
+                            StatRow(
+                                "All pools — avg/game violations",
+                                "%+.1f pts".format(vAvg),
+                                valueColor = RedValue
+                            )
+                            StatRow(
+                                "Readiness advantage",
+                                "%+.1f pts/game".format(aAvg - vAvg),
+                                valueColor = if (aAvg >= vAvg) GoldValue else RedValue
+                            )
+                        }
+                    }
+                }
+
+                // ── Sub-score breakdown ───────────────────────────────────
+                if (s.totalTests > 0) {
+                    StatsSection(title = "🧩 Sub-Score Averages (of 25)") {
+                        StatRow("😴 Sleep", "%.1f".format(s.avgSleepPts))
+                        StatRow("🧠 Clarity", "%.1f".format(s.avgClarityPts))
+                        StatRow("♟ Rated puzzles", "%.1f".format(s.avgPuzzlePts))
+                        StatRow("⚡ Puzzle Rush", "%.1f".format(s.avgRushPts))
+                    }
+                }
+
+                // ── Recent activity ───────────────────────────────────────
+                StatsSection(title = "📋 Recent Activity") {
+                    val recentTests = tests.takeLast(40).map {
+                        Triple(it.timestamp, "test", it as Any)
+                    }
+                    val recentGames = games.takeLast(40).map {
+                        Triple(it.endTimeMs, "game", it as Any)
+                    }
+                    val merged = (recentTests + recentGames)
+                        .sortedByDescending { it.first }
+                        .take(30)
+                    if (merged.isEmpty()) {
+                        Text("Nothing logged yet.", color = DimColor, fontSize = 12.sp)
+                    }
+                    merged.forEach { (_, kind, event) ->
+                        when (kind) {
+                            "test" -> {
+                                val t = event as ReadinessTestRecord
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        "♟ Test · ${fmtTime(t.timestamp)}",
+                                        color = LabelColor,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        "${t.ccrs} ${stateLabel(t.state)}",
+                                        color = stateColor(t.state),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            else -> {
+                                val g = event as ReadinessGameRecord
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    val badge = when {
+                                        g.authorized -> " ✓auth"
+                                        g.stateAtPlay != null -> " ✗no-auth"
+                                        else -> ""
+                                    }
+                                    Text(
+                                        "vs ${g.opponent} · ${g.type.lowercase()} · " +
+                                            "${if (g.won) "win" else "loss/draw"}$badge",
+                                        color = LabelColor,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        fmtTime(g.endTimeMs),
+                                        color = DimColor,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+
+    if (showChart && stats != null) {
+        StreakGraphPopup(
+            title = "♟ Readiness (avg CCRS/day)",
+            data = stats!!.dailyAvgCcrs,
+            lineColor = Color(0xFF22C55E),
+            currentValue = stats!!.dailyAvgCcrs.lastOrNull()?.second,
+            onDismiss = { showChart = false }
+        )
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+private fun fmtTime(ts: Long?): String =
+    ts?.let {
+        Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).format(EVENT_FMT)
+    } ?: "—"
+
+@Composable
+private fun StatsSection(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .background(SectionBg, RoundedCornerShape(10.dp))
+            .padding(12.dp)
+    ) {
+        Text(
+            text = title,
+            color = SectionTitleColor,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        HorizontalDivider(color = DividerColor, thickness = 1.dp)
+        Spacer(modifier = Modifier.height(8.dp))
+        content()
+    }
+}
+
+@Composable
+private fun StatRow(
+    label: String,
+    value: String,
+    valueColor: Color = ValueColor
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = label,
+            color = LabelColor,
+            fontSize = 12.sp,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = value,
+            color = valueColor,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+// ── Compliance chart ─────────────────────────────────────────────────────────
+
+private val BarGreen = Color(0xFF22C55E)
+private val BarRed = Color(0xFFEF4444)
+private val DAY_FMT = DateTimeFormatter.ofPattern("d/M")
+
+private fun fmtDate(ts: Long): String =
+    Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("d MMM yyyy"))
+
+/**
+ * Stacked daily bars for the compliance-over-time chart: the green part of
+ * each bar counts games played while authorized, the red part on top counts
+ * violations (played when a fresh test denied it, or without any fresh test).
+ */
+@Composable
+private fun ComplianceBarChart(days: List<ComplianceDay>) {
+    val labelPx = with(LocalDensity.current) { 9.dp.toPx() }
+    val labelPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#888888")
+        textSize = labelPx
+        isAntiAlias = true
+    }
+    Canvas(modifier = Modifier.fillMaxWidth().height(150.dp)) {
+        if (days.isEmpty()) return@Canvas
+        val chartLeft = 30.dp.toPx()
+        val padRight = 6.dp.toPx()
+        val padBottom = 20.dp.toPx()
+        val padTop = 6.dp.toPx()
+        val w = size.width
+        val h = size.height
+        val chartW = w - chartLeft - padRight
+        val chartH = h - padBottom - padTop
+        val bottom = h - padBottom
+        val maxTotal = maxOf(1, days.maxOf { it.total })
+
+        // Gridlines + y-axis labels at a nice step
+        val step = when {
+            maxTotal <= 5 -> 1
+            maxTotal <= 10 -> 2
+            maxTotal <= 25 -> 5
+            maxTotal <= 50 -> 10
+            else -> 25
+        }
+        var v = 0
+        while (v <= maxTotal) {
+            val y = bottom - chartH * v / maxTotal
+            drawLine(DividerColor, Offset(chartLeft, y), Offset(w - padRight, y), strokeWidth = 1f)
+            drawContext.canvas.nativeCanvas.drawText(v.toString(), 0f, y + labelPx / 3, labelPaint)
+            v += step
+        }
+
+        // One stacked bar per day that had games
+        val slot = chartW / days.size
+        val barW = minOf(slot * 0.72f, 18.dp.toPx())
+        val labelInterval = ((days.size - 1) / 5 + 1).coerceAtLeast(1)
+        days.forEachIndexed { i, d ->
+            val cx = chartLeft + slot * i + slot / 2
+            val totalH = chartH * d.total / maxTotal
+            val authH = chartH * d.authorized / maxTotal
+            val x = cx - barW / 2
+            if (d.authorized > 0) {
+                drawRect(
+                    color = BarGreen,
+                    topLeft = Offset(x, bottom - authH),
+                    size = Size(barW, authH)
+                )
+            }
+            val violations = d.violationDenied + d.violationNoTest
+            if (violations > 0) {
+                drawRect(
+                    color = BarRed,
+                    topLeft = Offset(x, bottom - totalH),
+                    size = Size(barW, totalH - authH)
+                )
+            }
+            if (i % labelInterval == 0 || i == days.size - 1) {
+                val label = d.date.format(DAY_FMT)
+                val tw = labelPaint.measureText(label)
+                drawContext.canvas.nativeCanvas.drawText(
+                    label, cx - tw / 2, h - 6.dp.toPx(), labelPaint
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Rating-over-time line chart for one pool, spanning the user's ENTIRE
+ * history. [markers] draws dashed gold vertical lines with labels at the
+ * given timestamps — currently the readiness system's adoption; later,
+ * significant system changes can be added the same way.
+ */
+@Composable
+private fun RatingHistoryChart(
+    points: List<RatingHistoryPoint>,
+    markers: List<Pair<Long, String>>
+) {
+    val labelPx = with(LocalDensity.current) { 9.dp.toPx() }
+    val labelPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#888888")
+        textSize = labelPx
+        isAntiAlias = true
+    }
+    val markerPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#FFD700")
+        textSize = labelPx
+        isAntiAlias = true
+        isFakeBoldText = true
+    }
+    Canvas(modifier = Modifier.fillMaxWidth().height(150.dp)) {
+        if (points.size < 2) return@Canvas
+        val padL = 38.dp.toPx()
+        val padR = 10.dp.toPx()
+        val padT = 12.dp.toPx()
+        val padB = 20.dp.toPx()
+        val w = size.width
+        val h = size.height
+        val chartW = w - padL - padR
+        val chartH = h - padT - padB
+        val tMin = points.first().endTimeMs.toFloat()
+        val tMax = points.last().endTimeMs.toFloat()
+        val tSpan = maxOf(1f, tMax - tMin)
+        val rMin = points.minOf { it.rating }
+        val rMax = points.maxOf { it.rating }
+        val rPad = maxOf(4f, (rMax - rMin) * 0.08f)
+        val lo = rMin - rPad
+        val hi = rMax + rPad
+        val rSpan = maxOf(1f, hi - lo)
+
+        fun x(t: Long) = padL + chartW * ((t - tMin) / tSpan)
+        fun y(r: Int) = padT + chartH * (1f - (r - lo) / rSpan)
+
+        // Horizontal gridlines + rating labels
+        val step = niceRatingStep(rMax - rMin)
+        var v = ((lo.toInt() + step - 1) / step) * step
+        while (v <= hi.toInt()) {
+            val gy = y(v)
+            drawLine(DividerColor, Offset(padL, gy), Offset(w - padR, gy), strokeWidth = 1f)
+            drawContext.canvas.nativeCanvas.drawText(v.toString(), 0f, gy + labelPx / 3, labelPaint)
+            v += step
+        }
+
+        // Rating line
+        val path = Path()
+        points.forEachIndexed { i, p ->
+            if (i == 0) path.moveTo(x(p.endTimeMs), y(p.rating))
+            else path.lineTo(x(p.endTimeMs), y(p.rating))
+        }
+        drawPath(path, BarGreen, style = Stroke(width = 2.dp.toPx()))
+
+        // Event markers (readiness system adoption; extensible for future
+        // significant system changes).
+        markers.forEach { (ts, label) ->
+            val mx = x(ts).coerceIn(padL, w - padR)
+            val dash = 6.dp.toPx()
+            val gap = 4.dp.toPx()
+            var yy = padT
+            while (yy < padT + chartH) {
+                drawLine(
+                    GoldValue, Offset(mx, yy),
+                    Offset(mx, minOf(yy + dash, padT + chartH)),
+                    strokeWidth = 2.dp.toPx()
+                )
+                yy += dash + gap
+            }
+            val tw = markerPaint.measureText(label)
+            val tx = if (mx + tw + 8f > w) mx - tw - 6f else mx + 6f
+            drawContext.canvas.nativeCanvas.drawText(label, tx, padT + labelPx, markerPaint)
+        }
+
+        // X-axis endpoint labels
+        val firstLabel = formatDateShort(points.first().endTimeMs)
+        drawContext.canvas.nativeCanvas.drawText(firstLabel, padL, h - 6.dp.toPx(), labelPaint)
+        val lastLabel = formatDateShort(points.last().endTimeMs)
+        drawContext.canvas.nativeCanvas.drawText(
+            lastLabel, w - padR - labelPaint.measureText(lastLabel), h - 6.dp.toPx(), labelPaint
+        )
+    }
+}
+
+private fun niceRatingStep(range: Int): Int {
+    val target = maxOf(1, range / 4)
+    return listOf(10, 25, 50, 100, 200, 400).firstOrNull { it >= target } ?: 400
+}
+
+private fun formatDateShort(ts: Long): String =
+    Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("MMM yy"))
+
+/**
+ * Diverging-bar chart of average rating delta per game: for each rating
+ * pool, the green bar is the authorized average and the red bar the
+ * violation average; both extend from the center axis — right for gains,
+ * left for losses.
+ */
+@Composable
+private fun RatingDeltaChart(pools: List<RatingPoolStats>) {
+    val labelPx = with(LocalDensity.current) { 9.dp.toPx() }
+    val poolPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#ADD8E6")
+        textSize = labelPx
+        isAntiAlias = true
+    }
+    val valPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#888888")
+        textSize = labelPx
+        isAntiAlias = true
+    }
+    Canvas(modifier = Modifier.fillMaxWidth().height((pools.size * 46 + 8).dp)) {
+        val rowH = 46.dp.toPx()
+        val pad = 6.dp.toPx()
+        val w = size.width
+        val axisX = w / 2
+        val halfW = w / 2 - pad
+        val maxAbs = maxOf(
+            1f,
+            pools.maxOf {
+                maxOf(abs(it.authorized.avgDelta), abs(it.violations.avgDelta)).toFloat()
+            }
+        )
+        val pxPerPt = halfW / maxAbs
+
+        // Center axis
+        drawLine(DividerColor, Offset(axisX, 0f), Offset(axisX, size.height), strokeWidth = 1f)
+
+        pools.forEachIndexed { i, p ->
+            val rowTop = i * rowH + 4.dp.toPx()
+            drawContext.canvas.nativeCanvas.drawText(p.label, 0f, rowTop + labelPx, poolPaint)
+
+            val bar1Y = rowTop + 16.dp.toPx()
+            val bar2Y = rowTop + 30.dp.toPx()
+            val barH = 8.dp.toPx()
+            listOf(
+                Triple(p.authorized.avgDelta, bar1Y, BarGreen),
+                Triple(p.violations.avgDelta, bar2Y, BarRed)
+            ).forEach { (delta, y, color) ->
+                val len = (abs(delta).toFloat() * pxPerPt).coerceAtMost(halfW)
+                val x0 = if (delta >= 0) axisX else axisX - len
+                drawRect(color, topLeft = Offset(x0, y), size = Size(len, barH))
+                val txt = "%+.1f".format(delta)
+                val tw = valPaint.measureText(txt)
+                val tx = if (delta >= 0) x0 + len + 4f else x0 - 4f - tw
+                drawContext.canvas.nativeCanvas.drawText(
+                    txt, tx, y + barH / 2 + labelPx / 3, valPaint
+                )
+            }
+        }
+    }
+}
+
+private fun fmtRatingDelta(c: com.example.tail.data.RatingCategoryStats): String =
+    if (c.games == 0) {
+        "no games"
+    } else {
+        "%+d total · %+.1f/game · %d games · %.0f%% win".format(
+            c.totalDelta, c.avgDelta, c.games, c.winRate
+        )
+    }
+
+@Composable
+private fun ComplianceLegend() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        LegendSwatch(BarGreen, "Authorized")
+        LegendSwatch(BarRed, "Violation (denied / no fresh test)")
+    }
+}
+
+@Composable
+private fun LegendSwatch(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .background(color, RoundedCornerShape(2.dp))
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(label, color = DimColor, fontSize = 10.sp)
+    }
+}

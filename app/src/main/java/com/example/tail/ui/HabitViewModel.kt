@@ -83,6 +83,7 @@ import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.applyDivider
+import com.example.tail.widget.ChessReadinessLogStore
 import com.example.tail.widget.HabitListWidgetProvider
 import com.example.tail.data.dateString
 import com.example.tail.data.expandEntriesToCalendarDaysPublic
@@ -6309,17 +6310,21 @@ class HabitViewModel(
     /**
      * Fetches current month chess.com data and applies increments to linked habits.
      * Called periodically by the polling loop.
+     *
+     * Even when no habits are linked to chess.com types, the poll still runs
+     * so every game is written to the Chess Readiness activity log
+     * ([ChessReadinessLogStore]) with its readiness context — the habit
+     * application is simply skipped.
      */
     private suspend fun syncChessComCurrentMonth() {
         val s = _settings.value
         if (!s.chessComEnabled || s.chessComUsername.isEmpty()) return
-        if (s.chessComHabitLinks.isEmpty()) return
-        if (s.fileUri.isEmpty()) return
+        val applyToHabits = s.chessComHabitLinks.isNotEmpty() && s.fileUri.isNotEmpty()
 
         // Self-heal: if the initial load failed (dbLoaded==false), try to load the
         // DB now BEFORE syncing, so a one-off startup read failure doesn't leave the
         // sync permanently gated. applyChessComData is still gated as a backstop.
-        if (!dbLoaded) {
+        if (applyToHabits && !dbLoaded) {
             try {
                 val db = withContext(Dispatchers.IO) {
                     habitsRepo.ensureDaysExist(Uri.parse(s.fileUri), context)
@@ -6335,8 +6340,16 @@ class HabitViewModel(
 
         try {
             _chessComSyncStatus.value = "Syncing chess.com data…"
-            val monthData = chessComRepo.fetchCurrentMonthData(s.chessComUsername)
-            applyChessComData(monthData, s)
+            val monthData = chessComRepo.fetchCurrentMonthData(s.chessComUsername) { games ->
+                // Chess Readiness activity log: every fetched game is recorded
+                // (deduped) with the readiness context at its end time.
+                try {
+                    ChessReadinessLogStore.logGames(context, games, s.chessComUsername)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Readiness game logging failed: ${e.message}")
+                }
+            }
+            if (applyToHabits) applyChessComData(monthData, s)
             _chessComSyncStatus.value = "Last sync: ${java.time.LocalTime.now().toString().take(5)}"
         } catch (e: Exception) {
             Log.e(TAG, "Chess.com sync failed: ${e.message}")
@@ -6370,9 +6383,21 @@ class HabitViewModel(
                 resetChessComHabitData(s)
 
                 _chessComSyncStatus.value = "Fetching entire backlog…"
-                val allData = chessComRepo.fetchEntireBacklog(s.chessComUsername) { done, total ->
-                    _chessComSyncStatus.value = "Fetching archives: $done / $total months"
-                }
+                val allData = chessComRepo.fetchEntireBacklog(
+                    s.chessComUsername,
+                    onProgress = { done, total ->
+                        _chessComSyncStatus.value = "Fetching archives: $done / $total months"
+                    },
+                    onGames = { games ->
+                        // Backfill the Chess Readiness activity log with every
+                        // freshly-fetched month (deduped inside the store).
+                        try {
+                            ChessReadinessLogStore.logGames(context, games, s.chessComUsername)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Readiness backlog logging failed: ${e.message}")
+                        }
+                    }
+                )
                 _chessComSyncStatus.value = "Applying backlog data to habits…"
                 applyChessComData(allData, s)
                 _chessComSyncStatus.value = "Backlog complete! Data applied to linked habits."

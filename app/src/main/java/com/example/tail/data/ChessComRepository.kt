@@ -158,13 +158,38 @@ class ChessComRepository(private val context: Context) {
      * Fetches and processes games for the current month only (for regular polling).
      * Returns per-day stats for each game type for the current month.
      * Uses cache for completed months, fetches fresh data for current month.
+     *
+     * @param onGames Invoked with the RAW game list before aggregation, so
+     *        callers can feed the Chess Readiness activity log without an
+     *        extra HTTP round-trip.
      */
     suspend fun fetchCurrentMonthData(
-        username: String
+        username: String,
+        onGames: (List<ChessComGame>) -> Unit = {}
     ): Map<ChessComType, DailyStatsMap> = withContext(Dispatchers.IO) {
         try {
             val now = LocalDate.now()
             val games = service.getGamesForMonth(username, now.year, now.monthValue)
+            onGames(games)
+
+            // Month-rollover safety net: games played in the final minutes of
+            // the previous month (after the last poll before midnight) live in
+            // the previous month's archive, which polling never revisits. For
+            // the first days of each month, re-fetch it fresh so the Chess
+            // Readiness activity log also sees them. The log store dedupes,
+            // and the returned stats stay current-month-only (the previous
+            // month's habit increments were already applied when it was
+            // current — re-applying would double-count).
+            if (now.dayOfMonth <= 3) {
+                try {
+                    val prev = now.minusMonths(1)
+                    val prevGames = service.getGamesForMonth(username, prev.year, prev.monthValue)
+                    if (prevGames.isNotEmpty()) onGames(prevGames)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Prev-month rollover fetch failed: ${e.message}")
+                }
+            }
+
             computeDailyChessStats(games, username)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch current month data: ${e.message}")
@@ -178,10 +203,13 @@ class ChessComRepository(private val context: Context) {
      * Returns per-day stats for ALL game types across ALL months.
      *
      * @param onProgress Called with (completedMonths, totalMonths) for UI progress.
+     * @param onGames Invoked with each freshly-fetched month's RAW game list
+     *        (cached months are skipped) for the Chess Readiness activity log.
      */
     suspend fun fetchEntireBacklog(
         username: String,
-        onProgress: (Int, Int) -> Unit = { _, _ -> }
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        onGames: (List<ChessComGame>) -> Unit = {}
     ): Map<ChessComType, DailyStatsMap> = withContext(Dispatchers.IO) {
         val archiveUrls = service.getArchiveUrls(username)
         val totalMonths = archiveUrls.size
@@ -194,7 +222,7 @@ class ChessComRepository(private val context: Context) {
                 val year = parts[parts.size - 2].toInt()
                 val month = parts[parts.size - 1].toInt()
 
-                val monthData = getCachedOrFetch(username, year, month, archiveUrl)
+                val monthData = getCachedOrFetch(username, year, month, archiveUrl, onGames)
                 mergeInto(allDaily, monthData)
 
                 onProgress(index + 1, totalMonths)
@@ -229,7 +257,8 @@ class ChessComRepository(private val context: Context) {
         username: String,
         year: Int,
         month: Int,
-        archiveUrl: String
+        archiveUrl: String,
+        onGames: (List<ChessComGame>) -> Unit = {}
     ): Map<ChessComType, DailyStatsMap> {
         val now = YearMonth.now()
         val isCurrentMonth = year == now.year && month == now.monthValue
@@ -242,6 +271,7 @@ class ChessComRepository(private val context: Context) {
 
         // Fetch from API
         val games = service.getGamesForMonth(archiveUrl)
+        onGames(games)
         val daily = computeDailyChessStats(games, username)
 
         // Cache completed months

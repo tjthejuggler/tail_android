@@ -145,6 +145,7 @@ class ChessReadinessOverlay(service: Context) {
                     ChessReadinessEngine.checkGate(history, System.currentTimeMillis())) {
                     is ChessReadinessEngine.GateStatus.Blocked -> {
                         blockedMessage = gate.error.message
+                        ChessReadinessLogStore.logBlockedAttempt(context, gate.error.message)
                         phase = Phase.BLOCKED
                     }
                     is ChessReadinessEngine.GateStatus.Allowed -> phase = Phase.SLEEP
@@ -395,6 +396,7 @@ class ChessReadinessOverlay(service: Context) {
         when (val gate = ChessReadinessEngine.checkGate(history, now)) {
             is ChessReadinessEngine.GateStatus.Blocked -> {
                 blockedMessage = gate.error.message
+                ChessReadinessLogStore.logBlockedAttempt(context, gate.error.message)
                 ChessReadinessStore.clearSession(context)
                 phase = Phase.BLOCKED
                 render()
@@ -404,6 +406,17 @@ class ChessReadinessOverlay(service: Context) {
                 ChessReadinessStore.appendTest(
                     context,
                     ChessReadinessEngine.ReadinessTest(r.timestamp, r.ccrs, r.state.name)
+                )
+                // Permanent detailed telemetry log (stats screen source of truth):
+                // full inputs + sub-scores + session duration.
+                ChessReadinessLogStore.logTest(
+                    context, r, input,
+                    sleepScore = sleepScore ?: 0,
+                    sleepFromGarmin = sleepFromGarmin,
+                    stress = stress,
+                    focus = focus,
+                    energy = energy,
+                    sessionStartedAt = sessionStartedAt
                 )
                 // The rush run itself lasts 3 minutes — credit those to the
                 // linked habit's minutes value (plus the usual +1 session).
