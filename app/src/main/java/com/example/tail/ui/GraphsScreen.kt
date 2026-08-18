@@ -143,6 +143,9 @@ fun GraphsPanel(
     val selectedPeriod by viewModel.graphTimePeriod.collectAsState()
     val zoomStartDate by viewModel.graphZoomStartDate.collectAsState()
     val zoomEndDate by viewModel.graphZoomEndDate.collectAsState()
+    // The app's "current day" — the graph window anchors on this date, so
+    // time-traveling to a past day shows the period around THAT day.
+    val currentDay by viewModel.selectedDate.collectAsState()
     val habits by viewModel.habits.collectAsState()
     // Collect settings so the graph recomputes when metric selection changes
     val settings by viewModel.settings.collectAsState()
@@ -165,8 +168,8 @@ fun GraphsPanel(
     // Check if any selected habit is a text-input habit
     val hasTextInputHabit = graphSelectedHabits.any { viewModel.isTextInputHabit(it) }
 
-    // When selection or period changes, clear the selected data point
-    LaunchedEffect(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate) {
+    // When selection, period, or the app's current day changes, clear the selected data point
+    LaunchedEffect(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, currentDay) {
         selectedDataPoint = null
         textEntriesForPoint = emptyList()
         datedEntriesForPoint = emptyList()
@@ -380,19 +383,43 @@ fun GraphsPanel(
         // ── Chart area ────────────────────────────────────────────────────
         if (graphSelectedHabits.isNotEmpty()) {
             val today = LocalDate.now()
+            // The app's "current day": when the app is set to a past date,
+            // the graph shows the period around THAT day instead of real today.
+            val anchorDate = currentDay.coerceAtMost(today)
             val earliestDate = viewModel.getEarliestDate(graphSelectedHabits)
 
-            // Use zoom range if set, otherwise use period-based range
-            val fullStartDate = zoomStartDate ?: when {
-                selectedPeriod?.days != null -> today.minusDays(selectedPeriod!!.days!!.toLong() - 1)
-                earliestDate != null -> earliestDate
-                else -> today.minusDays(29)
+            // Default (non-zoom) window for the selected period, centered on
+            // the anchor day.
+            val periodDays = selectedPeriod?.days
+            val defaultStart: LocalDate
+            val defaultEnd: LocalDate
+            if (periodDays != null) {
+                // Center the window on the anchor day: half the days before
+                // it, half after it. Days after real today don't exist yet,
+                // so when the anchor is too recent to center (e.g. just a
+                // couple of days ago) the window slides back to end at
+                // today — the anchor lands as close to the middle as possible.
+                val halfBefore = (periodDays - 1) / 2L
+                val centeredEnd = anchorDate.plusDays(periodDays - 1L - halfBefore)
+                defaultEnd = if (centeredEnd.isAfter(today)) today else centeredEnd
+                defaultStart = defaultEnd.minusDays(periodDays - 1L)
+            } else if (earliestDate != null) {
+                // "Max" — full history up to the app's current day
+                defaultStart = earliestDate
+                defaultEnd = anchorDate
+            } else {
+                // No data yet — a month around the anchor day
+                defaultStart = anchorDate.minusDays(29)
+                defaultEnd = anchorDate
             }
-            val fullEndDate = zoomEndDate ?: today
+
+            // Use zoom range if set, otherwise use the period-based range above
+            val fullStartDate = zoomStartDate ?: defaultStart
+            val fullEndDate = zoomEndDate ?: defaultEnd
 
             // Collect data for all selected habits × selected metrics.
             // Each (habit, metric) pair becomes a separate line on the chart.
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, textFilter, metricSelection, interpolateZeroMetrics, textEntriesCache) {
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, currentDay, textFilter, metricSelection, interpolateZeroMetrics, textEntriesCache) {
                 val isSingleHabit = graphSelectedHabits.size == 1
                 var sequentialColorIdx = 0
                 graphSelectedHabits.toList().flatMap { habitName ->

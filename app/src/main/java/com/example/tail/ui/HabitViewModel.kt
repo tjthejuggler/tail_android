@@ -4903,6 +4903,10 @@ class HabitViewModel(
         if (turningOn) {
             // Deactivate other modes
             _editMode.value = false
+            // Re-anchor the graph window on the app's currently selected day:
+            // drop any pinch-zoom/pan range left over from a previous session.
+            _graphZoomStartDate.value = null
+            _graphZoomEndDate.value = null
             // Carry the edit-mode selection into graph mode
             val carriedName = _habits.value.getOrNull(_selectedEditIndex.value)
                 ?.name?.takeIf { it.isNotEmpty() }
