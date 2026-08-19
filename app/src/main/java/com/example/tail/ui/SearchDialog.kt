@@ -69,7 +69,9 @@ private val SEARCH_DATE_FMT = DateTimeFormatter.ofPattern("EEE MMM d yyyy")
  *
  * All state (query, filters, results) lives in the [HabitViewModel], so
  * closing the dialog — including by tapping a result — preserves its exact
- * state for the next time the search icon is pressed.
+ * state for the next time the search icon is pressed. The last query and
+ * filter selection are additionally persisted and restored across app
+ * restarts. "All" re-selects every habit; "None" deselects them all.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -161,6 +163,12 @@ fun HabitSearchDialog(
                         )
                     }
                     Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = viewModel::clearSearchFilters,
+                        contentPadding = PaddingValues(horizontal = 6.dp)
+                    ) {
+                        Text("None", color = Color(0xFFFF8888), fontSize = 12.sp)
+                    }
                     TextButton(
                         onClick = viewModel::setAllSearchFilters,
                         contentPadding = PaddingValues(horizontal = 6.dp)

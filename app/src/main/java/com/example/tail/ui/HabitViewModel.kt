@@ -91,6 +91,7 @@ import com.example.tail.data.ParsedTitle
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.BridgeClient
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.SearchStateStore
 import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.bridgeConnectionFrom
 import com.example.tail.data.TextInputRepository
@@ -243,10 +244,15 @@ class HabitViewModel(
 
     // ── Global habit search ──────────────────────────────────────────────────
 
+    /** Persists the last query + filters so search state survives app restarts. */
+    private val searchStateStore = SearchStateStore(context)
+
     /**
      * Current search query text. Lives in the ViewModel (not dialog-local
      * state) so closing the search popup — including by tapping a result —
      * preserves its exact state for the next time the search icon is pressed.
+     * The last state is also persisted via [SearchStateStore] and restored
+     * on app start.
      */
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -254,6 +260,21 @@ class HabitViewModel(
     /** Habit names included in the search (filter section). */
     private val _searchFilters = MutableStateFlow<Set<String>>(emptySet())
     val searchFilters: StateFlow<Set<String>> = _searchFilters.asStateFlow()
+
+    /**
+     * True once the filter set carries real state — either restored from
+     * [SearchStateStore] or defaulted to "all". Until then an empty filter
+     * set means "not initialised yet", never "user deselected everything".
+     */
+    private var searchFiltersInitialized = false
+
+    init {
+        searchStateStore.load()?.let { saved ->
+            _searchQuery.value = saved.query
+            _searchFilters.value = saved.filters
+            searchFiltersInitialized = true
+        }
+    }
 
     /** Habits that have any searchable text, for the filter section. */
     private val _searchableHabits = MutableStateFlow<List<SearchableHabitInfo>>(emptyList())
@@ -268,18 +289,34 @@ class HabitViewModel(
 
     private var searchJob: Job? = null
 
-    /** Recomputes the list of habits with searchable text. Defaults the filter to "all". */
+    /**
+     * Recomputes the list of habits with searchable text. Defaults the
+     * filter to "all" on first run only; afterwards a persisted selection
+     * (even an empty one) is honoured, minus habits that no longer exist.
+     */
     fun refreshSearchableHabits() {
         val list = HabitSearcher.searchableHabits(_settings.value)
         _searchableHabits.value = list
-        if (_searchFilters.value.isEmpty()) {
-            _searchFilters.value = list.map { it.habitName }.toSet()
+        val names = list.map { it.habitName }.toSet()
+        if (!searchFiltersInitialized) {
+            _searchFilters.value = names
+            searchFiltersInitialized = true
+        } else {
+            // Drop filters for habits that were renamed or removed meanwhile.
+            val effective = _searchFilters.value intersect names
+            if (effective.size != _searchFilters.value.size) _searchFilters.value = effective
+        }
+        // A restored query with no in-memory results (fresh app start) re-runs
+        // so the dialog reopens showing its previous hits.
+        if (_searchQuery.value.isNotBlank() && _searchResults.value.isEmpty()) {
+            rerunSearchIfActive()
         }
     }
 
     /** Updates the query and runs a debounced fuzzy search across all text-bearing habits. */
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
+        persistSearchState()
         searchJob?.cancel()
         if (query.isBlank()) {
             _searchResults.value = emptyList()
@@ -296,13 +333,26 @@ class HabitViewModel(
     fun toggleSearchFilter(habitName: String) {
         val current = _searchFilters.value
         _searchFilters.value = if (habitName in current) current - habitName else current + habitName
+        persistSearchState()
         rerunSearchIfActive()
     }
 
     /** Re-selects every searchable habit, then re-runs the active query. */
     fun setAllSearchFilters() {
         _searchFilters.value = _searchableHabits.value.map { it.habitName }.toSet()
+        persistSearchState()
         rerunSearchIfActive()
+    }
+
+    /** Deselects every habit filter, then re-runs the active query. */
+    fun clearSearchFilters() {
+        _searchFilters.value = emptySet()
+        persistSearchState()
+        rerunSearchIfActive()
+    }
+
+    private fun persistSearchState() {
+        searchStateStore.save(_searchQuery.value, _searchFilters.value)
     }
 
     private fun rerunSearchIfActive() {

@@ -21,7 +21,9 @@ import java.time.ZoneId
  *    linked source files (same format as [DatedEntryRepository]).
  *  - Per-habit notes configured in edit mode (undated).
  *
- * Matching is fuzzy and forgiving of misspellings via [FuzzyMatcher].
+ * Matching is fuzzy and forgiving of misspellings via [FuzzyMatcher],
+ * except for query words of ≤ [FuzzyMatcher.SHORT_QUERY_EXACT_MAX]
+ * characters which must hit exactly (case-insensitive).
  */
 
 /** Where a search hit came from. */
@@ -60,14 +62,19 @@ data class HabitSearchResult(
 )
 
 /**
- * Fuzzy text matching that is forgiving of misspellings.
+ * Fuzzy text matching that is forgiving of misspellings — but only for
+ * words longer than [SHORT_QUERY_EXACT_MAX] characters. Short words must
+ * hit exactly (case-insensitive), because tiny words fuzzy-match far too
+ * much irrelevant text.
  *
  * Strategy (first that succeeds wins):
  *  1. Exact case-insensitive substring — score 100.
  *  2. Token-based fuzzy — the query is split into words; every query word
- *     must fuzzy-match some word of the text (equality, shared prefix, or a
- *     small Levenshtein distance that grows with word length). Score is the
- *     average per-token score (45–85).
+ *     must fuzzy-match some word of the text. Words of at most
+ *     [SHORT_QUERY_EXACT_MAX] characters require an exact case-insensitive
+ *     hit; longer words also allow a shared prefix or a small Levenshtein
+ *     distance that grows with word length. Score is the average
+ *     per-token score (45–85).
  *
  * The returned [Match] range refers to the *original* text so callers can
  * build highlight snippets around it.
@@ -77,15 +84,21 @@ object FuzzyMatcher {
     data class Match(val score: Int, val start: Int, val end: Int)
     data class Snippet(val text: String, val start: Int, val end: Int)
 
+    /** Query words of this length or shorter must hit exactly (case-insensitive). */
+    const val SHORT_QUERY_EXACT_MAX = 4
+
     private val whitespaceRe = Regex("\\s+")
     private val nonWordRe = Regex("[^\\p{L}\\p{N}]")
 
     private fun clean(s: String): String = nonWordRe.replace(s, "").lowercase()
 
-    /** Max tolerated Levenshtein edits for a word of the given length. */
+    /**
+     * Max tolerated Levenshtein edits for a word of the given length.
+     * Short words (≤ [SHORT_QUERY_EXACT_MAX]) get 0 — they must hit exactly.
+     */
     fun maxEditsFor(len: Int): Int = when {
         len >= 8 -> 2
-        len >= 4 -> 1
+        len >= SHORT_QUERY_EXACT_MAX + 1 -> 1
         else -> 0
     }
 
@@ -135,9 +148,10 @@ object FuzzyMatcher {
     /** Similarity score of a query token against a single word, or -1 when unrelated. */
     private fun scoreWord(token: String, word: String): Int {
         if (word == token) return 85
-        if (token.length >= 3 && word.length >= 3 &&
-            (word.startsWith(token) || token.startsWith(word))
-        ) return 75
+        // Short query words must hit exactly — no prefix or edit tolerance,
+        // since tiny words fuzzy-match far too much irrelevant text.
+        if (token.length <= SHORT_QUERY_EXACT_MAX) return -1
+        if (word.length >= 3 && (word.startsWith(token) || token.startsWith(word))) return 75
         val maxEdits = maxEditsFor(maxOf(token.length, word.length))
         if (maxEdits > 0) {
             val d = levenshtein(token, word, maxEdits)
