@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
@@ -63,6 +64,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
@@ -209,6 +211,7 @@ fun HabitGridScreen(
     val selectedDateLocation by viewModel.selectedDateLocation.collectAsState()
     val editMode by viewModel.editMode.collectAsState()
     val graphMode by viewModel.graphMode.collectAsState()
+    val scheduleMode by viewModel.scheduleMode.collectAsState()
     val graphSelectedHabits by viewModel.graphSelectedHabits.collectAsState()
     val selectedEditIndex by viewModel.selectedEditIndex.collectAsState()
     val movePendingSourceIndex by viewModel.movePendingSourceIndex.collectAsState()
@@ -259,6 +262,10 @@ fun HabitGridScreen(
             ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
     }
+
+    // Schedule timeline refresh counter — bumped when the timestamp editor
+    // (opened from a schedule event) closes, so the timeline reloads.
+    var scheduleRefresh by remember { mutableIntStateOf(0) }
 
     // Global search dialog state (query/filters/results live in the ViewModel,
     // so closing the dialog preserves its exact state for the next open)
@@ -456,14 +463,21 @@ fun HabitGridScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Start,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            // Nudge the whole date widget a little left to make
+                            // room for the sixth action icon on the right.
+                            .offset(x = (-4).dp)
                     ) {
                         // Soft red accent shared by the Today label and its arrows;
                         // the date itself turns bright red when viewing a past day.
                         val dateNavTint = lerp(Color.White, Color(0xFFFF5252), 0.35f)
 
                         // Back arrow — always available, hold to rapid-step
-                        RepeatIconButton(onClick = { viewModel.navigateDay(-1) }) {
+                        RepeatIconButton(
+                            onClick = { viewModel.navigateDay(-1) },
+                            modifier = Modifier.size(34.dp)
+                        ) {
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Previous day",
@@ -484,13 +498,14 @@ fun HabitGridScreen(
                                     indication = null,
                                     interactionSource = remember { MutableInteractionSource() }
                                 ) { showCalendarPicker = true }
-                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                                .padding(horizontal = 2.dp, vertical = 2.dp)
                         )
 
                         // Forward arrow — disabled when already on today, hold to rapid-step
                         RepeatIconButton(
                             onClick = { viewModel.navigateDay(+1) },
-                            enabled = !isToday
+                            enabled = !isToday,
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowForward,
@@ -505,10 +520,10 @@ fun HabitGridScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
-                    // Five compact actions (edit, graph, notifications, search,
-                    // settings) — sized down and tightly packed so all five fit
-                    // in the space the original four occupied. Each icon keeps
-                    // a light but visible tint of its accent colour.
+                    // Six compact actions (edit, graph, schedule, notifications,
+                    // search, settings) — sized down and tightly packed so all
+                    // six fit in the top bar. Each icon keeps a light but
+                    // visible tint of its accent colour.
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(0.dp)
@@ -516,7 +531,7 @@ fun HabitGridScreen(
                         // Edit mode toggle — slight orange tint
                         IconButton(
                             onClick = { viewModel.toggleEditMode() },
-                            modifier = Modifier.size(38.dp),
+                            modifier = Modifier.size(34.dp),
                             colors = IconButtonDefaults.iconButtonColors(
                                 containerColor = if (editMode) Color(0xFF4A2A00) else Color.Transparent
                             )
@@ -532,7 +547,7 @@ fun HabitGridScreen(
                         // Graph mode toggle — slight green tint
                         IconButton(
                             onClick = { viewModel.toggleGraphMode() },
-                            modifier = Modifier.size(38.dp),
+                            modifier = Modifier.size(34.dp),
                             colors = IconButtonDefaults.iconButtonColors(
                                 containerColor = if (graphMode) Color(0xFF0A2A0A) else Color.Transparent
                             )
@@ -545,13 +560,30 @@ fun HabitGridScreen(
                                 modifier = Modifier.size(19.dp)
                             )
                         }
-                        // Notifications — slight blue tint; highlighted while
+                        // Daily schedule (retrospective timeline) — slight blue
+                        // tint; highlighted while active
+                        IconButton(
+                            onClick = { viewModel.toggleScheduleMode() },
+                            modifier = Modifier.size(34.dp),
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = if (scheduleMode) Color(0xFF0A2A3A) else Color.Transparent
+                            )
+                        ) {
+                            Icon(
+                                Icons.Default.Schedule,
+                                contentDescription = if (scheduleMode) "Day timeline ON" else "Day timeline",
+                                tint = if (scheduleMode) Color(0xFF66CCFF)
+                                else lerp(Color.White, Color(0xFF66CCFF), 0.35f),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        // Notifications — slight yellow tint; highlighted while
                         // asks are waiting for an answer
                         IconButton(
                             onClick = { showNotificationsDialog = true },
-                            modifier = Modifier.size(38.dp),
+                            modifier = Modifier.size(34.dp),
                             colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = if (pendingNotifications > 0) Color(0xFF0A2A3A) else Color.Transparent
+                                containerColor = if (pendingNotifications > 0) Color(0xFF3A320A) else Color.Transparent
                             )
                         ) {
                             BadgedBox(
@@ -564,8 +596,8 @@ fun HabitGridScreen(
                                 Icon(
                                     Icons.Default.Notifications,
                                     contentDescription = "Notifications",
-                                    tint = if (pendingNotifications > 0) Color(0xFF66CCFF)
-                                    else lerp(Color.White, Color(0xFF66CCFF), 0.35f),
+                                    tint = if (pendingNotifications > 0) Color(0xFFFFD700)
+                                    else lerp(Color.White, Color(0xFFFFD700), 0.35f),
                                     modifier = Modifier.size(19.dp)
                                 )
                             }
@@ -576,7 +608,7 @@ fun HabitGridScreen(
                                 viewModel.refreshSearchableHabits()
                                 showSearchDialog = true
                             },
-                            modifier = Modifier.size(38.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 Icons.Default.Search,
@@ -585,15 +617,15 @@ fun HabitGridScreen(
                                 modifier = Modifier.size(19.dp)
                             )
                         }
-                        // Settings — slight yellow tint
+                        // Settings — white tint
                         IconButton(
                             onClick = onNavigateToSettings,
-                            modifier = Modifier.size(38.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 Icons.Default.Settings,
                                 contentDescription = "Settings",
-                                tint = lerp(Color.White, Color(0xFFFFD700), 0.35f),
+                                tint = Color.White,
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -651,8 +683,9 @@ fun HabitGridScreen(
                 }
             }
 
-            // Screen tabs — shown when multiple screens exist (hidden in landscape)
-            if (habitScreens.size > 1 && !isLandscape) {
+            // Screen tabs — shown when multiple screens exist (hidden in
+            // landscape and in schedule mode, which aggregates all screens)
+            if (habitScreens.size > 1 && !isLandscape && !scheduleMode) {
                 ScreenTabRow(
                     screens = habitScreens,
                     activeIndex = activeScreenIndex,
@@ -706,6 +739,37 @@ fun HabitGridScreen(
                         .fillMaxSize()
                         .weight(1f),
                     garminHabitLinks = settings.garminHabitLinks
+                )
+            } else if (scheduleMode) {
+                // ── Schedule mode: retrospective hour-by-hour timeline ────
+                // Replaces the grid with everything that was timestamped on
+                // the selected day. Habits without time data are absent.
+                ScheduleTimelineScreen(
+                    habitNames = habits.map { it.name },
+                    mealHabits = settings.mealHabits,
+                    textInputHabits = settings.textInputHabits,
+                    timelineExcludedHabits = settings.timelineExcludedHabits,
+                    selectedDate = selectedDate,
+                    isToday = isToday,
+                    refreshTrigger = scheduleRefresh,
+                    timestampRepo = viewModel.timestampRepo,
+                    onEventClick = { habitName ->
+                        timestampScope.launch {
+                            timestampEditorList = viewModel.timestampRepo
+                                .getTimestampsForDay(habitName, selectedDate)
+                            timestampEditorHabitName = habitName
+                            // Load any text logged at those times so the
+                            // editor popup can show/edit it.
+                            if (habitName in settings.textInputHabits) {
+                                viewModel.loadTextEntriesWithTimestamps(habitName, selectedDate) { entries ->
+                                    editModeTextEntries = entries
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f)
                 )
             } else {
                 // ── Portrait (or landscape without graph mode) ─────────────
@@ -1144,6 +1208,8 @@ fun HabitGridScreen(
                             mealDialogFromTap = false
                             mealDialogHabit = name
                         },
+                        timelineExcludedHabits = settings.timelineExcludedHabits,
+                        onToggleTimelineExcluded = { name -> viewModel.toggleTimelineExcluded(name) },
                         cameraHabits = settings.cameraHabits,
                         onToggleCamera = { name -> viewModel.toggleCameraHabit(name) },
                         habitLongPressActions = settings.habitLongPressActions,
@@ -1471,8 +1537,8 @@ fun HabitGridScreen(
         }
     }
 
-    // ── Advice banner at bottom of screen (hidden in edit/graph modes) ──
-    if (!editMode && !graphMode) {
+    // ── Advice banner at bottom of screen (hidden in edit/graph/schedule modes) ──
+    if (!editMode && !graphMode && !scheduleMode) {
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -1632,7 +1698,11 @@ fun HabitGridScreen(
                     }
                 }
             },
-            onDismiss = { timestampEditorHabitName = null }
+            onDismiss = {
+                timestampEditorHabitName = null
+                // Reload the schedule timeline so it reflects any edits
+                scheduleRefresh++
+            }
         )
     }
 
@@ -3342,7 +3412,10 @@ private fun HabitToggleSection(
     isSecondaryValue: Boolean,
     onToggleSecondaryValue: (String) -> Unit,
     isSecondaryValueFallback: Boolean = false,
-    onToggleSecondaryValueFallback: (String) -> Unit = {}
+    onToggleSecondaryValueFallback: (String) -> Unit = {},
+    /** Whether the habit appears on the day timeline (clock view). */
+    showOnTimeline: Boolean = true,
+    onToggleTimeline: (String) -> Unit = {}
 ) {
     // ── Disabled toggle ─────────────────────────────────────────────────
     Row(
@@ -3461,6 +3534,37 @@ private fun HabitToggleSection(
         }
 
         Spacer(modifier = Modifier.height(6.dp))
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    // ── Day timeline toggle ────────────────────────────────────────────
+    // Controls whether the habit's timestamped entries appear on the
+    // day timeline (the retrospective hour-by-hour clock view).
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Show on day timeline", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (showOnTimeline) "Timestamped entries appear on the clock view"
+                       else "Hidden from the clock view",
+                color = if (showOnTimeline) Color(0xFF66CCFF) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = showOnTimeline,
+            onCheckedChange = { onToggleTimeline(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66CCFF),
+                checkedTrackColor = Color(0xFF0A2A3A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
     }
 }
 
@@ -3966,6 +4070,10 @@ private fun EditModeControlBar(
     mealHabits: Set<String> = emptySet(),
     onToggleMeal: (String) -> Unit = {},
     onOpenMealDetails: (String) -> Unit = {},
+    /** Habits excluded from the day timeline (retrospective hour-by-hour view). */
+    timelineExcludedHabits: Set<String> = emptySet(),
+    /** Called when the user toggles day-timeline visibility for a habit. */
+    onToggleTimelineExcluded: (String) -> Unit = {},
     /** Habits eligible for camera/vision auto-detection ("Camera" setting). */
     cameraHabits: Set<String> = emptySet(),
     /** Called when the user toggles the "Camera" setting for a habit. */
@@ -4958,7 +5066,7 @@ private fun EditModeControlBar(
                         onClearUrlApp = onClearLongPressUrlApp
                     )
 
-                    // ── Disabled / No-points / Secondary-value toggles ──────
+                    // ── Disabled / No-points / Secondary-value / Timeline toggles ──
                     HabitToggleSection(
                         habitName = selectedHabitName,
                         isDisabled = selectedHabitName in disabledHabits,
@@ -4968,7 +5076,9 @@ private fun EditModeControlBar(
                         isSecondaryValue = selectedHabitName in secondaryValueSettings.habits,
                         onToggleSecondaryValue = secondaryValueSettings.onToggleSecondaryValue,
                         isSecondaryValueFallback = selectedHabitName in secondaryValueSettings.fallbackHabits,
-                        onToggleSecondaryValueFallback = secondaryValueSettings.onToggleSecondaryValueFallback
+                        onToggleSecondaryValueFallback = secondaryValueSettings.onToggleSecondaryValueFallback,
+                        showOnTimeline = selectedHabitName !in timelineExcludedHabits,
+                        onToggleTimeline = onToggleTimelineExcluded
                     )
 
                     // ── Minutes value on/off — first-class minutes toggle ──

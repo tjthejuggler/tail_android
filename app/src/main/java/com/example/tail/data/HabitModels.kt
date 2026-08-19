@@ -1115,6 +1115,8 @@ data class AppSettings(
     val mealSystemPrompt: String = "",
     /** Habits that have the "Meal" type enabled. */
     val mealHabits: Set<String> = emptySet(),
+    /** Habits excluded from the day timeline (retrospective hour-by-hour view). */
+    val timelineExcludedHabits: Set<String> = emptySet(),
     /**
      * Habits eligible for the camera/vision auto-detection ("Camera" setting).
      * When non-empty, ONLY these habits are offered to the LLM as choices for

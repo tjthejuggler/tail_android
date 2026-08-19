@@ -198,6 +198,7 @@ private val KEY_MEAL_API_KEY = stringPreferencesKey("meal_api_key")
 private val KEY_MEAL_MODEL = stringPreferencesKey("meal_model")
 private val KEY_MEAL_SYSTEM_PROMPT = stringPreferencesKey("meal_system_prompt")
 private val KEY_MEAL_HABITS = stringSetPreferencesKey("meal_habits")
+private val KEY_TIMELINE_EXCLUDED_HABITS = stringSetPreferencesKey("timeline_excluded_habits")
 private val KEY_CAMERA_HABITS = stringSetPreferencesKey("camera_habits")
 // App link keys — stored as "app_link_key\x00label|||app_link_key\x00label" pairs
 private val KEY_APP_LINKS = stringPreferencesKey("app_links")
@@ -930,6 +931,7 @@ class SettingsRepository(private val context: Context) {
             mealModel = prefs[KEY_MEAL_MODEL] ?: "",
             mealSystemPrompt = prefs[KEY_MEAL_SYSTEM_PROMPT] ?: "",
             mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet(),
+            timelineExcludedHabits = prefs[KEY_TIMELINE_EXCLUDED_HABITS] ?: emptySet(),
             cameraHabits = prefs[KEY_CAMERA_HABITS] ?: emptySet(),
             appLinks = decodeFileUriMap(prefs[KEY_APP_LINKS] ?: ""),
             habitAppAssociations = decodeSubtypesMap(prefs[KEY_HABIT_APP_ASSOCIATIONS] ?: ""),
@@ -1528,6 +1530,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that have the "Meal" type enabled. */
     suspend fun saveMealHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_MEAL_HABITS] = habits }
+    }
+
+    /** Saves the set of habits excluded from the day timeline. */
+    suspend fun saveTimelineExcludedHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_TIMELINE_EXCLUDED_HABITS] = habits }
     }
 
     /** Saves the set of habits eligible for camera/vision auto-detection. */

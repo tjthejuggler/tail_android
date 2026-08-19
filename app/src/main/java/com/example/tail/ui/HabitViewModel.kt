@@ -3144,8 +3144,9 @@ class HabitViewModel(
             _selectedEditIndex.value = -1
             _movePendingSourceIndex.value = -1
         } else {
-            // Deactivate graph mode when edit mode is activated
+            // Deactivate graph and schedule modes when edit mode is activated
             _graphMode.value = false
+            _scheduleMode.value = false
             // Carry the graph-mode selection into edit mode: the first selected
             // habit (in grid order) becomes the selected cell.
             _selectedEditIndex.value = _habits.value.indexOfFirst {
@@ -5586,6 +5587,7 @@ class HabitViewModel(
         if (turningOn) {
             // Deactivate other modes
             _editMode.value = false
+            _scheduleMode.value = false
             // Re-anchor the graph window on the app's currently selected day:
             // drop any pinch-zoom/pan range left over from a previous session.
             _graphZoomStartDate.value = null
@@ -5605,6 +5607,29 @@ class HabitViewModel(
         val current = _graphSelectedHabits.value.toMutableSet()
         if (habitName in current) current.remove(habitName) else current.add(habitName)
         _graphSelectedHabits.value = current
+    }
+
+    // ── Schedule mode ──────────────────────────────────────────────────────────
+
+    /**
+     * Whether daily-schedule (retrospective timeline) mode is active.
+     * When on, the habit grid is replaced by an hour-by-hour timeline of
+     * everything that was timestamped on the selected day.
+     */
+    private val _scheduleMode = MutableStateFlow(false)
+    val scheduleMode: StateFlow<Boolean> = _scheduleMode.asStateFlow()
+
+    fun toggleScheduleMode() {
+        val turningOn = !_scheduleMode.value
+        _scheduleMode.value = turningOn
+        if (turningOn) {
+            // Deactivate other modes
+            _editMode.value = false
+            _graphMode.value = false
+            _selectedEditIndex.value = -1
+            _movePendingSourceIndex.value = -1
+            _graphSelectedHabits.value = emptySet()
+        }
     }
 
     /**
@@ -10265,6 +10290,24 @@ class HabitViewModel(
             }
             settingsRepo.saveMealHabits(current)
             _settings.value = _settings.value.copy(mealHabits = current)
+        }
+    }
+
+    /**
+     * Toggles whether [habitName] appears on the day timeline (the
+     * retrospective hour-by-hour view). Excluded habits are stored in a
+     * set; every habit is shown by default.
+     */
+    fun toggleTimelineExcluded(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.timelineExcludedHabits.toMutableSet()
+            if (habitName in current) {
+                current.remove(habitName)
+            } else {
+                current.add(habitName)
+            }
+            settingsRepo.saveTimelineExcludedHabits(current)
+            _settings.value = _settings.value.copy(timelineExcludedHabits = current)
         }
     }
 
