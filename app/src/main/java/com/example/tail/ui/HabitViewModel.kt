@@ -5232,10 +5232,16 @@ class HabitViewModel(
      *   "version": 1,
      *   "updated_at": "<iso-8601>",
      *   "habits": [
-     *     { "name": "Meditation", "icon": "lotus", "minutes_primary": true },
+     *     { "name": "Meditation", "icon": "lotus", "minutes_primary": true,
+     *       "divider": 30, "inverted_binary": false, "no_points": false },
      *     ...
      *   ]
      * }
+     *
+     * "divider" is the habit's points divisor (habitDividers) — the PC
+     * widget needs it to compute effective points (raw ÷ divider) for its
+     * square colours; "inverted_binary" / "no_points" mirror the phone's
+     * scoring subtypes so the PC scores those habits identically.
      */
     private suspend fun pushPcWidgetConfig() {
         val s = _settings.value
@@ -5250,6 +5256,9 @@ class HabitViewModel(
                 habitObj.put("name", habitName)
                 s.habitIcons[habitName]?.let { habitObj.put("icon", it) }
                 habitObj.put("minutes_primary", habitName in s.widgetTimerMinutesPrimary)
+                habitObj.put("divider", s.habitDividers[habitName] ?: 1)
+                habitObj.put("inverted_binary", habitName in s.invertedBinaryHabits)
+                habitObj.put("no_points", habitName in s.noPointsHabits)
                 habitsArray.put(habitObj)
             }
             root.put("habits", habitsArray)

@@ -258,10 +258,20 @@ def pc_widget_set_config(payload: Dict[str, Any], api_key: str = Security(verify
             continue
         name = h.get("name")
         if isinstance(name, str) and name.strip():
+            div = h.get("divider")
+            inv = h.get("inverted_binary")
+            nop = h.get("no_points")
             clean.append({
                 "name": name,
                 "icon": h.get("icon") if isinstance(h.get("icon"), str) else None,
                 "minutes_primary": bool(h.get("minutes_primary", False)),
+                # effective-points inputs (phone: habitDividers /
+                # invertedBinaryHabits / noPointsHabits); None = phone
+                # hasn't sent the field yet → widget falls back to its
+                # overrides/backup layers
+                "divider": div if isinstance(div, int) and not isinstance(div, bool) and div >= 1 else None,
+                "inverted_binary": inv if isinstance(inv, bool) else None,
+                "no_points": nop if isinstance(nop, bool) else None,
             })
     body = {
         "version": 1,
