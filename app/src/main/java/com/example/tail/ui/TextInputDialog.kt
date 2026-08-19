@@ -11,14 +11,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -46,9 +52,11 @@ import androidx.compose.ui.window.Dialog
  * - When [showOptions] is true AND [options] is non-empty, also shows a scrollable
  *   list of all unique past entries with **multi-select checkboxes**. The user can
  *   select as many as desired; each selected option is saved as a separate entry.
- *   A "+" button next to the text field lets the user add a freshly-typed value as
- *   a new checked option **without closing the dialog**, so they can keep selecting
- *   more options before confirming.
+ *   The list has its own dedicated search field: search text only filters the list
+ *   and is never saved, so typing a partial word (e.g. "luc" to find "Lucid") and
+ *   checking the match registers exactly that book. A "+" button next to the entry
+ *   field lets the user add a freshly-typed value as a new checked option **without
+ *   closing the dialog**, so they can keep selecting more options before confirming.
  * - A time picker lets the user associate a specific time-of-day with the entries
  *   instead of defaulting to noon for past dates.
  * - When [suggestedMinutes] is non-null (movie-bridge suggestion), a separate
@@ -87,6 +95,10 @@ fun TextInputDialog(
 
     // Multi-select state for past options
     val selectedOptions = remember { mutableStateMapOf<String, Boolean>() }
+
+    // Search query for the past-options list. Deliberately separate from the
+    // entry field so filter text can never be submitted as an entry.
+    var searchQuery by remember { mutableStateOf("") }
 
     // Time picker state — wheel-based
     var selectedHour by remember { mutableIntStateOf(initialHour) }
@@ -400,22 +412,73 @@ fun TextInputDialog(
                     // Merge any newly-typed options (added via the + button) with the
                     // existing past options so they appear checked in the list.
                     val allOptions = selectedOptions.keys.filter { it !in options } + options
-                    // Filter options by current input text (case-insensitive contains)
-                    val filteredOptions = if (inputText.isBlank()) {
+                    // Filter options by the dedicated search field (case-insensitive
+                    // contains). The entry field no longer filters this list, so a
+                    // partial word typed to find a past entry can never be saved.
+                    val filteredOptions = if (searchQuery.isBlank()) {
                         allOptions
                     } else {
-                        allOptions.filter { it.contains(inputText, ignoreCase = true) }
+                        allOptions.filter { it.contains(searchQuery, ignoreCase = true) }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    val selectedCount = selectedOptions.values.count { it }
-                    Text(
-                        text = if (selectedCount > 0) {
-                            "Past entries ($selectedCount selected)"
-                        } else {
-                            "Past entries (tap to select multiple)"
+                    // Dedicated search field for the past-entries list. Whatever is
+                    // typed here only filters — it is never submitted as an entry.
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = {
+                            Text("Search past entries", color = Color(0xFF666666), fontSize = 13.sp)
                         },
+                        singleLine = true,
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = "Search past entries",
+                                tint = Color(0xFF888888),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Clear search",
+                                        tint = Color(0xFF888888),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFFFFAA00),
+                            unfocusedBorderColor = Color(0xFF555555),
+                            cursorColor = Color(0xFFFFAA00)
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    val selectedCount = selectedOptions.values.count { it }
+                    val header = buildString {
+                        append("Past entries")
+                        if (searchQuery.isNotBlank()) {
+                            append(" — ${filteredOptions.size} match")
+                            if (filteredOptions.size != 1) append("es")
+                        }
+                        if (selectedCount > 0) {
+                            append(" ($selectedCount selected)")
+                        } else if (searchQuery.isBlank()) {
+                            append(" (tap to select multiple)")
+                        }
+                    }
+                    Text(
+                        text = header,
                         color = Color(0xFF888888),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -430,12 +493,30 @@ fun TextInputDialog(
                             .background(Color(0xFF111111), RoundedCornerShape(6.dp))
                     ) {
                         if (filteredOptions.isEmpty()) {
-                            Text(
-                                text = "No matching entries",
-                                color = Color(0xFF555555),
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(12.dp)
-                            )
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Text(
+                                    text = "No matching entries",
+                                    color = Color(0xFF555555),
+                                    fontSize = 12.sp
+                                )
+                                // Shortcut: the searched value isn't a past entry yet,
+                                // offer to add it as a new checked entry in one tap.
+                                val trimmedQuery = searchQuery.trim()
+                                if (trimmedQuery.isNotEmpty()) {
+                                    TextButton(
+                                        onClick = { selectedOptions[trimmedQuery] = true },
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                            start = 0.dp, end = 0.dp, top = 4.dp, bottom = 0.dp
+                                        )
+                                    ) {
+                                        Text(
+                                            text = "Add \"$trimmedQuery\" as a new entry",
+                                            color = Color(0xFFFFAA00),
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
+                            }
                         } else {
                             LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
                                 items(filteredOptions) { option ->
@@ -500,10 +581,12 @@ fun TextInputDialog(
                             selectedOptions.filterValues { it }.keys.forEach { opt ->
                                 entries.add(opt)
                             }
-                            // Add free text if non-empty (avoid exact duplicates of selected options).
+                            // Add free text if non-empty (skip duplicates of selected
+                            // options, compared case-insensitively so leftover search
+                            // text can never ride along with a checked option).
                             // For movie suggestions, append the wheel-edited length as
                             // "(N min)" unless the text already carries a duration.
-                            if (hasFreeText && trimmedInput !in entries) {
+                            if (hasFreeText && entries.none { it.equals(trimmedInput, ignoreCase = true) }) {
                                 val alreadyHasDuration = Regex("""\(\d+\s*min\)\s*$""")
                                     .containsMatchIn(trimmedInput)
                                 val textWithLength = when {

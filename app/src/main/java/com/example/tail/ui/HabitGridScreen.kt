@@ -458,18 +458,22 @@ fun HabitGridScreen(
                         horizontalArrangement = Arrangement.Start,
                         modifier = Modifier.fillMaxWidth()
                     ) {
+                        // Soft red accent shared by the Today label and its arrows;
+                        // the date itself turns bright red when viewing a past day.
+                        val dateNavTint = lerp(Color.White, Color(0xFFFF5252), 0.35f)
+
                         // Back arrow — always available, hold to rapid-step
                         RepeatIconButton(onClick = { viewModel.navigateDay(-1) }) {
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Previous day",
-                                tint = Color.White
+                                tint = dateNavTint
                             )
                         }
 
                         // Date label — tappable to open the calendar picker
                         val dateLabel = if (isToday) "Today" else selectedDate.format(DISPLAY_DATE_FMT)
-                        val dateLabelColor = if (isToday) Color.White else Color(0xFFFFD700)
+                        val dateLabelColor = if (isToday) dateNavTint else Color(0xFFFF5252)
                         Text(
                             text = dateLabel,
                             color = dateLabelColor,
@@ -491,7 +495,7 @@ fun HabitGridScreen(
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowForward,
                                 contentDescription = "Next day",
-                                tint = if (isToday) Color.Gray else Color.White
+                                tint = if (isToday) Color.Gray else dateNavTint
                             )
                         }
 
@@ -504,7 +508,7 @@ fun HabitGridScreen(
                     // Five compact actions (edit, graph, notifications, search,
                     // settings) — sized down and tightly packed so all five fit
                     // in the space the original four occupied. Each icon keeps
-                    // a very slight tint of its accent colour.
+                    // a light but visible tint of its accent colour.
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(0.dp)
@@ -521,7 +525,7 @@ fun HabitGridScreen(
                                 Icons.Default.Edit,
                                 contentDescription = if (editMode) "Edit mode ON" else "Edit mode OFF",
                                 tint = if (editMode) Color(0xFFFFAA00)
-                                else lerp(Color.White, Color(0xFFFFAA00), 0.18f),
+                                else lerp(Color.White, Color(0xFFFFAA00), 0.35f),
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -537,7 +541,7 @@ fun HabitGridScreen(
                                 Icons.Default.BarChart,
                                 contentDescription = if (graphMode) "Graph mode ON" else "Graph mode OFF",
                                 tint = if (graphMode) Color(0xFF66DD66)
-                                else lerp(Color.White, Color(0xFF66DD66), 0.18f),
+                                else lerp(Color.White, Color(0xFF66DD66), 0.35f),
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -561,7 +565,7 @@ fun HabitGridScreen(
                                     Icons.Default.Notifications,
                                     contentDescription = "Notifications",
                                     tint = if (pendingNotifications > 0) Color(0xFF66CCFF)
-                                    else lerp(Color.White, Color(0xFF66CCFF), 0.18f),
+                                    else lerp(Color.White, Color(0xFF66CCFF), 0.35f),
                                     modifier = Modifier.size(19.dp)
                                 )
                             }
@@ -577,7 +581,7 @@ fun HabitGridScreen(
                             Icon(
                                 Icons.Default.Search,
                                 contentDescription = "Search",
-                                tint = lerp(Color.White, Color(0xFFFF69B4), 0.18f),
+                                tint = lerp(Color.White, Color(0xFFFF69B4), 0.35f),
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -589,7 +593,7 @@ fun HabitGridScreen(
                             Icon(
                                 Icons.Default.Settings,
                                 contentDescription = "Settings",
-                                tint = lerp(Color.White, Color(0xFFFFD700), 0.18f),
+                                tint = lerp(Color.White, Color(0xFFFFD700), 0.35f),
                                 modifier = Modifier.size(19.dp)
                             )
                         }
