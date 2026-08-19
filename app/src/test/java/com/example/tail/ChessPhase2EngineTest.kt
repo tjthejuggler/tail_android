@@ -1,6 +1,7 @@
 package com.example.tail
 
 import com.example.tail.widget.ChessPhase2Engine
+import com.example.tail.widget.ChessPhase2Engine.FloorBasis
 import com.example.tail.widget.ChessPhase2Engine.GameResult
 import com.example.tail.widget.ChessPhase2Engine.OutputState
 import com.example.tail.widget.ChessPhase2Engine.TimeControl
@@ -10,14 +11,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Unit tests for the Phase 2 Post-Game Performance Audit Engine (spec v1.0).
- * Covers the Elo ΔE math, time-control calibrated thresholds, the master
- * decision matrix, false-success detection and the §7 edge cases.
+ * Unit tests for the Phase 2 audit engine v2.0 — evidence-weighted strain
+ * model with personal percentile ΔE floors, readiness buffer, and hard
+ * cutoffs.
  */
 class ChessPhase2EngineTest {
 
-    private val NOW = 1_700_000_000_000L
     private val E = ChessPhase2Engine
+    private val NOW = 1_700_000_000_000L
+    private val DAY = 24L * 60 * 60 * 1000
 
     private fun input(
         tc: TimeControl = TimeControl.BLITZ,
@@ -31,350 +33,355 @@ class ChessPhase2EngineTest {
         short: Boolean = false,
         history: List<Double> = emptyList()
     ) = ChessPhase2Engine.GameInput(
-        timeControl = tc,
-        userRating = user,
-        opponentRating = opp,
-        gameResult = result,
-        caps2Accuracy = acc,
-        blunderCount = blunders,
-        hasUnforcedBlunder = unforced,
-        sessionElapsedMins = mins,
-        shortGame = short,
-        accuracyHistory = history
+        timeControl = tc, userRating = user, opponentRating = opp,
+        gameResult = result, caps2Accuracy = acc, blunderCount = blunders,
+        hasUnforcedBlunder = unforced, sessionElapsedMins = mins,
+        shortGame = short, accuracyHistory = history
     )
 
-    private fun session(vararg states: OutputState) =
-        states.mapIndexed { i, s ->
-            ChessPhase2Engine.SessionGame(NOW - (i + 1) * 600_000L, "BLITZ", s.name)
+    private fun session(vararg games: ChessPhase2Engine.SessionGame) = games.toList()
+
+    private fun game(
+        strain: Double = 0.0,
+        deltaE: Double = 0.0,
+        state: OutputState = OutputState.CONTINUE_RATED
+    ) = ChessPhase2Engine.SessionGame(NOW - 60_000, "BLITZ", state.name, deltaE, strain)
+
+    private fun deltaHistory(
+        vararg values: Double,
+        daysAgo: Int = 0
+    ): List<ChessPhase2Engine.DeltaERecord> =
+        values.mapIndexed { i, v ->
+            ChessPhase2Engine.DeltaERecord(NOW - daysAgo * DAY - i, v)
         }
 
-    // ── Elo expected score math ─────────────────────────────────────────────
+    // ── Elo math ───────────────────────────────────────────────────────────
 
     @Test
-    fun `equal ratings give expected score of one half`() {
+    fun `expected score of equal ratings is half`() {
         assertEquals(0.5, E.expectedScore(1500, 1500), 1e-9)
     }
 
     @Test
-    fun `400 point advantage gives ~0_909 expected score`() {
-        assertEquals(0.909, E.expectedScore(1900, 1500), 0.001)
+    fun `expected score against stronger opponent is low`() {
         assertEquals(0.091, E.expectedScore(1500, 1900), 0.001)
     }
 
     @Test
-    fun `expected score is symmetric`() {
-        assertEquals(1.0, E.expectedScore(1520, 1545) + E.expectedScore(1545, 1520), 1e-9)
+    fun `deltaE of loss to equal opponent is minus half`() {
+        assertEquals(-0.5, E.deltaE(1500, 1500, GameResult.LOSS), 0.001)
+        assertEquals(0.5, E.deltaE(1500, 1500, GameResult.WIN), 0.001)
+    }
+
+    // ── Rolling mean ───────────────────────────────────────────────────────
+
+    @Test
+    fun `rolling mean falls back to tier default`() {
+        assertEquals(75.0, E.rollingMean(emptyList(), TimeControl.BLITZ), 1e-9)
+        assertEquals(70.0, E.rollingMean(emptyList(), TimeControl.BULLET), 1e-9)
     }
 
     @Test
-    fun `deltaE classification boundaries`() {
-        assertEquals(
-            "Expected / Superior Performance",
-            E.deltaEClassification(-0.15)
-        )
-        assertEquals(
-            "Moderate Underperformance",
-            E.deltaEClassification(-0.151)
-        )
-        assertEquals(
-            "Moderate Underperformance",
-            E.deltaEClassification(-0.35)
-        )
-        assertEquals(
-            "Severe Executive Underperformance",
-            E.deltaEClassification(-0.351)
-        )
+    fun `rolling mean averages only the last ten games`() {
+        val history = (1..12).map { it.toDouble() } // last 10 → 3..12 → avg 7.5
+        assertEquals(7.5, E.rollingMean(history, TimeControl.BLITZ), 1e-9)
     }
 
-    // ── 60-minute session cap ───────────────────────────────────────────────
+    // ── Core v2.0 decisions ────────────────────────────────────────────────
 
     @Test
-    fun `session cap of 60 minutes terminates regardless of performance`() {
+    fun `clean win continues rated`() {
+        val r = E.evaluate(input(result = GameResult.WIN), emptyList(), NOW)
+        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
+        assertEquals(0.0, r.strain, 1e-9)
+        assertEquals("OPTIMAL PERFORMANCE", r.reason)
+    }
+
+    @Test
+    fun `clean draw continues rated`() {
+        val r = E.evaluate(input(result = GameResult.DRAW), emptyList(), NOW)
+        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
+        assertEquals(0.0, r.deltaE, 1e-9)
+    }
+
+    @Test
+    fun `single normal loss pivots instead of terminating`() {
+        // THE regression test: a coin-flip loss to an equal opponent
+        // (ΔE = −0.5) must NEVER terminate the session on its own.
+        val r = E.evaluate(input(result = GameResult.LOSS), emptyList(), NOW)
+        assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
+        assertEquals(E.SEVERE_STRAIN, r.strain, 1e-9)
+        assertFalse(r.catastrophic)
+        assertFalse(r.sessionCapReached)
+        assertEquals("SEVERE UNDERPERFORMANCE VS YOUR BAR", r.reason)
+    }
+
+    @Test
+    fun `strong readiness absorbs a single normal loss`() {
+        val r = E.evaluate(
+            input(result = GameResult.LOSS), emptyList(), NOW,
+            readinessCcrs = 90
+        )
+        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
+        assertEquals("READINESS BUFFER ABSORBED", r.reason)
+        assertEquals(25, r.readinessBuffer)
+        // The strain still counts toward the session tally
+        assertEquals(E.SEVERE_STRAIN, r.strain, 1e-9)
+    }
+
+    @Test
+    fun `weak readiness does not absorb a loss`() {
+        val r = E.evaluate(
+            input(result = GameResult.LOSS), emptyList(), NOW,
+            readinessCcrs = 60
+        )
+        assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
+        assertEquals(0, r.readinessBuffer)
+    }
+
+    @Test
+    fun `catastrophic loss terminates regardless of readiness and history`() {
+        // user 1900 loses to 1500 → E ≈ 0.91 → ΔE ≈ −0.91 (hard cutoff)
+        val r = E.evaluate(
+            input(user = 1900, opp = 1500, result = GameResult.LOSS),
+            emptyList(), NOW,
+            deltaEHistory = deltaHistory(-0.5, -0.5, -0.5, -0.5, -0.5, -0.5),
+            readinessCcrs = 95
+        )
+        assertEquals(OutputState.TERMINATE_SESSION, r.outputState)
+        assertTrue(r.catastrophic)
+        assertEquals("CATASTROPHIC LOSS (HARD CUTOFF)", r.reason)
+    }
+
+    @Test
+    fun `severe deltaE plus both violations terminates in one game`() {
+        // ΔE −0.5 (severe, 50) + accuracy drop (25) + unforced blunders (25) = 100
+        val r = E.evaluate(
+            input(result = GameResult.LOSS, acc = 59.0, blunders = 2, unforced = true),
+            emptyList(), NOW
+        )
+        assertEquals(OutputState.TERMINATE_SESSION, r.outputState)
+        assertEquals(E.STRAIN_TERMINATE_BASE, r.strain, 1e-9)
+        assertEquals("SEVERE COLLAPSE ACROSS ALL METRICS", r.reason)
+        assertFalse(r.catastrophic)
+    }
+
+    @Test
+    fun `accumulated session strain terminates`() {
+        // Prior games carried 75 strain; a fresh severe game (50) crosses 100.
+        val r = E.evaluate(
+            input(result = GameResult.LOSS),
+            session(game(strain = 50.0, state = OutputState.PIVOT_TO_DRILLS),
+                game(strain = 25.0, state = OutputState.PIVOT_TO_DRILLS)),
+            NOW
+        )
+        assertEquals(OutputState.TERMINATE_SESSION, r.outputState)
+        assertEquals("ACCUMULATED UNDERPERFORMANCE", r.reason)
+        assertEquals(125.0, r.sessionStrain, 0.1)
+        assertEquals(100.0, r.strainTerminateAt, 1e-9)
+    }
+
+    @Test
+    fun `readiness buffer raises the termination bar`() {
+        // Same 125 total strain, but CCRS 95 → terminate bar 130 → only pivot.
+        val r = E.evaluate(
+            input(result = GameResult.LOSS),
+            session(game(strain = 50.0, state = OutputState.PIVOT_TO_DRILLS),
+                game(strain = 25.0, state = OutputState.PIVOT_TO_DRILLS)),
+            NOW,
+            readinessCcrs = 95
+        )
+        assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
+        assertEquals(130.0, r.strainTerminateAt, 1e-9)
+    }
+
+    @Test
+    fun `forgiveness applies only to the first flagged game`() {
+        // A prior flagged game (strain 25) blocks forgiveness even with CCRS 90.
+        val r = E.evaluate(
+            input(result = GameResult.LOSS),
+            session(game(strain = 25.0, state = OutputState.PIVOT_TO_DRILLS)),
+            NOW,
+            readinessCcrs = 90
+        )
+        assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
+        assertEquals("SEVERE UNDERPERFORMANCE VS YOUR BAR", r.reason)
+    }
+
+    @Test
+    fun `forgiveness never applies to strain above severe`() {
+        // Moderate ΔE (−0.30) + accuracy drop + blunders = 75 strain: too much
+        // to forgive even with strong readiness (terminate bar 125).
+        val r = E.evaluate(
+            input(user = 1500, opp = 1647, result = GameResult.LOSS,
+                acc = 59.0, blunders = 2, unforced = true),
+            emptyList(), NOW,
+            readinessCcrs = 90
+        )
+        assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
+        assertEquals(75.0, r.strain, 1e-9)
+        assertFalse(r.isFalseSuccess) // it was a loss, not a false win
+    }
+
+    @Test
+    fun `session capacity ceiling terminates even a clean game`() {
         val r = E.evaluate(input(mins = 60), emptyList(), NOW)
         assertEquals(OutputState.TERMINATE_SESSION, r.outputState)
         assertTrue(r.sessionCapReached)
         assertEquals("60-MINUTE CAPACITY CEILING REACHED", r.reason)
     }
 
-    @Test
-    fun `59 minutes does not hit the cap`() {
-        val r = E.evaluate(input(mins = 59), emptyList(), NOW)
-        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
-        assertFalse(r.sessionCapReached)
-    }
-
-    // ── Severe executive underperformance ───────────────────────────────────
+    // ── Violations ─────────────────────────────────────────────────────────
 
     @Test
-    fun `loss to much weaker opponent is severe underperformance`() {
-        // E_A ≈ 0.952 → ΔE ≈ −0.952 < −0.35
-        val r = E.evaluate(input(user = 1520, opp = 1000, result = GameResult.LOSS), emptyList(), NOW)
-        assertEquals(OutputState.TERMINATE_SESSION, r.outputState)
-        assertEquals(-0.952, r.deltaE, 0.001)
-        assertEquals("SEVERE EXECUTIVE UNDERPERFORMANCE", r.reason)
-    }
-
-    // ── Repeated executive failures (session history) ───────────────────────
-
-    @Test
-    fun `prior yellow game in session terminates even when current game is clean`() {
-        val r = E.evaluate(
-            input(),
-            session(OutputState.CONTINUE_RATED, OutputState.PIVOT_TO_DRILLS),
-            NOW
-        )
-        assertEquals(OutputState.TERMINATE_SESSION, r.outputState)
-        assertEquals("REPEATED EXECUTIVE FAILURES", r.reason)
-    }
-
-    @Test
-    fun `prior green games do not escalate`() {
-        val r = E.evaluate(
-            input(),
-            session(OutputState.CONTINUE_RATED, OutputState.CONTINUE_RATED),
-            NOW
-        )
-        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
-    }
-
-    // ── Calibrated accuracy thresholds ──────────────────────────────────────
-
-    @Test
-    fun `blitz accuracy drop of exactly 15 is not a violation`() {
-        // default mean 75 → 60 gives ΔA = 15, needs > 15
-        val r = E.evaluate(input(acc = 60.0), emptyList(), NOW)
-        assertFalse(r.accViolation)
-        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
-    }
-
-    @Test
-    fun `blitz accuracy drop above 15 pivots to drills`() {
-        val r = E.evaluate(input(acc = 59.0), emptyList(), NOW)
-        assertTrue(r.accViolation)
+    fun `accuracy drop alone pivots as false success`() {
+        // Default blitz mean 75, tolerance 15 → acc 59 (drop 16) violates.
+        val r = E.evaluate(input(result = GameResult.WIN, acc = 59.0), emptyList(), NOW)
         assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
-        assertEquals(16.0, r.accuracyDelta, 0.01)
-    }
-
-    @Test
-    fun `bullet tolerance is 20 points`() {
-        assertEquals(
-            OutputState.CONTINUE_RATED,
-            E.evaluate(
-                input(tc = TimeControl.BULLET, acc = 50.0), emptyList(), NOW
-            ).outputState
-        )
-        assertEquals(
-            OutputState.PIVOT_TO_DRILLS,
-            E.evaluate(
-                input(tc = TimeControl.BULLET, acc = 49.5), emptyList(), NOW
-            ).outputState
-        )
-    }
-
-    @Test
-    fun `rapid tolerance is 10 points`() {
-        assertEquals(
-            OutputState.CONTINUE_RATED,
-            E.evaluate(
-                input(tc = TimeControl.RAPID, acc = 70.0), emptyList(), NOW
-            ).outputState
-        )
-        assertEquals(
-            OutputState.PIVOT_TO_DRILLS,
-            E.evaluate(
-                input(tc = TimeControl.RAPID, acc = 69.9), emptyList(), NOW
-            ).outputState
-        )
-    }
-
-    // ── Calibrated unforced blunder thresholds ──────────────────────────────
-
-    @Test
-    fun `one unforced blunder violates rapid but not blitz or bullet`() {
-        assertEquals(
-            OutputState.PIVOT_TO_DRILLS,
-            E.evaluate(
-                input(tc = TimeControl.RAPID, acc = 80.0, blunders = 1, unforced = true),
-                emptyList(), NOW
-            ).outputState
-        )
-        assertEquals(
-            OutputState.CONTINUE_RATED,
-            E.evaluate(
-                input(blunders = 1, unforced = true), emptyList(), NOW // blitz needs ≥ 2
-            ).outputState
-        )
-        assertEquals(
-            OutputState.CONTINUE_RATED,
-            E.evaluate(
-                input(tc = TimeControl.BULLET, acc = 70.0, blunders = 2, unforced = true),
-                emptyList(), NOW // bullet needs ≥ 3
-            ).outputState
-        )
-    }
-
-    @Test
-    fun `blunders without the unforced flag never violate`() {
-        // Time-scramble blunders (§7.2): user leaves the checkbox unchecked.
-        val r = E.evaluate(
-            input(tc = TimeControl.RAPID, acc = 80.0, blunders = 5, unforced = false),
-            emptyList(), NOW
-        )
-        assertFalse(r.blunderViolation)
-        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
-    }
-
-    // ── False success detection ─────────────────────────────────────────────
-
-    @Test
-    fun `win with accuracy collapse is a false success`() {
-        val r = E.evaluate(input(result = GameResult.WIN, acc = 55.0), emptyList(), NOW)
         assertTrue(r.accViolation)
         assertTrue(r.isFalseSuccess)
-        assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
         assertEquals("FALSE_SUCCESS", r.reason)
-        assertTrue(r.message.contains("FALSE WIN DETECTED"))
+        // ΔE +0.5 contributes nothing — only the accuracy violation strains.
+        assertEquals(E.ACC_VIOLATION_STRAIN, r.strain, 1e-9)
     }
 
     @Test
-    fun `loss with accuracy collapse is not a false success`() {
+    fun `unforced blunders alone pivot`() {
         val r = E.evaluate(
-            input(result = GameResult.LOSS, acc = 55.0, user = 1500, opp = 1500),
+            input(result = GameResult.WIN, blunders = 2, unforced = true),
             emptyList(), NOW
         )
-        // LOSS vs equal → ΔE = −0.5 → severe anyway, but not a false success
-        assertFalse(r.isFalseSuccess)
-        assertEquals(OutputState.TERMINATE_SESSION, r.outputState)
-    }
-
-    // ── Moderate ΔE band ────────────────────────────────────────────────────
-
-    @Test
-    fun `moderate underperformance pivots to drills`() {
-        // 1500 vs 1650 → E_A ≈ 0.297 → LOSS ΔE ≈ −0.297 (moderate band)
-        val r = E.evaluate(
-            input(user = 1500, opp = 1650, result = GameResult.LOSS),
-            emptyList(), NOW
-        )
-        assertEquals(-0.297, r.deltaE, 0.001)
         assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
-        assertEquals("EXECUTIVE CALCULATION DROP", r.reason)
+        assertTrue(r.blunderViolation)
+        assertTrue(r.isFalseSuccess)
     }
 
     @Test
-    fun `deltaE just above minus 0_15 is expected performance`() {
-        // DRAW as 107-point favorite: E_A ≈ 0.6493 → ΔE ≈ −0.149 (≥ −0.15)
+    fun `short game bypasses the accuracy check`() {
         val r = E.evaluate(
-            input(user = 1500, opp = 1393, result = GameResult.DRAW),
+            input(result = GameResult.WIN, acc = 59.0, short = true),
             emptyList(), NOW
         )
-        assertEquals(-0.149, r.deltaE, 0.001)
         assertEquals(OutputState.CONTINUE_RATED, r.outputState)
-    }
-
-    @Test
-    fun `deltaE just below minus 0_15 is moderate underperformance`() {
-        // DRAW as 108-point favorite: E_A ≈ 0.6505 → ΔE ≈ −0.151 (< −0.15)
-        val r = E.evaluate(
-            input(user = 1500, opp = 1392, result = GameResult.DRAW),
-            emptyList(), NOW
-        )
-        assertEquals(-0.151, r.deltaE, 0.001)
-        assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
-    }
-
-    // ── Optimal performance ─────────────────────────────────────────────────
-
-    @Test
-    fun `clean win against equal opponent continues rated`() {
-        val r = E.evaluate(input(), emptyList(), NOW)
-        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
-        assertEquals("#22C55E", r.outputState.colorHex)
-        assertEquals(0.5, r.deltaE, 1e-9)
-        assertFalse(r.accViolation)
-        assertFalse(r.blunderViolation)
-        assertFalse(r.isFalseSuccess)
-        assertTrue(r.message.contains("Cleared"))
-    }
-
-    // ── Edge case: short game bypasses accuracy (§7.1) ──────────────────────
-
-    @Test
-    fun `short game bypasses accuracy violation`() {
-        val r = E.evaluate(input(acc = 40.0, short = true), emptyList(), NOW)
         assertTrue(r.accuracyIgnored)
         assertFalse(r.accViolation)
-        assertFalse(r.isFalseSuccess)
-        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
-        // ΔE is still calculated normally
-        assertEquals(0.5, r.deltaE, 1e-9)
     }
 
     @Test
-    fun `short game still flags blunder violations`() {
+    fun `rolling accuracy history is used as baseline`() {
         val r = E.evaluate(
-            input(acc = 40.0, short = true, blunders = 2, unforced = true),
+            input(result = GameResult.WIN, acc = 74.0, history = listOf(90.0, 90.0)),
             emptyList(), NOW
         )
-        assertTrue(r.blunderViolation)
-        assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
-    }
-
-    // ── Rolling mean baseline (§7.3) ────────────────────────────────────────
-
-    @Test
-    fun `default baselines apply when no history exists`() {
-        assertEquals(70.0, E.rollingMean(emptyList(), TimeControl.BULLET), 1e-9)
-        assertEquals(75.0, E.rollingMean(emptyList(), TimeControl.BLITZ), 1e-9)
-        assertEquals(80.0, E.rollingMean(emptyList(), TimeControl.RAPID), 1e-9)
-        val r = E.evaluate(input(), emptyList(), NOW)
-        assertTrue(r.usedDefaultMean)
-        assertEquals(75.0, r.rollingMeanUsed, 1e-9)
-    }
-
-    @Test
-    fun `rolling mean is used when history exists`() {
-        val history = listOf(80.0, 76.0, 78.0, 74.0, 82.0, 79.0, 77.0, 81.0, 75.0, 78.0) // avg 78.0
-        val r = E.evaluate(input(history = history), emptyList(), NOW)
-        assertFalse(r.usedDefaultMean)
-        assertEquals(78.0, r.rollingMeanUsed, 1e-9)
-    }
-
-    @Test
-    fun `only the last 10 games form the rolling window`() {
-        val history = listOf(100.0, 100.0, 100.0, 100.0, 100.0) + List(10) { 50.0 }
-        assertEquals(50.0, E.rollingMean(history, TimeControl.BLITZ), 1e-9)
-    }
-
-    @Test
-    fun `rolling mean shifts the violation boundary`() {
-        // Mean 78 → 62.5 gives ΔA = 15.5 > 15 (would pass with default 75)
-        val history = listOf(80.0, 76.0, 78.0, 74.0, 82.0, 79.0, 77.0, 81.0, 75.0, 78.0)
-        val r = E.evaluate(input(acc = 62.5, history = history), emptyList(), NOW)
+        // Mean 90 − 74 = 16 > 15 tolerance → violation despite a "good" accuracy.
         assertTrue(r.accViolation)
         assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
+        assertFalse(r.usedDefaultMean)
+        assertEquals(90.0, r.rollingMeanUsed, 0.1)
     }
 
-    // ── Time control parsing ────────────────────────────────────────────────
+    // ── Personal adaptive ΔE floors ────────────────────────────────────────
 
     @Test
-    fun `unknown time control name falls back to blitz`() {
-        assertEquals(TimeControl.BLITZ, TimeControl.fromNameOrBlitz("NOPE"))
-        assertEquals(TimeControl.RAPID, TimeControl.fromNameOrBlitz("RAPID"))
-        assertEquals(TimeControl.BLITZ, TimeControl.fromNameOrBlitz(null))
+    fun `floors cold start below minimum sample`() {
+        val f = E.computeDeltaFloors(deltaHistory(-0.1, -0.3, -0.2, -0.4), NOW)
+        assertEquals(FloorBasis.COLD_START, f.basis)
+        assertEquals(E.COLD_TERMINATE_FLOOR, f.terminate, 1e-9)
+        assertEquals(E.COLD_PIVOT_FLOOR, f.pivot, 1e-9)
+        assertEquals(4, f.sampleSize)
     }
 
-    // ── Decision precedence ─────────────────────────────────────────────────
+    @Test
+    fun `frequent losses lower the personal bar`() {
+        // Someone whose recent games are all −0.5 gets floors at −0.5, so an
+        // ordinary −0.5 loss is WITHIN their normal range → continue.
+        val history = deltaHistory(-0.5, -0.5, -0.5, -0.5, -0.5, -0.5)
+        val f = E.computeDeltaFloors(history, NOW)
+        assertEquals(FloorBasis.PERCENTILE, f.basis)
+        assertEquals(-0.5, f.terminate, 1e-9)
+        assertEquals(-0.5, f.pivot, 1e-9)
+
+        val r = E.evaluate(input(result = GameResult.LOSS), emptyList(), NOW,
+            deltaEHistory = history)
+        assertEquals(OutputState.CONTINUE_RATED, r.outputState)
+        assertEquals(0.0, r.strain, 1e-9)
+    }
 
     @Test
-    fun `session cap outranks everything`() {
-        // Severe ΔE AND cap: the cap reason wins (checked first per §6)
-        val r = E.evaluate(
-            input(user = 1520, opp = 1000, result = GameResult.LOSS, mins = 75),
-            session(OutputState.PIVOT_TO_DRILLS),
-            NOW
-        )
-        assertTrue(r.sessionCapReached)
-        assertEquals("60-MINUTE CAPACITY CEILING REACHED", r.reason)
+    fun `strong history never tightens floors beyond the strict clamps`() {
+        val history = deltaHistory(0.3, 0.3, 0.3, 0.3, 0.3, 0.3)
+        val f = E.computeDeltaFloors(history, NOW)
+        assertEquals(E.TERMINATE_FLOOR_STRICT, f.terminate, 1e-9)
+        assertEquals(E.PIVOT_FLOOR_STRICT, f.pivot, 1e-9)
+
+        // A −0.5 loss is still severe against the clamped floor.
+        val r = E.evaluate(input(result = GameResult.LOSS), emptyList(), NOW,
+            deltaEHistory = history)
+        assertEquals(OutputState.PIVOT_TO_DRILLS, r.outputState)
+        assertEquals(E.SEVERE_STRAIN, r.strain, 1e-9)
+    }
+
+    @Test
+    fun `history older than the window is ignored`() {
+        val old = deltaHistory(-0.9, -0.9, -0.9, -0.9, -0.9, daysAgo = 30)
+        val recent = deltaHistory(0.2, 0.2, 0.2, 0.2, 0.2)
+        val f = E.computeDeltaFloors(old + recent, NOW)
+        assertEquals(FloorBasis.PERCENTILE, f.basis)
+        assertEquals(5, f.sampleSize)
+        // p10 of [+0.2 × 5] = 0.2 → clamped to the strict bound
+        assertEquals(E.TERMINATE_FLOOR_STRICT, f.terminate, 1e-9)
+    }
+
+    @Test
+    fun `floor window is capped at fifteen games`() {
+        val f = E.computeDeltaFloors(deltaHistory(*DoubleArray(20) { -0.3 }), NOW)
+        assertEquals(E.HISTORY_WINDOW_GAMES, f.sampleSize)
+    }
+
+    @Test
+    fun `pivot floor never loosens beyond its lenient clamp`() {
+        val f = E.computeDeltaFloors(deltaHistory(-0.8, -0.8, -0.8, -0.8, -0.8, -0.8), NOW)
+        assertEquals(E.CATASTROPHIC_DELTA_E, f.terminate, 1e-9)
+        assertEquals(E.PIVOT_FLOOR_LENIENT, f.pivot, 1e-9)
+        // A −0.6 game is only MODERATE against these floors.
+        assertEquals(E.MODERATE_STRAIN, E.strainFor(-0.6, f, false, false), 1e-9)
+    }
+
+    // ── Readiness buffer tiers ─────────────────────────────────────────────
+
+    @Test
+    fun `readiness buffer scales with pre-game ccrs`() {
+        assertEquals(0, E.readinessBuffer(null))
+        assertEquals(0, E.readinessBuffer(60))
+        assertEquals(0, E.readinessBuffer(69))
+        assertEquals(5, E.readinessBuffer(70))
+        assertEquals(10, E.readinessBuffer(75))
+        assertEquals(15, E.readinessBuffer(80))
+        assertEquals(20, E.readinessBuffer(85))
+        assertEquals(25, E.readinessBuffer(90))
+        assertEquals(30, E.readinessBuffer(95))
+        assertEquals(30, E.readinessBuffer(100))
+    }
+
+    // ── Classification & percentile ────────────────────────────────────────
+
+    @Test
+    fun `deltaE classification uses the personal floors`() {
+        val f = E.computeDeltaFloors(emptyList(), NOW) // cold: −0.45 / −0.20
+        assertEquals("Within your normal range", E.deltaEClassification(0.3, f))
+        assertEquals("Below your usual bar", E.deltaEClassification(-0.25, f))
+        assertEquals("Severe for you — bottom 10% of your games",
+            E.deltaEClassification(-0.5, f))
+        assertEquals("Catastrophic loss (hard cutoff)",
+            E.deltaEClassification(-0.8, f))
+    }
+
+    @Test
+    fun `percentile interpolates linearly`() {
+        val values = listOf(1.0, 2.0, 3.0, 4.0, 5.0)
+        assertEquals(1.0, E.percentileOf(values, 0.0), 1e-9)
+        assertEquals(3.0, E.percentileOf(values, 0.5), 1e-9)
+        assertEquals(5.0, E.percentileOf(values, 1.0), 1e-9)
+        assertEquals(1.5, E.percentileOf(values, 0.125), 1e-9)
     }
 }

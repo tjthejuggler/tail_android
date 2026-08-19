@@ -60,8 +60,22 @@ object ChessPhase2Store {
         /** chess.com game ID ("" for audits filed before share ingestion). */
         val gameId: String = "",
         /** Estimated base-clock minutes the game contributed to the session. */
-        val estimatedMinutes: Double = 0.0
+        val estimatedMinutes: Double = 0.0,
+        /** Strain (0–100) this game contributed to the session (v2.0). */
+        val strain: Double = 0.0
     )
+
+    /**
+     * Strain assigned to a PRE-v2.0 audit that has no stored strain:
+     * derived from its verdict so old history still counts as evidence.
+     */
+    private fun legacyStrain(outputState: String): Double = when (outputState) {
+        ChessPhase2Engine.OutputState.TERMINATE_SESSION.name ->
+            ChessPhase2Engine.STRAIN_TERMINATE_BASE
+        ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS.name ->
+            ChessPhase2Engine.SEVERE_STRAIN
+        else -> 0.0
+    }
 
     // ── Rolling accuracy windows (per time control) ────────────────────────
 
@@ -103,15 +117,18 @@ object ChessPhase2Store {
             val arr = JSONArray(raw)
             (0 until arr.length()).mapNotNull { i ->
                 val o = arr.getJSONObject(i)
+                val state = o.optString("outputState", "")
                 Phase2Audit(
                     timestamp = o.getLong("timestamp"),
                     timeControl = o.optString("timeControl", ""),
-                    outputState = o.optString("outputState", ""),
+                    outputState = state,
                     deltaE = o.optDouble("deltaE", 0.0),
                     caps2Accuracy = o.optDouble("caps2Accuracy", 0.0),
                     accuracyCounted = o.optBoolean("accuracyCounted", true),
                     gameId = o.optString("gameId", ""),
-                    estimatedMinutes = o.optDouble("estimatedMinutes", 0.0)
+                    estimatedMinutes = o.optDouble("estimatedMinutes", 0.0),
+                    strain = if (o.has("strain")) o.getDouble("strain")
+                    else legacyStrain(state)
                 )
             }
         } catch (_: Exception) {
@@ -134,6 +151,7 @@ object ChessPhase2Store {
                 put("accuracyCounted", it.accuracyCounted)
                 put("gameId", it.gameId)
                 put("estimatedMinutes", it.estimatedMinutes)
+                put("strain", it.strain)
             })
         }
         prefs(context).edit().putString(KEY_AUDITS, arr.toString()).apply()
@@ -178,7 +196,36 @@ object ChessPhase2Store {
         return chain.asReversed()
     }
 
+    // ── ΔE history (personal percentile floors) ────────────────────────────
+
+    /**
+     * The user's audited ΔE records (most recent last) — the input to
+     * [ChessPhase2Engine.computeDeltaFloors].
+     */
+    fun recentDeltaE(
+        context: Context,
+        now: Long = System.currentTimeMillis()
+    ): List<ChessPhase2Engine.DeltaERecord> =
+        loadAudits(context)
+            .filter { it.timestamp <= now }
+            .map { ChessPhase2Engine.DeltaERecord(it.timestamp, it.deltaE) }
+
     // ── Rated-play authorization (Phase 1 gate) ────────────────────────────
+
+    /**
+     * The CCRS of the Phase 1 test currently authorizing rated play, or null
+     * when no GREEN authorization is inside its validity window. Feeds the
+     * readiness buffer in [ChessPhase2Engine.evaluate].
+     */
+    fun authorizingReadinessCcrs(
+        context: Context,
+        now: Long = System.currentTimeMillis()
+    ): Int? {
+        val last = ChessReadinessStore.lastTest(context) ?: return null
+        if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return null
+        if (now - last.timestamp >= ChessReadinessEngine.SESSION_VALIDITY_MS) return null
+        return last.ccrs
+    }
 
     /**
      * True when the user may currently play/report RATED games, i.e. all of:
@@ -196,10 +243,13 @@ object ChessPhase2Store {
         context: Context,
         now: Long = System.currentTimeMillis()
     ): Boolean {
-        val last = ChessReadinessStore.lastTest(context) ?: return false
-        if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return false
-        if (now - last.timestamp >= ChessReadinessEngine.SESSION_VALIDITY_MS) return false
-        val auditsSinceAuth = loadAudits(context).filter { it.timestamp >= last.timestamp }
+        val authTimestamp = ChessReadinessStore.lastTest(context)
+            ?.takeIf {
+                it.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name &&
+                    now - it.timestamp < ChessReadinessEngine.SESSION_VALIDITY_MS
+            }
+            ?.timestamp ?: return false
+        val auditsSinceAuth = loadAudits(context).filter { it.timestamp >= authTimestamp }
         return auditsSinceAuth.all {
             it.outputState == ChessPhase2Engine.OutputState.CONTINUE_RATED.name
         }

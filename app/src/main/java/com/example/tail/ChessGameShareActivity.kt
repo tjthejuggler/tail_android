@@ -42,6 +42,7 @@ import com.example.tail.ui.theme.TailTheme
 import com.example.tail.widget.ChessGameAuditMapper
 import com.example.tail.widget.ChessPhase2Engine
 import com.example.tail.widget.ChessPhase2Store
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -207,9 +208,21 @@ class ChessGameShareActivity : ComponentActivity() {
 
         val now = System.currentTimeMillis()
         val session = ChessPhase2Store.currentSessionAudits(this, now).map {
-            ChessPhase2Engine.SessionGame(it.timestamp, it.timeControl, it.outputState)
+            ChessPhase2Engine.SessionGame(
+                timestamp = it.timestamp,
+                timeControl = it.timeControl,
+                outputState = it.outputState,
+                deltaE = it.deltaE,
+                strain = it.strain
+            )
         }
-        val result = ChessPhase2Engine.evaluate(ready.input, session, now)
+        val result = ChessPhase2Engine.evaluate(
+            input = ready.input,
+            sessionHistory = session,
+            now = now,
+            deltaEHistory = ChessPhase2Store.recentDeltaE(this, now),
+            readinessCcrs = ChessPhase2Store.authorizingReadinessCcrs(this, now)
+        )
 
         if (ready.accuracyKnown && !ready.input.shortGame) {
             ChessPhase2Store.appendAccuracy(
@@ -226,7 +239,8 @@ class ChessGameShareActivity : ComponentActivity() {
                 caps2Accuracy = ready.input.caps2Accuracy,
                 accuracyCounted = ready.accuracyKnown && !ready.input.shortGame,
                 gameId = gameId.toString(),
-                estimatedMinutes = ready.estimatedMinutes
+                estimatedMinutes = ready.estimatedMinutes,
+                strain = result.strain
             )
         )
 
@@ -355,9 +369,17 @@ class ChessGameShareActivity : ComponentActivity() {
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
             Text(
-                text = ChessPhase2Engine.deltaEClassification(r.deltaE),
+                text = ChessPhase2Engine.deltaEClassification(r.deltaE, r.floors),
                 color = Color(0xFF999999),
                 fontSize = 13.sp,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+            Text(
+                text = "Strain ${r.strain.roundToInt()} · session " +
+                    "${r.sessionStrain.roundToInt()}/${r.strainTerminateAt.roundToInt()}" +
+                    if (r.readinessBuffer > 0) " (+${r.readinessBuffer} readiness)" else "",
+                color = Color(0xFF888888),
+                fontSize = 11.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
             Spacer(modifier = Modifier.height(10.dp))
