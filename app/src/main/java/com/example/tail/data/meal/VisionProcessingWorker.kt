@@ -89,6 +89,10 @@ class VisionProcessingWorker(
             userSystemPrompt = settings.mealSystemPrompt
         )
 
+        // Single camera-eligible habit ⇒ every untargeted capture is
+        // unambiguously for it (see deterministic meal routing in the loop).
+        val singleCameraHabit = VisionHabitExecutor.cameraEligibleHabits(settings).singleOrNull()
+
         // Cleanup old completed/failed items periodically
         queueRepo.cleanupOldItems()
 
@@ -115,12 +119,33 @@ class VisionProcessingWorker(
                     continue
                 }
 
-                // Run the vision pipeline — with the learned memory and the
-                // valid habit list injected so smart auto-detection works
-                // in the background queue too.
-                val memoryPrompt = memoryRepo.buildMemoryPrompt().ifBlank { null }
-                val habitPrompt = VisionHabitExecutor.buildHabitPrompt(settings).ifBlank { null }
-                val result = visionService.processImage(imageFile, config, memoryPrompt, habitPrompt)
+                // ── Deterministic meal routing ─────────────────────────────────
+                // When the capture's target habit is already known — either
+                // explicitly (item.habitId from the meal screen / quick capture
+                // with EXTRA_HABIT_NAME) or because exactly ONE camera-eligible
+                // habit exists — and that habit is a meal habit, the image is
+                // unambiguously a meal photo for it. Run the EXACT pipeline the
+                // manual editor uses (MealPhotoAnalyser): plain food-analysis
+                // prompt, no habit list, no learned memory, no habit guessing.
+                // This keeps quick capture 100% identical to "pick the habit →
+                // add photo (AI)" and immune to LLM hedging on classification.
+                val forcedMealHabit = if (item.habitId != null) {
+                    item.habitId?.takeIf { settings.mealHabits.contains(it) }
+                } else {
+                    singleCameraHabit?.takeIf { settings.mealHabits.contains(it) }
+                }
+
+                val result = if (forcedMealHabit != null) {
+                    Log.i(TAG, "Item ${item.id}: deterministic meal pipeline for '$forcedMealHabit'")
+                    visionService.processImage(imageFile, config)
+                } else {
+                    // Run the vision pipeline — with the learned memory and the
+                    // valid habit list injected so smart auto-detection works
+                    // in the background queue too.
+                    val memoryPrompt = memoryRepo.buildMemoryPrompt().ifBlank { null }
+                    val habitPrompt = VisionHabitExecutor.buildHabitPrompt(settings).ifBlank { null }
+                    visionService.processImage(imageFile, config, memoryPrompt, habitPrompt)
+                }
                 if (result == null) {
                     val willRetry = queueRepo.markFailedOrRetry(item.id, "Vision service returned null")
                     failed++
@@ -134,7 +159,11 @@ class VisionProcessingWorker(
                 // instructed to always pick its best guess among them — so no
                 // confidence gate is applied. The user sees what was
                 // recognized via the toast and can undo a wrong guess.
-                if (result.classification != VisionClassification.FOOD_MEAL &&
+                // Habit guessing only applies when the target wasn't already
+                // deterministic — a forced meal capture goes straight to the
+                // meal-log path below.
+                if (forcedMealHabit == null &&
+                    result.classification != VisionClassification.FOOD_MEAL &&
                     result.habitAction != null
                 ) {
                     val action = result.habitAction!!
@@ -171,7 +200,9 @@ class VisionProcessingWorker(
                 }
 
                 // Determine target habit
-                val targetHabit = item.habitId ?: autoRouteHabit(result, settings.mealHabits)
+                val targetHabit = forcedMealHabit
+                    ?: item.habitId
+                    ?: autoRouteHabit(result, settings.mealHabits)
 
                 // ── Attach path: the image was already attached to an existing
                 // meal (close-succession grouping / gallery attach). Merge the
@@ -266,7 +297,12 @@ class VisionProcessingWorker(
                     // habit — tell the user what it saw instead of failing
                     // silently.
                     if (result.classification != VisionClassification.FOOD_MEAL) {
-                        notifyCameraResult(appContext, "📷 No camera habit matched" + visionSeenDescription(result))
+                        val prefix = if (forcedMealHabit != null) {
+                            "📷 Not recognised as food"
+                        } else {
+                            "📷 No camera habit matched"
+                        }
+                        notifyCameraResult(appContext, prefix + visionSeenDescription(result))
                     }
                 }
             } catch (e: Exception) {
