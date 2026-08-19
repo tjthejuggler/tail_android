@@ -132,11 +132,23 @@ class VisionProcessingService {
                 append("a meal they ate, in their own words. Extract structured nutrition data ")
                 append("with your BEST-GUESS estimates for portion sizes. Honour any dietary ")
                 append("rules the user mentions.\n")
+                if (config.userSystemPrompt.isNotBlank()) {
+                    append("\nUSER DIETARY RULES (apply strictly):\n")
+                    append(config.userSystemPrompt.trim())
+                    append("\n")
+                }
                 if (base64Image != null) {
                     append("A photo of the meal is attached: combine what you SEE in the photo ")
                     append("with what the user SAID — the spoken description takes priority for ")
                     append("quantities and ingredients they name explicitly.\n")
                 }
+                append("\n")
+                append("The description may name SEVERAL foods eaten together (e.g. \"vegan ")
+                append("burger and fries and salad\"). Treat them as ONE meal and return ONE ")
+                append("SINGLE JSON object for the whole meal: a combined title, SUMMED ")
+                append("calories and macros, and every food listed in ingredients_detected. ")
+                append("NEVER return an array, multiple JSON objects, or one object per food.\n")
+                append("Keep summary and health_notes to 1-2 short sentences.\n")
                 append("\n")
                 append("Respond ONLY with raw JSON (no markdown fences, no conversational text):\n")
                 append("{\n")
@@ -183,7 +195,9 @@ class VisionProcessingService {
                     })
                 })
                 put("temperature", 0.2)
-                put("max_tokens", 700)
+                // Multi-food descriptions produce long JSON — 700 truncated
+                // responses mid-object and made parsing fail.
+                put("max_tokens", 1500)
             }
 
             when (val outcome = chatCompletion(fullUrl, requestBody, config)) {
@@ -573,7 +587,7 @@ class VisionProcessingService {
      */
     fun parseTeachingResult(content: String): TeachingResult {
         return try {
-            val json = JSONObject(stripCodeFences(content).trim())
+            val json = JSONObject(FoodDataJsonParser.stripCodeFences(content).trim())
             TeachingResult(
                 understood = json.optBoolean("understood", false),
                 habitName = json.optString("habit_name").takeIf {
@@ -739,7 +753,7 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
     fun parseVisionResult(content: String): VisionResult {
         return try {
             // Strip markdown code fences if the LLM wrapped the JSON
-            val jsonStr = stripCodeFences(content).trim()
+            val jsonStr = FoodDataJsonParser.stripCodeFences(content).trim()
             val json = JSONObject(jsonStr)
 
             val classification = VisionClassification.fromString(
@@ -823,53 +837,23 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
 
     /**
      * Parses a food_data JSON object (shared by the vision and text-only
-     * pipelines) into a [FoodData].
+     * pipelines) into a [FoodData]. Delegates to [FoodDataJsonParser],
+     * which also coerces numeric fields sent as strings.
      */
-    fun parseFoodData(fd: JSONObject): FoodData {
-        val macros = fd.optJSONObject("macronutrients")
-        return FoodData(
-            title = fd.optString("title", ""),
-            summary = fd.optString("summary", ""),
-            isVeganVerified = fd.optBoolean("is_vegan_verified", false),
-            estimatedCalories = fd.optInt("estimated_calories", 0),
-            macronutrients = Macronutrients(
-                proteinGrams = macros?.optDouble("protein_grams", 0.0) ?: 0.0,
-                carbsGrams = macros?.optDouble("carbs_grams", 0.0) ?: 0.0,
-                fatGrams = macros?.optDouble("fat_grams", 0.0) ?: 0.0
-            ),
-            ingredientsDetected = fd.optJSONArray("ingredients_detected")?.let { arr ->
-                (0 until arr.length()).mapNotNull { arr.opt(it) as? String }
-            } ?: emptyList(),
-            healthNotes = fd.optString("health_notes").takeIf {
-                it.isNotBlank() && it != "null"
-            },
-            macroRatings = MacroRatings.fromJsonObj(fd.optJSONObject("macro_ratings"))
-        )
-    }
+    fun parseFoodData(fd: JSONObject): FoodData = FoodDataJsonParser.parseFoodData(fd)
 
     /**
      * Parses the LLM's JSON output from a text-only meal description call.
-     * Accepts both a bare food_data object and one wrapped in "food_data".
+     * Delegates to [FoodDataJsonParser.parseResponse], which tolerates
+     * markdown fences, preamble text, top-level arrays of per-food objects,
+     * `food_data` / `foods` / `items` / `meals` wrappers, and responses
+     * truncated by a max_tokens limit (salvaging the complete fields).
      */
     fun parseFoodDataResponse(content: String): FoodData? {
-        return try {
-            val json = JSONObject(stripCodeFences(content).trim())
-            val fd = json.optJSONObject("food_data") ?: json
-            parseFoodData(fd)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse food data JSON: ${content.take(200)}", e)
-            null
+        val fd = FoodDataJsonParser.parseResponse(content)
+        if (fd == null) {
+            Log.e(TAG, "Failed to parse food data JSON: ${content.take(200)}")
         }
-    }
-
-    /** Strips ```json ... ``` or ``` ... ``` fences from the content. */
-    private fun stripCodeFences(text: String): String {
-        val trimmed = text.trim()
-        if (!trimmed.startsWith("```")) return trimmed
-        // Remove opening fence (with optional language tag)
-        val afterOpen = trimmed.substringAfter("```", trimmed)
-            .removePrefix("json").removePrefix("JSON")
-        // Remove closing fence
-        return afterOpen.substringBeforeLast("```").trim()
+        return fd
     }
 }

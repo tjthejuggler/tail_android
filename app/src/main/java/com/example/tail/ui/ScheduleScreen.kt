@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,12 +19,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Icon
@@ -39,8 +38,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.HabitTimestampRepository
@@ -48,6 +49,7 @@ import com.example.tail.data.dateString
 import kotlinx.coroutines.delay
 import java.time.LocalDate
 import java.time.LocalTime
+import kotlin.math.ceil
 
 /**
  * One timed occurrence of a habit on the schedule — a group of increments
@@ -68,18 +70,104 @@ data class ScheduleEvent(
     }
 }
 
+/**
+ * One rendered rectangle on the timeline. A block with a single event is
+ * the usual "one timestamp" chip; a block with several events merges a
+ * cluster of same-habit timestamps recorded close together (e.g. a run of
+ * chess games) into one rectangle spanning the whole cluster, labelled
+ * with the total ×count.
+ */
+data class ScheduleBlock(
+    val habitName: String,
+    /** Minute of day of the first timestamp in the block. */
+    val startMinute: Int,
+    /** Minute of day the block visually ends at: last timestamp + minimum span. */
+    val endMinute: Int,
+    /** Total increment units across all merged events. */
+    val amount: Int,
+    /** Number of distinct timestamps merged into this block. */
+    val eventCount: Int,
+    /** "HH:mm:ss" of the first timestamp in the block. */
+    val firstTime: String,
+    /** "HH:mm:ss" of the last timestamp in the block. */
+    val lastTime: String,
+    val isMeal: Boolean,
+    val canEditText: Boolean
+) {
+    /** Timeline minutes the block occupies (always ≥ [MIN_SPAN_MINUTES]). */
+    val spanMinutes: Int get() = endMinute - startMinute
+}
+
 /** Vertical size of one hour on the timeline. */
 private val HOUR_HEIGHT = 64.dp
 /** Width of the hour-label gutter on the left. */
 private val GUTTER_WIDTH = 46.dp
-/** Visual height of one event chip (≈28 minutes on the timeline). */
-private val EVENT_HEIGHT = 30.dp
 /**
- * Minutes of timeline one chip occupies: EVENT_HEIGHT (30dp) at HOUR_HEIGHT
- * (64dp per hour) ≈ 28.1 min; 29 adds a small margin. Same-lane chips must
- * be at least this far apart or they overlap vertically.
+ * Minimum visual height of an event chip — just enough to comfortably fit
+ * its single line of text. Habits whose timestamps spread over more time
+ * get proportionally taller blocks.
  */
-private const val LANE_SPAN_MINUTES = 29
+private val EVENT_MIN_HEIGHT = 22.dp
+/**
+ * Timeline minutes covered by the minimum chip height: 22dp at 64dp/hour
+ * ≈ 20.6 → 21 minutes. Every block occupies at least this much time.
+ */
+internal val MIN_SPAN_MINUTES = ceil(EVENT_MIN_HEIGHT.value / HOUR_HEIGHT.value * 60f).toInt()
+/**
+ * Blocks spanning at least this much time are tall enough to stack the time
+ * label under the habit name (two text lines ≈ 28dp; 36 min ≈ 38dp).
+ */
+private const val TWO_LINE_SPAN_MINUTES = 36
+/** Character cap for the habit name on tall (two-line) chips. */
+private const val TALL_NAME_CHARS = 14
+/** Standard rectangle width — shared by every chip so lanes form tidy columns. */
+private val CHIP_WIDTH = 150.dp
+/** Names this short (or shorter) hug their content instead of the standard width. */
+private const val EXTRA_SHORT_NAME_CHARS = 4
+/**
+ * Same-habit timestamps at most this many minutes apart are treated as one
+ * continuous session and merged into a single block. Chains keep merging
+ * while each consecutive gap stays within the threshold, so a morning of
+ * back-to-back chess games collapses into one tall rectangle with ×N
+ * instead of a lane full of identical chips.
+ */
+internal const val MERGE_GAP_MINUTES = 30
+
+/**
+ * Merges the day's events into renderable blocks: per habit, consecutive
+ * timestamps whose gap is ≤ [MERGE_GAP_MINUTES] collapse into one block
+ * spanning from the first to the last timestamp (plus the minimum chip
+ * span). The result is sorted by start time, then habit name.
+ */
+fun buildScheduleBlocks(events: List<ScheduleEvent>): List<ScheduleBlock> {
+    val blocks = mutableListOf<ScheduleBlock>()
+    for ((habit, habitEvents) in events.groupBy { it.habitName }) {
+        val sorted = habitEvents.sortedBy { it.minuteOfDay }
+        var i = 0
+        while (i < sorted.size) {
+            var j = i
+            while (j + 1 < sorted.size &&
+                sorted[j + 1].minuteOfDay - sorted[j].minuteOfDay <= MERGE_GAP_MINUTES
+            ) j++
+            val group = sorted.subList(i, j + 1)
+            val start = group.first().minuteOfDay
+            val last = group.last().minuteOfDay
+            blocks += ScheduleBlock(
+                habitName = habit,
+                startMinute = start,
+                endMinute = last + MIN_SPAN_MINUTES,
+                amount = group.sumOf { it.amount },
+                eventCount = group.size,
+                firstTime = group.first().time,
+                lastTime = group.last().time,
+                isMeal = group.first().isMeal,
+                canEditText = group.first().canEditText
+            )
+            i = j + 1
+        }
+    }
+    return blocks.sortedWith(compareBy({ it.startMinute }, { it.habitName }))
+}
 
 /**
  * Harmonious accent palette for event chips. A habit's colour is derived
@@ -107,9 +195,12 @@ fun scheduleAccentFor(habitName: String): Color =
  * actually done on the selected day.
  *
  * Every habit that has increment timestamps for the day appears as a block
- * anchored at its recorded time. Habits without time data are simply absent.
- * Tapping a block opens the timestamp editor popup (time, amount, text and,
- * for meals, the full meal editor).
+ * anchored at its recorded time and sized to the time it spans: a minimum
+ * one-liner height for isolated timestamps, growing to cover the full
+ * duration of same-habit clusters (merged into one block with a ×count).
+ * Habits without time data are simply absent. Tapping a block opens the
+ * timestamp editor popup (time, amount, text and, for meals, the full
+ * meal editor).
  */
 @Composable
 fun ScheduleTimelineScreen(
@@ -164,11 +255,12 @@ fun ScheduleTimelineScreen(
         }
     }
 
-    val listState = rememberLazyListState()
-    // Shared horizontal scroll for the event-chip lanes: every hour row uses
-    // the same state so they pan together when the lanes are together wider
+    // Shared horizontal scroll for the event-chip lanes: the whole timeline
+    // uses one state so lanes pan together when they are together wider
     // than the screen (chips hug their habit names, so widths vary).
     val chipScroll = rememberScrollState()
+    val timelineScroll = rememberScrollState()
+    val density = LocalDensity.current
     // Jump to a sensible hour on open: the current hour today, otherwise
     // the first event (or a morning default).
     LaunchedEffect(loading, isToday) {
@@ -178,36 +270,37 @@ fun ScheduleTimelineScreen(
             events.isNotEmpty() -> events.first().minuteOfDay / 60
             else -> 8
         }
-        listState.animateScrollToItem(targetHour)
+        val targetPx = with(density) { (HOUR_HEIGHT * targetHour).roundToPx() }
+        timelineScroll.animateScrollTo(targetPx)
     }
 
-    val distinctHabits = remember(events) { events.map { it.habitName }.distinct().size }
-    val firstTime = events.firstOrNull()?.time?.take(5)
-    val lastTime = events.lastOrNull()?.time?.take(5)
-
-    // ── Global lane assignment ────────────────────────────────────────────
-    // Lanes are assigned across the WHOLE day, not per hour: a chip is
-    // EVENT_HEIGHT tall inside an HOUR_HEIGHT row, so chips near an hour
-    // boundary extend past their row and would collide with same-lane chips
-    // in the neighbouring hour. Assigning lanes over the full timeline
-    // slides every colliding chip into a free lane instead of overlapping.
-    val laneOf = remember(events) {
+    // ── Merged blocks + global lane assignment ────────────────────────────
+    // Events are first merged per habit into duration blocks (see
+    // buildScheduleBlocks). Lanes are then assigned across the WHOLE day
+    // using each block's real end minute: a block taller than its start
+    // hour extends across the following hour strips, so anything that
+    // would overlap it in the same lane is slid into a free lane instead.
+    val blocks = remember(events) { buildScheduleBlocks(events) }
+    val laneOf = remember(blocks) {
         val laneEndMinute = mutableListOf<Int>()
-        val map = HashMap<ScheduleEvent, Int>(events.size)
-        for (event in events) { // already sorted by minuteOfDay
-            val start = event.minuteOfDay
-            val lane = laneEndMinute.indexOfFirst { it <= start }
+        val map = HashMap<ScheduleBlock, Int>(blocks.size)
+        for (block in blocks) { // already sorted by startMinute
+            val lane = laneEndMinute.indexOfFirst { it <= block.startMinute }
             if (lane >= 0) {
-                laneEndMinute[lane] = start + LANE_SPAN_MINUTES
-                map[event] = lane
+                laneEndMinute[lane] = block.endMinute
+                map[block] = lane
             } else {
-                laneEndMinute.add(start + LANE_SPAN_MINUTES)
-                map[event] = laneEndMinute.lastIndex
+                laneEndMinute.add(block.endMinute)
+                map[block] = laneEndMinute.lastIndex
             }
         }
         map
     }
     val laneCount = (laneOf.values.maxOrNull() ?: -1) + 1
+
+    val distinctHabits = remember(events) { events.map { it.habitName }.distinct().size }
+    val firstTime = events.firstOrNull()?.time?.take(5)
+    val lastTime = events.lastOrNull()?.time?.take(5)
 
     Column(modifier = modifier.fillMaxSize()) {
         // ── Summary header ────────────────────────────────────────────────
@@ -271,22 +364,90 @@ fun ScheduleTimelineScreen(
             }
         } else {
             // ── Hour-by-hour timeline ─────────────────────────────────────
-            LazyColumn(
-                state = listState,
+            // One continuous 24h strip (not a lazy list) so blocks taller
+            // than one hour can extend across hour boundaries and stay
+            // composed no matter where the viewport is.
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .verticalScroll(timelineScroll)
             ) {
-                itemsIndexed((0..23).toList()) { _, hour ->
-                    HourRow(
-                        hour = hour,
-                        events = events.filter { it.minuteOfDay / 60 == hour },
-                        laneOf = laneOf,
-                        laneCount = laneCount,
-                        isNowHour = isToday && nowMinute / 60 == hour,
-                        nowMinuteInHour = if (isNowHourNow(isToday, nowMinute, hour)) nowMinute % 60 else null,
-                        chipScroll = chipScroll,
-                        onEventClick = onEventClick
+                // ── Backdrop: hour gutter labels + grid lines ─────────────
+                Column {
+                    repeat(24) { hour ->
+                        HourBackdrop(
+                            hour = hour,
+                            hasEvents = blocks.any {
+                                it.startMinute < (hour + 1) * 60 && it.endMinute > hour * 60
+                            },
+                            isNowHour = isToday && nowMinute / 60 == hour
+                        )
+                    }
+                }
+
+                // ── Event blocks overlay ──────────────────────────────────
+                // Blocks are positioned at their absolute time over the full
+                // 24h strip. Chips share a standard width (only extra-short
+                // names hug their content), so lanes read as tidy columns;
+                // when the lanes together exceed the screen width the shared
+                // horizontal scroll pans the chip area — the hour gutter and
+                // grid lines stay pinned. Drawn after the backdrop so blocks
+                // sit on top of the grid lines they cover.
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        // padding (not offset) so the scroll viewport ends at
+                        // the screen edge — with offset the viewport overhung
+                        // the screen by the gutter width and max-scroll
+                        // stopped that much short of the last chip's right
+                        // edge.
+                        .padding(start = GUTTER_WIDTH + 4.dp)
+                        .height(HOUR_HEIGHT * 24)
+                        .horizontalScroll(chipScroll)
+                ) {
+                    repeat(laneCount) { laneIdx ->
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                        ) {
+                            blocks
+                                .filter { (laneOf[it] ?: 0) == laneIdx }
+                                .forEach { block ->
+                                    EventChip(
+                                        block = block,
+                                        topOffset = HOUR_HEIGHT * (block.startMinute / 60f),
+                                        height = HOUR_HEIGHT * (block.spanMinutes / 60f),
+                                        onClick = { onEventClick(block.habitName) },
+                                        modifier = Modifier.align(Alignment.TopStart)
+                                    )
+                                }
+                        }
+                    }
+                    // Trailing breathing room so the final chip fully clears
+                    // the screen edge at maximum scroll.
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+
+                // ── Now indicator ─────────────────────────────────────────
+                if (isToday) {
+                    val y = HOUR_HEIGHT * (nowMinute / 60f)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .offset(x = GUTTER_WIDTH - 4.dp, y = y)
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF66CCFF))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .offset(x = GUTTER_WIDTH, y = y + 3.5.dp)
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(Color(0xFF66CCFF).copy(alpha = 0.6f))
                     )
                 }
             }
@@ -294,26 +455,16 @@ fun ScheduleTimelineScreen(
     }
 }
 
-private fun isNowHourNow(isToday: Boolean, nowMinute: Int, hour: Int): Boolean =
-    isToday && nowMinute / 60 == hour
-
 /**
- * One hour strip of the timeline: a gutter label plus the events that fall
- * inside this hour, positioned at their exact minute and laid out into
- * side-by-side lanes when they overlap.
+ * One hour strip of the timeline backdrop: the gutter label with its tick
+ * and the horizontal grid line at the top of the hour.
  */
 @Composable
-private fun HourRow(
+private fun HourBackdrop(
     hour: Int,
-    events: List<ScheduleEvent>,
-    laneOf: Map<ScheduleEvent, Int>,
-    laneCount: Int,
-    isNowHour: Boolean,
-    nowMinuteInHour: Int?,
-    chipScroll: ScrollState,
-    onEventClick: (String) -> Unit
+    hasEvents: Boolean,
+    isNowHour: Boolean
 ) {
-    val hasEvents = events.isNotEmpty()
     Box(modifier = Modifier.fillMaxWidth().height(HOUR_HEIGHT)) {
         // ── Gutter: hour label + tick ────────────────────────────────────
         Row(
@@ -360,101 +511,55 @@ private fun HourRow(
                     }
                 )
         )
-
-        // ── Event chips ──────────────────────────────────────────────────
-        // Lanes were assigned globally across the whole day (see
-        // ScheduleTimelineScreen) so chips bleeding past an hour boundary
-        // can't collide with the next hour's chips — anything that would
-        // overlap has already been slid into a free lane. Chips are
-        // vertically offset to their exact minute within the hour. Each lane
-        // is only as wide as its widest chip (chips hug their habit names);
-        // when the lanes together exceed the screen width the shared
-        // horizontal scroll pans the chip area — the hour gutter and grid
-        // line stay pinned.
-        val positioned = events.map { event ->
-            event to (event.minuteOfDay % 60 to (laneOf[event] ?: 0))
-        }
-
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .fillMaxWidth()
-                // padding (not offset) so the scroll viewport ends at the
-                // screen edge — with offset the viewport overhung the screen
-                // by the gutter width and max-scroll stopped that much short
-                // of the last chip's right edge.
-                .padding(start = GUTTER_WIDTH + 4.dp)
-                .height(HOUR_HEIGHT)
-                .horizontalScroll(chipScroll)
-        ) {
-            repeat(laneCount) { laneIdx ->
-                Box(
-                    modifier = Modifier
-                        .padding(end = 8.dp)
-                ) {
-                    positioned
-                        .filter { it.second.second == laneIdx }
-                        .forEach { (event, minuteAndLane) ->
-                            val (startMinute, _) = minuteAndLane
-                            EventChip(
-                                event = event,
-                                topOffset = HOUR_HEIGHT * (startMinute / 60f) - EVENT_HEIGHT / 2,
-                                onClick = { onEventClick(event.habitName) },
-                                modifier = Modifier.align(Alignment.TopStart)
-                            )
-                        }
-                }
-            }
-            // Trailing breathing room so the final chip fully clears the
-            // screen edge at maximum scroll.
-            Spacer(modifier = Modifier.width(8.dp))
-        }
-
-        // ── Now indicator ────────────────────────────────────────────────
-        if (nowMinuteInHour != null) {
-            val y = HOUR_HEIGHT * (nowMinuteInHour / 60f)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(x = GUTTER_WIDTH - 4.dp, y = y)
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF66CCFF))
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(x = GUTTER_WIDTH, y = y + 3.5.dp)
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(Color(0xFF66CCFF).copy(alpha = 0.6f))
-            )
-        }
     }
 }
 
 /**
- * A single timed-occurrence chip on the timeline: tinted with the habit's
- * stable accent colour, showing the habit name, the ×amount for
- * multi-increments, the time, and a 🍽 marker for meal habits.
+ * A single block on the timeline: tinted with the habit's stable accent
+ * colour, sized to the time it spans (minimum one text-height), showing
+ * the habit name, the ×count (merged units or multi-increments), the time
+ * — or the first–last range for merged clusters — and a 🍽 marker for
+ * meal habits. Blocks tall enough to afford it stack the time label under
+ * the name (with a longer name cap); every rectangle shares the same
+ * standard width so lanes form tidy columns, except extra-short names
+ * which hug their content.
  */
 @Composable
 private fun EventChip(
-    event: ScheduleEvent,
-    topOffset: androidx.compose.ui.unit.Dp,
+    block: ScheduleBlock,
+    topOffset: Dp,
+    height: Dp,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val accent = scheduleAccentFor(event.habitName)
-    // Cap the visible name at 10 characters (9 + ellipsis) so chips stay
-    // compact; the full name is still shown in the editor popup.
-    val displayName = if (event.habitName.length > 10) {
-        event.habitName.take(9) + "…"
-    } else event.habitName
+    val accent = scheduleAccentFor(block.habitName)
+    // Tall blocks (spanning real time) stack the time label under the
+    // name, which frees horizontal space for a longer name; one-line
+    // blocks keep the compact side-by-side label.
+    val twoLine = block.spanMinutes >= TWO_LINE_SPAN_MINUTES
+    val nameCap = if (twoLine) TALL_NAME_CHARS else 10
+    // Cap the visible name (cap - 1 + ellipsis) so chips stay compact; the
+    // full name is still shown in the editor popup.
+    val displayName = if (block.habitName.length > nameCap) {
+        block.habitName.take(nameCap - 1) + "…"
+    } else block.habitName
+    val timeLabel = if (block.eventCount > 1) {
+        "${block.firstTime.take(5)}–${block.lastTime.take(5)}"
+    } else {
+        block.firstTime.take(5)
+    }
+    // All rectangles share one standard width so the lanes line up as
+    // tidy columns; only unusually short names hug their content.
+    val widthModifier = if (block.habitName.length <= EXTRA_SHORT_NAME_CHARS) {
+        Modifier.widthIn(max = CHIP_WIDTH)
+    } else {
+        Modifier.width(CHIP_WIDTH)
+    }
     Box(
         modifier = modifier
             .offset(y = topOffset)
-            .height(EVENT_HEIGHT)
+            .height(height)
+            .then(widthModifier)
             .background(accent.copy(alpha = 0.16f), RoundedCornerShape(8.dp))
             .border(1.dp, accent.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
@@ -464,45 +569,91 @@ private fun EventChip(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .padding(vertical = 4.dp)
-                .size(width = 3.dp, height = EVENT_HEIGHT - 8.dp)
+                .fillMaxHeight()
+                .width(3.dp)
                 .background(accent, RoundedCornerShape(1.5.dp))
         )
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 10.dp, end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = displayName,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFFEAEAEA),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                // Hard width cap for wide glyphs — the string truncation
-                // above is the primary 10-character limit.
-                modifier = Modifier.widthIn(max = 76.dp)
-            )
-            if (event.amount > 1) {
+        if (twoLine) {
+            // ── Tall block: name (+ ×count) on top, time underneath ─────
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 10.dp, end = 6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = displayName,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFFEAEAEA),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        // Hard width cap for wide glyphs — the string
+                        // truncation above is the primary limit.
+                        modifier = Modifier.widthIn(max = 108.dp)
+                    )
+                    if (block.amount > 1) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "×${block.amount}",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accent
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = timeLabel,
+                        fontSize = 9.sp,
+                        color = Color(0xFF999999),
+                        maxLines = 1
+                    )
+                    if (block.isMeal) {
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(text = "🍽", fontSize = 9.sp)
+                    }
+                }
+            }
+        } else {
+            // ── One-line block: name, ×count and time side by side ──────
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 10.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = displayName,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFEAEAEA),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    // Hard width cap for wide glyphs — the string truncation
+                    // above is the primary 10-character limit.
+                    modifier = Modifier.widthIn(max = 76.dp)
+                )
+                if (block.amount > 1) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "×${block.amount}",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accent
+                    )
+                }
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "×${event.amount}",
+                    text = timeLabel,
                     fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = accent
+                    color = Color(0xFF999999),
+                    maxLines = 1
                 )
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = event.time.take(5),
-                fontSize = 9.sp,
-                color = Color(0xFF999999),
-                maxLines = 1
-            )
-            if (event.isMeal) {
-                Spacer(modifier = Modifier.width(3.dp))
-                Text(text = "🍽", fontSize = 9.sp)
+                if (block.isMeal) {
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(text = "🍽", fontSize = 9.sp)
+                }
             }
         }
     }
