@@ -102,4 +102,61 @@ object MealPhotoAnalyser {
                 else -> MealPhotoAnalysis(relPath, result.foodData, null)
             }
         }
+
+    /**
+     * Result of an in-editor voice analysis (see [analyseVoice]).
+     *
+     * @param foodData Parsed meal specifics from the LLM (null when the LLM
+     *        was not configured or the request failed).
+     * @param error Human-readable failure note (null on success).
+     */
+    data class MealVoiceAnalysis(
+        val foodData: FoodData?,
+        val error: String?
+    )
+
+    /**
+     * One-shot voice → LLM nutrition analysis used by the meal editor's mic
+     * button. Sends the transcript alone — or together with the meal's first
+     * attached photo when one exists — and returns the parsed [FoodData] to
+     * the CALLER so the open editor can fill its fields. Nothing is
+     * persisted until the user taps Save.
+     */
+    suspend fun analyseVoice(
+        context: Context,
+        transcript: String,
+        imageRelPath: String?
+    ): MealVoiceAnalysis = withContext(Dispatchers.IO) {
+        if (transcript.isBlank()) {
+            return@withContext MealVoiceAnalysis(null, "Nothing was said")
+        }
+        val s = try {
+            SettingsRepository(context).settingsFlow.first()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load settings", e)
+            return@withContext MealVoiceAnalysis(null, "Settings unavailable")
+        }
+        if (!s.mealEnabled || s.mealApiKey.isBlank() ||
+            s.mealBaseUrl.isBlank() || s.mealModel.isBlank()
+        ) {
+            return@withContext MealVoiceAnalysis(null, "AI not configured (Settings → Meal Engine)")
+        }
+
+        val config = VisionConfig(
+            baseUrl = s.mealBaseUrl,
+            apiKey = s.mealApiKey,
+            model = s.mealModel,
+            userSystemPrompt = s.mealSystemPrompt
+        )
+        val imageFile = imageRelPath?.takeIf { it.isNotBlank() }
+            ?.let { MealLogRepository(context).resolveImage(it) }
+        val fd = try {
+            VisionProcessingService().processMealText(transcript, config, imageFile)
+        } catch (e: Exception) {
+            Log.e(TAG, "Voice analysis failed", e)
+            null
+        }
+        if (fd != null) MealVoiceAnalysis(fd, null)
+        else MealVoiceAnalysis(null, "AI could not parse the description")
+    }
 }

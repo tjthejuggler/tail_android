@@ -518,12 +518,15 @@ class SmartVoiceService : Service() {
                         }
                     }
 
-                    // Record timestamp
+                    // Record timestamps — one per increment unit, matching the
+                    // in-app increment convention (N units are stored as N
+                    // duplicate "HH:mm:ss" strings at one moment, so the
+                    // schedule screen shows the event with ×N amount).
                     try {
                         val tsRepo = HabitTimestampRepository(applicationContext)
-                        tsRepo.addTimestamp(habitName)
+                        tsRepo.addTimestamps(habitName, incrementAmount)
                     } catch (e: Exception) {
-                        Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
+                        Log.w(TAG, "Failed to record timestamps for '$habitName': ${e.message}")
                     }
 
                     // Conditional habit propagation (each link feeds its configured value)

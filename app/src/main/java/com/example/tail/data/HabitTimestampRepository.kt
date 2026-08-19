@@ -125,6 +125,28 @@ class HabitTimestampRepository(private val context: Context) {
     }
 
     /**
+     * Record multiple timestamps at once, each with its OWN time string
+     * (e.g. one stamp per chess game at that game's actual end time).
+     * Single mutex/file cycle, unlike looping [addTimestamp].
+     */
+    suspend fun addTimestampsAt(
+        habitName: String,
+        date: LocalDate,
+        times: List<String>
+    ) {
+        if (times.isEmpty()) return
+        fileMutex.withLock {
+            val data = loadMutable()
+            val dateStr = dateString(date)
+            val habitMap = data.getOrPut(habitName) { mutableMapOf() }
+            val dayList = habitMap.getOrPut(dateStr) { mutableListOf() }
+            dayList.addAll(times)
+            dayList.sort()
+            saveAll(data)
+        }
+    }
+
+    /**
      * Get all timestamps for [habitName] on [date].
      * Returns a sorted list of "HH:mm:ss" strings.
      */

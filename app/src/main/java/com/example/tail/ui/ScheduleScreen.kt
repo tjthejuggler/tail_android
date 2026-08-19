@@ -1,8 +1,10 @@
 package com.example.tail.ui
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,9 +17,11 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -70,6 +74,12 @@ private val HOUR_HEIGHT = 64.dp
 private val GUTTER_WIDTH = 46.dp
 /** Visual height of one event chip (≈28 minutes on the timeline). */
 private val EVENT_HEIGHT = 30.dp
+/**
+ * Minutes of timeline one chip occupies: EVENT_HEIGHT (30dp) at HOUR_HEIGHT
+ * (64dp per hour) ≈ 28.1 min; 29 adds a small margin. Same-lane chips must
+ * be at least this far apart or they overlap vertically.
+ */
+private const val LANE_SPAN_MINUTES = 29
 
 /**
  * Harmonious accent palette for event chips. A habit's colour is derived
@@ -155,6 +165,10 @@ fun ScheduleTimelineScreen(
     }
 
     val listState = rememberLazyListState()
+    // Shared horizontal scroll for the event-chip lanes: every hour row uses
+    // the same state so they pan together when the lanes are together wider
+    // than the screen (chips hug their habit names, so widths vary).
+    val chipScroll = rememberScrollState()
     // Jump to a sensible hour on open: the current hour today, otherwise
     // the first event (or a morning default).
     LaunchedEffect(loading, isToday) {
@@ -170,6 +184,30 @@ fun ScheduleTimelineScreen(
     val distinctHabits = remember(events) { events.map { it.habitName }.distinct().size }
     val firstTime = events.firstOrNull()?.time?.take(5)
     val lastTime = events.lastOrNull()?.time?.take(5)
+
+    // ── Global lane assignment ────────────────────────────────────────────
+    // Lanes are assigned across the WHOLE day, not per hour: a chip is
+    // EVENT_HEIGHT tall inside an HOUR_HEIGHT row, so chips near an hour
+    // boundary extend past their row and would collide with same-lane chips
+    // in the neighbouring hour. Assigning lanes over the full timeline
+    // slides every colliding chip into a free lane instead of overlapping.
+    val laneOf = remember(events) {
+        val laneEndMinute = mutableListOf<Int>()
+        val map = HashMap<ScheduleEvent, Int>(events.size)
+        for (event in events) { // already sorted by minuteOfDay
+            val start = event.minuteOfDay
+            val lane = laneEndMinute.indexOfFirst { it <= start }
+            if (lane >= 0) {
+                laneEndMinute[lane] = start + LANE_SPAN_MINUTES
+                map[event] = lane
+            } else {
+                laneEndMinute.add(start + LANE_SPAN_MINUTES)
+                map[event] = laneEndMinute.lastIndex
+            }
+        }
+        map
+    }
+    val laneCount = (laneOf.values.maxOrNull() ?: -1) + 1
 
     Column(modifier = modifier.fillMaxSize()) {
         // ── Summary header ────────────────────────────────────────────────
@@ -243,8 +281,11 @@ fun ScheduleTimelineScreen(
                     HourRow(
                         hour = hour,
                         events = events.filter { it.minuteOfDay / 60 == hour },
+                        laneOf = laneOf,
+                        laneCount = laneCount,
                         isNowHour = isToday && nowMinute / 60 == hour,
                         nowMinuteInHour = if (isNowHourNow(isToday, nowMinute, hour)) nowMinute % 60 else null,
+                        chipScroll = chipScroll,
                         onEventClick = onEventClick
                     )
                 }
@@ -265,8 +306,11 @@ private fun isNowHourNow(isToday: Boolean, nowMinute: Int, hour: Int): Boolean =
 private fun HourRow(
     hour: Int,
     events: List<ScheduleEvent>,
+    laneOf: Map<ScheduleEvent, Int>,
+    laneCount: Int,
     isNowHour: Boolean,
     nowMinuteInHour: Int?,
+    chipScroll: ScrollState,
     onEventClick: (String) -> Unit
 ) {
     val hasEvents = events.isNotEmpty()
@@ -318,36 +362,35 @@ private fun HourRow(
         )
 
         // ── Event chips ──────────────────────────────────────────────────
-        // Assign lanes: chips within ~28 minutes of each other go side by
-        // side. Each lane is an equal-weight column; chips are vertically
-        // offset to their exact minute within the hour.
-        val laneEndMinutes = mutableListOf<Int>()
+        // Lanes were assigned globally across the whole day (see
+        // ScheduleTimelineScreen) so chips bleeding past an hour boundary
+        // can't collide with the next hour's chips — anything that would
+        // overlap has already been slid into a free lane. Chips are
+        // vertically offset to their exact minute within the hour. Each lane
+        // is only as wide as its widest chip (chips hug their habit names);
+        // when the lanes together exceed the screen width the shared
+        // horizontal scroll pans the chip area — the hour gutter and grid
+        // line stay pinned.
         val positioned = events.map { event ->
-            val start = event.minuteOfDay % 60
-            val lane = laneEndMinutes.indexOfFirst { it <= start }
-            val assigned = if (lane >= 0) {
-                laneEndMinutes[lane] = start + 28
-                lane
-            } else {
-                laneEndMinutes.add(start + 28)
-                laneEndMinutes.lastIndex
-            }
-            event to (start to assigned)
+            event to (event.minuteOfDay % 60 to (laneOf[event] ?: 0))
         }
-        val laneCount = laneEndMinutes.size.coerceIn(1, 3)
 
         Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .offset(x = GUTTER_WIDTH + 4.dp)
                 .fillMaxWidth()
+                // padding (not offset) so the scroll viewport ends at the
+                // screen edge — with offset the viewport overhung the screen
+                // by the gutter width and max-scroll stopped that much short
+                // of the last chip's right edge.
+                .padding(start = GUTTER_WIDTH + 4.dp)
                 .height(HOUR_HEIGHT)
+                .horizontalScroll(chipScroll)
         ) {
             repeat(laneCount) { laneIdx ->
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 4.dp)
+                        .padding(end = 8.dp)
                 ) {
                     positioned
                         .filter { it.second.second == laneIdx }
@@ -362,6 +405,9 @@ private fun HourRow(
                         }
                 }
             }
+            // Trailing breathing room so the final chip fully clears the
+            // screen edge at maximum scroll.
+            Spacer(modifier = Modifier.width(8.dp))
         }
 
         // ── Now indicator ────────────────────────────────────────────────
@@ -400,10 +446,14 @@ private fun EventChip(
     modifier: Modifier = Modifier
 ) {
     val accent = scheduleAccentFor(event.habitName)
+    // Cap the visible name at 10 characters (9 + ellipsis) so chips stay
+    // compact; the full name is still shown in the editor popup.
+    val displayName = if (event.habitName.length > 10) {
+        event.habitName.take(9) + "…"
+    } else event.habitName
     Box(
         modifier = modifier
             .offset(y = topOffset)
-            .fillMaxWidth()
             .height(EVENT_HEIGHT)
             .background(accent.copy(alpha = 0.16f), RoundedCornerShape(8.dp))
             .border(1.dp, accent.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
@@ -424,12 +474,15 @@ private fun EventChip(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = event.habitName,
+                text = displayName,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color(0xFFEAEAEA),
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                // Hard width cap for wide glyphs — the string truncation
+                // above is the primary 10-character limit.
+                modifier = Modifier.widthIn(max = 76.dp)
             )
             if (event.amount > 1) {
                 Spacer(modifier = Modifier.width(4.dp))

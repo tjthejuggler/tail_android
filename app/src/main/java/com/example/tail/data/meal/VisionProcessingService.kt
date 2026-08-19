@@ -100,11 +100,15 @@ class VisionProcessingService {
      * extracts the same structured [FoodData] the vision pipeline produces
      * (title, calories, macros, ingredient tags, macro ratings).
      *
+     * @param imageFile Optional meal photo — when set, it is sent together
+     *        with the transcript so the LLM can combine what it SEES with
+     *        what the user SAID (the spoken description wins on quantities).
      * @return The parsed [FoodData], or null on network failure.
      */
     suspend fun processMealText(
         transcript: String,
-        config: VisionConfig
+        config: VisionConfig,
+        imageFile: File? = null
     ): FoodData? =
         withContext(Dispatchers.IO) {
             if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
@@ -116,11 +120,24 @@ class VisionProcessingService {
             val fullUrl = buildEndpointUrl(config.baseUrl)
             Log.i(TAG, "Processing meal description text via $fullUrl model=${config.model}")
 
+            // Optional attached photo: sent together with the transcript so
+            // the LLM can combine what it SEES with what the user SAID.
+            val base64Image = imageFile?.let { compressAndEncode(it) }
+            if (imageFile != null && base64Image == null) {
+                Log.w(TAG, "Failed to encode attached meal photo — analysing text only")
+            }
+
             val systemPrompt = buildString {
                 append("You are a nutritional analysis assistant. The user briefly described ")
                 append("a meal they ate, in their own words. Extract structured nutrition data ")
                 append("with your BEST-GUESS estimates for portion sizes. Honour any dietary ")
-                append("rules the user mentions.\n\n")
+                append("rules the user mentions.\n")
+                if (base64Image != null) {
+                    append("A photo of the meal is attached: combine what you SEE in the photo ")
+                    append("with what the user SAID — the spoken description takes priority for ")
+                    append("quantities and ingredients they name explicitly.\n")
+                }
+                append("\n")
                 append("Respond ONLY with raw JSON (no markdown fences, no conversational text):\n")
                 append("{\n")
                 append("  \"title\": \"Short meal name\",\n")
@@ -136,6 +153,23 @@ class VisionProcessingService {
                 append("ingredients_detected: individual searchable TAGS (lowercase, singular where natural).")
             }
 
+            val userContent: Any = if (base64Image != null) {
+                JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("type", "text")
+                        put("text", "Meal description: \"$transcript\"")
+                    })
+                    put(JSONObject().apply {
+                        put("type", "image_url")
+                        put("image_url", JSONObject().apply {
+                            put("url", base64Image)
+                        })
+                    })
+                }
+            } else {
+                "Meal description: \"$transcript\""
+            }
+
             val requestBody = JSONObject().apply {
                 put("model", config.model)
                 put("messages", JSONArray().apply {
@@ -145,7 +179,7 @@ class VisionProcessingService {
                     })
                     put(JSONObject().apply {
                         put("role", "user")
-                        put("content", "Meal description: \"$transcript\"")
+                        put("content", userContent)
                     })
                 })
                 put("temperature", 0.2)

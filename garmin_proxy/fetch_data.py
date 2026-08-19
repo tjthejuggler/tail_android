@@ -30,7 +30,7 @@ import datetime
 import argparse
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 from garminconnect import (
     Garmin,
@@ -409,17 +409,50 @@ def _activity_local_date(act: dict) -> Optional[str]:
     return None
 
 
+def _activity_start_time(act: dict) -> Optional[str]:
+    """Extract "HH:MM:SS" from an activity's startTimeLocal (watch-local time).
+
+    The live Connect API returns "YYYY-MM-DD HH:MM:SS" (hour sometimes single
+    digit); fractional-second or timezone suffixes are tolerated. Used to
+    place run/bike/swim activities on the app's daily schedule timeline at
+    the time they actually happened.
+    """
+    sl = act.get("startTimeLocal")
+    if not isinstance(sl, str) or " " not in sl:
+        return None
+    hms = sl.split(" ", 1)[1].split(".")[0].split("+")[0].strip()
+    bits = hms.split(":")
+    if len(bits) < 2:
+        return None
+    try:
+        h, m = int(bits[0]), int(bits[1])
+        s = int(bits[2]) if len(bits) > 2 else 0
+    except ValueError:
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= s <= 59):
+        return None
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
 def fetch_activity_minutes(
     client: Garmin, start_date: str, end_date: str
-) -> Dict[str, Dict[str, int]]:
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, str]]]:
     """Fetch run/bike/swim durations for a date range, summed per day.
 
-    Returns {"run_minutes": {date: mins}, "bike_minutes": {...}, "swim_minutes": {...}}.
+    Returns (minutes, start_times):
+      minutes      {"run_minutes": {date: mins}, "bike_minutes": {...}, "swim_minutes": {...}}
+      start_times  {"run_minutes": {date: "HH:MM:SS"}, ...} — watch-local start
+                   time of the day's EARLIEST activity per category.
     Only days with at least one minute of a given sport are included, so a rest
     day simply has no entry (the linked habit is left untouched rather than
     being forced to a value).
     """
     seconds: Dict[str, Dict[str, float]] = {
+        "run_minutes": {},
+        "bike_minutes": {},
+        "swim_minutes": {},
+    }
+    start_times: Dict[str, Dict[str, str]] = {
         "run_minutes": {},
         "bike_minutes": {},
         "swim_minutes": {},
@@ -445,6 +478,11 @@ def fetch_activity_minutes(
             if cat is None:
                 continue
             seconds[cat][date_str] = seconds[cat].get(date_str, 0) + float(duration)
+            t = _activity_start_time(act)
+            if t:
+                prev = start_times[cat].get(date_str)
+                if prev is None or t < prev:
+                    start_times[cat][date_str] = t
 
     # Convert accumulated seconds -> whole minutes (floor), drop zero-minute days.
     result: Dict[str, Dict[str, int]] = {}
@@ -458,7 +496,7 @@ def fetch_activity_minutes(
         f"bike={len(result.get('bike_minutes', {}))}d, "
         f"swim={len(result.get('swim_minutes', {}))}d"
     )
-    return result
+    return result, start_times
 
 
 # --------------------------------------------------------------------------- #
@@ -516,12 +554,19 @@ def fetch_garmin_data(days: int = DEFAULT_DAYS, force: bool = False) -> Dict[str
     # --- Activity-type minutes (run / bike / swim) ---
     # Fetched once for the whole range (rate-limit friendly) and merged per day.
     # dates[-1] is the oldest day, dates[0] is today.
-    activity_mins = fetch_activity_minutes(client, dates[-1], dates[0])
+    activity_mins, activity_starts = fetch_activity_minutes(client, dates[-1], dates[0])
     for cat in ("run_minutes", "bike_minutes", "swim_minutes"):
         for date_str, mins in activity_mins.get(cat, {}).items():
             day = cache["data"].get(date_str)
             if day is not None:
                 day[cat] = mins
+        # Activity start times (watch-local) — the app uses them to place the
+        # activity on its daily schedule timeline at the actual start time.
+        tkey = cat.replace("_minutes", "_start_time")
+        for date_str, t in activity_starts.get(cat, {}).items():
+            day = cache["data"].get(date_str)
+            if day is not None:
+                day[tkey] = t
 
     cache["metadata"]["last_updated"] = datetime.datetime.now().isoformat()
 

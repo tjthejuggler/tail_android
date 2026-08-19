@@ -251,6 +251,9 @@ class GarminService {
             runMinutes = json.optInt("run_minutes").takeIf { it > 0 },
             bikeMinutes = json.optInt("bike_minutes").takeIf { it > 0 },
             swimMinutes = json.optInt("swim_minutes").takeIf { it > 0 },
+            runStartTime = json.optString("run_start_time").takeIf { it.isNotBlank() },
+            bikeStartTime = json.optString("bike_start_time").takeIf { it.isNotBlank() },
+            swimStartTime = json.optString("swim_start_time").takeIf { it.isNotBlank() },
             floorsClimbed = json.optInt("floors_climbed").takeIf { it > 0 },
             stressScore = json.optInt("stress_score").takeIf { it > 0 }
         )
@@ -278,6 +281,10 @@ data class GarminMetricsDto(
     val runMinutes: Int?,
     val bikeMinutes: Int?,
     val swimMinutes: Int?,
+    /** Watch-local start time "HH:mm:ss" of the day's earliest activity, when known. */
+    val runStartTime: String? = null,
+    val bikeStartTime: String? = null,
+    val swimStartTime: String? = null,
     val floorsClimbed: Int?,
     val stressScore: Int?
 )

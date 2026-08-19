@@ -205,10 +205,23 @@ fun MealEditorContent(
         }
     }
 
-    // A fresh mic result recorded while this editor is open replaces the
-    // transcript field content (the field itself stays user-editable).
+    // A fresh mic result recorded while this editor is open is parsed by the
+    // LLM — standalone, or together with the meal's first photo — and the
+    // recognised title/calories/macros/tags fill the fields. The transcript
+    // itself is kept as a record on the log, NOT used as the description.
+    var voiceParsing by remember { mutableStateOf(false) }
+    var voiceParseError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(externalTranscript) {
-        if (!externalTranscript.isNullOrBlank()) transcript = externalTranscript
+        val text = externalTranscript
+        if (!text.isNullOrBlank()) {
+            transcript = text
+            voiceParseError = null
+            voiceParsing = true
+            val res = MealPhotoAnalyser.analyseVoice(context, text, images.firstOrNull())
+            voiceParsing = false
+            res.foodData?.let { applyFoodData(it) }
+                ?: run { voiceParseError = res.error ?: "AI could not parse the description" }
+        }
     }
 
     Column {
@@ -447,6 +460,7 @@ fun MealEditorContent(
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedButton(
                 onClick = onVoiceRecord,
+                enabled = !voiceParsing,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = if (isListening) MaterialTheme.colorScheme.error
@@ -456,6 +470,16 @@ fun MealEditorContent(
                 Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(if (isListening) "Listening… tap to stop" else "🎤 Describe by voice (AI parses)")
+            }
+            if (voiceParsing) {
+                Text(
+                    "🎤 AI is parsing your description…",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            voiceParseError?.let {
+                Text("🎤 $it", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
             }
             voiceError?.let {
                 Text("🎤 $it", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)

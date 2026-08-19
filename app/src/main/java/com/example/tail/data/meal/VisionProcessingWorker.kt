@@ -228,6 +228,28 @@ class VisionProcessingWorker(
                 if (result.classification == VisionClassification.FOOD_MEAL &&
                     result.foodData != null && targetHabit != null
                 ) {
+                    // A meal group may have OPENED after this capture was
+                    // enqueued (e.g. a voice log landed while the photo sat in
+                    // the queue). Merge into it instead of creating a second
+                    // log + increment + stamp for the same meal — the source
+                    // of duplicate Eat chips at the same minute.
+                    val activeGroup = mealLogRepo.findActiveGroup(targetHabit, item.timestamp)
+                        ?.takeIf {
+                            kotlin.math.abs(item.timestamp - it.anchorTime()) <= MEAL_GROUP_WINDOW_MS
+                        }
+                    if (activeGroup != null) {
+                        mealLogRepo.updateLog(
+                            activeGroup.mergedWith(
+                                foodData = result.foodData,
+                                extraImageUri = item.imagePath
+                            )
+                        )
+                        queueRepo.markCompleted(item.id, activeGroup.id)
+                        processed++
+                        Log.i(TAG, "Merged queued photo into active meal ${activeGroup.id}: ${activeGroup.title}")
+                        continue
+                    }
+
                     // Create the meal log
                     val mealLog = result.toMealLog(
                         habitId = targetHabit,

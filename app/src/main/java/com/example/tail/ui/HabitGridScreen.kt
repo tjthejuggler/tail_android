@@ -745,7 +745,11 @@ fun HabitGridScreen(
                 // Replaces the grid with everything that was timestamped on
                 // the selected day. Habits without time data are absent.
                 ScheduleTimelineScreen(
-                    habitNames = habits.map { it.name },
+                    // ALL habits across ALL screens — the schedule is a
+                    // whole-day view and must not filter to the active grid.
+                    habitNames = habitScreens.flatMap { it.habitNames }
+                        .filter { it.isNotEmpty() && !com.example.tail.data.isAppLink(it) }
+                        .distinct(),
                     mealHabits = settings.mealHabits,
                     textInputHabits = settings.textInputHabits,
                     timelineExcludedHabits = settings.timelineExcludedHabits,
@@ -1472,9 +1476,14 @@ fun HabitGridScreen(
                     incrementToastHabit = null
                 },
                 onTimeless = {
-                    // Remove the just-recorded timestamp and mark as timeless
+                    // Remove the just-recorded timestamps and mark as timeless.
+                    // ALL units of the same-moment group must go (a multi-
+                    // increment is N duplicate time strings), not just the
+                    // last one — otherwise N-1 units linger on the schedule.
                     toastScope.launch {
-                        viewModel.timestampRepo.deleteLastTimestamp(toastHabit, selectedDate)
+                        viewModel.timestampRepo.deleteTimestampsAtTime(
+                            toastHabit, selectedDate, incrementToastOriginalTime
+                        )
                     }
                     incrementToastIsTimeless = true
                 }
@@ -2202,7 +2211,14 @@ fun HabitGridScreen(
                         // Was timeless — add a new timestamp instead of updating
                         viewModel.timestampRepo.addTimestamp(habitName, selectedDate, newTime)
                     } else {
-                        viewModel.timestampRepo.updateLastTimestamp(habitName, selectedDate, newTime)
+                        // Move the WHOLE same-moment group. A multi-increment of
+                        // N units is stored as N duplicate time strings; moving
+                        // only the last one (updateLastTimestamp) strands the
+                        // other N-1 units at the original time, duplicating the
+                        // event on the schedule screen.
+                        viewModel.timestampRepo.updateTimestampsAtTime(
+                            habitName, selectedDate, quickEditOriginalTime, newTime
+                        )
                     }
                 }
                 quickEditHabitName = null

@@ -10,6 +10,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 private const val TAG = "ChessComRepo"
 
@@ -137,6 +138,44 @@ internal fun computeDailyChessStats(
     }
 
     return result.mapValues { it.value.toMap() }
+}
+
+/**
+ * Returns the wall-clock end times ("HH:mm:ss", oldest first) of the [count]
+ * NEWEST games of [type] played by [username] that ended on [dateStr].
+ *
+ * Habit timestamps are recorded per NEW game, and games accumulate
+ * chronologically — so the newest [count] games ending that day are exactly
+ * the not-yet-stamped ones. Stamping at the actual end time (instead of sync
+ * time) keeps the schedule view truthful: N games no longer collapse into a
+ * single ×N event stacked at the moment the poll happened to run.
+ *
+ * Returns fewer (or no) entries when the raw game list is missing or short;
+ * callers fill any shortfall with sync-time stamps.
+ */
+internal fun newGameEndTimes(
+    games: List<ChessComGame>,
+    username: String,
+    type: ChessComType,
+    dateStr: String,
+    count: Int,
+    zone: ZoneId = ZoneId.systemDefault()
+): List<String> {
+    if (count <= 0) return emptyList()
+    val userLower = username.lowercase()
+    val matching = games
+        .filter { game ->
+            val isPlayer = game.whiteUsername.lowercase() == userLower ||
+                game.blackUsername.lowercase() == userLower
+            isPlayer &&
+                classifyByTimeControl(game.timeControl) == type &&
+                dateString(Instant.ofEpochSecond(game.endTime).atZone(zone).toLocalDate()) == dateStr
+        }
+        .sortedBy { it.endTime }
+    return matching.takeLast(count).map { game ->
+        Instant.ofEpochSecond(game.endTime).atZone(zone).toLocalTime()
+            .format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+    }
 }
 
 /**

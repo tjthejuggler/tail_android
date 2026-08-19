@@ -7113,7 +7113,12 @@ class HabitViewModel(
 
         try {
             _chessComSyncStatus.value = "Syncing chess.com data…"
+            // Raw games are kept alongside the aggregated stats so
+            // applyChessComData can stamp each NEW game's timestamp at the
+            // game's actual end time instead of N duplicates at sync time.
+            val fetchedGames = mutableListOf<com.example.tail.data.ChessComGame>()
             val monthData = chessComRepo.fetchCurrentMonthData(s.chessComUsername) { games ->
+                fetchedGames.addAll(games)
                 // Chess Readiness activity log: every fetched game is recorded
                 // (deduped) with the readiness context at its end time.
                 try {
@@ -7122,7 +7127,7 @@ class HabitViewModel(
                     Log.w(TAG, "Readiness game logging failed: ${e.message}")
                 }
             }
-            if (applyToHabits) applyChessComData(monthData, s)
+            if (applyToHabits) applyChessComData(monthData, s, fetchedGames)
             _chessComSyncStatus.value = "Last sync: ${java.time.LocalTime.now().toString().take(5)}"
         } catch (e: Exception) {
             Log.e(TAG, "Chess.com sync failed: ${e.message}")
@@ -7156,12 +7161,14 @@ class HabitViewModel(
                 resetChessComHabitData(s)
 
                 _chessComSyncStatus.value = "Fetching entire backlog…"
+                val fetchedGames = mutableListOf<com.example.tail.data.ChessComGame>()
                 val allData = chessComRepo.fetchEntireBacklog(
                     s.chessComUsername,
                     onProgress = { done, total ->
                         _chessComSyncStatus.value = "Fetching archives: $done / $total months"
                     },
                     onGames = { games ->
+                        fetchedGames.addAll(games)
                         // Backfill the Chess Readiness activity log with every
                         // freshly-fetched month (deduped inside the store).
                         try {
@@ -7172,7 +7179,7 @@ class HabitViewModel(
                     }
                 )
                 _chessComSyncStatus.value = "Applying backlog data to habits…"
-                applyChessComData(allData, s)
+                applyChessComData(allData, s, fetchedGames)
                 _chessComSyncStatus.value = "Backlog complete! Data applied to linked habits."
             } catch (e: Exception) {
                 Log.e(TAG, "Chess.com backlog failed: ${e.message}")
@@ -7219,6 +7226,35 @@ class HabitViewModel(
     }
 
     /**
+     * Re-reads the habits DB from disk into [cachedPhoneDb] right before a
+     * full-snapshot persist (chess.com / GitHub / Garmin sync paths).
+     *
+     * Concurrent writers in other processes — most notably the voice-capture
+     * service ([com.example.tail.ipc.SmartVoiceService]) — persist their
+     * increments directly to disk via read-modify-write. Persisting a
+     * snapshot built from a stale in-memory cache silently reverts those
+     * writes (this is how the "water 750" voice capture was wiped on
+     * 2026-08-19: chess.com polling persisted a seconds-stale snapshot).
+     */
+    private suspend fun refreshCachedDbFromDisk(fileUri: String) {
+        if (fileUri.isEmpty()) return
+        try {
+            val fresh = withContext(Dispatchers.IO) {
+                habitsRepo.loadDatabase(Uri.parse(fileUri), context)
+            }
+            if (fresh.isNotEmpty()) {
+                cachedPhoneDb = fresh
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Never swallow cancellation — the caller's scope is gone and the
+            // apply must abort rather than race a dead ViewModel's persist.
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "refreshCachedDbFromDisk failed, keeping cached db: ${e.message}")
+        }
+    }
+
+    /**
      * Applies chess.com daily stats (minutes, games, wins) to linked habits.
      * For each linked habit, writes three raw values per day:
      *  - minutes → the habit's primary count (rounded, min 1 on days with
@@ -7234,7 +7270,8 @@ class HabitViewModel(
      */
     private suspend fun applyChessComData(
         data: Map<ChessComType, DailyStatsMap>,
-        s: AppSettings
+        s: AppSettings,
+        rawGames: List<com.example.tail.data.ChessComGame> = emptyList()
     ) {
         // Auto-label the three value slots (Minutes / Games / Result) — also
         // covers habits linked before this labeling existed.
@@ -7252,11 +7289,16 @@ class HabitViewModel(
             return
         }
 
+        // Pick up concurrent on-disk writes (e.g. voice-capture increments)
+        // before building the snapshot — see refreshCachedDbFromDisk.
+        refreshCachedDbFromDisk(phoneUriStr)
+
         var dbChanged = false
         val mutableDb = cachedPhoneDb.toMutableMap()
-        // Track per-habit today-delta for timestamp recording (only add NEW timestamps)
+        // Track per-habit NEW-game stamp times for timestamp recording
+        // (only add NEW timestamps, one per new game at its actual end time)
         val todayStr = dateString(LocalDate.now())
-        val todayDeltas = mutableMapOf<String, Int>()
+        val todayNewTimes = mutableMapOf<String, List<String>>()
 
         for ((habitName, typeKey) in s.chessComHabitLinks) {
             val type = ChessComType.fromKey(typeKey) ?: continue
@@ -7309,13 +7351,25 @@ class HabitViewModel(
             mutableDb[secondaryValueKey(habitName)] = gamesEntries.toSortedMap()
             mutableDb[secondaryValue2Key(habitName)] = resultEntries.toSortedMap()
 
-            // Track today's timestamp count: ONE timestamp per NEW game (the
-            // count is minutes, but the underlying event is a game); at least
-            // one when minutes moved without a new game (e.g. rounding).
+            // Track today's timestamps: ONE per NEW game, stamped at the
+            // game's actual end time (not sync time) so the schedule view
+            // shows each game where it really happened instead of a ×N
+            // pile-up at the sync moment. At least one stamp when minutes
+            // moved without a new game (e.g. rounding).
             val todayDelta = dateDeltas[todayStr]
             if (todayDelta != null && todayDelta > 0) {
                 val newGames = ((gamesEntries[todayStr] ?: 0) - preGamesToday).coerceAtLeast(0)
-                todayDeltas[habitName] = if (newGames > 0) newGames else 1
+                val needed = if (newGames > 0) newGames else 1
+                val endTimes = if (newGames > 0) {
+                    com.example.tail.data.newGameEndTimes(
+                        rawGames, s.chessComUsername, type, todayStr, newGames
+                    )
+                } else emptyList()
+                val now = HabitTimestampRepository.nowTime()
+                val times = endTimes.toMutableList()
+                // Shortfall (missing raw games / rounding) falls back to now.
+                repeat(needed - times.size) { times.add(now) }
+                todayNewTimes[habitName] = times
             }
 
             // Propagate to conditional linked habits for dates where count increased
@@ -7378,13 +7432,12 @@ class HabitViewModel(
             }
 
             // Record timestamps only for NEW activity — one per new game
-            // played today (todayDeltas already carries the per-game count),
-            // never one per minute.
-            if (todayDeltas.isNotEmpty()) {
-                val now = HabitTimestampRepository.nowTime()
+            // played today, each at its actual end time (todayNewTimes
+            // already carries the per-game times), never one per minute.
+            if (todayNewTimes.isNotEmpty()) {
                 val today = LocalDate.now()
-                for ((habitName, delta) in todayDeltas) {
-                    timestampRepo.addTimestamps(habitName, delta, today, now)
+                for ((habitName, times) in todayNewTimes) {
+                    timestampRepo.addTimestampsAt(habitName, today, times)
                 }
             }
 
@@ -7639,6 +7692,10 @@ class HabitViewModel(
             Log.w(TAG, "applyGithubData: DB not loaded yet, skipping persist (anti-wipe gate)")
             return
         }
+
+        // Pick up concurrent on-disk writes (e.g. voice-capture increments)
+        // before building the snapshot — see refreshCachedDbFromDisk.
+        refreshCachedDbFromDisk(phoneUriStr)
 
         var mutableDb = cachedPhoneDb.toMutableMap()
         val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap()
@@ -8235,6 +8292,10 @@ class HabitViewModel(
             return
         }
 
+        // Pick up concurrent on-disk writes (e.g. voice-capture increments)
+        // before building the snapshot — see refreshCachedDbFromDisk.
+        refreshCachedDbFromDisk(settings.fileUri)
+
         // Diagnostic: log what data is available and what habits are linked
         Log.d(TAG, "applyGarminData: allData types=${allData.keys.map { it.name }}, " +
             "linkedHabits=$linkedHabits")
@@ -8417,12 +8478,19 @@ class HabitViewModel(
                 habitsRepo.persistDatabase(Uri.parse(settings.fileUri), context, mutableDb)
             }
 
-            // Record timestamps only for the NEW increments (delta), not the total count
+            // Record timestamps only for the NEW increments (delta), not the
+            // total count. For activity-based types (run/bike/swim) prefer
+            // the watch-recorded activity start time so the schedule screen
+            // shows WHEN the activity happened, not when the sync ran.
             if (todayDeltas.isNotEmpty()) {
                 val now = HabitTimestampRepository.nowTime()
                 val today = LocalDate.now()
                 for ((habitName, delta) in todayDeltas) {
-                    timestampRepo.addTimestamps(habitName, delta, today, now)
+                    val garminType = linkedHabits[habitName]?.let { GarminType.fromKey(it) }
+                    val activityTime = garminType?.let {
+                        garminRepo.activityStartTime(it, today.toString())
+                    }
+                    timestampRepo.addTimestamps(habitName, delta, today, activityTime ?: now)
                 }
             }
 
@@ -10521,11 +10589,7 @@ class HabitViewModel(
                         .atZone(java.time.ZoneId.systemDefault())
                     val newZdt = java.time.Instant.ofEpochMilli(updated.timestamp)
                         .atZone(java.time.ZoneId.systemDefault())
-                    val day = timestampRepo.getTimestampsForDay(habitName, oldZdt.toLocalDate())
-                    val idx = day.indexOf(oldZdt.toLocalTime().format(mealTimeFmt))
-                    if (idx >= 0) {
-                        timestampRepo.deleteTimestamp(habitName, oldZdt.toLocalDate(), idx)
-                    }
+                    deleteMealStampNear(habitName, oldZdt)
                     timestampRepo.addTimestamp(
                         habitName, newZdt.toLocalDate(), newZdt.toLocalTime().format(mealTimeFmt)
                     )
@@ -10582,8 +10646,11 @@ class HabitViewModel(
             val now = System.currentTimeMillis()
             val active = mealLogRepo.findActiveGroup(habitName, now)
             if (active != null) {
+                // No newTimestamp: the log must keep the time its habit stamp
+                // was recorded at — drifting it orphans the stamp and shows
+                // duplicate chips on the schedule.
                 mealLogRepo.updateLog(
-                    active.mergedWith(foodData = fd, transcript = transcript, newTimestamp = now)
+                    active.mergedWith(foodData = fd, transcript = transcript)
                 )
                 _mealVoiceStatus.value = "Merged into \"${active.title}\""
             } else {
@@ -10689,14 +10756,43 @@ class HabitViewModel(
             habitsRepo.incrementHabitForDate(
                 android.net.Uri.parse(uriString), context, habitName, -1, zdt.toLocalDate()
             )
-            val day = timestampRepo.getTimestampsForDay(habitName, zdt.toLocalDate())
-            val idx = day.indexOf(zdt.toLocalTime().format(mealTimeFmt))
-            if (idx >= 0) {
-                timestampRepo.deleteTimestamp(habitName, zdt.toLocalDate(), idx)
-            }
+            deleteMealStampNear(habitName, zdt)
             rebuildHabitList()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to roll back meal increment for '$habitName'", e)
+        }
+    }
+
+    /**
+     * Deletes the meal-increment stamp for [zdt] — exact match first, then the
+     * nearest stamp within ±5 minutes. Meal log timestamps can drift a few
+     * seconds from their stamp (voice merges, editor saves that round to the
+     * minute), so a strict exact match silently orphans stamps and leaves
+     * duplicate chips on the schedule.
+     */
+    private suspend fun deleteMealStampNear(
+        habitName: String,
+        zdt: java.time.ZonedDateTime
+    ) {
+        val date = zdt.toLocalDate()
+        val day = timestampRepo.getTimestampsForDay(habitName, date)
+        val idx = day.indexOf(zdt.toLocalTime().format(mealTimeFmt))
+        if (idx >= 0) {
+            timestampRepo.deleteTimestamp(habitName, date, idx)
+            return
+        }
+        val targetSec = zdt.toLocalTime().toSecondOfDay()
+        val nearest = day.withIndex()
+            .mapNotNull { (i, t) ->
+                val s = runCatching {
+                    java.time.LocalTime.parse(t).toSecondOfDay()
+                }.getOrNull() ?: return@mapNotNull null
+                val dist = kotlin.math.abs(s - targetSec)
+                if (dist <= 300) i to dist else null
+            }
+            .minByOrNull { (_, dist) -> dist }
+        if (nearest != null) {
+            timestampRepo.deleteTimestamp(habitName, date, nearest.first)
         }
     }
 

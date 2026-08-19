@@ -82,6 +82,14 @@ class GarminRepository(private val context: Context) {
         get() = File(context.filesDir, "garmin_cache").also { it.mkdirs() }
 
     /**
+     * Watch-local start times ("HH:mm:ss") of the day's earliest activity per
+     * type per date, as served by the proxy. Populated while fetching daily
+     * metrics (current-month fetches always hit the proxy); used to place
+     * run/bike/swim events on the daily schedule at the ACTIVITY time.
+     */
+    private val activityStartTimes = mutableMapOf<GarminType, MutableMap<String, String>>()
+
+    /**
      * Fetches and processes metrics for the last 7 days (for regular polling / test-connection).
      * Returns per-day values for each metric type, keyed by date.
      *
@@ -202,6 +210,7 @@ class GarminRepository(private val context: Context) {
         // Cache completed months
         if (!isCurrentMonth) {
             saveToCache(year, month, daily)
+            saveActivityTimesToCache()
         }
 
         return daily
@@ -334,6 +343,19 @@ class GarminRepository(private val context: Context) {
             dayMap[date] = it
         }
 
+        metrics.runStartTime?.let {
+            val times = activityStartTimes.getOrPut(GarminType.RUN_MINUTES) { mutableMapOf() }
+            times[date] = it
+        }
+        metrics.bikeStartTime?.let {
+            val times = activityStartTimes.getOrPut(GarminType.BIKE_MINUTES) { mutableMapOf() }
+            times[date] = it
+        }
+        metrics.swimStartTime?.let {
+            val times = activityStartTimes.getOrPut(GarminType.SWIM_MINUTES) { mutableMapOf() }
+            times[date] = it
+        }
+
         metrics.floorsClimbed?.let {
             val dayMap = result.getOrPut(GarminType.FLOORS_CLIMBED) { mutableMapOf() }
             dayMap[date] = it
@@ -342,6 +364,59 @@ class GarminRepository(private val context: Context) {
         metrics.stressScore?.let {
             val dayMap = result.getOrPut(GarminType.STRESS_LEVEL) { mutableMapOf() }
             dayMap[date] = it
+        }
+    }
+
+    /**
+     * Watch-local start time ("HH:mm:ss") of the earliest activity of [type]
+     * on [date], when the proxy served one; null when no time is known for
+     * that day (rest day, aggregate metric, or cached historical month).
+     */
+    fun activityStartTime(type: GarminType, date: String): String? =
+        activityStartTimes[type]?.get(date)
+
+    /**
+     * Persists the in-memory activity start times (run/bike/swim) alongside the
+     * monthly value cache, so the cached re-apply path (loadAllCachedData +
+     * applyGarminData) can also stamp habit timestamps with the ACTUAL activity
+     * start time instead of falling back to the sync time. Written in the same
+     * pass as [mergeAndCacheDailyData] writes values, keeping the two in sync.
+     */
+    private fun activityTimesFile(): File = File(cacheDir, "activity_times.json")
+
+    private fun saveActivityTimesToCache() {
+        if (activityStartTimes.isEmpty()) return
+        try {
+            val json = JSONObject()
+            for ((type, dayMap) in activityStartTimes) {
+                val typeJson = JSONObject()
+                for ((date, time) in dayMap) {
+                    typeJson.put(date, time)
+                }
+                json.put(type.name, typeJson)
+            }
+            activityTimesFile().writeText(json.toString())
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write activity times cache: ${e.message}")
+        }
+    }
+
+    /** Loads persisted activity start times into the in-memory map. */
+    private fun loadActivityTimesFromCache() {
+        val file = activityTimesFile()
+        if (!file.exists()) return
+        try {
+            val json = JSONObject(file.readText())
+            for (typeName in json.keys()) {
+                val type = GarminType.fromKey(typeName) ?: continue
+                val typeJson = json.getJSONObject(typeName)
+                val times = activityStartTimes.getOrPut(type) { mutableMapOf() }
+                for (date in typeJson.keys()) {
+                    times[date] = typeJson.getString(date)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read activity times cache: ${e.message}")
         }
     }
 
@@ -455,6 +530,7 @@ class GarminRepository(private val context: Context) {
         }
         if (byMonth.isNotEmpty()) {
             Log.d(TAG, "mergeAndCacheDailyData: persisted ${byMonth.size} month(s) to cache")
+            saveActivityTimesToCache()
         }
     }
 
@@ -463,6 +539,9 @@ class GarminRepository(private val context: Context) {
      * Returns a map of GarminType to date-value pairs for all cached months.
      */
     fun loadAllCachedData(): Map<GarminType, DailyValueMap> {
+        // Restore persisted activity start times first so applyGarminData can
+        // use them for habit timestamps on this cached (non-fetch) path too.
+        loadActivityTimesFromCache()
         val allData = mutableMapOf<GarminType, MutableMap<String, Int>>()
         val cacheFiles = cacheDir.listFiles()
         Log.d(TAG, "loadAllCachedData: Found ${cacheFiles?.size ?: 0} cache files")
