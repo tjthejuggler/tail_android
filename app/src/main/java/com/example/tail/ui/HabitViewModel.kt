@@ -7159,10 +7159,56 @@ class HabitViewModel(
             // All reads/writes of cachedPhoneDb and _settings happen here on Main.
             val mutableDb = cachedPhoneDb.toMutableMap()
             val habitEntries = (mutableDb[habitName] ?: emptyMap()).toMutableMap()
+            // Pre-replace values per date — the conditional feed baseline.
+            val beforeEntries = habitEntries.toMap()
             for ((dateStr, count) in parsedCounts) {
                 habitEntries[dateStr] = count
             }
             mutableDb[habitName] = habitEntries.toSortedMap()
+
+            // Conditional propagation: a dated-entry habit configured as a
+            // conditional source feeds its linked habits for POSITIVE day
+            // deltas (new entries in the file), mirroring the GitHub sync
+            // path. Without this, file-driven habits (e.g. "Chess Video")
+            // would never feed their linked aggregates ("Chess").
+            val st = _settings.value
+            if (habitName in st.conditionalHabits) {
+                val linkedNames = st.conditionalLinkedHabits[habitName] ?: emptySet()
+                val positiveDayDeltas = positiveSyncDayDeltas(beforeEntries, parsedCounts)
+                if (linkedNames.isNotEmpty() && positiveDayDeltas.isNotEmpty()) {
+                    val feedPoints = habitName in st.conditionalFeedPointsHabits
+                    val sourceDivider = st.habitDividers[habitName] ?: 1
+                    for (linkedName in linkedNames) {
+                        val valueKey = effectiveConditionalLinkValueKey(
+                            st.conditionalLinkValues, st.secondaryValueHabits,
+                            st.chessComHabitLinks, habitName, linkedName
+                        )
+                        val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
+                        for ((date, storedBefore, delta) in positiveDayDeltas) {
+                            val baseFeedAmount = if (feedPoints && sourceDivider > 1) {
+                                applyDivider(storedBefore + delta, sourceDivider) -
+                                    applyDivider(storedBefore, sourceDivider)
+                            } else delta
+                            val feedAmount = if (targetKey == linkedName) {
+                                conditionalSyncFeedAmount(
+                                    storedBefore, baseFeedAmount,
+                                    habitName in st.conditionalFeedMaxOneHabits
+                                )
+                            } else baseFeedAmount
+                            if (feedAmount == 0) continue
+                            val targetEntries = (mutableDb[targetKey] ?: emptyMap()).toMutableMap()
+                            val existing = targetEntries[date] ?: 0
+                            val newVal = if (targetKey == linkedName && linkedName in st.maxOneHabits) {
+                                1
+                            } else existing + feedAmount
+                            if (newVal != existing) {
+                                targetEntries[date] = newVal
+                                mutableDb[targetKey] = targetEntries.toSortedMap()
+                            }
+                        }
+                    }
+                }
+            }
             cachedPhoneDb = mutableDb
 
             // Save the new file size
@@ -7433,6 +7479,16 @@ class HabitViewModel(
 
         viewModelScope.launch {
             try {
+                // Snapshot the PRE-reset stored primary values: conditional
+                // feeds must be computed against what was really stored before
+                // the reset zeroes the linked habits, so a backlog re-fetch
+                // never re-feeds history into conditional linked habits (the
+                // same pattern as fetchGithubBacklog). Without this, every
+                // backlog fetch re-applies the full minutes history as fresh
+                // deltas and multiplies the linked aggregates (e.g. "Chess").
+                val preResetEntries = s.chessComHabitLinks.keys.mapNotNull { habit ->
+                    cachedPhoneDb[habit]?.takeIf { it.isNotEmpty() }?.let { habit to it }
+                }.toMap()
                 // Reset all chess.com-linked habits to 0 for all dates
                 _chessComSyncStatus.value = "Resetting linked habit data…"
                 resetChessComHabitData(s)
@@ -7456,7 +7512,7 @@ class HabitViewModel(
                     }
                 )
                 _chessComSyncStatus.value = "Applying backlog data to habits…"
-                applyChessComData(result.daily, s, fetchedGames)
+                applyChessComData(result.daily, s, fetchedGames, preResetEntries)
                 if (result.failedMonths == 0) {
                     ChessReadinessLogStore.markHistoryBackfilled(context, s.chessComUsername)
                     _chessComSyncStatus.value = "Backlog complete! Data applied to linked habits."
@@ -7551,11 +7607,18 @@ class HabitViewModel(
      * Also propagates to conditional linked habits: if a chess-linked habit is
      * configured as a conditional habit, any date where its minutes increase
      * also increments each conditional linked habit.
+     *
+     * [preResetEntries] carries the linked habits' PRE-reset primary values
+     * when the caller zeroed them first (fetchChessComBacklog). Conditional
+     * feed deltas are computed against that snapshot — NOT the post-reset
+     * zeros — so a backlog re-fetch never re-feeds history into linked
+     * habits (same contract as applyGithubData's beforeEntries).
      */
     private suspend fun applyChessComData(
         data: Map<ChessComType, DailyStatsMap>,
         s: AppSettings,
-        rawGames: List<com.example.tail.data.ChessComGame> = emptyList()
+        rawGames: List<com.example.tail.data.ChessComGame> = emptyList(),
+        preResetEntries: Map<String, Map<String, Int>> = emptyMap()
     ) {
         // Auto-label the three value slots (Minutes / Games / Result) — also
         // covers habits linked before this labeling existed.
@@ -7601,6 +7664,9 @@ class HabitViewModel(
             // NEW game, not per minute.
             val preGamesToday = gamesEntries[todayStr] ?: 0
 
+            // Pre-reset primary values for THIS habit (backlog path); empty on
+            // the poll path, where the current stored values are the baseline.
+            val beforeEntries = preResetEntries[habitName] ?: emptyMap()
             for ((dateStr, stats) in dailyStats) {
                 val games = stats.games
                 // Any day with at least one game records at least 1 minute
@@ -7613,9 +7679,12 @@ class HabitViewModel(
                 } else 0
 
                 val existingMinutes = habitEntries[dateStr] ?: 0
-                preExistingCounts[dateStr] = existingMinutes
+                // Conditional feed baseline: what was stored BEFORE any reset
+                // (poll path: identical to existingMinutes).
+                val storedBefore = beforeEntries[dateStr] ?: existingMinutes
+                preExistingCounts[dateStr] = storedBefore
                 if (minutes != existingMinutes) {
-                    val delta = minutes - existingMinutes
+                    val delta = minutes - storedBefore
                     if (delta > 0) dateDeltas[dateStr] = delta
                     habitEntries[dateStr] = minutes
                     dbChanged = true

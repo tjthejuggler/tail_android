@@ -279,9 +279,16 @@ class PcEventQueueProcessor(private val context: Context) {
             }
         }
 
-        // Conditional linked habits — same rules as the IPC receiver.
+        // Conditional linked habits — same rules as the IPC receiver and the
+        // manual tap path: the feed amount is the source's POINTS delta when
+        // "feed points" is enabled (divider-applied), else the raw increment
+        // amount, with the "feed max1" cap on Points targets. A flat +1 here
+        // would over-feed linked aggregates (e.g. "Chess") whenever a source
+        // has a divider or multi-unit increments.
         if (appliedAny && event.habit in settings.conditionalHabits) {
             val sourceCountBefore = db[event.habit]?.get(dateStr) ?: 0
+            val feedPoints = event.habit in settings.conditionalFeedPointsHabits
+            val sourceDivider = settings.habitDividers[event.habit] ?: 1
             for (linkedName in settings.conditionalLinkedHabits[event.habit].orEmpty()) {
                 val valueKey = effectiveConditionalLinkValueKey(
                     settings.conditionalLinkValues, settings.secondaryValueHabits,
@@ -289,13 +296,22 @@ class PcEventQueueProcessor(private val context: Context) {
                 )
                 val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
                 if (targetKey == linkedName) {
-                    val feedMaxOneBlocked = event.habit in settings.conditionalFeedMaxOneHabits &&
-                        sourceCountBefore > 0
                     val linkedAtMax = linkedName in settings.maxOneHabits &&
                         (db[linkedName]?.get(dateStr) ?: 0) >= 1
-                    if (feedMaxOneBlocked || linkedAtMax) continue
+                    if (linkedAtMax) continue
                 }
-                increments[targetKey] = (increments[targetKey] ?: 0) + 1
+                // A PC event carries one unit (tap or session) of the source.
+                val baseFeedAmount = conditionalTapFeedAmount(
+                    sourceCountBefore, 1, feedPoints, sourceDivider
+                )
+                val feedAmount = if (
+                    targetKey == linkedName &&
+                    event.habit in settings.conditionalFeedMaxOneHabits
+                ) {
+                    conditionalCappedFeedAmount(sourceCountBefore, baseFeedAmount)
+                } else baseFeedAmount
+                if (feedAmount == 0) continue
+                increments[targetKey] = (increments[targetKey] ?: 0) + feedAmount
             }
         }
 

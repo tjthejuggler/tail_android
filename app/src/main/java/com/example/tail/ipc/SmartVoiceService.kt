@@ -491,13 +491,10 @@ class SmartVoiceService : Service() {
                         }
                     }
 
-                    // "Feed max1" conditional sub-setting: capture the source's count
-                    // BEFORE incrementing so the cap can tell first-of-day increments
-                    // from repeat ones.
-                    val sourceCountBefore = if (
-                        habitName in settings.conditionalHabits &&
-                        habitName in settings.conditionalFeedMaxOneHabits
-                    ) {
+                    // Conditional feeds: capture the source's count BEFORE
+                    // incrementing — needed both for the "feed max1" cap and
+                    // for the "feed points" divider delta.
+                    val sourceCountBefore = if (habitName in settings.conditionalHabits) {
                         habitsRepo.loadDatabase(uri, applicationContext)[habitName]?.get(todayStr) ?: 0
                     } else -1
 
@@ -529,21 +526,34 @@ class SmartVoiceService : Service() {
                         Log.w(TAG, "Failed to record timestamps for '$habitName': ${e.message}")
                     }
 
-                    // Conditional habit propagation (each link feeds its configured value)
+                    // Conditional habit propagation (each link feeds its configured
+                    // value). The feed amount follows the manual tap path exactly:
+                    // "feed points" sources feed their divider-applied POINTS delta,
+                    // others the raw amount, with the "feed max1" cap on Points
+                    // targets — so linked aggregates grow identically no matter
+                    // which path delivered the increment.
                     if (habitName in settings.conditionalHabits) {
                         val linked = settings.conditionalLinkedHabits[habitName] ?: emptySet()
+                        val feedPoints = habitName in settings.conditionalFeedPointsHabits
+                        val sourceDivider = settings.habitDividers[habitName] ?: 1
                         for (linkedName in linked) {
                             val valueKey = com.example.tail.data.effectiveConditionalLinkValueKey(
                                 settings.conditionalLinkValues, settings.secondaryValueHabits,
                                 settings.chessComHabitLinks, habitName, linkedName
                             )
                             val targetKey = com.example.tail.data.conditionalLinkStorageKey(linkedName, valueKey)
+                            val baseFeedAmount = com.example.tail.data.conditionalTapFeedAmount(
+                                sourceCountBefore, incrementAmount, feedPoints, sourceDivider
+                            )
                             // "Feed max1" cap: skip Points feeds when this source
                             // already fed its 1 point today (primary/Points feeds only)
-                            if (targetKey == linkedName && sourceCountBefore > 0) {
-                                Log.i(TAG, "Skipping linked '$linkedName' — '$habitName' already fed max1 point today")
-                                continue
-                            }
+                            val feedAmount = if (
+                                targetKey == linkedName &&
+                                habitName in settings.conditionalFeedMaxOneHabits
+                            ) {
+                                com.example.tail.data.conditionalCappedFeedAmount(sourceCountBefore, baseFeedAmount)
+                            } else baseFeedAmount
+                            if (feedAmount == 0) continue
                             if (targetKey == linkedName && linkedName in settings.maxOneHabits) {
                                 val db = habitsRepo.loadDatabase(uri, applicationContext)
                                 val cnt = db[linkedName]?.get(todayStr) ?: 0
@@ -552,9 +562,9 @@ class SmartVoiceService : Service() {
                                     continue
                                 }
                             }
-                            habitsRepo.incrementHabitForDate(uri, applicationContext, targetKey, 1, java.time.LocalDate.now())
+                            habitsRepo.incrementHabitForDate(uri, applicationContext, targetKey, feedAmount, java.time.LocalDate.now())
                             HabitIncrementBus.emit(linkedName)
-                            Log.i(TAG, "Incremented linked '$linkedName' (conditional on '$habitName', feeds $valueKey)")
+                            Log.i(TAG, "Incremented linked '$linkedName' (conditional on '$habitName', feeds $valueKey +$feedAmount)")
 
                             // Record timestamp for the linked habit too
                             try {

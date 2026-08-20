@@ -408,6 +408,31 @@ fun conditionalCappedFeedAmount(sourceStoredToday: Int, amount: Int): Int = when
 }
 
 /**
+ * Computes the BASE feed amount for a tap-like conditional increment of
+ * [amount] units, given the source habit's stored count for the day BEFORE
+ * the increment ([sourceStoredBefore]). Mirrors the manual increment path
+ * (HabitViewModel.incrementHabit step 2c): a "feed points" source with a
+ * divider > 1 feeds its divider-applied POINTS delta (so a minutes habit
+ * feeds its divided point value); every other source feeds the raw
+ * increment amount. Apply [conditionalCappedFeedAmount] on top for Points
+ * targets when the source has the "feed max1" cap enabled.
+ *
+ * All increment-driven conditional paths (manual taps, IPC broadcasts,
+ * voice capture, PC widget events) MUST use this so a linked aggregate
+ * habit (e.g. "Chess" = sum of its sources' points) grows identically no
+ * matter which path delivered the increment.
+ */
+fun conditionalTapFeedAmount(
+    sourceStoredBefore: Int,
+    amount: Int,
+    feedPoints: Boolean,
+    sourceDivider: Int
+): Int = if (feedPoints && sourceDivider > 1) {
+    applyDivider(sourceStoredBefore + amount, sourceDivider) -
+        applyDivider(sourceStoredBefore, sourceDivider)
+} else amount
+
+/**
  * Computes the conditional feed amount for sync-driven writes (e.g. the Garmin
  * path in applyGarminData), where the source habit's stored count for a day
  * changes by [delta] from a previous stored value of [sourceStoredBefore].
