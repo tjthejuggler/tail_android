@@ -978,6 +978,31 @@ class FloatingBubbleService : Service() {
                     bottomMargin = 6.dp()
                 })
             }
+
+            // Stats — opens the Tail app straight on the Chess Readiness
+            // stats screen (ratings over time, authorization windows, …).
+            val statsItem = TextView(this).apply {
+                text = "📊 Stats"
+                textSize = 15f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+                background = GradientDrawable().apply {
+                    setColor(0xFF1A2A3A.toInt())
+                    cornerRadius = 8f * density
+                    setStroke(1, 0xFF5588AA.toInt())
+                }
+                setOnClickListener {
+                    hideHabitPickerMenu()
+                    openChessReadinessStats()
+                }
+            }
+            menu.addView(statsItem, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = 6.dp()
+            })
         }
 
         habits.forEachIndexed { index, habit ->
@@ -1066,6 +1091,16 @@ class FloatingBubbleService : Service() {
     // closing a dialog hands focus straight back to it.
     private var chessReadinessOverlay: ChessReadinessOverlay? = null
     private var chessStatusOverlay: ChessStatusOverlay? = null
+
+    /** Opens the Tail app directly on the Chess Readiness stats screen. */
+    private fun openChessReadinessStats() {
+        try {
+            val intent = Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_OPEN_ROUTE, MainActivity.ROUTE_CHESS_READINESS_STATS)
+            startActivity(intent)
+        } catch (e: Exception) { /* never crash the bubble */ }
+    }
 
     /** Shows the Phase 1 readiness wizard as a floating overlay dialog. */
     private fun openChessReadiness() {

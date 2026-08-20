@@ -558,7 +558,13 @@ fun computeRatingStats(
 /** One point of a pool's rating-over-time series. */
 data class RatingHistoryPoint(
     val endTimeMs: Long,
-    val rating: Int
+    val rating: Int,
+    /**
+     * Whether the game ending at this point was played inside a valid GREEN
+     * authorization window. Drives the per-segment coloring of the
+     * "rating since readiness" chart (green = authorized, red = violation).
+     */
+    val authorized: Boolean = true
 )
 
 /** A pool's full rating timeline across the user's entire history. */
@@ -588,7 +594,7 @@ fun computeRatingHistory(games: List<ReadinessGameRecord>): List<RatingHistorySe
         .map { (key, poolGames) ->
             val pts = poolGames
                 .sortedBy { it.endTimeMs }
-                .map { RatingHistoryPoint(it.endTimeMs, it.ratingAfter!!) }
+                .map { RatingHistoryPoint(it.endTimeMs, it.ratingAfter!!, it.authorized) }
             RatingHistorySeries(
                 label = ratingPoolLabel(key),
                 key = key,

@@ -120,13 +120,17 @@ fun StreakGraphPopup(
     onDismiss: () -> Unit
 ) {
     // Force landscape orientation — state is saved via rememberSaveable in the
-    // caller so it survives the configuration change this triggers.
+    // caller so it survives the configuration change this triggers. On close,
+    // restore whatever orientation the host screen had before the popup, so
+    // screens that allow free rotation (e.g. Chess Readiness stats) keep it.
     val context = LocalContext.current
     val activity = context as? Activity
     DisposableEffect(Unit) {
+        val previousOrientation =
+            activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            activity?.requestedOrientation = previousOrientation
         }
     }
 

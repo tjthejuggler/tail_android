@@ -1,5 +1,8 @@
 package com.example.tail.ui
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -48,10 +51,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -125,6 +130,29 @@ fun ChessReadinessStatsScreen(
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
+
+    // Landscape support: this screen owns orientation while composed —
+    // unlock free rotation so the charts can use the full screen width,
+    // and re-apply the app-wide portrait lock when leaving (the grid
+    // destination also re-locks on return).
+    val activity = context as? Activity
+    DisposableEffect(Unit) {
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    // In landscape the charts grow to use most of the (shorter) screen
+    // height, so rotating the phone is a quick way to see more detail.
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val chartHeight: Dp = if (isLandscape)
+        (configuration.screenHeightDp * 0.78f).coerceIn(150f, 420f).dp
+    else
+        150.dp
+    val deltaRowHeight = if (isLandscape) 64 else 46
+
     var stats by remember { mutableStateOf<ReadinessStats?>(null) }
     var tests by remember { mutableStateOf<List<ReadinessTestRecord>>(emptyList()) }
     var games by remember { mutableStateOf<List<ReadinessGameRecord>>(emptyList()) }
@@ -427,7 +455,7 @@ fun ChessReadinessStatsScreen(
                                 fontSize = 12.sp
                             )
                         } else {
-                            ComplianceBarChart(complianceDays)
+                            ComplianceBarChart(complianceDays, chartHeight)
                             Spacer(modifier = Modifier.height(6.dp))
                             ComplianceLegend()
                             Spacer(modifier = Modifier.height(8.dp))
@@ -524,7 +552,7 @@ fun ChessReadinessStatsScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(top = 6.dp)
                             )
-                            RatingHistoryChart(s.points, markers)
+                            RatingHistoryChart(s.points, markers, chartHeight)
                             StatRow("Start → Now", "${s.startRating} → ${s.endRating}")
                             StatRow(
                                 "Peak / Low",
@@ -554,9 +582,11 @@ fun ChessReadinessStatsScreen(
                         StatsSection(title = "📜 Rating Since Readiness System ♟") {
                             Text(
                                 "The same rating timeline, zoomed to the period since " +
-                                    "the first recorded readiness test. Gold ◆ points mark " +
-                                    "system rule changes — tap one to read what changed " +
-                                    "and when it took effect.",
+                                    "the first recorded readiness test. Each segment is " +
+                                    "colored by the game that produced it: green = played " +
+                                    "while authorized, red = played without authorization. " +
+                                    "Gold ◆ points mark system rule changes — tap one to " +
+                                    "read what changed and when it took effect.",
                                 color = DimColor,
                                 fontSize = 11.sp
                             )
@@ -572,8 +602,17 @@ fun ChessReadinessStatsScreen(
                                 RatingSinceSystemChart(
                                     points = s.points,
                                     changes = ChessReadinessSystemChanges.ALL,
-                                    systemStartMs = startMs
+                                    systemStartMs = startMs,
+                                    chartHeight = chartHeight
                                 )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                ) {
+                                    LegendSwatch(BarGreen, "Authorized games")
+                                    LegendSwatch(BarRed, "Played without authorization")
+                                }
                                 StatRow("Adoption → Now", "${s.startRating} → ${s.endRating}")
                                 StatRow(
                                     "Peak / Low",
@@ -597,7 +636,7 @@ fun ChessReadinessStatsScreen(
                             fontSize = 11.sp
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        RatingDeltaChart(filteredPools)
+                        RatingDeltaChart(filteredPools, deltaRowHeight)
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -857,14 +896,17 @@ private fun fmtDate(ts: Long): String =
  * violations (played when a fresh test denied it, or without any fresh test).
  */
 @Composable
-private fun ComplianceBarChart(days: List<ComplianceDay>) {
+private fun ComplianceBarChart(
+    days: List<ComplianceDay>,
+    chartHeight: Dp = 150.dp
+) {
     val labelPx = with(LocalDensity.current) { 9.dp.toPx() }
     val labelPaint = android.graphics.Paint().apply {
         color = android.graphics.Color.parseColor("#888888")
         textSize = labelPx
         isAntiAlias = true
     }
-    Canvas(modifier = Modifier.fillMaxWidth().height(150.dp)) {
+    Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
         if (days.isEmpty()) return@Canvas
         val chartLeft = 30.dp.toPx()
         val padRight = 6.dp.toPx()
@@ -937,7 +979,8 @@ private fun ComplianceBarChart(days: List<ComplianceDay>) {
 @Composable
 private fun RatingHistoryChart(
     points: List<RatingHistoryPoint>,
-    markers: List<Pair<Long, String>>
+    markers: List<Pair<Long, String>>,
+    chartHeight: Dp = 150.dp
 ) {
     val labelPx = with(LocalDensity.current) { 9.dp.toPx() }
     val labelPaint = android.graphics.Paint().apply {
@@ -951,7 +994,7 @@ private fun RatingHistoryChart(
         isAntiAlias = true
         isFakeBoldText = true
     }
-    Canvas(modifier = Modifier.fillMaxWidth().height(150.dp)) {
+    Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
         if (points.size < 2) return@Canvas
         val padL = 38.dp.toPx()
         val padR = 10.dp.toPx()
@@ -1031,7 +1074,8 @@ private fun RatingHistoryChart(
 private fun RatingSinceSystemChart(
     points: List<RatingHistoryPoint>,
     changes: List<ReadinessSystemChange>,
-    systemStartMs: Long
+    systemStartMs: Long,
+    chartHeight: Dp = 150.dp
 ) {
     var selected by remember { mutableStateOf<ReadinessSystemChange?>(null) }
     var canvasWidth by remember { mutableStateOf(0f) }
@@ -1063,7 +1107,7 @@ private fun RatingSinceSystemChart(
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(150.dp)
+            .height(chartHeight)
             .onSizeChanged { canvasWidth = it.width.toFloat() }
             .pointerInput(changes, canvasWidth) {
                 detectTapGestures { pos ->
@@ -1105,13 +1149,19 @@ private fun RatingSinceSystemChart(
             v += step
         }
 
-        // Rating line
-        val path = Path()
-        points.forEachIndexed { i, p ->
-            if (i == 0) path.moveTo(x(p.endTimeMs), y(p.rating))
-            else path.lineTo(x(p.endTimeMs), y(p.rating))
+        // Rating line — one segment per game, colored by that game's
+        // authorization: green = played inside a valid GREEN window,
+        // red = played without authorization (denied or no fresh test).
+        for (i in 1 until points.size) {
+            val from = points[i - 1]
+            val to = points[i]
+            drawLine(
+                color = if (to.authorized) BarGreen else BarRed,
+                start = Offset(x(from.endTimeMs), y(from.rating)),
+                end = Offset(x(to.endTimeMs), y(to.rating)),
+                strokeWidth = 2.dp.toPx()
+            )
         }
-        drawPath(path, BarGreen, style = Stroke(width = 2.dp.toPx()))
 
         // Adoption start line (solid gold, labeled)
         val startX = markerX(systemStartMs, w)
@@ -1194,7 +1244,10 @@ private fun formatDateShort(ts: Long): String =
  * left for losses.
  */
 @Composable
-private fun RatingDeltaChart(pools: List<RatingPoolStats>) {
+private fun RatingDeltaChart(
+    pools: List<RatingPoolStats>,
+    rowHeightDp: Int = 46
+) {
     val labelPx = with(LocalDensity.current) { 9.dp.toPx() }
     val poolPaint = android.graphics.Paint().apply {
         color = android.graphics.Color.parseColor("#ADD8E6")
@@ -1206,8 +1259,8 @@ private fun RatingDeltaChart(pools: List<RatingPoolStats>) {
         textSize = labelPx
         isAntiAlias = true
     }
-    Canvas(modifier = Modifier.fillMaxWidth().height((pools.size * 46 + 8).dp)) {
-        val rowH = 46.dp.toPx()
+    Canvas(modifier = Modifier.fillMaxWidth().height((pools.size * rowHeightDp + 8).dp)) {
+        val rowH = rowHeightDp.dp.toPx()
         val pad = 6.dp.toPx()
         val w = size.width
         val axisX = w / 2

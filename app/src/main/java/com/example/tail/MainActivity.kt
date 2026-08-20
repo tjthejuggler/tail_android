@@ -45,11 +45,18 @@ import kotlinx.coroutines.launch
 private const val ROUTE_GRID = "grid"
 private const val ROUTE_SETTINGS = "settings"
 private const val ROUTE_APP_STATS = "app_stats"
-private const val ROUTE_CHESS_READINESS_STATS = "chess_readiness_stats"
 private const val ROUTE_MAP = "map"
 private const val ROUTE_MAP_STATS = "map_stats"
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        /** Intent extra: navigation route to open on launch (deep link from overlays). */
+        const val EXTRA_OPEN_ROUTE = "open_route"
+
+        /** Chess Readiness stats screen — deep-linked from the floating bubble menu. */
+        const val ROUTE_CHESS_READINESS_STATS = "chess_readiness_stats"
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -164,6 +171,31 @@ private fun TailApp(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    // Deep links from system overlays (e.g. the floating bubble's chess menu):
+    // navigate straight to the requested route. Handles both the launch intent
+    // and onNewIntent deliveries while the activity is already alive.
+    val activity = context as? androidx.activity.ComponentActivity
+    if (activity != null) {
+        androidx.compose.runtime.LaunchedEffect(activity) {
+            activity.intent?.getStringExtra(MainActivity.EXTRA_OPEN_ROUTE)?.let { route ->
+                if (navController.currentDestination?.route != route) {
+                    navController.navigate(route)
+                }
+            }
+        }
+        androidx.compose.runtime.DisposableEffect(activity) {
+            val listener = androidx.core.util.Consumer<android.content.Intent> { intent ->
+                intent.getStringExtra(MainActivity.EXTRA_OPEN_ROUTE)?.let { route ->
+                    if (navController.currentDestination?.route != route) {
+                        navController.navigate(route)
+                    }
+                }
+            }
+            activity.addOnNewIntentListener(listener)
+            onDispose { activity.removeOnNewIntentListener(listener) }
+        }
+    }
+
     // ON_START: snap date to today if stale from a previous session (overnight),
     //           AND run the once-per-day automatic backup BEFORE any DB read/write.
     //           Only fires when the app truly returns from background, not on
@@ -240,7 +272,10 @@ private fun TailApp(
                     autoBackupManager = autoBackupManager,
                     gdriveManager = gdriveManager,
                     onNavigateBack = { navController.popBackStack() },
-                    onNavigateToAppStats = { navController.navigate(ROUTE_APP_STATS) }
+                    onNavigateToAppStats = { navController.navigate(ROUTE_APP_STATS) },
+                    onNavigateToChessReadinessStats = {
+                        navController.navigate(MainActivity.ROUTE_CHESS_READINESS_STATS)
+                    }
                 )
             }
             composable(ROUTE_APP_STATS) {
@@ -251,13 +286,10 @@ private fun TailApp(
                         // Navigate to the date on the main grid, popping back to grid first
                         viewModel.navigateToDate(date)
                         navController.popBackStack(ROUTE_GRID, inclusive = false)
-                    },
-                    onNavigateToChessReadinessStats = {
-                        navController.navigate(ROUTE_CHESS_READINESS_STATS)
                     }
                 )
             }
-            composable(ROUTE_CHESS_READINESS_STATS) {
+            composable(MainActivity.ROUTE_CHESS_READINESS_STATS) {
                 ChessReadinessStatsScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )

@@ -82,6 +82,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -188,7 +189,8 @@ fun SettingsScreen(
     autoBackupManager: AutoBackupManager,
     gdriveManager: GoogleDriveManager,
     onNavigateBack: () -> Unit,
-    onNavigateToAppStats: () -> Unit = {}
+    onNavigateToAppStats: () -> Unit = {},
+    onNavigateToChessReadinessStats: () -> Unit = {}
 ) {
     val settings by viewModel.settings.collectAsState()
     val debugSnapshot by debugPrefs.snapshot.collectAsState()
@@ -282,7 +284,8 @@ fun SettingsScreen(
                 SettingsCategory(
                     title = "Data Files",
                     summary = "Habit database · screens layout",
-                    icon = Icons.Filled.FolderOpen
+                    icon = Icons.Filled.FolderOpen,
+                    accent = BorderRed
                 ) {
                     HabitDatabaseFileSection(
                         fileUri = settings.fileUri,
@@ -301,10 +304,17 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Integrations",
-                    summary = "Chess.com · GitHub · Garmin · Tail Bridge",
-                    icon = Icons.Filled.Extension
+                    summary = "Chess.com · chess readiness · GitHub · Garmin · Tail Bridge",
+                    icon = Icons.Filled.Extension,
+                    accent = BorderOrange
                 ) {
                     ChessComSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    ChessReadinessSettingsSection(
+                        viewModel = viewModel,
+                        settings = settings,
+                        onNavigateToStats = onNavigateToChessReadinessStats
+                    )
                     SettingsSubSectionDivider()
                     GithubSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
@@ -319,7 +329,8 @@ fun SettingsScreen(
                 SettingsCategory(
                     title = "Voice & Input",
                     summary = "Voice trigger · voice note dictation",
-                    icon = Icons.Filled.Mic
+                    icon = Icons.Filled.Mic,
+                    accent = BorderGreen
                 ) {
                     VoiceTriggerSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
@@ -331,14 +342,13 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Overlays & Tools",
-                    summary = "Stats overlay · floating bubble · chess readiness · debug mode",
-                    icon = Icons.Filled.Layers
+                    summary = "Stats overlay · floating bubble · debug mode",
+                    icon = Icons.Filled.Layers,
+                    accent = BorderBlue
                 ) {
                     StatsOverlaySettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     FloatingBubbleSettingsSection(context = context)
-                    SettingsSubSectionDivider()
-                    ChessReadinessSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     DebugModeCard(
                         debugModeEnabled = debugSnapshot.debugModeEnabled,
@@ -355,7 +365,8 @@ fun SettingsScreen(
                 SettingsCategory(
                     title = "Wallpaper",
                     summary = "Points-driven wallpaper from an image folder",
-                    icon = Icons.Filled.Wallpaper
+                    icon = Icons.Filled.Wallpaper,
+                    accent = BorderPink
                 ) {
                     WallpaperSettingsSection(
                         context = context,
@@ -371,7 +382,8 @@ fun SettingsScreen(
                 SettingsCategory(
                     title = "Habit Features",
                     summary = "AI icons · meal engine · vision memory · advice banner",
-                    icon = Icons.Filled.AutoAwesome
+                    icon = Icons.Filled.AutoAwesome,
+                    accent = BorderYellow
                 ) {
                     AiIconSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
@@ -388,7 +400,8 @@ fun SettingsScreen(
                 SettingsCategory(
                     title = "Backup & Recovery",
                     summary = "Backups · Google Drive · automatic snapshots",
-                    icon = Icons.Filled.Backup
+                    icon = Icons.Filled.Backup,
+                    accent = BorderGlass
                 ) {
                     BackupSettingsSection(
                         backupManager = backupManager,
@@ -397,32 +410,6 @@ fun SettingsScreen(
                     )
                     SettingsSubSectionDivider()
                     SnapshotRestoreSection(viewModel = viewModel)
-                }
-            }
-
-            // ── Per-habit settings hint (always visible footer) ───────────────
-            item {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Per-habit settings",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "To change settings for a specific habit (e.g. custom input mode), " +
-                                   "go back to the main screen, tap the ✏ edit button, then tap the habit " +
-                                   "you want to configure.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
         }
@@ -445,6 +432,7 @@ private fun SettingsCategory(
     title: String,
     summary: String,
     icon: ImageVector,
+    accent: Color,
     content: @Composable () -> Unit
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -457,10 +445,23 @@ private fun SettingsCategory(
         label = "chevronRotation"
     )
 
+    // Section tint — each category carries one accent from the app color
+    // system (Red → Orange → Green → Blue → Pink → Yellow → Glass), applied
+    // to the card surface, border and header icon.
+    val dark = isSystemInDarkTheme()
+    val cardColor = lerp(
+        MaterialTheme.colorScheme.surfaceVariant,
+        accent,
+        if (dark) 0.20f else 0.14f
+    )
+    val borderColor = accent.copy(alpha = if (dark) 0.60f else 0.50f)
+    // Glass is near-white — fall back to a theme gray so the icon stays visible.
+    val iconTint = if (accent == BorderGlass) MaterialTheme.colorScheme.outline else accent
+
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = cardColor,
+        border = BorderStroke(1.dp, borderColor),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -483,13 +484,13 @@ private fun SettingsCategory(
                     modifier = Modifier
                         .size(38.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(accent.copy(alpha = if (dark) 0.30f else 0.18f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = icon,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        tint = iconTint,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -2220,7 +2221,8 @@ private fun FloatingBubbleSettingsSection(context: Context) {
 @Composable
 private fun ChessReadinessSettingsSection(
     viewModel: HabitViewModel,
-    settings: com.example.tail.data.AppSettings
+    settings: com.example.tail.data.AppSettings,
+    onNavigateToStats: () -> Unit
 ) {
     val context = LocalContext.current
     val enabled = settings.chessReadinessEnabled
@@ -2259,6 +2261,12 @@ private fun ChessReadinessSettingsSection(
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Shortcut to the detailed readiness stats screen
+        Button(onClick = onNavigateToStats) {
+            Text("📊 Stats", fontSize = 12.sp)
+        }
         Spacer(modifier = Modifier.height(8.dp))
 
         // Enable toggle
