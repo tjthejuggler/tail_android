@@ -6,6 +6,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.example.tail.data.PcEventQueueProcessor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Self-healing watchdog for the widget stack.
@@ -23,6 +28,11 @@ import android.util.Log
  *    but isn't;
  *  - a BOOT_COMPLETED hook so the monitor also returns after a reboot.
  *
+ * It also drains the PC-widget event queue on every heartbeat, so habit
+ * events queued by the PC bubble widget land on the phone within ~one
+ * heartbeat even when the floating bubble service is not running (its
+ * long-poll gives ~1 s pickup while it is).
+ *
  * The trigger service's poll then re-shows the bubble over the watched app
  * (its first poll looks back 15 minutes, so a chess session already in
  * progress is picked up without the user having to leave and re-enter the
@@ -32,6 +42,7 @@ class WidgetWatchdogReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val appContext = context.applicationContext
+        drainPcEventQueue(appContext)
         val shouldRun = monitorShouldRun(appContext)
         val overlayShouldRun = StatsOverlayStore.shouldRun(appContext)
         if (!shouldRun && !overlayShouldRun) {
@@ -39,6 +50,29 @@ class WidgetWatchdogReceiver : BroadcastReceiver() {
         } else {
             reviveServices(appContext, shouldRun, overlayShouldRun)
             schedule(appContext)
+        }
+    }
+
+    /**
+     * One PC-event queue drain per heartbeat. The bubble service's
+     * long-poll picks events up ~1 s after a PC timer stops while it runs;
+     * this bounds the wait to ~one heartbeat (2 min; up to ~9 min in deep
+     * Doze, where allow-while-idle alarms are batched) when it doesn't —
+     * process killed, bubble dismissed, app closed. processOnce() is a
+     * cheap no-op GET when nothing is queued (and returns early when no
+     * bridge is configured), so the battery cost is negligible. goAsync()
+     * keeps the process alive for the IO; finish() releases it.
+     */
+    private fun drainPcEventQueue(appContext: Context) {
+        val pending = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                PcEventQueueProcessor(appContext).processOnce()
+            } catch (e: Exception) {
+                Log.d(TAG, "PC event drain failed: ${e.message}")
+            } finally {
+                pending.finish()
+            }
         }
     }
 

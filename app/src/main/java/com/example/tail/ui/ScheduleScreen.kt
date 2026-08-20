@@ -53,7 +53,6 @@ import kotlinx.coroutines.delay
 import java.time.LocalDate
 import java.time.LocalTime
 import kotlin.math.ceil
-import kotlin.math.max
 
 /**
  * One timed occurrence of a habit on the schedule — a group of increments
@@ -484,15 +483,15 @@ fun ScheduleTimelineScreen(
 
                 // ── Event blocks overlay ──────────────────────────────────
                 // Blocks are positioned at their absolute time over the full
-                // 24h strip and left-packed horizontally: each chip's x
-                // starts right after the right edge of every chip that
-                // overlaps it in time, so vertically-level chips sit
-                // directly next to each other no matter how wide their
-                // neighbours are (no even columns). When the packed chips
-                // together exceed the screen width the shared horizontal
-                // scroll pans the chip area — the hour gutter and grid lines
-                // stay pinned. Drawn after the backdrop so blocks sit on top
-                // of the grid lines they cover.
+                // 24h strip and lane-packed horizontally: each chip takes
+                // the leftmost x that clears every chip it overlaps in time
+                // (the far left is tried first), so a chain of slightly-
+                // overlapping habits reuses lanes freed on the left instead
+                // of staircasing endlessly to the right. When the packed
+                // chips together exceed the screen width the shared
+                // horizontal scroll pans the chip area — the hour gutter and
+                // grid lines stay pinned. Drawn after the backdrop so blocks
+                // sit on top of the grid lines they cover.
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -534,20 +533,37 @@ fun ScheduleTimelineScreen(
                                 )
                             )
                         }
-                        // Greedy left-pack in start-time order (blocks are
-                        // already sorted): each chip's x is the rightmost
-                        // edge of the already-placed chips it overlaps in
-                        // time, plus the spacing — nothing more.
+                        // Lane-packed leftmost-fit in start-time order
+                        // (blocks are already sorted). Placing each chip
+                        // right after the rightmost overlapping chip makes a
+                        // chain of slightly-overlapping habits staircase to
+                        // the right even when the far-left lane is free
+                        // again. Instead, the already-placed chips this one
+                        // overlaps in time are obstacles, and the chip takes
+                        // the leftmost candidate x — 0 first, then just
+                        // right of every obstacle — whose width clears them
+                        // all. The rightmost candidate always fits, so a
+                        // position is guaranteed.
                         val xs = IntArray(placeables.size)
                         for (i in placeables.indices) {
-                            var x = 0
-                            for (j in 0 until i) {
+                            val (block, placeable) = placeables[i]
+                            // x-ranges (padded with trailing spacing) of the
+                            // placed chips this one overlaps in time
+                            val obstacles = (0 until i).mapNotNull { j ->
                                 val (other, otherPlaceable) = placeables[j]
-                                if (other.endMinute > placeables[i].first.startMinute) {
-                                    x = max(x, xs[j] + otherPlaceable.width + spacing)
+                                if (other.endMinute > block.startMinute) {
+                                    xs[j] to xs[j] + otherPlaceable.width + spacing
+                                } else null
+                            }
+                            val candidates =
+                                (listOf(0) + obstacles.map { it.second })
+                                    .distinct().sorted()
+                            xs[i] = candidates.first { cand ->
+                                obstacles.all { (left, right) ->
+                                    cand + placeable.width + spacing <= left ||
+                                        cand >= right
                                 }
                             }
-                            xs[i] = x
                         }
                         // Trailing breathing room so the final chip fully
                         // clears the screen edge at maximum scroll.
@@ -656,10 +672,11 @@ private fun HourBackdrop(
  * text-height; movie blocks cover their watched duration), showing the
  * habit name, the ×count (merged units or multi-increments), the time —
  * or the first–last range for merged clusters — and a 🍽 marker for meal
- * habits. Blocks tall enough to afford it stack the time label under the
- * name. Every chip hugs its content — the full habit name is shown
- * whenever it fits — and only stops growing at [CHIP_WIDTH], where the
- * name ellipsizes.
+ * habits. Blocks tall enough to afford it stack the ×count and time
+ * labels under the name (a long name would otherwise squeeze the ×count
+ * out of the name row). Every chip hugs its content — the full habit
+ * name is shown whenever it fits — and only stops growing at
+ * [CHIP_WIDTH], where the name ellipsizes.
  */
 @Composable
 private fun EventChip(
@@ -669,9 +686,9 @@ private fun EventChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Tall blocks (spanning real time) stack the time label under the
-    // name, which frees horizontal space for a longer name; one-line
-    // blocks keep the compact side-by-side label.
+    // Tall blocks (spanning real time) stack the ×count + time labels
+    // under the name, which frees horizontal space for a longer name;
+    // one-line blocks keep the compact side-by-side label.
     val twoLine = block.spanMinutes >= TWO_LINE_SPAN_MINUTES
     val timeLabel = if (block.eventCount > 1) {
         "${block.firstTime.take(5)}–${block.lastTime.take(5)}"
@@ -698,32 +715,34 @@ private fun EventChip(
                 .background(accent, RoundedCornerShape(1.5.dp))
         )
         if (twoLine) {
-            // ── Tall block: name (+ ×count) on top, time underneath ─────
+            // ── Tall block: name on top, ×count + time underneath ───────
+            // The ×count lives on the bottom row: a long name (e.g.
+            // "Programming sessions") fills the name row to the chip cap,
+            // and a trailing ×count there gets squeezed to zero width and
+            // soft-wraps onto its own line.
             Column(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = 10.dp, end = 6.dp)
             ) {
+                Text(
+                    text = block.habitName,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFEAEAEA),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = block.habitName,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFEAEAEA),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
                     if (block.amount > 1) {
-                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = "×${block.amount}",
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             color = accent
                         )
+                        Spacer(modifier = Modifier.width(4.dp))
                     }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = timeLabel,
                         fontSize = 9.sp,
