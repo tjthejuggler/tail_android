@@ -7,8 +7,10 @@ import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.HabitsLoadResult
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.HabitTimestampRepository
+import com.example.tail.data.SECONDARY_VALUE_SLOT_PREFIXES
 import com.example.tail.data.isAppLink
 import com.example.tail.data.isInternalValueKey
+import com.example.tail.data.minutesKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,7 +60,7 @@ data class AiPlanOp(
         "remove_timestamps" -> "Remove ${times.size} timestamp(s) from \"$habit\" on $date: ${times.joinToString(", ")}"
         "set_timestamps" -> "Replace timestamps of \"$habit\" on $date with ${times.size}: ${times.joinToString(", ")}"
         "copy_timestamps" ->
-            "Copy ALL session timestamps from \"${sourceHabit ?: "?"}\" to \"$habit\" on $date" +
+            "Copy ALL sessions (timestamps + counts/minutes) from \"${sourceHabit ?: "?"}\" to \"$habit\" on $date" +
                 if (replaceExisting) " (replacing existing)" else " (keeping existing)"
         else -> "$type $habit $date $value ${times.joinToString(", ")}"
     }
@@ -466,13 +468,21 @@ class AiAssistantController(
                     val from = args.optString("from_date", "")
                     val to = args.optString("to_date", "")
                     val db = loadDb(fileUri)
-                    val values = JSONObject()
-                    db[habit]?.forEach { (date, value) ->
-                        if ((from.isEmpty() || date >= from) && (to.isEmpty() || date <= to)) {
-                            values.put(date, value)
+                    fun slotValues(key: String): JSONObject {
+                        val out = JSONObject()
+                        db[key]?.forEach { (date, value) ->
+                            if ((from.isEmpty() || date >= from) && (to.isEmpty() || date <= to)) {
+                                out.put(date, value)
+                            }
                         }
+                        return out
                     }
-                    JSONObject().put("habit", habit).put("values", values).toString()
+                    val result = JSONObject().put("habit", habit).put("values", slotValues(habit))
+                    slotValues(minutesKey(habit)).takeIf { it.length() > 0 }?.let { result.put("minutes", it) }
+                    SECONDARY_VALUE_SLOT_PREFIXES.forEachIndexed { i, p ->
+                        slotValues(p + habit).takeIf { it.length() > 0 }?.let { result.put("value${i + 2}", it) }
+                    }
+                    result.toString()
                 }
                 "get_timestamps" -> {
                     val habit = args.optString("habit")
@@ -496,9 +506,14 @@ class AiAssistantController(
         withContext(Dispatchers.IO) { writeBackupFiles(fileUri, plan) }
         refreshBackupInfo()
 
-        // 2. Apply habitsdb operations (if any).
+        // 2. Apply habitsdb operations: explicit value writes PLUS the
+        // habitsdb side of copy_timestamps. Durations/counts live in value
+        // slots here (minutes:<habit>, secondary_value*:<habit>, the primary
+        // key itself) — NOT in the timestamp store — so a session copy must
+        // mirror them too or minutes are silently lost.
         val dbOps = plan.operations.filter { it.type == "set_habit_value" }
-        if (dbOps.isNotEmpty()) {
+        val copyOps = plan.operations.filter { it.type == "copy_timestamps" }
+        if (dbOps.isNotEmpty() || copyOps.isNotEmpty()) {
             val loadResult = habitsRepo.loadDatabaseResult(fileUri, context)
             if (loadResult !is HabitsLoadResult.Success) {
                 throw IllegalStateException("could not re-load habitsdb before writing")
@@ -509,18 +524,36 @@ class AiAssistantController(
                 entries[op.date] = op.value ?: 0
                 mutable[op.habit] = entries.toSortedMap()
             }
+            // copy_timestamps — app-side batch copy. The model never lists
+            // the individual times, so mirroring 50+ sessions stays ONE op.
+            // Every value slot the source habit has for that date is mirrored
+            // onto the target's matching slot, so counts and durations carry
+            // over exactly, not just the times.
+            for (op in copyOps) {
+                val source = op.sourceHabit ?: continue
+                val slotPairs = listOf(
+                    source to op.habit,
+                    minutesKey(source) to minutesKey(op.habit)
+                ) + SECONDARY_VALUE_SLOT_PREFIXES.map { it + source to it + op.habit }
+                for ((srcKey, dstKey) in slotPairs) {
+                    val srcVal = loadResult.db[srcKey]?.get(op.date) ?: continue
+                    val entries = mutable.getOrPut(dstKey) { mutableMapOf() }.toMutableMap()
+                    entries[op.date] = if (op.replaceExisting) srcVal
+                                       else maxOf(entries[op.date] ?: 0, srcVal)
+                    mutable[dstKey] = entries.toSortedMap()
+                }
+            }
             habitsRepo.saveDatabase(fileUri, context, mutable)
         }
 
-        // 3. copy_timestamps — app-side batch copy. The model never lists
-        // the individual times, so mirroring 50+ sessions stays ONE op.
-        for (op in plan.operations.filter { it.type == "copy_timestamps" }) {
+        // 3. copy_timestamps — timestamp-store side of the batch copy.
+        for (op in copyOps) {
             val source = op.sourceHabit ?: continue
             val day = LocalDate.parse(op.date)
             val srcTimes = timestampRepo.getTimestampsForDay(source, day)
             val existing = if (op.replaceExisting) emptyList()
                            else timestampRepo.getTimestampsForDay(op.habit, day)
-            timestampRepo.setTimestampsForDay(op.habit, day, (existing + srcTimes).sorted())
+            timestampRepo.setTimestampsForDay(op.habit, day, (existing + srcTimes).distinct().sorted())
         }
 
         // 4. Apply timestamp operations, grouped per habit+date in one write.
@@ -626,7 +659,9 @@ class AiAssistantController(
         append("local time ${LocalTime.now().format(TIME_FMT)}.\n\n")
         append("DATABASE SCHEMA\n")
         append("1. habitsdb: habit name -> date \"YYYY-MM-DD\" -> integer count. The count is the ")
-        append("primary daily value (reps, minutes, sessions, etc.).\n")
+        append("primary daily value (reps, minutes, sessions, etc.). Habits also carry internal ")
+        append("value slots — minutes:<habit> and secondary_value*:<habit> — holding minutes and ")
+        append("extra per-date values; get_habit_values exposes them when present.\n")
         append("2. Timestamps store: habit name -> date -> list of \"HH:mm:ss\" strings. Each ")
         append("timestamp marks ONE session/increment of that habit at that time of day.\n\n")
         append("RULES\n")
@@ -637,7 +672,7 @@ class AiAssistantController(
         append("(habit names, dates, times, values, before -> after where relevant).\n")
         append("  * operations: the exact list of write operations.\n")
         append("- Operation types:\n")
-        append("  {\"type\":\"copy_timestamps\",\"source_habit\":\"...\",\"habit\":\"...\",\"date\":\"YYYY-MM-DD\",\"replace_existing\":<bool>} — copy ALL of another habit's session timestamps on that date onto this habit (batch; executed by the app, no times listed)\n")
+        append("  {\"type\":\"copy_timestamps\",\"source_habit\":\"...\",\"habit\":\"...\",\"date\":\"YYYY-MM-DD\",\"replace_existing\":<bool>} — copy ALL of another habit's sessions on that date onto this habit: the timestamps AND every stored value slot (primary count, minutes, secondary values) are mirrored, so counts and durations carry over exactly (batch; executed by the app, no times listed)\n")
         append("  {\"type\":\"set_habit_value\",\"habit\":\"...\",\"date\":\"YYYY-MM-DD\",\"value\":<int>} — set the habit's count for a date (absolute value)\n")
         append("  {\"type\":\"add_timestamps\",\"habit\":\"...\",\"date\":\"YYYY-MM-DD\",\"times\":[\"HH:MM:SS\",...]} — add session timestamps\n")
         append("  {\"type\":\"remove_timestamps\",\"habit\":\"...\",\"date\":\"YYYY-MM-DD\",\"times\":[\"HH:MM:SS\",...]} — remove specific timestamps\n")
@@ -675,7 +710,7 @@ class AiAssistantController(
         )
         fn(
             "get_habit_values",
-            "Get the stored daily values of one habit, optionally restricted to a date range.",
+            "Get the stored daily values of one habit (plus its minutes/secondary-value slots when present), optionally restricted to a date range.",
             JSONObject().apply {
                 put("habit", JSONObject().put("type", "string"))
                 put("from_date", JSONObject().put("type", "string").put("description", "YYYY-MM-DD inclusive, optional"))
