@@ -15,6 +15,9 @@ import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import com.example.tail.data.backup.HabitRestorePreview
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -103,6 +106,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -159,7 +163,9 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.flow.collectLatest
 
 // Sentinel used to track which habit's text-input dialog is open
 private data class TextInputDialogState(
@@ -178,6 +184,32 @@ private data class TextInputDialogState(
 // Grid is 8 columns × 10 rows = 80 cells
 private const val GRID_COLUMNS = 8
 private const val TOTAL_CELLS = 80
+
+// ── Idle shimmer tuning ───────────────────────────────────────────────────────
+// After this long without any interaction, a barely-visible brightness wave
+// rolls diagonally across the habit squares, starting at the lower-right
+// corner and sweeping up to the upper-left corner, then pauses a few
+// seconds and repeats until the next interaction.
+private const val IDLE_SHIMMER_DELAY_MS = 5_000L   // idle time before the wave starts
+private const val IDLE_SHIMMER_SWEEP_MS = 1_300    // duration of one full sweep
+private const val IDLE_SHIMMER_PAUSE_MS = 3_500L   // pause between sweeps
+private const val IDLE_SHIMMER_BAND = 0.22f        // wave width (fraction of diagonal span)
+private const val IDLE_SHIMMER_MAX_ALPHA = 0.07f   // peak brightness — deliberately very slight
+
+/** Grid diagonal span in cells: (rows − 1) + (columns − 1). */
+private const val GRID_DIAGONAL_SPAN =
+    (TOTAL_CELLS / GRID_COLUMNS - 1) + (GRID_COLUMNS - 1)
+
+/**
+ * Per-cell shimmer alpha for sweep progress [t] (0..1) at normalized
+ * diagonal position [u] (0 = upper-left corner, 1 = lower-right corner).
+ * The wave front enters at the lower-right and exits at the upper-left.
+ */
+private fun idleShimmerAlpha(t: Float, u: Float): Float {
+    val front = (1f + IDLE_SHIMMER_BAND) - t * (1f + 2f * IDLE_SHIMMER_BAND)
+    val proximity = 1f - kotlin.math.abs(u - front) / IDLE_SHIMMER_BAND
+    return proximity.coerceIn(0f, 1f) * IDLE_SHIMMER_MAX_ALPHA
+}
 
 private val DISPLAY_DATE_FMT = DateTimeFormatter.ofPattern("EEE MMM d")
 
@@ -224,6 +256,28 @@ fun HabitGridScreen(
     val notifications by viewModel.notifications.collectAsState()
     val pendingNotifications = notifications.size
     val context = LocalContext.current
+
+    // ── Idle shimmer ─────────────────────────────────────────────────────────
+    // After IDLE_SHIMMER_DELAY_MS without any pointer activity anywhere on
+    // the screen, a barely-visible brightness wave rolls diagonally across
+    // the habit squares (lower-right → upper-left), pauses a few seconds,
+    // and repeats. Any interaction stops it immediately and restarts the
+    // idle timer. The interaction counter is only read inside snapshotFlow
+    // and the sweep value only inside draw lambdas, so neither the pointer
+    // traffic nor the animation recomposes the grid.
+    val shimmerInteractionGen = remember { mutableIntStateOf(0) }
+    val shimmerSweep = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { shimmerInteractionGen.intValue }.collectLatest {
+            shimmerSweep.snapTo(0f)
+            delay(IDLE_SHIMMER_DELAY_MS)
+            while (true) {
+                shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
+                delay(IDLE_SHIMMER_PAUSE_MS)
+                shimmerSweep.snapTo(0f)
+            }
+        }
+    }
 
     val today = LocalDate.now()
     val isToday = selectedDate == today
@@ -458,7 +512,21 @@ fun HabitGridScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // Observe every pointer event (Initial pass — before children
+            // handle it, without consuming) so ANY touch counts as user
+            // activity for the idle shimmer.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        shimmerInteractionGen.intValue++
+                    }
+                }
+            }
+    ) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -592,7 +660,13 @@ fun HabitGridScreen(
                             BadgedBox(
                                 badge = {
                                     if (pendingNotifications > 0) {
-                                        Badge { Text("$pendingNotifications", fontSize = 9.sp) }
+                                        // White circle, very slightly transparent, black number
+                                        Badge(
+                                            containerColor = Color.White.copy(alpha = 0.88f),
+                                            contentColor = Color.Black
+                                        ) {
+                                            Text("$pendingNotifications", fontSize = 9.sp)
+                                        }
                                     }
                                 }
                             ) {
@@ -832,6 +906,7 @@ fun HabitGridScreen(
                 ) {
                     HabitGrid(
                         habits = habits,
+                        shimmerSweep = { shimmerSweep.value },
                         editMode = editMode,
                         graphMode = graphMode,
                         highlightedHabit = highlightedHabit,
@@ -2441,7 +2516,9 @@ private fun HabitGrid(
     habitLongPressUrls: Map<String, String> = emptyMap(),
     onHabitClick: (Habit, Int) -> Unit,
     onHabitLongClick: (Habit) -> Unit,
-    onPlaceholderClick: (Int) -> Unit
+    onPlaceholderClick: (Int) -> Unit,
+    /** Current idle-shimmer sweep progress (0..1); null disables the shimmer. */
+    shimmerSweep: (() -> Float)? = null
 ) {
     // Build a list of TOTAL_CELLS nullable items (null = placeholder).
     // Habits with an empty name are embedded placeholders (moved to another screen) —
@@ -2460,6 +2537,14 @@ private fun HabitGrid(
             .padding(4.dp)
     ) {
         itemsIndexed(cells) { index, habit ->
+            // This cell's position along the lower-right → upper-left
+            // shimmer diagonal (0 = upper-left corner, 1 = lower-right).
+            val cellShimmer: (() -> Float)? = shimmerSweep?.let { sweep ->
+                val row = index / GRID_COLUMNS
+                val col = index % GRID_COLUMNS
+                val u = (row + col).toFloat() / GRID_DIAGONAL_SPAN
+                { idleShimmerAlpha(sweep(), u) }
+            }
             if (habit != null) {
                 val isEditSelected = editMode && index == selectedEditIndex
                 val isGraphSelected = graphMode && habit.name in graphSelectedHabits
@@ -2475,7 +2560,8 @@ private fun HabitGrid(
                         editMode = editMode,
                         isSelected = isEditSelected,
                         isMovePendingSource = isMovePendingSource,
-                        isMovePendingTarget = isMovePending && !isMovePendingSource && editMode
+                        isMovePendingTarget = isMovePending && !isMovePendingSource && editMode,
+                        shimmerAlpha = cellShimmer
                     )
                 } else {
                     // Effective long-press action — mirrors the grid's long-press handler:
@@ -2514,7 +2600,8 @@ private fun HabitGrid(
                         hasAppAssociation = effectiveAction == com.example.tail.data.LONG_PRESS_APP &&
                             habit.name in habitAppAssociations,
                         hasLongPressUrl = effectiveAction == com.example.tail.data.LONG_PRESS_URL,
-                        specialBadge = specialBadge
+                        specialBadge = specialBadge,
+                        shimmerAlpha = cellShimmer
                     )
                 }
             } else if (editMode) {

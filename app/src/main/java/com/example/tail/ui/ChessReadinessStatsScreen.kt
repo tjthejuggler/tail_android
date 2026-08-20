@@ -84,18 +84,19 @@ import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-// ── Palette (matches AppStatsScreen) ─────────────────────────────────────────
-private val SectionTitleColor = Color(0xFFFFD700)
-private val LabelColor = Color(0xFFADD8E6)
+// ── Palette (soft/vague orange — a continuation of the Chess Readiness
+//    settings section this screen is reached from) ────────────────────────────
+private val SectionTitleColor = Color(0xFFF2A65A)   // soft orange
+private val LabelColor = Color(0xFFE6C79C)          // warm sand
 private val ValueColor = Color.White
-private val DimColor = Color(0xFF888888)
-private val SectionBg = Color(0xFF1A1A2E)
-private val DividerColor = Color(0xFF333344)
+private val DimColor = Color(0xFF9C8B77)            // warm grey
+private val SectionBg = Color(0xFF231A10)           // dark warm brown
+private val DividerColor = Color(0xFF3A2E1E)        // warm divider
 private val GreenValue = Color(0xFF80FF80)
 private val RedValue = Color(0xFFFF8080)
 private val YellowValue = Color(0xFFEAB308)
-private val GoldValue = Color(0xFFFFD700)
-private val LinkColor = Color(0xFF66CCFF)
+private val GoldValue = Color(0xFFFFC24D)           // warm amber
+private val LinkColor = Color(0xFFFFB066)           // light orange
 
 private val EVENT_FMT = DateTimeFormatter.ofPattern("EEE d MMM · HH:mm")
 
@@ -201,7 +202,7 @@ fun ChessReadinessStatsScreen(
     }
 
     Scaffold(
-        containerColor = Color(0xFF0F0F1E),
+        containerColor = Color(0xFF120E08),
         topBar = {
             TopAppBar(
                 title = {
@@ -222,7 +223,7 @@ fun ChessReadinessStatsScreen(
                     }
                 },
                 colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF16162B)
+                    containerColor = Color(0xFF1B140C)
                 )
             )
         }
@@ -774,7 +775,7 @@ fun ChessReadinessStatsScreen(
         StreakGraphPopup(
             title = "♟ Readiness (avg CCRS/day)",
             data = stats!!.dailyAvgCcrs,
-            lineColor = Color(0xFF22C55E),
+            lineColor = Color(0xFFF2994A),
             currentValue = stats!!.dailyAvgCcrs.lastOrNull()?.second,
             onDismiss = { showChart = false }
         )
@@ -806,7 +807,7 @@ private fun VariantSelector(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
-                    .background(if (active) Color(0xFF2E2E52) else Color(0xFF16162B))
+                    .background(if (active) Color(0xFF3A2A14) else Color(0xFF1B140C))
                     .clickable { onSelect(v) }
                     .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
@@ -1223,7 +1224,7 @@ private fun RatingSinceSystemChart(
                     fontSize = 13.sp
                 )
             },
-            containerColor = Color(0xFF1A1A2E)
+            containerColor = SectionBg
         )
     }
 }

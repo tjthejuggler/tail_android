@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -61,6 +62,10 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 
 // ── Color palette ─────────────────────────────────────────────────────────────
+// The screen is rainbow-themed around the app's own colour progression
+// (Red → Orange → Green → Blue → Pink → Yellow): each section's title and
+// background take the next step of the progression, matching the vibe of
+// the settings screen the stats are reached from.
 private val SectionTitleColor = Color(0xFFFFD700)
 private val LabelColor = Color(0xFFADD8E6)
 private val ValueColor = Color.White
@@ -72,6 +77,14 @@ private val DividerColor = Color(0xFF333344)
 private val GreenValue = Color(0xFF80FF80)
 private val RedValue = Color(0xFFFF8080)
 private val GoldValue = Color(0xFFFFD700)
+
+/** Vivid title colour for the n-th section of the rainbow. */
+private fun rainbowTitleColor(accentIndex: Int): Color =
+    screenProgressionAccent(accentIndex)
+
+/** Section background: the navy base whispered toward the progression hue. */
+private fun rainbowSectionBg(accentIndex: Int): Color =
+    lerp(SectionBg, screenProgressionColor(accentIndex), 0.35f)
 
 private val DISPLAY_FMT = DateTimeFormatter.ofPattern("EEE, MMM d yyyy")
 
@@ -152,34 +165,36 @@ fun AppStatsScreen(
             GoldValue,
             stats.totalPointsAllTime.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         )
+        // Rolling-average graphs each take a colour from the app's rainbow
+        // progression so the charts themselves carry the rainbow theme.
         "avg_last_7_days" -> GraphInfo(
             "7-Day Rolling Average Over Time",
             stats.dailyAvgLast7Days.map { Pair(it.first, it.second.toInt()) },
-            ValueColor,
+            screenProgressionAccent(3), // blue
             stats.avgLast7Days.toInt()
         )
         "avg_last_30_days" -> GraphInfo(
             "30-Day Rolling Average Over Time",
             stats.dailyAvgLast30Days.map { Pair(it.first, it.second.toInt()) },
-            ValueColor,
+            screenProgressionAccent(4), // pink
             stats.avgLast30Days.toInt()
         )
         "avg_last_90_days" -> GraphInfo(
             "90-Day Rolling Average Over Time",
             stats.dailyAvgLast90Days.map { Pair(it.first, it.second.toInt()) },
-            ValueColor,
+            screenProgressionAccent(5), // yellow
             stats.avgLast90Days.toInt()
         )
         "avg_last_365_days" -> GraphInfo(
             "365-Day Rolling Average Over Time",
             stats.dailyAvgLast365Days.map { Pair(it.first, it.second.toInt()) },
-            ValueColor,
+            screenProgressionAccent(2), // green
             stats.avgLast365Days.toInt()
         )
         "avg_all_time" -> GraphInfo(
             "All-Time Rolling Average Over Time",
             stats.dailyAvgAllTime.map { Pair(it.first, it.second.toInt()) },
-            ValueColor,
+            screenProgressionAccent(1), // orange
             stats.avgAllTime.toInt()
         )
         else -> null
@@ -227,7 +242,7 @@ fun AppStatsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // ── Overview ──────────────────────────────────────────────────
-                StatsSection(title = "📊 Overview") {
+                StatsSection(title = "📊 Overview", accentIndex = 0) {
                     StatClickableCountRow(
                         label = "Total habits tracked",
                         count = stats.totalHabits,
@@ -297,7 +312,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Highest Points ────────────────────────────────────────────
-                StatsSection(title = "🏆 Highest Points") {
+                StatsSection(title = "🏆 Highest Points", accentIndex = 1) {
                     StatDateValueRow(
                         label = "Best single day",
                         value = stats.highestPointsDay.second.toString(),
@@ -335,42 +350,42 @@ fun AppStatsScreen(
                 }
 
                 // ── Daily Averages ────────────────────────────────────────────
-                StatsSection(title = "📈 Daily Averages") {
+                StatsSection(title = "📈 Daily Averages", accentIndex = 2) {
                     StatRow("Today's points", stats.todayPoints.toString())
                     StatGraphableRow(
                         label = "Average (last 7 days)",
                         value = "%.2f".format(stats.avgLast7Days),
-                        valueColor = ValueColor,
+                        valueColor = screenProgressionAccent(3), // blue
                         onClick = { graphPopupKey = "avg_last_7_days" }
                     )
                     StatGraphableRow(
                         label = "Average (last 30 days)",
                         value = "%.2f".format(stats.avgLast30Days),
-                        valueColor = ValueColor,
+                        valueColor = screenProgressionAccent(4), // pink
                         onClick = { graphPopupKey = "avg_last_30_days" }
                     )
                     StatGraphableRow(
                         label = "Average (last 90 days)",
                         value = "%.2f".format(stats.avgLast90Days),
-                        valueColor = ValueColor,
+                        valueColor = screenProgressionAccent(5), // yellow
                         onClick = { graphPopupKey = "avg_last_90_days" }
                     )
                     StatGraphableRow(
                         label = "Average (last 365 days)",
                         value = "%.2f".format(stats.avgLast365Days),
-                        valueColor = ValueColor,
+                        valueColor = screenProgressionAccent(2), // green
                         onClick = { graphPopupKey = "avg_last_365_days" }
                     )
                     StatGraphableRow(
                         label = "Average (all time)",
                         value = "%.2f".format(stats.avgAllTime),
-                        valueColor = ValueColor,
+                        valueColor = screenProgressionAccent(1), // orange
                         onClick = { graphPopupKey = "avg_all_time" }
                     )
                 }
 
                 // ── Streaks (aggregate) ───────────────────────────────────────
-                StatsSection(title = "🔥 Aggregate Streaks") {
+                StatsSection(title = "🔥 Aggregate Streaks", accentIndex = 3) {
                     StatRow(
                         "Current streak (days with any points)",
                         "${stats.currentAggregateStreak} days",
@@ -399,7 +414,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Top Habits by Total Points ────────────────────────────────
-                StatsSection(title = "⭐ Top 10 Habits by Total Points") {
+                StatsSection(title = "⭐ Top 10 Habits by Total Points", accentIndex = 4) {
                     stats.topHabitsByTotalPoints.forEachIndexed { index, (name, points) ->
                         StatRow(
                             "${index + 1}. $name",
@@ -415,7 +430,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Top Habits by Longest Streak ──────────────────────────────
-                StatsSection(title = "🔗 Top 10 Habits by Longest Streak") {
+                StatsSection(title = "🔗 Top 10 Habits by Longest Streak", accentIndex = 5) {
                     stats.topHabitsByLongestStreak.forEachIndexed { index, (name, streak) ->
                         StatRow(
                             "${index + 1}. $name",
@@ -431,7 +446,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Top Habits by Current Streak ──────────────────────────────
-                StatsSection(title = "🏃 Top 10 Habits by Current Streak") {
+                StatsSection(title = "🏃 Top 10 Habits by Current Streak", accentIndex = 6) {
                     stats.topHabitsByCurrentStreak.forEachIndexed { index, (name, streak) ->
                         StatRow(
                             "${index + 1}. $name",
@@ -447,7 +462,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Worst Anti-Streaks ────────────────────────────────────────
-                StatsSection(title = "💤 Top 10 Longest Current Anti-Streaks") {
+                StatsSection(title = "💤 Top 10 Longest Current Anti-Streaks", accentIndex = 7) {
                     stats.topHabitsByAntiStreak.forEachIndexed { index, (name, antiStreak) ->
                         StatRow(
                             "${index + 1}. $name",
@@ -458,7 +473,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Habits with Highest Single-Day Count ──────────────────────
-                StatsSection(title = "💥 Highest Single-Day Count per Habit") {
+                StatsSection(title = "💥 Highest Single-Day Count per Habit", accentIndex = 8) {
                     stats.topHabitsBySingleDayHigh.forEachIndexed { index, triple ->
                         StatDateValueRow(
                             label = "${index + 1}. ${triple.first}",
@@ -470,7 +485,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Day of Week Analysis ──────────────────────────────────────
-                StatsSection(title = "📅 Average Points by Day of Week") {
+                StatsSection(title = "📅 Average Points by Day of Week", accentIndex = 9) {
                     stats.avgPointsByDayOfWeek.forEach { (dayName, avg) ->
                         val isHighest = avg == stats.avgPointsByDayOfWeek.maxByOrNull { it.second }?.second
                         StatRow(
@@ -493,7 +508,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Monthly Trends ────────────────────────────────────────────
-                StatsSection(title = "📆 Best Months (Total Points)") {
+                StatsSection(title = "📆 Best Months (Total Points)", accentIndex = 10) {
                     stats.topMonths.forEachIndexed { index, (monthLabel, points) ->
                         StatRow(
                             "${index + 1}. $monthLabel",
@@ -509,7 +524,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Milestones ────────────────────────────────────────────────
-                StatsSection(title = "🎯 Milestones") {
+                StatsSection(title = "🎯 Milestones", accentIndex = 11) {
                     StatRow("Days with ≥1 point", stats.daysWithAtLeastOnePoint.toString())
                     StatRow("Days with zero points", stats.daysWithZeroPoints.toString())
                     StatRow(
@@ -557,7 +572,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Habit Diversity ────────────────────────────────────────────
-                StatsSection(title = "🌈 Habit Diversity") {
+                StatsSection(title = "🌈 Habit Diversity", accentIndex = 12) {
                     StatRow("Habits with data today", "${stats.habitsDoneToday} / ${stats.totalHabits}")
                     StatClickableCountRow(
                         label = "Habits ever done (at least once)",
@@ -589,7 +604,7 @@ fun AppStatsScreen(
                 }
 
                 // ── Recent Activity ───────────────────────────────────────────
-                StatsSection(title = "📋 Last 7 Days") {
+                StatsSection(title = "📋 Last 7 Days", accentIndex = 13) {
                     stats.last7DaysBreakdown.forEach { (date, points) ->
                         val localDate = parseDate(date)
                         val isToday = localDate == LocalDate.now()
@@ -724,18 +739,19 @@ private fun HabitListPopup(
 @Composable
 private fun StatsSection(
     title: String,
+    accentIndex: Int = 0,
     content: @Composable () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
-            .background(SectionBg, RoundedCornerShape(10.dp))
+            .background(rainbowSectionBg(accentIndex), RoundedCornerShape(10.dp))
             .padding(12.dp)
     ) {
         Text(
             text = title,
-            color = SectionTitleColor,
+            color = rainbowTitleColor(accentIndex),
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold
         )

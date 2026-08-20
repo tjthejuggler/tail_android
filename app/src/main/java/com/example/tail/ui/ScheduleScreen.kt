@@ -185,23 +185,13 @@ fun buildScheduleBlocks(events: List<ScheduleEvent>): List<ScheduleBlock> {
 }
 
 /**
- * Harmonious accent palette for event chips. A habit's colour encodes the
- * habits screen (grid tab) it belongs to, so everything from one screen
- * shares a colour; the palette cycles when there are more screens than
- * colours.
+ * Accent palette for event chips: the app's own colour progression
+ * (Red → Orange → Green → Blue → Pink → Yellow → Glass), so a habit's chip
+ * colour exactly matches the faint background tint of the habits screen
+ * (grid tab) it lives on; the palette cycles when there are more screens
+ * than colours.
  */
-private val SCHEDULE_PALETTE = listOf(
-    Color(0xFF66CCFF), // sky blue
-    Color(0xFFFF69B4), // pink
-    Color(0xFF66DD66), // green
-    Color(0xFFFFAA00), // orange
-    Color(0xFFB388FF), // purple
-    Color(0xFF44DDDD), // teal
-    Color(0xFFFFD700), // gold
-    Color(0xFFFF8A80), // salmon
-    Color(0xFFA5D6A7), // mint
-    Color(0xFFF48FB1)  // rose
-)
+private val SCHEDULE_PALETTE = ScreenAccentColors
 
 /**
  * Stable accent colour for a habit. With a known [screenIndex] (the habits

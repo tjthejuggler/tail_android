@@ -308,12 +308,15 @@ fun SettingsScreen(
                     icon = Icons.Filled.Extension,
                     accent = BorderOrange
                 ) {
-                    ChessComSettingsSection(viewModel = viewModel, settings = settings)
-                    SettingsSubSectionDivider()
-                    ChessReadinessSettingsSection(
+                    ChessComSettingsSection(
                         viewModel = viewModel,
                         settings = settings,
                         onNavigateToStats = onNavigateToChessReadinessStats
+                    )
+                    SettingsSubSectionDivider()
+                    ChessReadinessSettingsSection(
+                        viewModel = viewModel,
+                        settings = settings
                     )
                     SettingsSubSectionDivider()
                     GithubSettingsSection(viewModel = viewModel, settings = settings)
@@ -872,7 +875,8 @@ private fun AiIconSettingsSection(
 @Composable
 private fun ChessComSettingsSection(
     viewModel: HabitViewModel,
-    settings: com.example.tail.data.AppSettings
+    settings: com.example.tail.data.AppSettings,
+    onNavigateToStats: () -> Unit = {}
 ) {
     val chessComSyncStatus by viewModel.chessComSyncStatus.collectAsState()
 
@@ -884,7 +888,23 @@ private fun ChessComSettingsSection(
     }
 
     Column {
-        Text("♟ Chess.com Integration", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        // Header row — title on the left, icon-only shortcut to the chess
+        // readiness stats screen pinned to the far right.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("♟ Chess.com Integration", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(onClick = onNavigateToStats, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    Icons.Filled.BarChart,
+                    contentDescription = "Chess readiness stats",
+                    tint = BorderOrange,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
         Text(
             text = "Link habits to your chess.com activity. Each linked habit stores three " +
                    "raw values per day: games (count), minutes, and wins. Points are derived " +
@@ -2221,8 +2241,7 @@ private fun FloatingBubbleSettingsSection(context: Context) {
 @Composable
 private fun ChessReadinessSettingsSection(
     viewModel: HabitViewModel,
-    settings: com.example.tail.data.AppSettings,
-    onNavigateToStats: () -> Unit
+    settings: com.example.tail.data.AppSettings
 ) {
     val context = LocalContext.current
     val enabled = settings.chessReadinessEnabled
@@ -2261,12 +2280,6 @@ private fun ChessReadinessSettingsSection(
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Shortcut to the detailed readiness stats screen
-        Button(onClick = onNavigateToStats) {
-            Text("📊 Stats", fontSize = 12.sp)
-        }
         Spacer(modifier = Modifier.height(8.dp))
 
         // Enable toggle

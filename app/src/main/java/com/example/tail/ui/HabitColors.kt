@@ -1,6 +1,7 @@
 package com.example.tail.ui
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import com.example.tail.R
 
 // 7 color tiers — progressively brighter/more saturated as count increases
@@ -41,6 +42,37 @@ data class HabitStyle(
 private val vividBorderColors = listOf(
     BorderRed, BorderOrange, BorderGreen, BorderBlue, BorderPink, BorderYellow
 )
+
+/**
+ * The app's colour progression (Red → Orange → Green → Blue → Pink → Yellow →
+ * Glass), exposed for screen-level theming: each habits screen (grid page)
+ * is tinted with the next step, and the schedule view's screen-coded chips
+ * use the vivid variants of the same order.
+ */
+val ScreenProgressionColors = listOf(
+    ColorRed, ColorOrange, ColorGreen, ColorBlue, ColorPink, ColorYellow, ColorGlass
+)
+
+/** Vivid (readable-on-dark) variants of [ScreenProgressionColors], same order. */
+val ScreenAccentColors = listOf(
+    BorderRed, BorderOrange, BorderGreen, BorderBlue, BorderPink, BorderYellow, BorderGlass
+)
+
+/** The progression colour for a habits screen index (cycles past the end). */
+fun screenProgressionColor(screenIndex: Int): Color =
+    ScreenProgressionColors[Math.floorMod(screenIndex, ScreenProgressionColors.size)]
+
+/** The vivid progression accent for a habits screen index (cycles past the end). */
+fun screenProgressionAccent(screenIndex: Int): Color =
+    ScreenAccentColors[Math.floorMod(screenIndex, ScreenAccentColors.size)]
+
+/**
+ * Background colour for a habits screen (grid page): [base] shifted a barely
+ * visible amount toward the screen's progression colour, so page 1 is faintly
+ * red, page 2 faintly orange, page 3 faintly green, and so on.
+ */
+fun screenBackgroundTint(base: Color, screenIndex: Int): Color =
+    lerp(base, screenProgressionColor(screenIndex), 0.26f)
 
 /**
  * Returns the background color for a habit button based on today's effective points count.

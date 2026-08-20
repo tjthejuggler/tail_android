@@ -114,7 +114,13 @@ fun HabitButton(
     /** Tiny corner icon identifying a special (integration-linked) habit. */
     specialBadge: HabitSpecialBadge? = null,
     /** True while this habit should pulse (e.g. jumped to from global search). */
-    isHighlighted: Boolean = false
+    isHighlighted: Boolean = false,
+    /**
+     * Idle-shimmer brightness (0..~0.07) for this cell, or null when the
+     * grid-wide shimmer is inactive. Read only inside the draw phase, so
+     * the rolling wave animates without recomposing the grid.
+     */
+    shimmerAlpha: (() -> Float)? = null
 ) {
     // Inverted-binary habits colour by RAW count (orange = clean day → +1 point, red = done today)
     val habitStyle = if (habit.invertedBinary) {
@@ -268,12 +274,25 @@ fun HabitButton(
         else -> bgColor
     }
 
+    // Idle shimmer — a barely-visible brightness wave rolling diagonally
+    // across the grid while the user is idle. Drawn over the background but
+    // under the tier borders and content.
+    val shimmerMod = if (shimmerAlpha != null) {
+        Modifier.drawWithContent {
+            drawContent()
+            val a = shimmerAlpha()
+            if (a > 0.005f) drawRect(Color.White.copy(alpha = a))
+        }
+    } else Modifier
+
+
     Box(
         modifier = modifier
             .aspectRatio(1f)
             .graphicsLayer { this.scaleX = scale; this.scaleY = scale }
             .clip(shape)
             .background(effectiveBgColor)
+            .then(shimmerMod)
             .then(tierBorderMod)
             .then(modeBorderMod)
             .combinedClickable(
@@ -492,7 +511,9 @@ fun AppLinkButton(
     editMode: Boolean = false,
     isSelected: Boolean = false,
     isMovePendingSource: Boolean = false,
-    isMovePendingTarget: Boolean = false
+    isMovePendingTarget: Boolean = false,
+    /** Idle-shimmer brightness (0..~0.07) for this cell; null when inactive. */
+    shimmerAlpha: (() -> Float)? = null
 ) {
     val context = LocalContext.current
     val packageName = appLinkPackageName(appLinkKey) ?: return
@@ -531,12 +552,23 @@ fun AppLinkButton(
                   else if (isMovePendingTarget) Color(0xFF0A0E12).copy(alpha = 0.7f)
                   else Color(0xFF0A0E12)
 
+    // Idle shimmer — same barely-visible brightness wave as HabitButton.
+    val shimmerMod = if (shimmerAlpha != null) {
+        Modifier.drawWithContent {
+            drawContent()
+            val a = shimmerAlpha()
+            if (a > 0.005f) drawRect(Color.White.copy(alpha = a))
+        }
+    } else Modifier
+
+
     Box(
         modifier = modifier
             .aspectRatio(1f)
             .graphicsLayer { this.scaleX = scale; this.scaleY = scale }
             .clip(shape)
             .background(bgColor)
+            .then(shimmerMod)
             .then(modeBorderMod)
             .combinedClickable(
                 onClick = onClick,
