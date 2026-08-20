@@ -12,6 +12,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -606,6 +609,7 @@ private fun ManualEntrySection(onAdd: (title: String, calories: Int) -> Unit) {
  * A single meal entry card. ALWAYS clickable — opens the full editor where
  * time, macros, ratings, tags, transcript and photos can be changed.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MealLogCard(log: MealLog, filesDir: File, onClick: () -> Unit) {
     Card(
@@ -686,21 +690,28 @@ private fun MealLogCard(log: MealLog, filesDir: File, onClick: () -> Unit) {
                         RatingDots("F", r.fat, Color(0xFFF57F17))
                     }
                 }
-                // Ingredient tags
+                // Ingredient tags — FlowRow wraps chips to the next line.
+                // A plain Row squeezes trailing chips to zero width, which
+                // rendered them one letter per line with no chip background.
                 if (log.ingredientsDetected.isNotEmpty()) {
-                    Row(
+                    FlowRow(
                         modifier = Modifier.padding(top = 2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         log.ingredientsDetected.take(4).forEach { tag ->
                             Text(
                                 "#$tag",
                                 fontSize = 10.sp,
                                 color = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.background(
-                                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
-                                    RoundedCornerShape(4.dp)
-                                ).padding(horizontal = 4.dp, vertical = 1.dp)
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .background(
+                                        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+                                        RoundedCornerShape(4.dp)
+                                    )
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
                             )
                         }
                         if (log.ingredientsDetected.size > 4) {

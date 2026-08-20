@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -43,6 +45,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.meal.MacroRatings
@@ -593,6 +596,7 @@ fun MacroRatingSelector(
  * field + button adds new ones. Tags (not a plain list) so meals can later
  * be searched, filtered, and graphed by ingredient.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TagChipsEditor(tags: List<String>, onChange: (List<String>) -> Unit) {
     var newTag by remember { mutableStateOf("") }
@@ -600,12 +604,16 @@ fun TagChipsEditor(tags: List<String>, onChange: (List<String>) -> Unit) {
     Text("Ingredient tags", fontSize = 12.sp, fontWeight = FontWeight.Medium)
     if (tags.isNotEmpty()) {
         Spacer(modifier = Modifier.height(4.dp))
-        Row(
+        // FlowRow wraps chips onto further lines. A plain Row squeezes
+        // trailing chips to zero width, which rendered them one letter per
+        // line with no chip background.
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            // Wrap manually in rows of chips (simple two-row cap keeps the
-            // editor compact; the full list stays visible in the editor list)
+            // Simple cap keeps the editor compact; the full list stays
+            // visible in the detail screen's tag filters.
             tags.take(8).forEach { tag ->
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -615,7 +623,13 @@ fun TagChipsEditor(tags: List<String>, onChange: (List<String>) -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(start = 8.dp, end = 2.dp, top = 2.dp, bottom = 2.dp)
                     ) {
-                        Text(tag, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                        Text(
+                            tag,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         Icon(
                             Icons.Default.Close,
                             contentDescription = "Remove $tag",
