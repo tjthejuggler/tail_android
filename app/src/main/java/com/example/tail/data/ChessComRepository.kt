@@ -3,16 +3,17 @@ package com.example.tail.data
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.io.File
 import java.time.Instant
 import java.time.LocalDate
-import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 private const val TAG = "ChessComRepo"
+
+/** Pause between sequential archive requests so full sweeps stay within chess.com rate limits. */
+private const val ARCHIVE_FETCH_PACE_MS = 250L
 
 /**
  * The 3 chess.com activity types that can be linked to habits.
@@ -178,25 +179,23 @@ internal fun newGameEndTimes(
     }
 }
 
-/**
- * Processes chess.com API data into per-day stats (minutes, games, wins) for each
- * game type, and caches monthly archive data to avoid re-fetching historical months.
- *
- * Cache is stored as JSON files in the app's internal storage under `chess_com_cache/`.
- * Each file is named `{username}_{YYYY}_{MM}.json` and contains the processed
- * per-day stats for that month in the format:
- * `{ "BLITZ": { "2026-08-15": { "minutes": 24.0, "games": 8, "wins": 5 } } }`
- */
+/** Result of a full-archive sweep over the user's entire chess.com history. */
+data class ArchiveFetchResult(
+    /** Per-day stats for each game type, merged across ALL months. */
+    val daily: Map<ChessComType, DailyStatsMap>,
+    /** Months that failed to fetch even after retries (0 = complete sweep). */
+    val failedMonths: Int,
+    /** Total monthly archives discovered on the account. */
+    val totalMonths: Int
+)
+
 class ChessComRepository(private val context: Context) {
 
     private val service = ChessComService()
-    private val cacheDir: File
-        get() = File(context.filesDir, "chess_com_cache").also { it.mkdirs() }
 
     /**
      * Fetches and processes games for the current month only (for regular polling).
      * Returns per-day stats for each game type for the current month.
-     * Uses cache for completed months, fetches fresh data for current month.
      *
      * @param onGames Invoked with the RAW game list before aggregation, so
      *        callers can feed the Chess Readiness activity log without an
@@ -237,41 +236,49 @@ class ChessComRepository(private val context: Context) {
     }
 
     /**
-     * Fetches the entire game history for a user (all monthly archives).
-     * Caches each completed month so subsequent calls skip already-fetched months.
-     * Returns per-day stats for ALL game types across ALL months.
+     * Fetches the RAW game list of EVERY monthly archive on the account —
+     * all the way back to when the chess.com account was created — and
+     * hands every month's games to [onGames], so the Chess Readiness
+     * activity log sees the ENTIRE history (the old cache-backed path
+     * skipped cached months, leaving pre-feature months unlogged).
+     *
+     * Requests are paced and retried (see [ChessComService]) so long sweeps
+     * survive chess.com rate limiting. A month that still fails is skipped
+     * and counted in [ArchiveFetchResult.failedMonths] — callers decide
+     * whether a partial sweep is acceptable.
      *
      * @param onProgress Called with (completedMonths, totalMonths) for UI progress.
-     * @param onGames Invoked with each freshly-fetched month's RAW game list
-     *        (cached months are skipped) for the Chess Readiness activity log.
+     * @param onGames Invoked with EVERY month's RAW game list for the
+     *        Chess Readiness activity log (deduping happens inside the store).
      */
-    suspend fun fetchEntireBacklog(
+    suspend fun fetchAllArchiveGames(
         username: String,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
         onGames: (List<ChessComGame>) -> Unit = {}
-    ): Map<ChessComType, DailyStatsMap> = withContext(Dispatchers.IO) {
+    ): ArchiveFetchResult = withContext(Dispatchers.IO) {
         val archiveUrls = service.getArchiveUrls(username)
         val totalMonths = archiveUrls.size
         val allDaily = mutableMapOf<ChessComType, MutableMap<String, ChessComDailyStats>>()
+        var failed = 0
 
         archiveUrls.forEachIndexed { index, archiveUrl ->
             try {
-                // Parse year/month from URL: .../games/YYYY/MM
-                val parts = archiveUrl.trimEnd('/').split("/")
-                val year = parts[parts.size - 2].toInt()
-                val month = parts[parts.size - 1].toInt()
-
-                val monthData = getCachedOrFetch(username, year, month, archiveUrl, onGames)
-                mergeInto(allDaily, monthData)
-
-                onProgress(index + 1, totalMonths)
+                val games = service.getGamesForMonth(archiveUrl)
+                onGames(games)
+                mergeInto(allDaily, computeDailyChessStats(games, username))
             } catch (e: Exception) {
+                failed++
                 Log.w(TAG, "Failed to fetch archive $archiveUrl: ${e.message}")
-                onProgress(index + 1, totalMonths)
             }
+            onProgress(index + 1, totalMonths)
+            if (index < archiveUrls.lastIndex) delay(ARCHIVE_FETCH_PACE_MS)
         }
 
-        allDaily.mapValues { it.value.toMap() }
+        ArchiveFetchResult(
+            daily = allDaily.mapValues { it.value.toMap() },
+            failedMonths = failed,
+            totalMonths = totalMonths
+        )
     }
 
     /**
@@ -286,109 +293,6 @@ class ChessComRepository(private val context: Context) {
     /** Validates that a chess.com username exists. */
     suspend fun validateUsername(username: String): Boolean {
         return service.validateUsername(username)
-    }
-
-    /**
-     * Returns cached data for a month if available, otherwise fetches from API and caches.
-     * Current month is never cached (always fetched fresh).
-     */
-    private suspend fun getCachedOrFetch(
-        username: String,
-        year: Int,
-        month: Int,
-        archiveUrl: String,
-        onGames: (List<ChessComGame>) -> Unit = {}
-    ): Map<ChessComType, DailyStatsMap> {
-        val now = YearMonth.now()
-        val isCurrentMonth = year == now.year && month == now.monthValue
-
-        // Try cache first (but not for current month — it's still in progress)
-        if (!isCurrentMonth) {
-            val cached = loadFromCache(username, year, month)
-            if (cached != null) return cached
-        }
-
-        // Fetch from API
-        val games = service.getGamesForMonth(archiveUrl)
-        onGames(games)
-        val daily = computeDailyChessStats(games, username)
-
-        // Cache completed months
-        if (!isCurrentMonth) {
-            saveToCache(username, year, month, daily)
-        }
-
-        return daily
-    }
-
-    // ── Cache I/O ────────────────────────────────────────────────────────────
-
-    private fun cacheFile(username: String, year: Int, month: Int): File {
-        val monthStr = month.toString().padStart(2, '0')
-        return File(cacheDir, "${username.lowercase()}_${year}_$monthStr.json")
-    }
-
-    private fun saveToCache(
-        username: String,
-        year: Int,
-        month: Int,
-        data: Map<ChessComType, DailyStatsMap>
-    ) {
-        try {
-            val json = JSONObject()
-            for ((type, dayMap) in data) {
-                val typeJson = JSONObject()
-                for ((date, stats) in dayMap) {
-                    val statsJson = JSONObject()
-                    statsJson.put("minutes", stats.minutes)
-                    statsJson.put("games", stats.games)
-                    statsJson.put("wins", stats.wins)
-                    typeJson.put(date, statsJson)
-                }
-                json.put(type.name, typeJson)
-            }
-            cacheFile(username, year, month).writeText(json.toString())
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to write cache: ${e.message}")
-        }
-    }
-
-    private fun loadFromCache(
-        username: String,
-        year: Int,
-        month: Int
-    ): Map<ChessComType, DailyStatsMap>? {
-        val file = cacheFile(username, year, month)
-        if (!file.exists()) return null
-        return try {
-            val json = JSONObject(file.readText())
-            val result = mutableMapOf<ChessComType, DailyStatsMap>()
-            for (typeName in json.keys()) {
-                val type = ChessComType.fromKey(typeName) ?: continue
-                val typeJson = json.getJSONObject(typeName)
-                val dayMap = mutableMapOf<String, ChessComDailyStats>()
-                for (date in typeJson.keys()) {
-                    val statsJson = typeJson.getJSONObject(date)
-                    dayMap[date] = ChessComDailyStats(
-                        minutes = statsJson.optDouble("minutes", 0.0),
-                        games = statsJson.optInt("games", 0),
-                        wins = statsJson.optInt("wins", 0)
-                    )
-                }
-                result[type] = dayMap
-            }
-            result
-        } catch (e: Exception) {
-            // Legacy cache format (plain per-day minutes) or corrupt file —
-            // treat as a cache miss so the month is re-fetched fresh.
-            Log.w(TAG, "Failed to read cache (will re-fetch): ${e.message}")
-            null
-        }
-    }
-
-    /** Clears all cached chess.com data. */
-    fun clearCache() {
-        cacheDir.listFiles()?.forEach { it.delete() }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

@@ -319,13 +319,39 @@ class ChessReadinessStatsCalculatorTest {
         assertEquals(-7, std.violations.totalDelta)
         assertEquals(0, std.violations.wins)
 
-        val fischer = pools.first { it.key == "chess960|BLITZ" }
-        assertEquals("Chess960 · Blitz", fischer.label)
+        val fischer = pools.first { it.key == "chess960" }
+        assertEquals("Chess960", fischer.label)
         assertEquals(2, fischer.ratedGames)
         assertEquals(1985, fischer.currentRating)
         assertEquals(0, fischer.authorized.games) // first pool game = baseline only
         assertEquals(1, fischer.violations.games)
         assertEquals(-15, fischer.violations.totalDelta)
+    }
+
+    @Test
+    fun `chess960 games across speeds share one pool with a continuous chain`() {
+        val t0 = test(ms("2026-08-10", 9), 90, green) // system adoption
+        // chess.com gives Chess960 a SINGLE rating — a blitz and a rapid
+        // game feed the same pool and the delta chain crosses speeds.
+        val blitz1 = gameToRecord(game(ms("2026-08-10", 9, 20) / 1000, whiteRating = 2000, rules = "chess960"), "me", listOf(t0))!!
+        val rapid1 = gameToRecord(game(ms("2026-08-10", 9, 30) / 1000, whiteRating = 1985, rules = "chess960", timeControl = "600"), "me", listOf(t0))!!
+        val blitz2 = gameToRecord(game(ms("2026-08-10", 9, 40) / 1000, whiteRating = 1992, rules = "chess960"), "me", listOf(t0))!!
+
+        val pools = computeRatingStats(listOf(blitz1, rapid1, blitz2), listOf(t0), t0.timestamp)
+        assertEquals(1, pools.size)
+        val p = pools[0]
+        assertEquals("chess960", p.key)
+        assertEquals("Chess960", p.label)
+        assertEquals(3, p.ratedGames)
+        assertEquals(1992, p.currentRating)
+        // blitz1 is the baseline; rapid1 (−15) and blitz2 (+7) chain across speeds
+        assertEquals(2, p.authorized.games)
+        assertEquals(-8, p.authorized.totalDelta)
+        assertEquals(0, p.violations.games)
+
+        val history = computeRatingHistory(listOf(blitz2, rapid1, blitz1)) // unsorted input
+        assertEquals(1, history.size)
+        assertEquals(listOf(2000, 1985, 1992), history[0].points.map { it.rating })
     }
 
     @Test
@@ -390,7 +416,7 @@ class ChessReadinessStatsCalculatorTest {
         assertEquals(1400, std.lowRating)
         // Pre-system games ARE included — the series spans the entire history
         assertTrue(std.points.first().endTimeMs < t0.timestamp)
-        val fischer = history.first { it.key == "chess960|BLITZ" }
+        val fischer = history.first { it.key == "chess960" }
         assertEquals(1, fischer.points.size)
     }
 

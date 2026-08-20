@@ -42,7 +42,7 @@ package com.example.tail.widget
  * [ChessReadinessOverlay].
  *
  * Rate-limiting rules (anti "test-hunting"):
- *  - Max 4 tests per rolling 24-hour window.
+ *  - Max 8 tests per rolling 24-hour window.
  *  - Last test Green/Yellow → strict 60-minute cool-down.
  *  - Last test Red → mandatory 30/60/120-minute biological rest break
  *    (scaled by how poor the attempt was) before a re-test is allowed.
@@ -52,7 +52,7 @@ object ChessReadinessEngine {
     // ── Constants ──────────────────────────────────────────────────────────
 
     /** Max Phase 1 tests allowed per rolling 24-hour window. */
-    const val MAX_DAILY_TESTS = 4
+    const val MAX_DAILY_TESTS = 8
 
     /** Cool-down after a Green/Yellow result (ms). */
     const val COOLDOWN_MS = 60L * 60 * 1000

@@ -40,9 +40,15 @@ object ChessReadinessLogStore {
     private const val KEY_TESTS = "tests"
     private const val KEY_GAMES = "games"
     private const val KEY_BLOCKED = "blocked"
+    private const val KEY_BACKFILL_USER = "backfillUser"
+    private const val KEY_BACKFILL_AT = "backfillAt"
 
-    /** Soft cap on stored events (oldest are trimmed first). */
-    private const val MAX_EVENTS = 20000
+    /**
+     * Soft cap on stored events (oldest are trimmed first). Generous on
+     * purpose: the one-time full-history backfill must be able to hold a
+     * user's ENTIRE chess.com game history, not just recent months.
+     */
+    private const val MAX_EVENTS = 50000
 
     private val lock = Any()
 
@@ -208,6 +214,29 @@ object ChessReadinessLogStore {
     /** Deletes the entire readiness log. */
     fun clear(context: Context) {
         synchronized(lock) { file(context).delete() }
+    }
+
+    /**
+     * True when the user's ENTIRE chess.com history has already been
+     * swept into the games log for [username] (case-insensitive —
+     * chess.com usernames are). The marker lives in the log file itself,
+     * so clearing the log also clears the backfill state.
+     */
+    fun isHistoryBackfilled(context: Context, username: String): Boolean =
+        synchronized(lock) {
+            val root = readRoot(context)
+            root.optLong(KEY_BACKFILL_AT, 0L) > 0L &&
+                root.optString(KEY_BACKFILL_USER).equals(username.trim(), ignoreCase = true)
+        }
+
+    /** Marks the full-history sweep complete for [username]. */
+    fun markHistoryBackfilled(context: Context, username: String) {
+        synchronized(lock) {
+            val root = readRoot(context)
+            root.put(KEY_BACKFILL_USER, username.trim())
+            root.put(KEY_BACKFILL_AT, System.currentTimeMillis())
+            writeRoot(context, root)
+        }
     }
 
     // ── Reading ─────────────────────────────────────────────────────────────

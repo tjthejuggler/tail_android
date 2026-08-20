@@ -474,8 +474,27 @@ private fun prettyType(type: String): String =
     type.lowercase().replaceFirstChar { it.uppercase() }
 
 /**
+ * Rating pool key. Standard chess has a separate chess.com rating per
+ * speed (bullet/blitz/rapid), but every other variant (chess960,
+ * kingofthehill, …) carries a SINGLE chess.com rating regardless of game
+ * speed — so all of a variant's games, across all speeds, merge into one
+ * pool with one continuous rating chain.
+ */
+internal fun ratingPoolKey(variant: String, type: String): String =
+    if (variant.equals("chess", ignoreCase = true)) "$variant|$type" else variant.lowercase()
+
+/** Display label for a [ratingPoolKey]: "Standard · Blitz" or just "Chess960". */
+internal fun ratingPoolLabel(key: String): String {
+    val idx = key.indexOf('|')
+    return if (idx < 0) prettyVariant(key)
+    else "${prettyVariant(key.substring(0, idx))} · ${prettyType(key.substring(idx + 1))}"
+}
+
+/**
  * Computes per-game rating deltas and splits them by compliance category,
- * per rating pool (variant × speed — Chess960 Blitz ≠ Standard Blitz).
+ * per rating pool (see [ratingPoolKey]: standard chess per speed; each
+ * variant — e.g. Chess960 — is ONE pool because chess.com gives variants
+ * a single rating).
  *
  * Delta chain: within a pool, a game's delta is its `ratingAfter` minus the
  * `ratingAfter` of the previous RATED game in that pool (unrated games never
@@ -490,7 +509,7 @@ fun computeRatingStats(
 ): List<RatingPoolStats> {
     val pools = games
         .filter { it.rated && it.ratingAfter != null }
-        .groupBy { "${it.variant}|${it.type}" }
+        .groupBy { ratingPoolKey(it.variant, it.type) }
 
     val result = pools.map { (key, poolGames) ->
         val sorted = poolGames.sortedBy { it.endTimeMs }
@@ -514,9 +533,8 @@ fun computeRatingStats(
             }
         }
 
-        val (variant, type) = key.split("|", limit = 2).let { it[0] to it[1] }
         RatingPoolStats(
-            label = "${prettyVariant(variant)} · ${prettyType(type)}",
+            label = ratingPoolLabel(key),
             key = key,
             ratedGames = sorted.size,
             currentRating = sorted.lastOrNull()?.ratingAfter,
@@ -556,22 +574,23 @@ data class RatingHistorySeries(
 )
 
 /**
- * Full rating history per pool (variant × speed) from every rated game in
- * the log — deliberately independent of readiness adoption, so the chart
- * can show the user's ENTIRE chess.com history with the adoption point
- * (and later, significant system-change points) marked on top.
+ * Full rating history per pool (see [ratingPoolKey]: standard chess per
+ * speed; each variant — e.g. Chess960 — is ONE pool because chess.com
+ * gives variants a single rating) from every rated game in the log —
+ * deliberately independent of readiness adoption, so the chart can show
+ * the user's ENTIRE chess.com history with the adoption point (and later,
+ * significant system-change points) marked on top.
  */
 fun computeRatingHistory(games: List<ReadinessGameRecord>): List<RatingHistorySeries> =
     games
         .filter { it.rated && it.ratingAfter != null }
-        .groupBy { "${it.variant}|${it.type}" }
+        .groupBy { ratingPoolKey(it.variant, it.type) }
         .map { (key, poolGames) ->
             val pts = poolGames
                 .sortedBy { it.endTimeMs }
                 .map { RatingHistoryPoint(it.endTimeMs, it.ratingAfter!!) }
-            val (variant, type) = key.split("|", limit = 2).let { it[0] to it[1] }
             RatingHistorySeries(
-                label = "${prettyVariant(variant)} · ${prettyType(type)}",
+                label = ratingPoolLabel(key),
                 key = key,
                 points = pts,
                 startRating = pts.first().rating,

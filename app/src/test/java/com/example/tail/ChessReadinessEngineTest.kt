@@ -507,8 +507,8 @@ class ChessReadinessEngineTest {
     }
 
     @Test
-    fun `four tests in 24 hours blocks the fifth`() {
-        val history = (1..4).map {
+    fun `eight tests in 24 hours blocks the ninth`() {
+        val history = (1..8).map {
             test(NOW - it * 60L * 60 * 1000, 90, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
         }
         val status = ChessReadinessEngine.checkGate(history, NOW)
@@ -517,8 +517,8 @@ class ChessReadinessEngineTest {
             (status as ChessReadinessEngine.GateStatus.Blocked).error
                 is ChessReadinessEngine.GateError.MaxDailyTests
         )
-        // retryAt = oldest test in the window + 24 h → NOW - 4 h + 24 h
-        assertEquals(NOW + 20L * 60 * 60 * 1000, status.error.retryAt)
+        // retryAt = oldest test in the window + 24 h → NOW - 8 h + 24 h
+        assertEquals(NOW + 16L * 60 * 60 * 1000, status.error.retryAt)
     }
 
     @Test
@@ -527,7 +527,11 @@ class ChessReadinessEngineTest {
             test(NOW - 25L * 60 * 60 * 1000, 90),
             test(NOW - 26L * 60 * 60 * 1000, 90),
             test(NOW - 27L * 60 * 60 * 1000, 90),
-            test(NOW - 28L * 60 * 60 * 1000, 90)
+            test(NOW - 28L * 60 * 60 * 1000, 90),
+            test(NOW - 29L * 60 * 60 * 1000, 90),
+            test(NOW - 30L * 60 * 60 * 1000, 90),
+            test(NOW - 31L * 60 * 60 * 1000, 90),
+            test(NOW - 32L * 60 * 60 * 1000, 90)
         )
         assertTrue(
             ChessReadinessEngine.checkGate(history, NOW)

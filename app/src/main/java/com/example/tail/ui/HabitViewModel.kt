@@ -7293,10 +7293,59 @@ class HabitViewModel(
         // Cancel any existing polling job
         chessComPollingJob?.cancel()
         chessComPollingJob = viewModelScope.launch {
+            // One-time: sweep the user's ENTIRE chess.com history into the
+            // Chess Readiness activity log so the stats page covers the
+            // whole account, not just the months since this feature shipped.
+            backfillChessComHistoryOnce()
             while (true) {
                 syncChessComCurrentMonth()
                 delay(CHESS_COM_POLL_INTERVAL_MS)
             }
+        }
+    }
+
+    /**
+     * One-time automatic backfill of the user's ENTIRE chess.com game
+     * history (every monthly archive, back to account creation) into the
+     * Chess Readiness activity log. The persisted marker in
+     * [ChessReadinessLogStore] makes it a single sweep per username; a
+     * sweep with failed months stays unmarked and is retried on the next
+     * app start. Only the readiness log is filled — linked habit data is
+     * intentionally untouched (the Settings "Fetch Entire Backlog" button
+     * remains the deliberate reset+reapply path for habits).
+     */
+    private suspend fun backfillChessComHistoryOnce() {
+        val s = _settings.value
+        if (!s.chessComEnabled || s.chessComUsername.isEmpty()) return
+        if (ChessReadinessLogStore.isHistoryBackfilled(context, s.chessComUsername)) return
+        try {
+            _chessComSyncStatus.value = "Backfilling full chess.com history…"
+            val result = chessComRepo.fetchAllArchiveGames(
+                s.chessComUsername,
+                onProgress = { done, total ->
+                    _chessComSyncStatus.value = "Backfilling history: $done / $total months"
+                },
+                onGames = { games ->
+                    try {
+                        ChessReadinessLogStore.logGames(context, games, s.chessComUsername)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Readiness backfill logging failed: ${e.message}")
+                    }
+                }
+            )
+            if (result.failedMonths == 0) {
+                ChessReadinessLogStore.markHistoryBackfilled(context, s.chessComUsername)
+                Log.i(TAG, "Chess.com history backfill complete (${result.totalMonths} months)")
+            } else {
+                // Keep the marker unset so the next app start retries the missing months.
+                Log.w(
+                    TAG,
+                    "Chess.com history backfill incomplete: ${result.failedMonths}/" +
+                        "${result.totalMonths} months failed — will retry next launch"
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Chess.com history backfill failed: ${e.message}")
         }
     }
 
@@ -7378,17 +7427,13 @@ class HabitViewModel(
 
         viewModelScope.launch {
             try {
-                // Clear cache so we get completely fresh data
-                _chessComSyncStatus.value = "Clearing cache…"
-                chessComRepo.clearCache()
-
                 // Reset all chess.com-linked habits to 0 for all dates
                 _chessComSyncStatus.value = "Resetting linked habit data…"
                 resetChessComHabitData(s)
 
                 _chessComSyncStatus.value = "Fetching entire backlog…"
                 val fetchedGames = mutableListOf<com.example.tail.data.ChessComGame>()
-                val allData = chessComRepo.fetchEntireBacklog(
+                val result = chessComRepo.fetchAllArchiveGames(
                     s.chessComUsername,
                     onProgress = { done, total ->
                         _chessComSyncStatus.value = "Fetching archives: $done / $total months"
@@ -7396,7 +7441,7 @@ class HabitViewModel(
                     onGames = { games ->
                         fetchedGames.addAll(games)
                         // Backfill the Chess Readiness activity log with every
-                        // freshly-fetched month (deduped inside the store).
+                        // fetched month (deduped inside the store).
                         try {
                             ChessReadinessLogStore.logGames(context, games, s.chessComUsername)
                         } catch (e: Exception) {
@@ -7405,8 +7450,15 @@ class HabitViewModel(
                     }
                 )
                 _chessComSyncStatus.value = "Applying backlog data to habits…"
-                applyChessComData(allData, s, fetchedGames)
-                _chessComSyncStatus.value = "Backlog complete! Data applied to linked habits."
+                applyChessComData(result.daily, s, fetchedGames)
+                if (result.failedMonths == 0) {
+                    ChessReadinessLogStore.markHistoryBackfilled(context, s.chessComUsername)
+                    _chessComSyncStatus.value = "Backlog complete! Data applied to linked habits."
+                } else {
+                    _chessComSyncStatus.value =
+                        "Backlog applied, but ${result.failedMonths} month(s) failed — " +
+                            "they'll be retried on next app start."
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Chess.com backlog failed: ${e.message}")
                 _chessComSyncStatus.value = "Backlog failed: ${e.message?.take(80)}"

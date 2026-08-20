@@ -11,6 +11,8 @@ import java.net.URL
 private const val TAG = "ChessComService"
 private const val BASE_URL = "https://api.chess.com/pub"
 private const val USER_AGENT = "TailHabitTracker/1.0 (Android habit tracking app)"
+private const val HTTP_RETRIES = 2
+private const val HTTP_RETRY_BACKOFF_MS = 1500L
 
 /**
  * Represents a single chess.com game with the data we need for habit tracking.
@@ -298,9 +300,33 @@ class ChessComService {
 
     /**
      * Makes an HTTP GET request and returns the parsed JSON response.
-     * Throws on non-2xx status codes.
+     * Retries rate-limited (429), transient server (5xx) and network
+     * failures with linear backoff — full-archive sweeps issue many
+     * sequential requests and chess.com throttles bursts. Throws the last
+     * error once retries are exhausted (or immediately for other 4xx,
+     * which never resolve on retry).
      */
     private fun httpGet(urlStr: String): JSONObject {
+        var lastError: Exception? = null
+        for (attempt in 0..HTTP_RETRIES) {
+            if (attempt > 0) Thread.sleep(HTTP_RETRY_BACKOFF_MS * attempt)
+            try {
+                return httpGetOnce(urlStr)
+            } catch (e: ChessComApiException) {
+                lastError = e
+                val retryable = e.statusCode == 429 || e.statusCode in 500..599
+                if (!retryable) throw e
+                Log.w(TAG, "HTTP ${e.statusCode} (attempt ${attempt + 1}/${HTTP_RETRIES + 1}) for $urlStr")
+            } catch (e: Exception) {
+                lastError = e
+                Log.w(TAG, "Request failed (attempt ${attempt + 1}/${HTTP_RETRIES + 1}) for $urlStr: ${e.message}")
+            }
+        }
+        throw lastError!!
+    }
+
+    /** Single HTTP GET attempt — no retry logic. */
+    private fun httpGetOnce(urlStr: String): JSONObject {
         val url = URL(urlStr)
         val conn = url.openConnection() as HttpURLConnection
         conn.requestMethod = "GET"
