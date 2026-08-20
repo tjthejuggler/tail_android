@@ -109,6 +109,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.painterResource
@@ -2351,17 +2352,7 @@ private fun ScreenTabRow(
                 return@forEachIndexed
             }
             if (editMode && isActive && onMoveScreenLeft != null && index > 0) {
-                TextButton(
-                    onClick = { onMoveScreenLeft(index) },
-                    colors = ButtonDefaults.textButtonColors(
-                        containerColor = Color(0xFF333300),
-                        contentColor = Color(0xFFFFAA00)
-                    ),
-                    modifier = Modifier.height(28.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                ) {
-                    Text("◀", fontSize = 12.sp)
-                }
+                ScreenTabMoveArrow(arrow = "◀", onClick = { onMoveScreenLeft(index) })
             }
             val label = when {
                 editMode && isActive -> "✎ ${screen.name}"
@@ -2387,20 +2378,33 @@ private fun ScreenTabRow(
                 )
             }
             if (editMode && isActive && onMoveScreenRight != null && index < screens.size - 1) {
-                TextButton(
-                    onClick = { onMoveScreenRight(index) },
-                    colors = ButtonDefaults.textButtonColors(
-                        containerColor = Color(0xFF333300),
-                        contentColor = Color(0xFFFFAA00)
-                    ),
-                    modifier = Modifier.height(28.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                ) {
-                    Text("▶", fontSize = 12.sp)
-                }
+                ScreenTabMoveArrow(arrow = "▶", onClick = { onMoveScreenRight(index) })
             }
         }
     }
+}
+
+/**
+ * ◀/▶ reorder arrow shown next to the selected screen tab in edit mode.
+ * A plain Text with its own tight background — material3 TextButton
+ * enforces a 48dp minimum touch target, which made the highlight much
+ * larger than the small arrow glyph.
+ */
+@Composable
+private fun ScreenTabMoveArrow(
+    arrow: String,
+    onClick: () -> Unit
+) {
+    Text(
+        text = arrow,
+        color = Color(0xFFFFAA00),
+        fontSize = 12.sp,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0xFF333300))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 3.dp, vertical = 7.dp)
+    )
 }
 
 // ── Habit grid ────────────────────────────────────────────────────────────────
@@ -3191,8 +3195,7 @@ private fun AssociatedAppLauncherDialog(
 private fun MealToggleSection(
     habitName: String,
     isMeal: Boolean,
-    onToggleMeal: (String) -> Unit,
-    onOpenMealDetails: (String) -> Unit
+    onToggleMeal: (String) -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -3217,27 +3220,36 @@ private fun MealToggleSection(
             )
         )
     }
+}
 
-    if (isMeal) {
-        Spacer(modifier = Modifier.height(4.dp))
-        Button(
-            onClick = { onOpenMealDetails(habitName) },
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3E2723)),
-            modifier = Modifier.fillMaxWidth().height(36.dp)
-        ) {
-            Icon(
-                Icons.Default.PhotoCamera,
-                contentDescription = null,
-                tint = Color(0xFFFF9800),
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                "Meal Detail",
-                fontSize = 12.sp,
-                color = Color(0xFFFF9800)
-            )
-        }
+/**
+ * "Meal Detail" button for meal habits — opens the meal detail editor
+ * (vision logging setup). Rendered at the top of the SETTINGS section in
+ * [EditModeControlBar] so it is immediately visible instead of buried in
+ * the special-habit-types drawer under the meal toggle.
+ */
+@Composable
+private fun MealDetailButton(
+    habitName: String,
+    onOpenMealDetails: (String) -> Unit
+) {
+    Button(
+        onClick = { onOpenMealDetails(habitName) },
+        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3E2723)),
+        modifier = Modifier.fillMaxWidth().height(36.dp)
+    ) {
+        Icon(
+            Icons.Default.PhotoCamera,
+            contentDescription = null,
+            tint = Color(0xFFFF9800),
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            "Meal Detail",
+            fontSize = 12.sp,
+            color = Color(0xFFFF9800)
+        )
     }
 }
 
@@ -4524,6 +4536,18 @@ private fun EditModeControlBar(
 
                 if (selectedHabitName != null) {
 
+                    // ── Meal Detail (meal habits only) ─────────────────────────
+                    // Opens the meal detail editor; kept at the top of settings
+                    // so meal habits don't need to dig through the special
+                    // habit types drawer to find it.
+                    if (selectedHabitName in mealHabits) {
+                        MealDetailButton(
+                            habitName = selectedHabitName,
+                            onOpenMealDetails = onOpenMealDetails
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+
                     // ── Divider toggle ────────────────────────────────────────
                     val currentDivisor = habitDividers[selectedHabitName] ?: 1
                     val isDivider = currentDivisor > 1
@@ -5523,6 +5547,11 @@ private fun EditModeControlBar(
                         onRequestUsageAccess = onRequestUsageAccess
                     )
 
+                    // ── PC Widget (desktop bubble widget) ─────────────────────
+                    // Rendered next to the Use Widget toggle rather than inside
+                    // the special-habit-types drawer.
+                    pcWidgetContent()
+
                     // ── Daily ask (scheduled notification) ─────────────────
                     // Asks about this habit at the same time every day via a
                     // system notification + in-app notification + one-time
@@ -5546,8 +5575,7 @@ private fun EditModeControlBar(
                             MealToggleSection(
                                 habitName = selHabitName,
                                 isMeal = selHabitName in mealHabits,
-                                onToggleMeal = onToggleMeal,
-                                onOpenMealDetails = onOpenMealDetails
+                                onToggleMeal = onToggleMeal
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             CameraToggleSection(
@@ -5589,8 +5617,7 @@ private fun EditModeControlBar(
                             }
                         },
                         githubContent = githubContent,
-                        movieBridgeContent = movieBridgeContent,
-                        pcWidgetContent = pcWidgetContent
+                        movieBridgeContent = movieBridgeContent
                     )
 
                     // ── Advanced section (invert, restore-from-backup, etc.) ──
@@ -6502,8 +6529,7 @@ private fun SpecialHabitTypesSection(
     mediaContent: @Composable () -> Unit,
     garminContent: @Composable () -> Unit,
     githubContent: @Composable () -> Unit,
-    movieBridgeContent: @Composable () -> Unit,
-    pcWidgetContent: @Composable () -> Unit = {}
+    movieBridgeContent: @Composable () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -6545,7 +6571,6 @@ private fun SpecialHabitTypesSection(
         garminContent()
         githubContent()
         movieBridgeContent()
-        pcWidgetContent()
     }
 }
 
