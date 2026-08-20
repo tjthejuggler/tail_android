@@ -38,9 +38,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,6 +53,7 @@ import kotlinx.coroutines.delay
 import java.time.LocalDate
 import java.time.LocalTime
 import kotlin.math.ceil
+import kotlin.math.max
 
 /**
  * One timed occurrence of a habit on the schedule — a group of increments
@@ -63,7 +67,13 @@ data class ScheduleEvent(
     /** Number of increment units recorded at this moment. */
     val amount: Int,
     val isMeal: Boolean,
-    val canEditText: Boolean
+    val canEditText: Boolean,
+    /**
+     * Watch-duration minutes for movie-bridge entries (the "(N min)"
+     * annotation on the habit's text entry); 0 when the event carries no
+     * length. A block grows to cover this much time on the timeline.
+     */
+    val durationMinutes: Int = 0
 ) {
     val minuteOfDay: Int by lazy {
         runCatching { LocalTime.parse(time) }.getOrDefault(LocalTime.NOON).let { it.hour * 60 + it.minute }
@@ -118,12 +128,14 @@ internal val MIN_SPAN_MINUTES = ceil(EVENT_MIN_HEIGHT.value / HOUR_HEIGHT.value 
  * label under the habit name (two text lines ≈ 28dp; 36 min ≈ 38dp).
  */
 private const val TWO_LINE_SPAN_MINUTES = 36
-/** Character cap for the habit name on tall (two-line) chips. */
-private const val TALL_NAME_CHARS = 14
-/** Standard rectangle width — shared by every chip so lanes form tidy columns. */
+/**
+ * Maximum rectangle width. Chips hug their content — the full habit name
+ * plus its labels — and only stop growing at this cap, where the name
+ * ellipsizes. Nothing is padded out to a shared width.
+ */
 private val CHIP_WIDTH = 150.dp
-/** Names this short (or shorter) hug their content instead of the standard width. */
-private const val EXTRA_SHORT_NAME_CHARS = 4
+/** Horizontal gap between chips packed next to each other in time. */
+private val CHIP_SPACING = 8.dp
 /**
  * Same-habit timestamps at most this many minutes apart are treated as one
  * continuous session and merged into a single block. Chains keep merging
@@ -151,11 +163,15 @@ fun buildScheduleBlocks(events: List<ScheduleEvent>): List<ScheduleBlock> {
             ) j++
             val group = sorted.subList(i, j + 1)
             val start = group.first().minuteOfDay
-            val last = group.last().minuteOfDay
             blocks += ScheduleBlock(
                 habitName = habit,
                 startMinute = start,
-                endMinute = last + MIN_SPAN_MINUTES,
+                // A block ends at the latest of its events' ends: every
+                // event occupies at least the minimum chip span, or its
+                // full watch duration (movie entries) when that is longer.
+                endMinute = group.maxOf {
+                    it.minuteOfDay + maxOf(MIN_SPAN_MINUTES, it.durationMinutes)
+                },
                 amount = group.sumOf { it.amount },
                 eventCount = group.size,
                 firstTime = group.first().time,
@@ -170,8 +186,10 @@ fun buildScheduleBlocks(events: List<ScheduleEvent>): List<ScheduleBlock> {
 }
 
 /**
- * Harmonious accent palette for event chips. A habit's colour is derived
- * stably from its name so it keeps the same colour across recompositions.
+ * Harmonious accent palette for event chips. A habit's colour encodes the
+ * habits screen (grid tab) it belongs to, so everything from one screen
+ * shares a colour; the palette cycles when there are more screens than
+ * colours.
  */
 private val SCHEDULE_PALETTE = listOf(
     Color(0xFF66CCFF), // sky blue
@@ -186,9 +204,13 @@ private val SCHEDULE_PALETTE = listOf(
     Color(0xFFF48FB1)  // rose
 )
 
-/** Stable accent colour for a habit name. */
-fun scheduleAccentFor(habitName: String): Color =
-    SCHEDULE_PALETTE[Math.floorMod(habitName.hashCode(), SCHEDULE_PALETTE.size)]
+/**
+ * Stable accent colour for a habit. With a known [screenIndex] (the habits
+ * screen/grid tab the habit lives on) the colour encodes that screen;
+ * otherwise it falls back to a stable name-derived colour.
+ */
+fun scheduleAccentFor(habitName: String, screenIndex: Int? = null): Color =
+    SCHEDULE_PALETTE[Math.floorMod(screenIndex ?: habitName.hashCode(), SCHEDULE_PALETTE.size)]
 
 /**
  * The Daily Schedule — a retrospective, hour-by-hour timeline of what was
@@ -198,7 +220,10 @@ fun scheduleAccentFor(habitName: String): Color =
  * anchored at its recorded time and sized to the time it spans: a minimum
  * one-liner height for isolated timestamps, growing to cover the full
  * duration of same-habit clusters (merged into one block with a ×count).
- * Habits without time data are simply absent. Tapping a block opens the
+ * Movie-bridge blocks instead cover their watched duration — the "(N min)"
+ * length annotated on the entry. Each block is tinted with the colour of
+ * the habits screen (grid tab) its habit lives on. Habits without time
+ * data are simply absent. Tapping a block opens the
  * timestamp editor popup (time, amount, text and, for meals, the full
  * meal editor).
  */
@@ -209,6 +234,26 @@ fun ScheduleTimelineScreen(
     textInputHabits: Set<String>,
     /** Habits the user has excluded from the day timeline via edit mode. */
     timelineExcludedHabits: Set<String> = emptySet(),
+    /** Movie-bridge habits whose text entries carry "(N min)" watch lengths. */
+    movieHabits: Set<String> = emptySet(),
+    /**
+     * Loads a movie habit's entries for the selected day from its text
+     * log: watch time-of-day ("HH:mm:ss") → watched minutes (0 when the
+     * entry has no "(N min)" length yet). Text-log timestamps are the
+     * source of truth for movies, so past films appear even without
+     * increment timestamps.
+     */
+    loadMovieEntries: suspend (habitName: String) -> Map<String, Int> = { emptyMap() },
+    /** Habits linked to Garmin metrics (activity blocks are sized to the activity). */
+    garminHabits: Set<String> = emptySet(),
+    /**
+     * Loads the watch-recorded start time ("HH:mm:ss", null when unknown)
+     * and duration minutes of the Garmin activity linked to a habit on
+     * the selected day; null when the habit has no activity data.
+     */
+    loadGarminActivity: suspend (habitName: String) -> Pair<String?, Int>? = { null },
+    /** Index of the habits screen (grid tab) each habit belongs to — drives chip colour. */
+    screenIndexOfHabit: Map<String, Int> = emptyMap(),
     selectedDate: LocalDate,
     isToday: Boolean,
     /** Bumped by the host whenever the editor popup closes, to reload. */
@@ -243,6 +288,75 @@ fun ScheduleTimelineScreen(
                 }
             }
             .sortedWith(compareBy({ it.minuteOfDay }, { it.habitName }))
+        // Movie habits: entries come from the TEXT LOG — every entry has
+        // its watch time, and the "(N min)" length sizes the block — so
+        // past films appear even when no increment timestamp exists.
+        if (movieHabits.isNotEmpty()) {
+            val merged = events.toMutableList()
+            for (habit in movieHabits) {
+                if (habit !in known || habit in timelineExcludedHabits) continue
+                val entries = loadMovieEntries(habit)
+                if (entries.isNotEmpty()) {
+                    // The text log is authoritative for movie habits: drop
+                    // increment-only events (e.g. a confirm-time stamp) so
+                    // each film has exactly ONE block, at its watch-start
+                    // time — never two separate times for one movie.
+                    merged.removeAll { event ->
+                        event.habitName == habit &&
+                            entries.keys.none { it.take(5) == event.time.take(5) }
+                    }
+                }
+                for ((time, minutes) in entries) {
+                    val idx = merged.indexOfFirst {
+                        it.habitName == habit && it.time.take(5) == time.take(5)
+                    }
+                    if (idx >= 0) {
+                        if (minutes > merged[idx].durationMinutes) {
+                            merged[idx] = merged[idx].copy(durationMinutes = minutes)
+                        }
+                    } else {
+                        merged += ScheduleEvent(
+                            habitName = habit,
+                            time = time,
+                            amount = 1,
+                            isMeal = habit in mealHabits,
+                            canEditText = habit in textInputHabits,
+                            durationMinutes = minutes
+                        )
+                    }
+                }
+            }
+            events = merged
+        }
+        // Garmin-linked activity habits: place the block at the
+        // watch-recorded start time and size it to the activity's
+        // minutes, so past runs/rides/swims show at their real time
+        // and duration.
+        if (garminHabits.isNotEmpty()) {
+            val merged = events.toMutableList()
+            for (habit in garminHabits) {
+                if (habit !in known || habit in timelineExcludedHabits) continue
+                val (startTime, minutes) = loadGarminActivity(habit) ?: continue
+                if (minutes <= 0) continue
+                val idx = merged.indexOfFirst {
+                    it.habitName == habit &&
+                        (startTime == null || it.time.take(5) == startTime.take(5))
+                }
+                if (idx >= 0) {
+                    merged[idx] = merged[idx].copy(durationMinutes = minutes)
+                } else if (startTime != null) {
+                    merged += ScheduleEvent(
+                        habitName = habit,
+                        time = startTime,
+                        amount = 1,
+                        isMeal = habit in mealHabits,
+                        canEditText = habit in textInputHabits,
+                        durationMinutes = minutes
+                    )
+                }
+            }
+            events = merged
+        }
         loading = false
     }
 
@@ -255,9 +369,9 @@ fun ScheduleTimelineScreen(
         }
     }
 
-    // Shared horizontal scroll for the event-chip lanes: the whole timeline
-    // uses one state so lanes pan together when they are together wider
-    // than the screen (chips hug their habit names, so widths vary).
+    // Shared horizontal scroll for the event chips: the whole timeline uses
+    // one state so the packed chips pan together when they are together
+    // wider than the screen (chips hug their habit names, so widths vary).
     val chipScroll = rememberScrollState()
     val timelineScroll = rememberScrollState()
     val density = LocalDensity.current
@@ -274,29 +388,11 @@ fun ScheduleTimelineScreen(
         timelineScroll.animateScrollTo(targetPx)
     }
 
-    // ── Merged blocks + global lane assignment ────────────────────────────
-    // Events are first merged per habit into duration blocks (see
-    // buildScheduleBlocks). Lanes are then assigned across the WHOLE day
-    // using each block's real end minute: a block taller than its start
-    // hour extends across the following hour strips, so anything that
-    // would overlap it in the same lane is slid into a free lane instead.
+    // ── Merged blocks ─────────────────────────────────────────────────────
+    // Events are merged per habit into duration blocks (see
+    // buildScheduleBlocks); the chip layout below left-packs them
+    // horizontally by their real time overlaps.
     val blocks = remember(events) { buildScheduleBlocks(events) }
-    val laneOf = remember(blocks) {
-        val laneEndMinute = mutableListOf<Int>()
-        val map = HashMap<ScheduleBlock, Int>(blocks.size)
-        for (block in blocks) { // already sorted by startMinute
-            val lane = laneEndMinute.indexOfFirst { it <= block.startMinute }
-            if (lane >= 0) {
-                laneEndMinute[lane] = block.endMinute
-                map[block] = lane
-            } else {
-                laneEndMinute.add(block.endMinute)
-                map[block] = laneEndMinute.lastIndex
-            }
-        }
-        map
-    }
-    val laneCount = (laneOf.values.maxOrNull() ?: -1) + 1
 
     val distinctHabits = remember(events) { events.map { it.habitName }.distinct().size }
     val firstTime = events.firstOrNull()?.time?.take(5)
@@ -388,13 +484,16 @@ fun ScheduleTimelineScreen(
 
                 // ── Event blocks overlay ──────────────────────────────────
                 // Blocks are positioned at their absolute time over the full
-                // 24h strip. Chips share a standard width (only extra-short
-                // names hug their content), so lanes read as tidy columns;
-                // when the lanes together exceed the screen width the shared
-                // horizontal scroll pans the chip area — the hour gutter and
-                // grid lines stay pinned. Drawn after the backdrop so blocks
-                // sit on top of the grid lines they cover.
-                Row(
+                // 24h strip and left-packed horizontally: each chip's x
+                // starts right after the right edge of every chip that
+                // overlaps it in time, so vertically-level chips sit
+                // directly next to each other no matter how wide their
+                // neighbours are (no even columns). When the packed chips
+                // together exceed the screen width the shared horizontal
+                // scroll pans the chip area — the hour gutter and grid lines
+                // stay pinned. Drawn after the backdrop so blocks sit on top
+                // of the grid lines they cover.
+                Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
@@ -404,30 +503,67 @@ fun ScheduleTimelineScreen(
                         // stopped that much short of the last chip's right
                         // edge.
                         .padding(start = GUTTER_WIDTH + 4.dp)
-                        .height(HOUR_HEIGHT * 24)
                         .horizontalScroll(chipScroll)
                 ) {
-                    repeat(laneCount) { laneIdx ->
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 8.dp)
-                        ) {
-                            blocks
-                                .filter { (laneOf[it] ?: 0) == laneIdx }
-                                .forEach { block ->
-                                    EventChip(
-                                        block = block,
-                                        topOffset = HOUR_HEIGHT * (block.startMinute / 60f),
-                                        height = HOUR_HEIGHT * (block.spanMinutes / 60f),
-                                        onClick = { onEventClick(block.habitName) },
-                                        modifier = Modifier.align(Alignment.TopStart)
-                                    )
+                    Layout(
+                        content = {
+                            blocks.forEach { block ->
+                                EventChip(
+                                    block = block,
+                                    accent = scheduleAccentFor(
+                                        block.habitName,
+                                        screenIndexOfHabit[block.habitName]
+                                    ),
+                                    height = HOUR_HEIGHT * (block.spanMinutes / 60f),
+                                    onClick = { onEventClick(block.habitName) },
+                                    modifier = Modifier.layoutId(block)
+                                )
+                            }
+                        }
+                    ) { measurables, _ ->
+                        val chipMaxWidth = CHIP_WIDTH.roundToPx()
+                        val spacing = CHIP_SPACING.roundToPx()
+                        val placeables = measurables.map { measurable ->
+                            val block = measurable.layoutId as ScheduleBlock
+                            block to measurable.measure(
+                                Constraints(
+                                    minWidth = 0,
+                                    maxWidth = chipMaxWidth,
+                                    minHeight = 0,
+                                    maxHeight = Constraints.Infinity
+                                )
+                            )
+                        }
+                        // Greedy left-pack in start-time order (blocks are
+                        // already sorted): each chip's x is the rightmost
+                        // edge of the already-placed chips it overlaps in
+                        // time, plus the spacing — nothing more.
+                        val xs = IntArray(placeables.size)
+                        for (i in placeables.indices) {
+                            var x = 0
+                            for (j in 0 until i) {
+                                val (other, otherPlaceable) = placeables[j]
+                                if (other.endMinute > placeables[i].first.startMinute) {
+                                    x = max(x, xs[j] + otherPlaceable.width + spacing)
                                 }
+                            }
+                            xs[i] = x
+                        }
+                        // Trailing breathing room so the final chip fully
+                        // clears the screen edge at maximum scroll.
+                        val contentWidth =
+                            (placeables.indices.maxOfOrNull {
+                                xs[it] + placeables[it].second.width
+                            } ?: 0) + spacing
+                        layout(contentWidth, (HOUR_HEIGHT * 24).roundToPx()) {
+                            placeables.forEachIndexed { i, (block, placeable) ->
+                                placeable.placeRelative(
+                                    xs[i],
+                                    (HOUR_HEIGHT * (block.startMinute / 60f)).roundToPx()
+                                )
+                            }
                         }
                     }
-                    // Trailing breathing room so the final chip fully clears
-                    // the screen edge at maximum scroll.
-                    Spacer(modifier = Modifier.width(8.dp))
                 }
 
                 // ── Now indicator ─────────────────────────────────────────
@@ -515,51 +651,39 @@ private fun HourBackdrop(
 }
 
 /**
- * A single block on the timeline: tinted with the habit's stable accent
- * colour, sized to the time it spans (minimum one text-height), showing
- * the habit name, the ×count (merged units or multi-increments), the time
- * — or the first–last range for merged clusters — and a 🍽 marker for
- * meal habits. Blocks tall enough to afford it stack the time label under
- * the name (with a longer name cap); every rectangle shares the same
- * standard width so lanes form tidy columns, except extra-short names
- * which hug their content.
+ * A single block on the timeline: tinted with the colour of the habits
+ * screen its habit belongs to, sized to the time it spans (minimum one
+ * text-height; movie blocks cover their watched duration), showing the
+ * habit name, the ×count (merged units or multi-increments), the time —
+ * or the first–last range for merged clusters — and a 🍽 marker for meal
+ * habits. Blocks tall enough to afford it stack the time label under the
+ * name. Every chip hugs its content — the full habit name is shown
+ * whenever it fits — and only stops growing at [CHIP_WIDTH], where the
+ * name ellipsizes.
  */
 @Composable
 private fun EventChip(
     block: ScheduleBlock,
-    topOffset: Dp,
+    accent: Color,
     height: Dp,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val accent = scheduleAccentFor(block.habitName)
     // Tall blocks (spanning real time) stack the time label under the
     // name, which frees horizontal space for a longer name; one-line
     // blocks keep the compact side-by-side label.
     val twoLine = block.spanMinutes >= TWO_LINE_SPAN_MINUTES
-    val nameCap = if (twoLine) TALL_NAME_CHARS else 10
-    // Cap the visible name (cap - 1 + ellipsis) so chips stay compact; the
-    // full name is still shown in the editor popup.
-    val displayName = if (block.habitName.length > nameCap) {
-        block.habitName.take(nameCap - 1) + "…"
-    } else block.habitName
     val timeLabel = if (block.eventCount > 1) {
         "${block.firstTime.take(5)}–${block.lastTime.take(5)}"
     } else {
         block.firstTime.take(5)
     }
-    // All rectangles share one standard width so the lanes line up as
-    // tidy columns; only unusually short names hug their content.
-    val widthModifier = if (block.habitName.length <= EXTRA_SHORT_NAME_CHARS) {
-        Modifier.widthIn(max = CHIP_WIDTH)
-    } else {
-        Modifier.width(CHIP_WIDTH)
-    }
     Box(
         modifier = modifier
-            .offset(y = topOffset)
             .height(height)
-            .then(widthModifier)
+            // Hug the content — full habit name plus labels — and only
+            // stop growing at the shared cap, where the name ellipsizes.
+            .widthIn(max = CHIP_WIDTH)
             .background(accent.copy(alpha = 0.16f), RoundedCornerShape(8.dp))
             .border(1.dp, accent.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
@@ -582,15 +706,12 @@ private fun EventChip(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = displayName,
+                        text = block.habitName,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFFEAEAEA),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        // Hard width cap for wide glyphs — the string
-                        // truncation above is the primary limit.
-                        modifier = Modifier.widthIn(max = 108.dp)
+                        overflow = TextOverflow.Ellipsis
                     )
                     if (block.amount > 1) {
                         Spacer(modifier = Modifier.width(4.dp))
@@ -624,15 +745,15 @@ private fun EventChip(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = displayName,
+                    text = block.habitName,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFFEAEAEA),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    // Hard width cap for wide glyphs — the string truncation
-                    // above is the primary 10-character limit.
-                    modifier = Modifier.widthIn(max = 76.dp)
+                    // Grow into whatever room is left inside the chip cap;
+                    // the chip still hugs its content when the name fits.
+                    modifier = Modifier.weight(1f, fill = false)
                 )
                 if (block.amount > 1) {
                     Spacer(modifier = Modifier.width(4.dp))

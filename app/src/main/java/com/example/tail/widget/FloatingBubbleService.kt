@@ -31,9 +31,11 @@ import android.widget.TextView
 import android.widget.Toast
 import com.example.tail.MainActivity
 import com.example.tail.R
+import com.example.tail.data.BridgeClient
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.bridgeConnectionFrom
 import com.example.tail.data.dateString
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.ui.HabitIncrementBus
@@ -174,25 +176,44 @@ class FloatingBubbleService : Service() {
     private val habitsRepo by lazy { HabitsRepository() }
 
     // ── PC widget event queue poll ────────────────────────────────────────
-    // The PC bubble widget appends habit events to pc_habit_events.json in
-    // the Syncthing-synced noteVault/tail/ folder. While this service runs
-    // we periodically drain that queue into the phone DB (acking what we
-    // applied), so PC sessions are recorded even when the Tail app itself
-    // is not open. No-op when no Tail Bridge connection is configured.
+    // The PC bubble widget appends habit events to the Tail Bridge queue.
+    // While this service runs we drain that queue into the phone DB
+    // (acking what we applied), so PC sessions are recorded even when the
+    // Tail app itself is not open. The drain uses the bridge's long-poll
+    // endpoint (pc_widget/events/wait), so a PC-side timer stop is applied
+    // ~instantly; bridges without that endpoint (404) fall back to the
+    // fixed interval. No-op when no Tail Bridge connection is configured.
     private val pcEventPollIntervalMs = 45_000L
+    private var pcEventLongPollSupported = true
     private val pcEventPollRunnable = Runnable { pollPcEventQueue() }
 
     private fun pollPcEventQueue() {
         serviceScope.launch(Dispatchers.IO) {
+            var nextDelayMs = pcEventPollIntervalMs
             try {
                 val settings = settingsRepo.settingsFlow.first()
                 if (settings.garminProxyUrl.isNotEmpty()) {
                     PcEventQueueProcessor(applicationContext).processOnce()
+                    val bridge = bridgeConnectionFrom(
+                        settings.garminProxyUrl, settings.garminAppToken)
+                    if (bridge != null && pcEventLongPollSupported) {
+                        // Hold the connection open until the bridge has
+                        // something (or the timeout passes) — instant pickup.
+                        val waitSec = pcEventPollIntervalMs / 1000
+                        val result = BridgeClient().fetchWithStatus(
+                            bridge.first, bridge.second,
+                            "pc_widget/events/wait?timeout=$waitSec",
+                            readTimeoutMs = (pcEventPollIntervalMs + 10_000L).toInt())
+                        when (result?.first) {
+                            200 -> nextDelayMs = 1_000L
+                            404 -> pcEventLongPollSupported = false // old bridge
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Log.w("FloatingBubbleService", "PC event poll failed: ${e.message}")
             } finally {
-                handler.postDelayed(pcEventPollRunnable, pcEventPollIntervalMs)
+                handler.postDelayed(pcEventPollRunnable, nextDelayMs)
             }
         }
     }

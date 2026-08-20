@@ -25,6 +25,10 @@ Supported Metrics:
     - ACTIVE_MINUTES: Moderate + vigorous intensity minutes
     - RUN_MINUTES, BIKE_MINUTES, SWIM_MINUTES: Per-sport activity minutes
       (from _summarizedActivities.json durations, categorised by activityType.typeKey)
+    - ACTIVITY_START_TIMES: Earliest per-sport start time-of-day per day
+      (from _summarizedActivities.json startTimeLocal); the app's Garmin JSON
+      import merges it into its activity-times cache so historic activity
+      blocks are placed at their real watch start time
     - FLOORS_CLIMBED: Elevation climbed in meters (from floorsAscendedInMeters)
     - MIN_HR, MAX_HR: Daily heart rate extremes
     - STRESS_LEVEL: From StressDetailSummary files
@@ -93,9 +97,16 @@ class GarminDataExtractor:
             "BIKE_MINUTES": {},
             "SWIM_MINUTES": {},
         }
+        # Earliest device-local start time-of-day ("HH:MM:SS") per sport per
+        # date, emitted as the JSON's ACTIVITY_START_TIMES section.
+        self.activity_start_times: Dict[str, Dict[str, str]] = {
+            "RUN_MINUTES": {},
+            "BIKE_MINUTES": {},
+            "SWIM_MINUTES": {},
+        }
     
-    def extract_local_date(self, timestamp_raw: Any) -> Optional[str]:
-        """Convert Garmin timestamp (ISO or Epoch) to local YYYY-MM-DD format."""
+    def extract_local_datetime(self, timestamp_raw: Any) -> Optional[datetime]:
+        """Convert Garmin timestamp (ISO or Epoch) to a local datetime."""
         if not timestamp_raw:
             return None
         try:
@@ -106,25 +117,27 @@ class GarminDataExtractor:
                 # For activity data, startTimeGMT is in UTC, startTimeLocal is in device local time
                 # Both are Unix timestamps, so we treat them as UTC and convert to TARGET_TZ
                 dt_utc = datetime.fromtimestamp(ts_seconds, tz=ZoneInfo("UTC"))
-                dt_local = dt_utc.astimezone(TARGET_TZ)
-                return dt_local.strftime("%Y-%m-%d")
+                return dt_utc.astimezone(TARGET_TZ)
+            # Handle String formats
+            timestamp_str = str(timestamp_raw).strip()
+            if " " in timestamp_str:
+                timestamp_str = timestamp_str.replace(" ", "T")
+
+            ts = timestamp_str.split('.')[0]
+            dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+            # For ISO strings, assume they're already in local time
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=TARGET_TZ)
             else:
-                # Handle String formats
-                timestamp_str = str(timestamp_raw).strip()
-                if " " in timestamp_str:
-                    timestamp_str = timestamp_str.replace(" ", "T")
-                
-                ts = timestamp_str.split('.')[0]
-                dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
-                # For ISO strings, assume they're already in local time
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=TARGET_TZ)
-                else:
-                    dt = dt.astimezone(TARGET_TZ)
-            
-            return dt.strftime("%Y-%m-%d")
+                dt = dt.astimezone(TARGET_TZ)
+            return dt
         except Exception:
             return None
+
+    def extract_local_date(self, timestamp_raw: Any) -> Optional[str]:
+        """Convert Garmin timestamp (ISO or Epoch) to local YYYY-MM-DD format."""
+        dt = self.extract_local_datetime(timestamp_raw)
+        return dt.strftime("%Y-%m-%d") if dt else None
     
     def process_sleep_data(self, file_name: str, z: zipfile.ZipFile):
         """Process sleep data from DI-Connect-Wellness/*_sleepData.json files."""
@@ -383,18 +396,20 @@ class GarminDataExtractor:
                 # precisely to avoid late-night activities being shifted to the
                 # next day when converted to TARGET_TZ.
                 date = None
+                wall_dt = None  # device wall-clock start (for activity start times)
                 start_time_local = entry.get("startTimeLocal")
                 if start_time_local:
                     ts_seconds = start_time_local / 1000 if start_time_local > 2e9 else start_time_local
-                    dt = datetime.fromtimestamp(ts_seconds, tz=ZoneInfo("UTC"))
-                    date = dt.strftime("%Y-%m-%d")
+                    wall_dt = datetime.fromtimestamp(ts_seconds, tz=ZoneInfo("UTC"))
+                    date = wall_dt.strftime("%Y-%m-%d")
                 else:
                     # Fallback: GMT/begin timestamps converted to TARGET_TZ.
                     start_time = (entry.get("startTimeGMT") or
                                   entry.get("startTimeGmt") or
                                   entry.get("beginTimestamp") or
                                   entry.get("startTime"))
-                    date = self.extract_local_date(start_time)
+                    wall_dt = self.extract_local_datetime(start_time)
+                    date = wall_dt.strftime("%Y-%m-%d") if wall_dt else None
                 if not date:
                     continue
                 
@@ -450,6 +465,13 @@ class GarminDataExtractor:
                         self.activity_seconds[cat][date] = (
                             self.activity_seconds[cat].get(date, 0) + duration_s
                         )
+                        # Earliest start time-of-day per sport+date — the
+                        # app places the day's activity block at this time.
+                        if wall_dt is not None:
+                            tod = wall_dt.strftime("%H:%M:%S")
+                            prev = self.activity_start_times[cat].get(date)
+                            if prev is None or tod < prev:
+                                self.activity_start_times[cat][date] = tod
         except Exception as e:
             print(f"Warning: Failed to process activity data from {file_name}: {e}")
     
@@ -610,6 +632,9 @@ class GarminDataExtractor:
             if dates:
                 sorted_dates = sorted(dates.keys())
                 print(f"{metric_name}: {len(dates)} entries from {sorted_dates[0]} to {sorted_dates[-1]}")
+        for cat, days in sorted(self.activity_start_times.items()):
+            if days:
+                print(f"{cat} start times: {len(days)} days")
 
 
 def main():
@@ -626,6 +651,12 @@ def main():
     
     # Write output
     output_data = extractor.get_output()
+    # Activity start times ride along in a dedicated section; the app's
+    # Garmin JSON import merges them into its activity-times cache so
+    # historic run/bike/swim blocks land at their real watch start time.
+    start_times = {cat: dict(days) for cat, days in extractor.activity_start_times.items() if days}
+    if start_times:
+        output_data["ACTIVITY_START_TIMES"] = start_times
     with open(output_path, 'w') as f:
         json.dump(output_data, f, indent=2)
     

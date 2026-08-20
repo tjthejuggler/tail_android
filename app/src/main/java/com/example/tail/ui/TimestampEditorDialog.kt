@@ -53,7 +53,8 @@ import java.time.format.DateTimeFormatter
  * The repository stores one "HH:mm:ss" string PER increment unit, so a
  * multi-increment (e.g. "+5" via IPC, widget batch, or in-app amount) is a run
  * of identical time strings. The editor aggregates them into one card showing
- * the shared time and the increment amount (group size).
+ * the shared time and the increment amount (group size). An amount of 0 marks
+ * a text-only group — a text entry at a time with no increments.
  */
 private data class TimeGroup(
     val time: String,
@@ -100,8 +101,18 @@ fun TimestampEditorDialog(
     onDismiss: () -> Unit
 ) {
     // Aggregate duplicate time strings into per-moment groups (chronological).
-    val groups = remember(timestamps) {
-        timestamps.groupBy { it }.map { (time, list) -> TimeGroup(time, list.size) }
+    // Text entries whose time has no increment group still get a card
+    // (amount 0) so their text is visible and editable — e.g. movie
+    // entries logged by the bridge without an increment at that moment.
+    val groups = remember(timestamps, textEntries) {
+        val tsGroups = timestamps.groupBy { it }
+            .map { (time, list) -> TimeGroup(time, list.size) }
+            .toMutableList()
+        val covered = tsGroups.map { it.time }.toSet()
+        textEntries.keys.filter { it !in covered }.sorted().forEach { time ->
+            tsGroups.add(TimeGroup(time, 0))
+        }
+        tsGroups.sortedBy { it.time }
     }
 
     // null = nothing open; a time string = that group is being re-timed;
@@ -128,17 +139,24 @@ fun TimestampEditorDialog(
         text = {
             Column {
                 Text(
-                    text = if (groups.size == 1 && groups.first().amount == 1)
-                        "1 timestamped increment"
-                    else
-                        "${timestamps.size} increment${if (timestamps.size != 1) "s" else ""} " +
-                            "across ${groups.size} time${if (groups.size != 1) "s" else ""}",
+                    text = when {
+                        timestamps.isEmpty() && groups.isNotEmpty() ->
+                            "${groups.size} text entr${if (groups.size != 1) "ies" else "y"}"
+                        groups.size == 1 && groups.first().amount == 1 ->
+                            "1 timestamped increment"
+                        else ->
+                            "${timestamps.size} increment${if (timestamps.size != 1) "s" else ""} " +
+                                "across ${groups.size} time${if (groups.size != 1) "s" else ""}"
+                    },
                     fontSize = 12.sp,
                     color = Color(0xFF888888)
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                if (timestamps.isEmpty() && editingTime != addNewSentinel) {
+                // Empty only when there is NOTHING to show — no increment
+                // timestamps AND no text entries. Text-only days (e.g. a
+                // past movie logged by the bridge) still render their cards.
+                if (groups.isEmpty() && editingTime != addNewSentinel) {
                     Text(
                         text = "No timestamps recorded for today.",
                         fontSize = 12.sp,
@@ -204,7 +222,16 @@ fun TimestampEditorDialog(
                                         }
                                         editingCard = null
                                     },
-                                    onDelete = { onDeleteTimeGroup(group.time) }
+                                    onDelete = {
+                                        if (group.amount == 0 && canEditText &&
+                                            textEntries[group.time].orEmpty().isNotBlank()
+                                        ) {
+                                            // Text-only card: deleting clears its text.
+                                            onUpdateText(group.time, "")
+                                        } else {
+                                            onDeleteTimeGroup(group.time)
+                                        }
+                                    }
                                 )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
@@ -334,19 +361,22 @@ private fun TimestampCard(
                     .weight(1f)
             )
             // Amount chip: how much was contributed at this time.
-            Text(
-                text = "+${group.amount}",
-                fontSize = 12.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                color = if (group.amount > 1) Color(0xFF66FFAA) else Color(0xFF889988),
-                modifier = Modifier
-                    .background(
-                        if (group.amount > 1) Color(0xFF003322) else Color(0xFF222826),
-                        RoundedCornerShape(6.dp)
-                    )
-                    .padding(horizontal = 8.dp, vertical = 2.dp)
-            )
+            // Text-only entries (no increments at this time) show no chip.
+            if (group.amount > 0) {
+                Text(
+                    text = "+${group.amount}",
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = if (group.amount > 1) Color(0xFF66FFAA) else Color(0xFF889988),
+                    modifier = Modifier
+                        .background(
+                            if (group.amount > 1) Color(0xFF003322) else Color(0xFF222826),
+                            RoundedCornerShape(6.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+            }
             IconButton(
                 onClick = onStartEditInfo,
                 modifier = Modifier.size(28.dp)

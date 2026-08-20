@@ -40,6 +40,7 @@ On the Android side:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -221,6 +222,16 @@ PC_WIDGET_CONFIG_PATH = PC_WIDGET_STATE_DIR / "pc_widget_config.json"
 PC_WIDGET_EVENTS_PATH = PC_WIDGET_STATE_DIR / "pc_habit_events.json"
 PC_WIDGET_MAX_EVENTS = 500  # safety valve if the phone never acks
 
+# Set whenever an event is queued, so long-polling phones (the bubble
+# service's pc_widget/events/wait loop) wake up instantly.
+PC_WIDGET_EVENT_SIGNAL = asyncio.Event()
+
+
+def _pc_widget_pending_events() -> list:
+    """Un-acked events right now (acks prune, so this is the queue)."""
+    events = _pc_widget_read(PC_WIDGET_EVENTS_PATH).get("events")
+    return [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+
 
 def _pc_widget_read(path: Path) -> dict:
     try:
@@ -284,8 +295,12 @@ def pc_widget_set_config(payload: Dict[str, Any], api_key: str = Security(verify
 
 
 @app.post("/api/v1/pc_widget/event", tags=["pc_widget"])
-def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(verify_key)):
-    """PC widget appends one habit event; the bridge assigns its id."""
+async def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """PC widget appends one habit event; the bridge assigns its id.
+
+    (async so it can wake the pc_widget/events/wait long-pollers on the
+    event loop — the file writes it does are tiny and local.)
+    """
     habit = payload.get("habit")
     if not isinstance(habit, str) or not habit.strip():
         raise HTTPException(status_code=400, detail="'habit' is required")
@@ -309,14 +324,38 @@ def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(verify_
         "events": events,
     })
     logger.info(f"pc_widget event queued: {event['habit']} ({event['kind']}, {event['minutes']}m)")
+    PC_WIDGET_EVENT_SIGNAL.set()
     return {"ok": True, "id": event["id"]}
 
 
 @app.get("/api/v1/pc_widget/events", tags=["pc_widget"])
 def pc_widget_get_events(api_key: str = Security(verify_key)):
     """Phone pulls every event not yet acked (acks prune, so this is the queue)."""
-    events = _pc_widget_read(PC_WIDGET_EVENTS_PATH).get("events")
-    events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+    return {"version": 1, "events": _pc_widget_pending_events(),
+            "count": len(_pc_widget_pending_events())}
+
+
+@app.get("/api/v1/pc_widget/events/wait", tags=["pc_widget"])
+async def pc_widget_wait_events(timeout: int = 50, api_key: str = Security(verify_key)):
+    """
+    Long-poll variant of GET /pc_widget/events for the phone's bubble
+    service: returns pending events at once, or holds the request open
+    until one is queued (or `timeout` s pass, capped at 120). The phone
+    re-issues the call immediately, so a PC-side timer stop is picked up
+    ~instantly instead of on the next fixed poll.
+    """
+    # clear() BEFORE reading: an event queued between the two still wakes
+    # the wait below — no lost wakeups.
+    PC_WIDGET_EVENT_SIGNAL.clear()
+    events = _pc_widget_pending_events()
+    if not events:
+        try:
+            await asyncio.wait_for(
+                PC_WIDGET_EVENT_SIGNAL.wait(),
+                timeout=max(1, min(int(timeout), 120)))
+        except asyncio.TimeoutError:
+            pass
+        events = _pc_widget_pending_events()
     return {"version": 1, "events": events, "count": len(events)}
 
 

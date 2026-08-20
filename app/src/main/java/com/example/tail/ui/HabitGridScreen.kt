@@ -755,6 +755,29 @@ fun HabitGridScreen(
                     mealHabits = settings.mealHabits,
                     textInputHabits = settings.textInputHabits,
                     timelineExcludedHabits = settings.timelineExcludedHabits,
+                    // Movie-bridge habits: their blocks are sized to the
+                    // watched minutes annotated on the day's text entries —
+                    // the text log is the source of truth, so past films
+                    // appear even without increment timestamps.
+                    movieHabits = if (settings.bridgeEnabled) settings.bridgeMovieHabits else emptySet(),
+                    loadMovieEntries = { habitName ->
+                        viewModel.loadMovieEntriesForDay(habitName, selectedDate)
+                    },
+                    // Garmin-linked habits: activity blocks are sized (and,
+                    // when the watch start time is known, placed) from the
+                    // cached daily activity minutes.
+                    garminHabits = settings.garminHabitLinks.keys,
+                    loadGarminActivity = { habitName ->
+                        viewModel.loadGarminActivityForDay(habitName, selectedDate)
+                    },
+                    // Chip colour encodes the habits screen (tab) each
+                    // habit lives on in the main grid.
+                    screenIndexOfHabit = habitScreens.flatMapIndexed { idx, screen ->
+                        screen.habitNames.mapNotNull { name ->
+                            if (name.isEmpty() || com.example.tail.data.isAppLink(name)) null
+                            else name to idx
+                        }
+                    }.toMap(),
                     selectedDate = selectedDate,
                     isToday = isToday,
                     refreshTrigger = scheduleRefresh,

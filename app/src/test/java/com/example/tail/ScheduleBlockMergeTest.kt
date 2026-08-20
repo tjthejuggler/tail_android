@@ -12,6 +12,7 @@ import org.junit.Test
  *  - an isolated timestamp becomes one minimum-height block;
  *  - same-habit timestamps within the merge gap collapse into a single
  *    block spanning first→last (plus the minimum span) with a summed ×count;
+ *  - movie watch durations grow a block to the watched length;
  *  - chains keep merging while each consecutive gap stays within the gap;
  *  - genuinely separate sessions and different habits stay separate;
  *  - the result is sorted by start time.
@@ -22,13 +23,15 @@ class ScheduleBlockMergeTest {
         habit: String,
         hour: Int,
         minute: Int,
-        amount: Int = 1
+        amount: Int = 1,
+        durationMinutes: Int = 0
     ) = ScheduleEvent(
         habitName = habit,
         time = "%02d:%02d:00".format(hour, minute),
         amount = amount,
         isMeal = false,
-        canEditText = false
+        canEditText = false,
+        durationMinutes = durationMinutes
     )
 
     @Test
@@ -144,5 +147,41 @@ class ScheduleBlockMergeTest {
         )
         assertEquals(1, blocks.size)
         assertEquals(2, blocks.single().eventCount)
+    }
+
+    @Test
+    fun `movie watch duration sets the block span`() {
+        // A movie entry's "(N min)" length grows its block to N minutes.
+        val blocks = buildScheduleBlocks(
+            listOf(event("Movies", 20, 15, durationMinutes = 115))
+        )
+        val b = blocks.single()
+        assertEquals(20 * 60 + 15, b.startMinute)
+        assertEquals(20 * 60 + 15 + 115, b.endMinute)
+        assertEquals(115, b.spanMinutes)
+    }
+
+    @Test
+    fun `duration below the minimum span still gets the minimum span`() {
+        val blocks = buildScheduleBlocks(
+            listOf(event("Movies", 21, 0, durationMinutes = 5))
+        )
+        assertEquals(MIN_SPAN_MINUTES, blocks.single().spanMinutes)
+    }
+
+    @Test
+    fun `merged cluster extends to the longest event end`() {
+        // Two movie entries inside the merge gap: the block must reach the
+        // later of (first + its duration) and (last + minimum span).
+        val blocks = buildScheduleBlocks(
+            listOf(
+                event("Movies", 20, 0, durationMinutes = 95), // ends 21:35
+                event("Movies", 20, 25)                        // min-span end 20:46
+            )
+        )
+        val b = blocks.single()
+        assertEquals(2, b.eventCount)
+        assertEquals(20 * 60, b.startMinute)
+        assertEquals(20 * 60 + 95, b.endMinute)
     }
 }

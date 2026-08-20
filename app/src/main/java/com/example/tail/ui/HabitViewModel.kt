@@ -1299,6 +1299,14 @@ class HabitViewModel(
                 performChessTimestampTrim()
             }
 
+            // ── Movie-bridge timestamp reconciliation ────────────────────
+            // The text log is the source of truth for movie habits: make
+            // each entry's watch-start time THE timestamp. Backfills past
+            // films and removes confirm-time duplicates. Idempotent — it
+            // only writes when the store differs from the log, so running
+            // it on every load is cheap.
+            runCatching { syncAllMovieHabitTimestamps() }
+
             // Perform roll forward BEFORE ensureDaysExist creates today=0
             performRollForwardIfNeeded()
 
@@ -5442,8 +5450,14 @@ class HabitViewModel(
                     }
                 }
 
-                // Also increment the habit count so it registers as done for today
-                incrementHabit(habitName, 1)
+                // Also increment the habit count so it registers as done for
+                // today. Movie-bridge habits: suppress the "now" stamp — the
+                // text entry's watch-start time is THE timestamp (sync below).
+                incrementHabit(habitName, 1, recordTimestamp = !isMovieBridgeHabit(habitName))
+
+                // Movie-bridge habits: reconcile the timestamp store to the
+                // text log so the entry's watch time is the single timestamp.
+                if (isMovieBridgeHabit(habitName)) syncMovieTimestamps(habitName)
 
                 // Trigger async IMDb rating fetch for movie-bridge habits
                 triggerImdbFetchForEntry(habitName, text)
@@ -5515,7 +5529,13 @@ class HabitViewModel(
 
                 // Increment the habit count by 1 — selecting multiple options
                 // is a single action and must not count as multiple increments.
-                incrementHabit(habitName, 1)
+                // Movie-bridge habits: suppress the "now" stamp — the text
+                // entries' watch-start times are THE timestamps (sync below).
+                incrementHabit(habitName, 1, recordTimestamp = !isMovieBridgeHabit(habitName))
+
+                // Movie-bridge habits: reconcile the timestamp store to the
+                // text log so each entry's watch time is the single timestamp.
+                if (isMovieBridgeHabit(habitName)) syncMovieTimestamps(habitName)
 
                 // Trigger async IMDb rating fetch for movie-bridge habits
                 texts.forEach { triggerImdbFetchForEntry(habitName, it) }
@@ -6365,6 +6385,92 @@ class HabitViewModel(
                 onResult(emptyList())
             }
         }
+    }
+
+    /**
+     * Reconciles a movie-bridge habit's timestamp store with its text log so
+     * each entry's "HH:mm:ss" watch-start time is THE timestamp for its date
+     * — one time per movie, never a separate confirm-time increment.
+     *
+     * Per date: when the day has at most as many distinct timestamps as text
+     * entries, every timestamp belongs to a logged movie and the day is
+     * rewritten to the entry times; when there are extra timestamps (manual
+     * additions via the editor), only missing entry times are added and the
+     * extras are preserved. Idempotent — no write when already in sync.
+     */
+    private suspend fun syncMovieTimestamps(habitName: String) {
+        val uriString = _settings.value.textInputFileUris[habitName] ?: return
+        val log = try {
+            textInputRepo.loadTextLog(Uri.parse(uriString), context)
+        } catch (e: Exception) {
+            Log.w(TAG, "syncMovieTimestamps: failed to load text log for '$habitName': ${e.message}")
+            return
+        }
+        val byDate = log.keys.groupBy({ it.substringBefore(' ') }, { it.substringAfter(' ') })
+        for ((dateStr, times) in byDate) {
+            val date = com.example.tail.data.parseDate(dateStr) ?: continue
+            val desired = times.distinct().sorted()
+            val currentDistinct = timestampRepo.getTimestampsForDay(habitName, date)
+                .distinct().sorted()
+            if (currentDistinct == desired) continue
+            if (currentDistinct.size <= desired.size) {
+                timestampRepo.setTimestampsForDay(habitName, date, desired)
+            } else {
+                val missing = desired.filter { it !in currentDistinct }
+                if (missing.isNotEmpty()) {
+                    timestampRepo.addTimestampsAt(habitName, date, missing)
+                }
+            }
+        }
+    }
+
+    /** Runs [syncMovieTimestamps] for every enabled movie-bridge habit. */
+    suspend fun syncAllMovieHabitTimestamps() {
+        val s = _settings.value
+        if (!s.bridgeEnabled) return
+        for (habitName in s.bridgeMovieHabits) {
+            syncMovieTimestamps(habitName)
+        }
+    }
+
+    /**
+     * Loads a movie-bridge habit's entries for [date] from its text log:
+     * watch time-of-day ("HH:mm:ss") → watched minutes parsed from the
+     * "(N min)" annotations (0 when the entry has no length yet). The
+     * text-log timestamps are the source of truth for the schedule
+     * timeline, so past films appear at their watch time even when no
+     * increment timestamp exists for the day.
+     */
+    suspend fun loadMovieEntriesForDay(habitName: String, date: LocalDate): Map<String, Int> {
+        // The text log is the source of truth — reconcile the timestamp
+        // store to it so each entry's watch time IS the habit's timestamp.
+        syncMovieTimestamps(habitName)
+        val uriString = _settings.value.textInputFileUris[habitName]
+        if (uriString.isNullOrEmpty()) return emptyMap()
+        val datePrefix = dateString(date)
+        return textInputRepo.loadTextLog(Uri.parse(uriString), context)
+            .filterKeys { it.startsWith(datePrefix) && it.length >= 16 }
+            .mapKeys { (timestamp, _) -> timestamp.substring(11) }
+            .mapValues { (_, text) -> OmdbService.parseTitle(text).minutes ?: 0 }
+    }
+
+    /**
+     * Watch-recorded start time ("HH:mm:ss", null when unknown) and
+     * duration minutes of the Garmin activity linked to [habitName] on
+     * [date]; null when the habit is not linked to an activity-minutes
+     * type (run/bike/swim) or has no cached data for that date. Used by
+     * the schedule timeline to place past activities at their real time
+     * and size the block to the duration.
+     */
+    suspend fun loadGarminActivityForDay(habitName: String, date: LocalDate): Pair<String?, Int>? {
+        val type = _settings.value.garminHabitLinks[habitName]
+            ?.let { GarminType.fromKey(it) } ?: return null
+        if (type != GarminType.RUN_MINUTES && type != GarminType.BIKE_MINUTES &&
+            type != GarminType.SWIM_MINUTES
+        ) return null
+        val minutes = garminRepo.cachedDailyValue(type, date.toString()) ?: return null
+        if (minutes <= 0) return null
+        return garminRepo.activityStartTime(type, date.toString()) to minutes
     }
 
     /**

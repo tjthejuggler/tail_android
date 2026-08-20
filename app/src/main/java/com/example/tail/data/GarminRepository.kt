@@ -376,6 +376,16 @@ class GarminRepository(private val context: Context) {
         activityStartTimes[type]?.get(date)
 
     /**
+     * Cached daily value for [type] on [date] (ISO "yyyy-MM-dd"), or null
+     * when the month holding that date has no cache. Reads the monthly
+     * cache only — no network. Used for schedule block durations.
+     */
+    fun cachedDailyValue(type: GarminType, date: String): Int? {
+        val parsed = runCatching { LocalDate.parse(date) }.getOrNull() ?: return null
+        return loadFromCache(parsed.year, parsed.monthValue)?.get(type)?.get(date)
+    }
+
+    /**
      * Persists the in-memory activity start times (run/bike/swim) alongside the
      * monthly value cache, so the cached re-apply path (loadAllCachedData +
      * applyGarminData) can also stamp habit timestamps with the ACTUAL activity
@@ -629,7 +639,27 @@ class GarminRepository(private val context: Context) {
                     Log.d(TAG, "Import: Parsed ${dayMap.size} dates for $typeName")
                 }
             }
-            
+
+            // Optional activity start-times section emitted by garmin_import.py
+            // ("ACTIVITY_START_TIMES": { "RUN_MINUTES": { "2026-01-05": "07:12:33" } }).
+            // Merged into the persisted activity-times cache so historic
+            // run/bike/swim activities can be placed at their real watch
+            // start times on the schedule timeline.
+            val timesSection = json.optJSONObject("ACTIVITY_START_TIMES")
+            if (timesSection != null) {
+                for (catName in timesSection.keys()) {
+                    val type = GarminType.fromKey(catName) ?: continue
+                    val dayTimes = timesSection.getJSONObject(catName)
+                    val times = activityStartTimes.getOrPut(type) { mutableMapOf() }
+                    for (day in dayTimes.keys()) {
+                        times[day] = dayTimes.getString(day)
+                    }
+                }
+                saveActivityTimesToCache()
+                Log.d(TAG, "Import: merged activity start times for " +
+                    "${timesSection.length()} sport categories")
+            }
+
             Log.d(TAG, "Import: Total types parsed: ${allData.size}, total dates: $totalDates")
             
             if (allData.isEmpty()) {

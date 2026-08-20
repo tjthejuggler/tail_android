@@ -82,6 +82,46 @@ class BridgeClient {
     }
 
     /**
+     * Fetches JSON like [fetch], but reports the HTTP status code and
+     * allows a longer read timeout — for long-poll endpoints
+     * (pc_widget/events/wait), where the server holds the connection
+     * open until data arrives or the poll timeout passes.
+     *
+     * @return null on transport error, else (status code, parsed body or null)
+     */
+    suspend fun fetchWithStatus(
+        bridgeUrl: String,
+        token: String,
+        path: String,
+        readTimeoutMs: Int = READ_TIMEOUT
+    ): Pair<Int, JSONObject?>? = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = bridgeUrl.trim().trimEnd('/')
+            val url = URL("$cleanUrl/api/v1/$path")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = CONNECT_TIMEOUT
+            conn.readTimeout = readTimeoutMs
+            conn.setRequestProperty("X-App-Auth", token)
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+
+            val code = conn.responseCode
+            val body = if (code == 200) {
+                conn.inputStream.bufferedReader().readText()
+            } else {
+                conn.errorStream?.bufferedReader()?.readText()?.take(200) ?: ""
+            }
+            conn.disconnect()
+            val json = if (code == 200 && body.isNotEmpty()) {
+                try { JSONObject(body) } catch (_: Exception) { null }
+            } else null
+            code to json
+        } catch (e: Exception) {
+            Log.w(TAG, "Fetch failed for '$path': ${e.message}")
+            null
+        }
+    }
+
+    /**
      * POSTs JSON to a bridge endpoint.
      *
      * @param bridgeUrl  Base URL of the bridge server (e.g. "http://192.168.1.100:8001")

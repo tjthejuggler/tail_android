@@ -92,9 +92,25 @@ The script generates a JSON file with the following structure:
   "MIN_HR": {"2024-01-01": 52, ...},
   "MAX_HR": {"2024-01-01": 145, ...},
   "STRESS_LEVEL": {"2024-01-01": 35, ...},
-  "ALTITUDE_ASCENT": {"2024-01-01": 150, ...}
+  "ALTITUDE_ASCENT": {"2024-01-01": 150, ...},
+  "ACTIVITY_START_TIMES": {
+    "RUN_MINUTES": {"2024-01-01": "07:12:33", ...},
+    "BIKE_MINUTES": {"2024-01-01": "18:45:00", ...},
+    "SWIM_MINUTES": {"2024-01-01": "06:30:00", ...}
+  }
 }
 ```
+
+### ACTIVITY_START_TIMES
+
+The `ACTIVITY_START_TIMES` section maps each sport to the **earliest
+device-local start time-of-day** ("HH:MM:SS") per day, extracted from
+`_summarizedActivities.json` `startTimeLocal` (with a GMT/begin-timestamp
+fallback). The app's Garmin JSON import merges it into its
+`activity_times.json` cache, which the schedule timeline uses to place
+historic run/bike/swim blocks at their real watch start time. JSONs
+compiled with older versions of this script lack this section — recompile
+from the GDPR ZIP to obtain it.
 
 ## Garmin Export Structure
 
