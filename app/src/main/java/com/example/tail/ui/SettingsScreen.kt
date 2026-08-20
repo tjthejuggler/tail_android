@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -196,6 +197,9 @@ fun SettingsScreen(
     val debugSnapshot by debugPrefs.snapshot.collectAsState()
     val context = LocalContext.current
 
+    // AI Assistant chat popup — opened via the 🤖 button in the top bar.
+    var showAiAssistant by rememberSaveable { mutableStateOf(false) }
+
     // Picker for habitsdb.txt — needs read+write so the app can increment habits
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -263,6 +267,10 @@ fun SettingsScreen(
                     }
                 },
                 actions = {
+                    // AI Assistant — sits next to the stats icon.
+                    IconButton(onClick = { showAiAssistant = true }) {
+                        Icon(Icons.Filled.SmartToy, contentDescription = "AI Assistant")
+                    }
                     IconButton(onClick = onNavigateToAppStats) {
                         Icon(Icons.Filled.BarChart, contentDescription = "App Stats")
                     }
@@ -384,13 +392,15 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Habit Features",
-                    summary = "AI icons · meal engine · vision memory · advice banner",
+                    summary = "AI icons · meal engine · AI assistant · vision memory · advice banner",
                     icon = Icons.Filled.AutoAwesome,
                     accent = BorderYellow
                 ) {
                     AiIconSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     MealSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    AiAssistantSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     VisionMemorySection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
@@ -416,6 +426,14 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    // AI Assistant chat popup (top-bar 🤖 button).
+    if (showAiAssistant) {
+        AiAssistantDialog(
+            viewModel = viewModel,
+            onDismiss = { showAiAssistant = false }
+        )
     }
     } // closes grayscale MaterialTheme
 }

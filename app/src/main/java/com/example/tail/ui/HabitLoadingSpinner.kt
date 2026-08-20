@@ -188,16 +188,20 @@ fun HabitLoadingSpinner(
     modifier: Modifier = Modifier,
     size: Dp = 72.dp
 ) {
-    val tiers = loadingTiers(LoadingMetrics(monthlyAverage, weeklyAverage, todayPoints))
-    // Diagnostic: log the resolved tiers whenever they change, so any
-    // mismatch between screens is traceable in logcat (tag "Orrery").
-    remember(tiers) {
+    // Freeze the tiers for the whole lifetime of this composition — i.e. for
+    // one continuous loading session. Mid-load metric emissions (fresh
+    // averages arriving while the DB streams in) must NOT morph the colours,
+    // form or canvas size mid-spin: that looked like the animation
+    // "restarting". A fresh load session re-enters composition and picks up
+    // the then-current metrics.
+    val tiers = remember {
+        val frozen = loadingTiers(LoadingMetrics(monthlyAverage, weeklyAverage, todayPoints))
         android.util.Log.d(
             "Orrery",
-            "tiers m=${tiers.monthly} w=${tiers.weekly} d=${tiers.daily} " +
-                "grandeur=${tiers.grandeur} raw(m=$monthlyAverage w=$weeklyAverage t=$todayPoints)"
+            "tiers m=${frozen.monthly} w=${frozen.weekly} d=${frozen.daily} " +
+                "grandeur=${frozen.grandeur} raw(m=$monthlyAverage w=$weeklyAverage t=$todayPoints)"
         )
-        tiers
+        frozen
     }
     val monthColor = tierAccent(tiers.monthly)
     val weekColor = tierAccent(tiers.weekly)

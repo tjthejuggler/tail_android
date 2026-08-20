@@ -1159,6 +1159,14 @@ data class AppSettings(
     val mealSystemPrompt: String = "",
     /** Habits that have the "Meal" type enabled. */
     val mealHabits: Set<String> = emptySet(),
+
+    // ── AI Assistant settings ───────────────────────────────────────────
+    /** Base URL for the AI Assistant LLM API (OpenAI-compatible, e.g. "https://api.z.ai/api/coding/paas/v4"). */
+    val aiAssistantBaseUrl: String = "",
+    /** API key (Bearer token) for the AI Assistant endpoint. */
+    val aiAssistantApiKey: String = "",
+    /** Model name used by the AI Assistant (e.g. "glm-4.6"). */
+    val aiAssistantModel: String = "",
     /** Habits excluded from the day timeline (retrospective hour-by-hour view). */
     val timelineExcludedHabits: Set<String> = emptySet(),
     /**

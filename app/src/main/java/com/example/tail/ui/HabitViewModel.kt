@@ -1342,6 +1342,11 @@ class HabitViewModel(
         _isLoading.value = true
         _errorMessage.value = null
         try {
+            // All sequential load work (SAF reads, JSON parsing, migrations,
+            // roll-forward, day backfill) runs OFF the main thread. This used
+            // to run on the Main dispatcher, which blocked the choreographer
+            // and made the loading spinner animation visibly choppy.
+            withContext(Dispatchers.Default) {
             runAutoRestoreIfNeeded(uri)
 
             // ── Roll forward MUST run BEFORE ensureDaysExist ──────────────
@@ -1425,6 +1430,7 @@ class HabitViewModel(
             // rolled-forward value, so ensureDaysExist won't overwrite it.
             val db = habitsRepo.ensureDaysExist(uri, context)
             cachedPhoneDb = db
+            }
 
             // Gate opens ONLY here, after a genuinely successful load. Background
             // sync writers check this before persisting cachedPhoneDb.
@@ -10662,6 +10668,57 @@ class HabitViewModel(
                 mealModel = model,
                 mealSystemPrompt = systemPrompt
             )
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  AI Assistant (natural-language habit database editing)
+    // ════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Controller for the AI Assistant chat: plans DB changes via an LLM,
+     * shows them for confirmation, backs up, executes and can restore.
+     * Lazy — created on first use (settings screen or the ⭐ dialog button).
+     */
+    val aiAssistant: com.example.tail.data.ai.AiAssistantController by lazy {
+        com.example.tail.data.ai.AiAssistantController(
+            context = context,
+            habitsRepo = habitsRepo,
+            configProvider = {
+                val s = _settings.value
+                com.example.tail.data.ai.AiAssistantConfig(
+                    baseUrl = s.aiAssistantBaseUrl,
+                    apiKey = s.aiAssistantApiKey,
+                    model = s.aiAssistantModel
+                )
+            },
+            fileUriProvider = { _settings.value.fileUri.takeIf { it.isNotEmpty() } },
+            onDatabaseChanged = { refreshAfterExternalDbChange() }
+        )
+    }
+
+    /** Saves the AI Assistant endpoint configuration. */
+    fun saveAiAssistantSettings(baseUrl: String, apiKey: String, model: String) {
+        viewModelScope.launch {
+            val cleanUrl = baseUrl.trim().trimEnd('/')
+            val cleanKey = apiKey.trim()
+            settingsRepo.saveAiAssistantSettings(cleanUrl, cleanKey, model)
+            _settings.value = _settings.value.copy(
+                aiAssistantBaseUrl = cleanUrl,
+                aiAssistantApiKey = cleanKey,
+                aiAssistantModel = model
+            )
+        }
+    }
+
+    /**
+     * Reloads the whole database from disk. Called after the AI Assistant
+     * (or any external writer) modified habitsdb.txt / the timestamp store.
+     */
+    fun refreshAfterExternalDbChange() {
+        val uri = _settings.value.fileUri
+        if (uri.isNotEmpty()) {
+            loadFromFile(Uri.parse(uri))
         }
     }
 

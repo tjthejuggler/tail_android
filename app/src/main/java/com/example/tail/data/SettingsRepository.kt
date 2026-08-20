@@ -204,6 +204,9 @@ private val KEY_MEAL_API_KEY = stringPreferencesKey("meal_api_key")
 private val KEY_MEAL_MODEL = stringPreferencesKey("meal_model")
 private val KEY_MEAL_SYSTEM_PROMPT = stringPreferencesKey("meal_system_prompt")
 private val KEY_MEAL_HABITS = stringSetPreferencesKey("meal_habits")
+private val KEY_AI_ASSISTANT_BASE_URL = stringPreferencesKey("ai_assistant_base_url")
+private val KEY_AI_ASSISTANT_API_KEY = stringPreferencesKey("ai_assistant_api_key")
+private val KEY_AI_ASSISTANT_MODEL = stringPreferencesKey("ai_assistant_model")
 private val KEY_TIMELINE_EXCLUDED_HABITS = stringSetPreferencesKey("timeline_excluded_habits")
 private val KEY_CAMERA_HABITS = stringSetPreferencesKey("camera_habits")
 // App link keys — stored as "app_link_key\x00label|||app_link_key\x00label" pairs
@@ -956,6 +959,9 @@ class SettingsRepository(private val context: Context) {
             mealModel = prefs[KEY_MEAL_MODEL] ?: "",
             mealSystemPrompt = prefs[KEY_MEAL_SYSTEM_PROMPT] ?: "",
             mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet(),
+            aiAssistantBaseUrl = prefs[KEY_AI_ASSISTANT_BASE_URL] ?: "",
+            aiAssistantApiKey = prefs[KEY_AI_ASSISTANT_API_KEY] ?: "",
+            aiAssistantModel = prefs[KEY_AI_ASSISTANT_MODEL] ?: "",
             timelineExcludedHabits = prefs[KEY_TIMELINE_EXCLUDED_HABITS] ?: emptySet(),
             cameraHabits = prefs[KEY_CAMERA_HABITS] ?: emptySet(),
             appLinks = decodeFileUriMap(prefs[KEY_APP_LINKS] ?: ""),
@@ -1573,6 +1579,19 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_MEAL_API_KEY] = apiKey
             prefs[KEY_MEAL_MODEL] = model
             prefs[KEY_MEAL_SYSTEM_PROMPT] = systemPrompt
+        }
+    }
+
+    /** Saves the AI Assistant LLM endpoint configuration. */
+    suspend fun saveAiAssistantSettings(
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_AI_ASSISTANT_BASE_URL] = baseUrl
+            prefs[KEY_AI_ASSISTANT_API_KEY] = apiKey
+            prefs[KEY_AI_ASSISTANT_MODEL] = model
         }
     }
 
