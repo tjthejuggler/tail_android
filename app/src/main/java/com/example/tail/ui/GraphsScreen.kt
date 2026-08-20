@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -281,154 +282,23 @@ fun GraphsPanel(
             }
         }
 
-        // ── Multi-select metric toggle — shown when exactly one habit is selected ────
-        // Multiple metrics can be active simultaneously; each renders as a separate line.
-        // Meal habits show additional options (Calories, Protein, Carbs, Fat).
-        if (graphSelectedHabits.size == 1) {
-            val selectedHabit = graphSelectedHabits.first()
-            val availableMetrics = viewModel.getAvailableMetrics(selectedHabit)
-            val selectedMetrics = viewModel.getSelectedMetrics(selectedHabit)
-            // Long-pressed metric awaiting the "Interp 0s" popup
-            var interpMenuMetric by remember { mutableStateOf<String?>(null) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                availableMetrics.forEachIndexed { index, option ->
-                    val isActive = option.key in selectedMetrics
-                    // Match the line color: use the metric's position in availableMetrics
-                    val metricColor = GRAPH_COLORS[index % GRAPH_COLORS.size]
-                    val interpActive = viewModel.isGraphInterpolateZeroEnabled(selectedHabit, option.key)
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                if (isActive) metricColor else Color(0xFF1A2E1A),
-                                RoundedCornerShape(8.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.toggleGraphMetric(selectedHabit, option.key) },
-                                onLongClick = { interpMenuMetric = option.key },
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() }
-                            )
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = option.label,
-                            color = if (isActive) Color(0xFF000000) else Color(0xFF88AA88),
-                            fontSize = 11.sp,
-                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                            textAlign = TextAlign.Center
-                        )
-                        // Struck-through 0 badge: zeros are interpolated for this metric
-                        if (interpActive) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .offset(x = 6.dp, y = (-6).dp)
-                                    .size(13.dp)
-                                    .background(Color(0xFF0D1A0D), CircleShape)
-                                    .border(1.dp, Color(0xFF66DD66), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "0",
-                                    textDecoration = TextDecoration.LineThrough,
-                                    color = Color(0xFF66DD66),
-                                    fontSize = 9.sp,
-                                    lineHeight = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Long-press popup: per-metric "Interp 0s" toggle + a chooser for
-            // which value IS the habit's value (generic/named count vs the
-            // minutes slot). Choosing minutes transitions legacy single-value
-            // habits: their value-1 history moves into the minutes slot and
-            // minutes becomes the primary value (see
-            // migrateValue1ToMinutesPrimary).
-            interpMenuMetric?.let { metricKey ->
-                val minutesPrimary = viewModel.isMinutesPrimaryHabit(selectedHabit)
-                Popup(
-                    alignment = Alignment.TopCenter,
-                    properties = PopupProperties(focusable = true, dismissOnClickOutside = true),
-                    onDismissRequest = { interpMenuMetric = null }
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .background(Color(0xFF0D1A0D), RoundedCornerShape(8.dp))
-                            .border(1.dp, Color(0xFF3A5A3A), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = viewModel.isGraphInterpolateZeroEnabled(selectedHabit, metricKey),
-                                onCheckedChange = { enabled ->
-                                    viewModel.setGraphInterpolateZero(selectedHabit, metricKey, enabled)
-                                }
-                            )
-                            Text(
-                                text = "Interp 0s",
-                                color = Color(0xFFCCEECC),
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(start = 4.dp)
-                            )
-                        }
-                        // Primary-value chooser — hidden for max-1 habits
-                        // (a binary habit's only value is its generic count).
-                        if (!viewModel.isMaxOneHabit(selectedHabit)) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            HorizontalDivider(color = Color(0xFF3A5A3A))
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Set as the habit's value:",
-                                color = Color(0xFF88CC88),
-                                fontSize = 10.sp
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            // The generic count slot — shown under the name
-                            // the user gave it (if any) instead of "Generic".
-                            GraphPrimaryValueOption(
-                                label = viewModel.customValueLabel(
-                                    selectedHabit,
-                                    com.example.tail.data.GRAPH_METRIC_VALUE1
-                                ) ?: "Generic value",
-                                selected = !minutesPrimary,
-                                onClick = {
-                                    viewModel.setWidgetTimerPrimaryValue(selectedHabit, false)
-                                    interpMenuMetric = null
-                                }
-                            )
-                            GraphPrimaryValueOption(
-                                label = viewModel.customValueLabel(
-                                    selectedHabit,
-                                    com.example.tail.data.GRAPH_METRIC_MINUTES
-                                ) ?: "Minutes value",
-                                selected = minutesPrimary,
-                                onClick = {
-                                    // Selecting minutes carries legacy value-1
-                                    // history into the minutes slot (when that
-                                    // slot is empty) and makes minutes the
-                                    // primary value; the minutes toggle turns
-                                    // on with it.
-                                    viewModel.migrateValue1ToMinutesPrimary(selectedHabit)
-                                    interpMenuMetric = null
-                                }
-                            )
-                        }
-                    }
-                }
-            }
+        // ── Multi-select metric toggles — one row per selected habit ────────────
+        // Multiple metrics can be active simultaneously; each renders as a
+        // separate line. Every selected habit gets its own row of buttons, so
+        // value types stay filterable no matter how many habits are graphed
+        // (meal habits show extra options: Calories, Protein, Carbs, Fat).
+        // Active buttons are tinted with the exact color of their chart line.
+        val seriesColors = remember(graphSelectedHabits, metricSelection) {
+            buildSeriesColorMap(viewModel, graphSelectedHabits)
+        }
+        val showHabitLabels = graphSelectedHabits.size > 1
+        graphSelectedHabits.forEach { habitName ->
+            GraphMetricToggleRow(
+                habitName = habitName,
+                viewModel = viewModel,
+                seriesColors = seriesColors,
+                showHabitLabel = showHabitLabels
+            )
         }
 
         // ── Chart area ────────────────────────────────────────────────────
@@ -471,8 +341,6 @@ fun GraphsPanel(
             // Collect data for all selected habits × selected metrics.
             // Each (habit, metric) pair becomes a separate line on the chart.
             val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, currentDay, textFilter, metricSelection, interpolateZeroMetrics, textEntriesCache) {
-                val isSingleHabit = graphSelectedHabits.size == 1
-                var sequentialColorIdx = 0
                 graphSelectedHabits.toList().flatMap { habitName ->
                     val data = viewModel.getGraphData(habitName, fullStartDate, fullEndDate, textFilter)
                     val metrics = viewModel.getSelectedMetrics(habitName)
@@ -483,15 +351,10 @@ fun GraphsPanel(
                         .filter { it in metrics }
                     val metricsToShow = orderedMetrics.ifEmpty { metrics.toList() }
                     metricsToShow.map { metricKey ->
-                        // For single-habit mode, use the metric's position in availableMetrics
-                        // so button colors match line colors deterministically.
-                        // For multi-habit mode, use a sequential counter.
-                        val color = if (isSingleHabit) {
-                            val idx = availableMetrics.indexOfFirst { it.key == metricKey }
-                            GRAPH_COLORS[(if (idx >= 0) idx else 0) % GRAPH_COLORS.size]
-                        } else {
-                            GRAPH_COLORS[sequentialColorIdx++ % GRAPH_COLORS.size]
-                        }
+                        // Line colors come from the shared (habit, metric) → color
+                        // map (see buildSeriesColorMap) so metric buttons always
+                        // match their lines, in single- AND multi-habit mode.
+                        val color = seriesColors[habitName to metricKey] ?: GRAPH_COLORS[0]
                         GraphSeries(
                             habitName = habitName,
                             data = data,
@@ -925,6 +788,223 @@ fun formatTooltipValue(value: Int, metric: String): String {
         metric == com.example.tail.data.GRAPH_METRIC_RUNTIME && value > 0 ->
             formatRuntimeMinutes(value)
         else -> value.toString()
+    }
+}
+
+/**
+ * Computes the chart color for every (habit, metric) pair that currently
+ * renders as a line. Single habit: color follows the metric's position in
+ * that habit's available metrics. Multiple habits: colors run sequentially
+ * across all visible series so different habits get distinct colors.
+ *
+ * Both the metric toggle buttons and the chart series read from this map,
+ * keeping button colors and line colors identical.
+ */
+private fun buildSeriesColorMap(
+    viewModel: HabitViewModel,
+    graphSelectedHabits: Set<String>
+): Map<Pair<String, String>, Color> {
+    val map = mutableMapOf<Pair<String, String>, Color>()
+    val isSingleHabit = graphSelectedHabits.size == 1
+    var sequentialColorIdx = 0
+    graphSelectedHabits.toList().forEach { habitName ->
+        val metrics = viewModel.getSelectedMetrics(habitName)
+        val availableMetrics = viewModel.getAvailableMetrics(habitName)
+        // Preserve a stable ordering: points, value1, value2, then extra metrics
+        val orderedMetrics = availableMetrics
+            .map { it.key }
+            .filter { it in metrics }
+        val metricsToShow = orderedMetrics.ifEmpty { metrics.toList() }
+        metricsToShow.forEach { metricKey ->
+            val color = if (isSingleHabit) {
+                val idx = availableMetrics.indexOfFirst { it.key == metricKey }
+                GRAPH_COLORS[(if (idx >= 0) idx else 0) % GRAPH_COLORS.size]
+            } else {
+                GRAPH_COLORS[sequentialColorIdx++ % GRAPH_COLORS.size]
+            }
+            map[habitName to metricKey] = color
+        }
+    }
+    return map
+}
+
+/**
+ * One horizontally-scrollable row of metric toggle buttons for a single
+ * selected habit, plus that row's long-press popup ("Interp 0s" and the
+ * primary-value chooser). GraphsPanel renders one of these per selected
+ * habit, so value types stay filterable with any number of habits graphed.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GraphMetricToggleRow(
+    habitName: String,
+    viewModel: HabitViewModel,
+    seriesColors: Map<Pair<String, String>, Color>,
+    showHabitLabel: Boolean
+) {
+    val availableMetrics = viewModel.getAvailableMetrics(habitName)
+    val selectedMetrics = viewModel.getSelectedMetrics(habitName)
+    // Long-pressed metric awaiting the "Interp 0s" popup
+    var interpMenuMetric by remember(habitName) { mutableStateOf<String?>(null) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // With several habits graphed, label each row so it's clear which
+        // habit's value types its buttons filter.
+        if (showHabitLabel) {
+            Text(
+                text = habitName,
+                color = Color(0xFF88CC88),
+                fontSize = 10.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 96.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+        }
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            availableMetrics.forEachIndexed { index, option ->
+                val isActive = option.key in selectedMetrics
+                // Active buttons are tinted with the exact color of their
+                // chart line (falls back to the metric's position color).
+                val metricColor = seriesColors[habitName to option.key]
+                    ?: GRAPH_COLORS[index % GRAPH_COLORS.size]
+                val interpActive = viewModel.isGraphInterpolateZeroEnabled(habitName, option.key)
+                Box(
+                    modifier = Modifier
+                        .background(
+                            if (isActive) metricColor else Color(0xFF1A2E1A),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .combinedClickable(
+                            onClick = { viewModel.toggleGraphMetric(habitName, option.key) },
+                            onLongClick = { interpMenuMetric = option.key },
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        )
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = option.label,
+                        color = if (isActive) Color(0xFF000000) else Color(0xFF88AA88),
+                        fontSize = 11.sp,
+                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                        textAlign = TextAlign.Center
+                    )
+                    // Struck-through 0 badge: zeros are interpolated for this metric
+                    if (interpActive) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 6.dp, y = (-6).dp)
+                                .size(13.dp)
+                                .background(Color(0xFF0D1A0D), CircleShape)
+                                .border(1.dp, Color(0xFF66DD66), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "0",
+                                textDecoration = TextDecoration.LineThrough,
+                                color = Color(0xFF66DD66),
+                                fontSize = 9.sp,
+                                lineHeight = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Long-press popup: per-metric "Interp 0s" toggle + a chooser for
+    // which value IS the habit's value (generic/named count vs the
+    // minutes slot). Choosing minutes transitions legacy single-value
+    // habits: their value-1 history moves into the minutes slot and
+    // minutes becomes the primary value (see
+    // migrateValue1ToMinutesPrimary).
+    interpMenuMetric?.let { metricKey ->
+        val minutesPrimary = viewModel.isMinutesPrimaryHabit(habitName)
+        Popup(
+            alignment = Alignment.TopCenter,
+            properties = PopupProperties(focusable = true, dismissOnClickOutside = true),
+            onDismissRequest = { interpMenuMetric = null }
+        ) {
+            Column(
+                modifier = Modifier
+                    .background(Color(0xFF0D1A0D), RoundedCornerShape(8.dp))
+                    .border(1.dp, Color(0xFF3A5A3A), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = viewModel.isGraphInterpolateZeroEnabled(habitName, metricKey),
+                        onCheckedChange = { enabled ->
+                            viewModel.setGraphInterpolateZero(habitName, metricKey, enabled)
+                        }
+                    )
+                    Text(
+                        text = "Interp 0s",
+                        color = Color(0xFFCCEECC),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
+                // Primary-value chooser — hidden for max-1 habits
+                // (a binary habit's only value is its generic count).
+                if (!viewModel.isMaxOneHabit(habitName)) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    HorizontalDivider(color = Color(0xFF3A5A3A))
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Set as the habit's value:",
+                        color = Color(0xFF88CC88),
+                        fontSize = 10.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    // The generic count slot — shown under the name
+                    // the user gave it (if any) instead of "Generic".
+                    GraphPrimaryValueOption(
+                        label = viewModel.customValueLabel(
+                            habitName,
+                            com.example.tail.data.GRAPH_METRIC_VALUE1
+                        ) ?: "Generic value",
+                        selected = !minutesPrimary,
+                        onClick = {
+                            viewModel.setWidgetTimerPrimaryValue(habitName, false)
+                            interpMenuMetric = null
+                        }
+                    )
+                    GraphPrimaryValueOption(
+                        label = viewModel.customValueLabel(
+                            habitName,
+                            com.example.tail.data.GRAPH_METRIC_MINUTES
+                        ) ?: "Minutes value",
+                        selected = minutesPrimary,
+                        onClick = {
+                            // Selecting minutes carries legacy value-1
+                            // history into the minutes slot (when that
+                            // slot is empty) and makes minutes the
+                            // primary value; the minutes toggle turns
+                            // on with it.
+                            viewModel.migrateValue1ToMinutesPrimary(habitName)
+                            interpMenuMetric = null
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 
