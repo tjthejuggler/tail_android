@@ -257,6 +257,47 @@ fun fallbackSlotKey(
     }
 }
 
+/**
+ * Identifies habits WRONGLY classified as minutes-primary by the Aug-18-2026
+ * minutes-slot rollout: Wags-fed habits whose minutes arrive in the PRIMARY
+ * key (per the Wags IPC protocol) and whose sessions live in the legacy
+ * `secondary_value:` slot. Minutes-primary instead expects minutes in the
+ * first-class `minutes:` slot — which Wags never writes — so these habits
+ * showed raw undivided minutes as points and lost their sessions metric.
+ *
+ * A habit in [widgetTimerMinutesPrimary] is a FALSE minutes-primary when it
+ * is NOT fed by any timer feature (PC widget, phone bubble trigger, media
+ * tracker, movie bridge, chess.com link, or the hardcoded "Good Posture"),
+ * AND either
+ * • its `minutes:` slot holds no nonzero data (nothing was ever migrated
+ *   or hand-entered there), or
+ * • it has session data in the legacy `secondary_value:` slot — the Wags
+ *   protocol signature — which makes minutes-primary wrong regardless of
+ *   any stray minutes-slot entries.
+ *
+ * Habits deliberately configured minutes-primary by the user (e.g. media
+ * minutes habits) hold real minutes-slot data and no sessions data, so
+ * they are never matched.
+ */
+fun falseMinutesPrimaryHabits(
+    widgetTimerMinutesPrimary: Set<String>,
+    pcWidgetHabits: Set<String>,
+    widgetTriggerHabits: Set<String>,
+    mediaHabits: Set<String>,
+    bridgeMovieHabits: Set<String>,
+    chessLinked: Set<String>,
+    db: HabitsDatabase
+): Set<String> {
+    val timerFed = pcWidgetHabits + widgetTriggerHabits + mediaHabits +
+        bridgeMovieHabits + chessLinked + setOf("Good Posture")
+    return widgetTimerMinutesPrimary.filter { habit ->
+        if (habit in timerFed) return@filter false
+        val hasRealMinutes = db[minutesKey(habit)].orEmpty().values.any { it > 0 }
+        val hasSessions = db[secondaryValueKey(habit)].orEmpty().values.any { it > 0 }
+        !hasRealMinutes || hasSessions
+    }.toSet()
+}
+
 /** Extracts the habit name from a minutes key, or null if [name] is not one. */
 fun minutesHabitName(name: String): String? =
     name.takeIf { it.startsWith(MINUTES_PREFIX) }?.removePrefix(MINUTES_PREFIX)

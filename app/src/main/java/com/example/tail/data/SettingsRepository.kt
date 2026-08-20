@@ -182,6 +182,10 @@ private val KEY_MIGRATION_MINUTES_SLOT_DONE = booleanPreferencesKey("migration_m
 private val KEY_MIGRATION_MINUTES_TOGGLE_INIT = booleanPreferencesKey("migration_minutes_toggle_init")
 // True after the one-time widget/media/movie minutes backfill has run.
 private val KEY_MIGRATION_MINUTES_WIDGET_BACKFILL = booleanPreferencesKey("migration_minutes_widget_backfill")
+// True after the one-time repair of Wags-fed habits wrongly classified as
+// minutes-primary by the minutes-slot rollout (Wags stores minutes in the
+// primary key and sessions in secondary_value:, per the IPC protocol).
+private val KEY_MIGRATION_WAGS_MINUTES_PRIMARY_REPAIR_DONE = booleanPreferencesKey("migration_wags_minutes_primary_repair_done")
 
 // One-time cleanup: chess.com sync used to record one timestamp per MINUTE;
 // trim chess.com-linked habits' daily timestamps to one per game.
@@ -792,6 +796,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setMinutesWidgetBackfillDone() {
         context.dataStore.edit { it[KEY_MIGRATION_MINUTES_WIDGET_BACKFILL] = true }
+    }
+
+    /** True after the one-time Wags minutes-primary repair migration has run. */
+    suspend fun isWagsMinutesPrimaryRepairDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_WAGS_MINUTES_PRIMARY_REPAIR_DONE] ?: false }.first()
+    }
+
+    suspend fun setWagsMinutesPrimaryRepairDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_WAGS_MINUTES_PRIMARY_REPAIR_DONE] = true }
     }
 
     suspend fun isChessTimestampsTrimDone(): Boolean {

@@ -1208,6 +1208,105 @@ class HabitViewModel(
     }
 
     /**
+     * One-time repair for Wags-fed habits wrongly classified as minutes-primary
+     * by the Aug-18-2026 minutes-slot rollout.
+     *
+     * The Wags IPC protocol stores MINUTES in the primary key and SESSIONS in
+     * the legacy `secondary_value:` slot. The minutes-primary role instead
+     * expects minutes in the first-class `minutes:` slot — which Wags never
+     * writes — so points fell back to the raw undivided primary minutes
+     * (16 min ÷ divider 10 showed as 16 points) and the sessions metric
+     * disappeared from the graph.
+     *
+     * This restores the pre-breakage Meditations/Resonance pattern for every
+     * false minutes-primary habit
+     * ([com.example.tail.data.falseMinutesPrimaryHabits]):
+     * • minutes stay in the primary key (Value1; the divider applies for
+     *   points),
+     * • sessions stay in `secondary_value:` (Value2 metric + zero-minutes
+     *   fallback for points — preserving the legacy Apnea apb / Apnea spb /
+     *   Apnea practiced session history),
+     * • any stray `minutes:` slot data is max-merged into the primary key so
+     *   nothing entered via the minutes editor is lost.
+     */
+    private suspend fun performWagsMinutesPrimaryRepair(uri: Uri) {
+        try {
+            val s = _settings.value
+            val chessLinked = setOf(
+                com.example.tail.widget.ChessReadinessStore.linkedPuzzleHabit(context),
+                com.example.tail.widget.ChessReadinessStore.linkedRushHabit(context)
+            ).filter { it.isNotBlank() }
+            val targets = com.example.tail.data.falseMinutesPrimaryHabits(
+                widgetTimerMinutesPrimary = s.widgetTimerMinutesPrimary,
+                pcWidgetHabits = s.pcWidgetHabits,
+                widgetTriggerHabits = s.widgetTriggerHabits,
+                mediaHabits = s.mediaHabits,
+                bridgeMovieHabits = s.bridgeMovieHabits,
+                chessLinked = chessLinked.toSet(),
+                db = cachedPhoneDb
+            )
+            if (targets.isEmpty()) {
+                settingsRepo.setWagsMinutesPrimaryRepairDone()
+                Log.i(TAG, "performWagsMinutesPrimaryRepair: nothing to repair")
+                return
+            }
+            // Max-merge stray minutes: data into the primary key, then drop
+            // the slot so no hand-entered minutes are orphaned.
+            val db = cachedPhoneDb.toMutableMap()
+            var dbChanged = false
+            for (habit in targets) {
+                val stray = db[minutesKey(habit)] ?: continue
+                val merged = (db[habit] ?: emptyMap()).toMutableMap()
+                for ((d, v) in stray) merged[d] = maxOf(merged[d] ?: 0, v)
+                db[habit] = merged
+                db.remove(minutesKey(habit))
+                dbChanged = true
+            }
+            if (dbChanged) {
+                habitsRepo.saveDatabase(uri, context, db)
+                cachedPhoneDb = db
+            }
+            val minutesPrimary = s.widgetTimerMinutesPrimary - targets
+            val secHabits = s.secondaryValueHabits + targets
+            val fallback = s.secondaryValueFallbackHabits + targets
+            val minutesEnabled = s.minutesEnabledHabits - targets
+            val primaryFallbacks = s.minutesPrimaryFallbacks - targets
+            val labels = s.valueDisplayLabels.toMutableMap()
+            for (habit in targets) {
+                val inner = labels[habit]?.toMutableMap() ?: mutableMapOf()
+                if (inner[GRAPH_METRIC_VALUE1].isNullOrBlank()) {
+                    inner[GRAPH_METRIC_VALUE1] = "minutes"
+                }
+                if (inner[GRAPH_METRIC_VALUE2].isNullOrBlank()) {
+                    inner[GRAPH_METRIC_VALUE2] = "sessions"
+                }
+                labels[habit] = inner
+            }
+            settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
+            settingsRepo.saveSecondaryValueHabits(secHabits)
+            settingsRepo.saveSecondaryValueFallbackHabits(fallback)
+            settingsRepo.saveMinutesEnabledHabits(minutesEnabled)
+            settingsRepo.saveMinutesPrimaryFallbacks(primaryFallbacks)
+            settingsRepo.saveValueDisplayLabels(labels)
+            _settings.value = _settings.value.copy(
+                widgetTimerMinutesPrimary = minutesPrimary,
+                secondaryValueHabits = secHabits,
+                secondaryValueFallbackHabits = fallback,
+                minutesEnabledHabits = minutesEnabled,
+                minutesPrimaryFallbacks = primaryFallbacks,
+                valueDisplayLabels = labels
+            )
+            settingsRepo.setWagsMinutesPrimaryRepairDone()
+            Log.i(
+                TAG,
+                "performWagsMinutesPrimaryRepair: repaired ${targets.size} Wags-fed habits: ${targets.sorted()}"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "performWagsMinutesPrimaryRepair failed (will retry next load): ${e.message}")
+        }
+    }
+
+    /**
      * One-time cleanup: the chess.com sync used to record one timestamp per
      * MINUTE played (the minutes delta was passed to addTimestamps). Trims
      * each chess.com-linked habit's daily timestamp lists down to that day's
@@ -1290,6 +1389,16 @@ class HabitViewModel(
             // turned ON (covers habits connected after the init seeding).
             if (!settingsRepo.isMinutesWidgetBackfillDone()) {
                 performMinutesWidgetBackfill()
+            }
+
+            // ── One-time Wags minutes-primary repair ─────────────────────
+            // The minutes-slot rollout wrongly classified Wags-fed habits as
+            // minutes-primary: Wags stores minutes in the PRIMARY key and
+            // sessions in secondary_value:, per the IPC protocol. Restore the
+            // Meditations/Resonance pattern (minutes = Value1 with divider,
+            // sessions = Value2 + zero-minutes points fallback).
+            if (!settingsRepo.isWagsMinutesPrimaryRepairDone()) {
+                performWagsMinutesPrimaryRepair(uri)
             }
 
             // ── One-time chess.com timestamp trim ──────────────────────────
