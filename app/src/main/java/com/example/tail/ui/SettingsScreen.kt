@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -60,6 +61,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -72,6 +74,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -98,8 +101,13 @@ import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.backup.GoogleDriveManager
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.widget.ChessReadinessStore
+import com.example.tail.wallpaper.WallpaperAlarmReceiver
+import com.example.tail.wallpaper.WallpaperMetric
+import com.example.tail.wallpaper.WallpaperRefresher
+import com.example.tail.wallpaper.WallpaperTarget
 import com.example.tail.ui.AdviceDialog
 import com.example.tail.ui.AdviceViewModel
+import kotlinx.coroutines.launch
 
 /**
  * Grayscale color scheme for the Settings screen.
@@ -228,6 +236,20 @@ fun SettingsScreen(
         }
     }
 
+    // Picker for the wallpaper image directory (result_1.png … result_N.png) —
+    // read-only access is enough, the app only decodes the images.
+    val wallpaperDirLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            viewModel.saveWallpaperSettings(dirUri = uri.toString())
+        }
+    }
+
     MaterialTheme(colorScheme = settingsGrayscaleScheme()) {
     Scaffold(
         topBar = {
@@ -324,6 +346,22 @@ fun SettingsScreen(
                         onToggleDebugMode = { debugPrefs.debugModeEnabled = it },
                         onChooseDirectory = { debugDirLauncher.launch(null) },
                         onClearDirectory = { debugPrefs.debugFileDirUri = "" }
+                    )
+                }
+            }
+
+            // ── Wallpaper ───────────────────────────────────────────────────────
+            item {
+                SettingsCategory(
+                    title = "Wallpaper",
+                    summary = "Points-driven wallpaper from an image folder",
+                    icon = Icons.Filled.Wallpaper
+                ) {
+                    WallpaperSettingsSection(
+                        context = context,
+                        viewModel = viewModel,
+                        settings = settings,
+                        onPickDirectory = { wallpaperDirLauncher.launch(null) }
                     )
                 }
             }
@@ -1188,6 +1226,153 @@ private fun GarminSettingsSection(
                 )
             ) {
                 Text("Import Historic Data", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/**
+ * Points-driven wallpaper settings section.
+ *
+ * The user picks a folder of numbered images (result_1.png … result_N.png),
+ * which wallpaper to replace (home / lock / both) and which point statistic
+ * drives the choice (today / 7-day avg / 30-day avg). Image N is used for
+ * N points, clamped to the available range.
+ */
+@Composable
+private fun WallpaperSettingsSection(
+    context: Context,
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings,
+    onPickDirectory: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val wallpaperStatus by viewModel.wallpaperStatus.collectAsState()
+    var applying by remember { mutableStateOf(false) }
+
+    var enabled by remember(settings.wallpaperEnabled) {
+        mutableStateOf(settings.wallpaperEnabled)
+    }
+
+    // Human-readable folder label from the SAF tree URI.
+    val dirLabel = remember(settings.wallpaperDirUri) {
+        if (settings.wallpaperDirUri.isEmpty()) ""
+        else Uri.decode(settings.wallpaperDirUri.substringAfterLast('/'))
+    }
+
+    Column {
+        Text("🖼 Points Wallpaper", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Sets the wallpaper to the image matching your points. " +
+                   "Name the images <anything>_<number>.png (e.g. result_51.png) — " +
+                   "image N is used for N points.",
+            fontSize = 11.sp,
+            color = Color(0xFF888888)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Enable toggle
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Enable Wallpaper", fontSize = 14.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    viewModel.saveWallpaperSettings(enabled = it)
+                    if (it) WallpaperAlarmReceiver.scheduleNext(context)
+                    else WallpaperAlarmReceiver.cancel(context)
+                }
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // ── Image folder ──────────────────────────────────────────────
+            Text("Image folder", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text(
+                text = if (dirLabel.isEmpty()) "No folder selected yet"
+                       else "📁 $dirLabel",
+                fontSize = 11.sp,
+                color = if (dirLabel.isEmpty()) Color(0xFFE65100) else Color(0xFF81C784)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(onClick = onPickDirectory) {
+                    Text(if (dirLabel.isEmpty()) "Choose Folder" else "Change Folder", fontSize = 12.sp)
+                }
+            }
+            Text(
+                text = "Refreshes automatically as points change and once a day after midnight.",
+                fontSize = 9.sp,
+                color = Color(0xFF666666)
+            )
+
+            // ── Wallpaper target ──────────────────────────────────────────
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Apply to", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            WallpaperTarget.entries.forEach { target ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.saveWallpaperSettings(target = target) },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = settings.wallpaperTarget == target,
+                        onClick = { viewModel.saveWallpaperSettings(target = target) }
+                    )
+                    Text(target.label, fontSize = 13.sp)
+                }
+            }
+
+            // ── Metric ────────────────────────────────────────────────────
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Based on", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            WallpaperMetric.entries.forEach { metric ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.saveWallpaperSettings(metric = metric) },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = settings.wallpaperMetric == metric,
+                        onClick = { viewModel.saveWallpaperSettings(metric = metric) }
+                    )
+                    Text(metric.label, fontSize = 13.sp)
+                }
+            }
+
+            // ── Manual apply + status ─────────────────────────────────────
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    applying = true
+                    scope.launch {
+                        val status = WallpaperRefresher.refresh(context, force = true)
+                        viewModel.setWallpaperStatus(status.ifEmpty { "No change needed" })
+                        applying = false
+                    }
+                },
+                enabled = !applying && settings.wallpaperDirUri.isNotEmpty()
+            ) {
+                Text(if (applying) "Applying…" else "Apply Now", fontSize = 12.sp)
+            }
+            if (wallpaperStatus.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = wallpaperStatus,
+                    fontSize = 10.sp,
+                    color = Color(0xFFAAAAAA)
+                )
             }
         }
     }

@@ -45,6 +45,9 @@
          inexact allow-while-idle alarm when the exact-alarm grant is absent. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
+    <!-- Required for the points-driven wallpaper feature (set home/lock wallpaper). -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+
     <!--
         Custom signature permission for IPC.
         Only apps signed with the same keystore can use the ContentProvider or
@@ -452,6 +455,21 @@
         -->
         <receiver
             android:name=".notify.HabitAlarmReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            WallpaperAlarmReceiver: daily refresh of the points-driven
+            wallpaper (re-applies the image matching the selected point
+            metric shortly after midnight) and re-scheduling after a
+            reboot. Intraday point changes are handled by the post-save
+            hook in HabitsRepository.
+        -->
+        <receiver
+            android:name=".wallpaper.WallpaperAlarmReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

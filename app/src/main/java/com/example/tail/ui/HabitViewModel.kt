@@ -104,6 +104,8 @@ import com.example.tail.data.parseDate
 import com.example.tail.data.HABIT_ORDER
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import com.example.tail.wallpaper.WallpaperMetric
+import com.example.tail.wallpaper.WallpaperTarget
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -8836,6 +8838,46 @@ class HabitViewModel(
                 bridgeEnabled = enabled,
                 bridgeUrl = derivedUrl,
                 bridgeToken = derivedToken
+            )
+        }
+    }
+
+    // ── Points Wallpaper ─────────────────────────────────────────────────
+
+    private val _wallpaperStatus = MutableStateFlow("")
+
+    /** Human-readable result of the most recent manual wallpaper apply. */
+    val wallpaperStatus: StateFlow<String> = _wallpaperStatus
+
+    /** Updates the wallpaper status text (set by the Settings section). */
+    fun setWallpaperStatus(status: String) {
+        _wallpaperStatus.value = status
+    }
+
+    /**
+     * Saves the points-driven wallpaper settings. Every parameter is
+     * optional — unspecified values keep their current state.
+     */
+    fun saveWallpaperSettings(
+        enabled: Boolean? = null,
+        dirUri: String? = null,
+        target: WallpaperTarget? = null,
+        metric: WallpaperMetric? = null
+    ) {
+        viewModelScope.launch {
+            val cur = _settings.value
+            val newEnabled = enabled ?: cur.wallpaperEnabled
+            val newDir = dirUri ?: cur.wallpaperDirUri
+            val newTarget = target ?: cur.wallpaperTarget
+            val newMetric = metric ?: cur.wallpaperMetric
+            settingsRepo.saveWallpaperSettings(
+                newEnabled, newDir, newTarget.name, newMetric.name
+            )
+            _settings.value = _settings.value.copy(
+                wallpaperEnabled = newEnabled,
+                wallpaperDirUri = newDir,
+                wallpaperTarget = newTarget,
+                wallpaperMetric = newMetric
             )
         }
     }

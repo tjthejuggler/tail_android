@@ -832,6 +832,9 @@ class BackupManager(
         settingsRepo.saveChessReadinessApp(s.chessReadinessApp)
         settingsRepo.saveGdriveAutoEnabled(s.gdriveAutoEnabled)
         settingsRepo.saveGdriveAccountName(s.gdriveAccountName)
+        settingsRepo.saveWallpaperSettings(
+            s.wallpaperEnabled, s.wallpaperDirUri, s.wallpaperTarget, s.wallpaperMetric
+        )
     }
 
     private suspend fun applyAdvice(items: List<AdviceBackupItem>) {
@@ -1203,7 +1206,11 @@ class BackupManager(
         chessReadinessEnabled = s.chessReadinessEnabled,
         chessReadinessApp = s.chessReadinessApp,
         gdriveAutoEnabled = s.gdriveAutoEnabled,
-        gdriveAccountName = s.gdriveAccountName
+        gdriveAccountName = s.gdriveAccountName,
+        wallpaperEnabled = s.wallpaperEnabled,
+        wallpaperDirUri = s.wallpaperDirUri,
+        wallpaperTarget = s.wallpaperTarget.name,
+        wallpaperMetric = s.wallpaperMetric.name
     )
 
     private fun AdviceItem.toBackup() = AdviceBackupItem(

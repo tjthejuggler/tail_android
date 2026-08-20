@@ -190,7 +190,13 @@ data class SettingsSection(
     val chessReadinessEnabled: Boolean = false,
     val chessReadinessApp: String = "",
     val gdriveAutoEnabled: Boolean = false,
-    val gdriveAccountName: String = ""
+    val gdriveAccountName: String = "",
+
+    // Points-driven wallpaper (enum names persisted as strings)
+    val wallpaperEnabled: Boolean = false,
+    val wallpaperDirUri: String = "",
+    val wallpaperTarget: String = "SYSTEM",
+    val wallpaperMetric: String = "TODAY"
 )
 
 /** Backup form of [com.example.tail.data.PointRange]. */

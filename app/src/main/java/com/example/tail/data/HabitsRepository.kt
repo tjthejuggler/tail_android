@@ -277,6 +277,16 @@ class HabitsRepository {
             // Snapshot the newly-written state only after a confirmed write.
             if (wrote) {
                 snapshotManager(context).snapshot(db, reason = "post-save")
+
+                // Points-driven wallpaper: recompute after every successful
+                // save so the wallpaper tracks the day's points as they
+                // accrue. No-op when the feature is disabled or the resolved
+                // image hasn't changed. Never allowed to break the save.
+                try {
+                    com.example.tail.wallpaper.WallpaperRefresher.onDatabaseSaved(context, db)
+                } catch (e: Exception) {
+                    Log.w(TAG, "post-save wallpaper refresh failed: ${e.message}")
+                }
             }
         }
 

@@ -1,5 +1,8 @@
 package com.example.tail.data
 
+import com.example.tail.wallpaper.WallpaperMetric
+import com.example.tail.wallpaper.WallpaperTarget
+
 // ════════════════════════════════════════════════════════════════════════════
 //  Long-press action constants
 // ════════════════════════════════════════════════════════════════════════════
@@ -1321,7 +1324,21 @@ data class AppSettings(
     /** Account name (e-mail) of the signed-in Google account used for Drive backups. */
     val gdriveAccountName: String = "",
     /** ISO date ("YYYY-MM-DD") of the most recent successful Drive auto-backup. */
-    val gdriveLastBackupDate: String = ""
+    val gdriveLastBackupDate: String = "",
+
+    // ── Points-driven wallpaper ────────────────────────────────────────────
+    /** Master switch for the points-driven wallpaper feature. */
+    val wallpaperEnabled: Boolean = false,
+    /**
+     * SAF tree URI of the folder holding the numbered wallpaper images
+     * (result_1.png … result_N.png). The applied image's number matches the
+     * selected point metric, clamped to the available range.
+     */
+    val wallpaperDirUri: String = "",
+    /** Which wallpaper surface(s) the image is applied to (home/lock/both). */
+    val wallpaperTarget: WallpaperTarget = WallpaperTarget.SYSTEM,
+    /** Which point statistic picks the image index (today / avg7 / avg30). */
+    val wallpaperMetric: WallpaperMetric = WallpaperMetric.TODAY
 )
 
 /** Fallback source for minutes-primary habits: no fallback on 0-minute days. */

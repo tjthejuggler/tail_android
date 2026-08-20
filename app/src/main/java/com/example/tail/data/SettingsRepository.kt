@@ -10,6 +10,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.tail.wallpaper.WallpaperMetric
+import com.example.tail.wallpaper.WallpaperTarget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -239,6 +241,16 @@ private val KEY_GDRIVE_AUTO_ENABLED = booleanPreferencesKey("gdrive_auto_enabled
 private val KEY_GDRIVE_ACCOUNT_NAME = stringPreferencesKey("gdrive_account_name")
 // ISO date ("YYYY-MM-DD") of the most recent successful Drive auto-backup.
 private val KEY_GDRIVE_LAST_DATE = stringPreferencesKey("gdrive_last_backup_date")
+
+// ── Points-driven wallpaper keys ───────────────────────────────────────
+// Master switch for the points-driven wallpaper feature.
+private val KEY_WALLPAPER_ENABLED = booleanPreferencesKey("wallpaper_enabled")
+// SAF tree URI of the folder holding the numbered images (result_1.png … result_N.png).
+private val KEY_WALLPAPER_DIR_URI = stringPreferencesKey("wallpaper_dir_uri")
+// WallpaperTarget enum name (SYSTEM / LOCK / BOTH).
+private val KEY_WALLPAPER_TARGET = stringPreferencesKey("wallpaper_target")
+// WallpaperMetric enum name (TODAY / WEEKLY / MONTHLY).
+private val KEY_WALLPAPER_METRIC = stringPreferencesKey("wallpaper_metric")
 
 /**
  * One-time rename mapping for legacy "Launch … Widget" habit names.
@@ -962,7 +974,11 @@ class SettingsRepository(private val context: Context) {
             chessReadinessApp = prefs[KEY_CHESS_READINESS_APP] ?: "",
             gdriveAutoEnabled = prefs[KEY_GDRIVE_AUTO_ENABLED] ?: false,
             gdriveAccountName = prefs[KEY_GDRIVE_ACCOUNT_NAME] ?: "",
-            gdriveLastBackupDate = prefs[KEY_GDRIVE_LAST_DATE] ?: ""
+            gdriveLastBackupDate = prefs[KEY_GDRIVE_LAST_DATE] ?: "",
+            wallpaperEnabled = prefs[KEY_WALLPAPER_ENABLED] ?: false,
+            wallpaperDirUri = prefs[KEY_WALLPAPER_DIR_URI] ?: "",
+            wallpaperTarget = WallpaperTarget.fromName(prefs[KEY_WALLPAPER_TARGET]),
+            wallpaperMetric = WallpaperMetric.fromName(prefs[KEY_WALLPAPER_METRIC])
         )
     }
 
@@ -1367,6 +1383,26 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits linked to the movie bridge. */
     suspend fun saveBridgeMovieHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_BRIDGE_MOVIE_HABITS] = habits }
+    }
+
+    // ── Points Wallpaper ─────────────────────────────────────────────────
+
+    /**
+     * Saves the points-driven wallpaper settings. [target] and [metric] are
+     * persisted as enum names (WallpaperTarget / WallpaperMetric).
+     */
+    suspend fun saveWallpaperSettings(
+        enabled: Boolean,
+        dirUri: String,
+        target: String,
+        metric: String
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_WALLPAPER_ENABLED] = enabled
+            prefs[KEY_WALLPAPER_DIR_URI] = dirUri
+            prefs[KEY_WALLPAPER_TARGET] = target
+            prefs[KEY_WALLPAPER_METRIC] = metric
+        }
     }
 
     /** Saves the habit name → daily "HH:mm" ask-time map for scheduled asks. */
