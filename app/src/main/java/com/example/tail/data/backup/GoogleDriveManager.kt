@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -78,7 +79,7 @@ data class SignInOutcome(
  *  2. An OAuth access token for the `drive.file` scope is fetched on demand
  *     via [GoogleAuthUtil.getToken] (cached/refreshed by Play Services).
  *  3. Uploads use the exact same [BackupBundle] JSON that SAF exports write
- *     ([BackupManager.buildBackupJson]), so a Drive backup is byte-identical
+ *     ([BackupManager.writeBackupJson]), so a Drive backup is byte-identical
  *     in format to a local one and can be restored anywhere.
  *  4. Daily auto-backup mirrors [AutoBackupManager]: on the first launch of
  *     each day, if enabled + signed in, one `tail_gdrive_backup_YYYY-MM-DD.json`
@@ -210,10 +211,17 @@ class GoogleDriveManager(
     }
 
     /**
-     * Uploads (or replaces) the backup file with the given [fileName],
-     * containing [json]. Returns the Drive fileId on success.
+     * Uploads (or replaces) the backup file with the given [fileName].
+     * The JSON body is produced by [writeJson] (e.g.
+     * [BackupManager.writeBackupJson]) and STAGED into a cache temp file
+     * first, so the multi-MB body never lives on the Java heap and the exact
+     * Content-Length is known for fixed-length streaming upload.
+     * Returns the Drive fileId on success.
      */
-    suspend fun uploadBackupJson(fileName: String, json: String): Result<String> =
+    suspend fun uploadBackupJson(
+        fileName: String,
+        writeJson: suspend (OutputStream) -> Unit
+    ): Result<String> =
         withContext(Dispatchers.IO) {
             var token = accessToken() ?: return@withContext Result.failure(
                 IllegalStateException(
@@ -224,7 +232,18 @@ class GoogleDriveManager(
                     }
                 )
             )
+            val tmp = File(context.cacheDir, "gdrive_upload_${System.currentTimeMillis()}.json")
             try {
+                // Stage the JSON to disk (memory-flat serialization).
+                try {
+                    tmp.outputStream().use { writeJson(it) }
+                } catch (e: Exception) {
+                    return@withContext Result.failure(
+                        IllegalStateException("Building backup JSON failed: ${e.message}", e)
+                    )
+                }
+                val bodyLen = tmp.length()
+
                 // If today's file already exists, replace its content instead
                 // of creating a duplicate.
                 val existing = listBackupsWithToken(token).firstOrNull { it.name == fileName }
@@ -235,7 +254,10 @@ class GoogleDriveManager(
                     )
                     conn.doOutput = true
                     conn.setRequestProperty("Content-Type", "application/json")
-                    conn.outputStream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                    conn.setFixedLengthStreamingMode(bodyLen)
+                    conn.outputStream.use { out ->
+                        tmp.inputStream().use { it.copyTo(out) }
+                    }
                     val code = conn.responseCode
                     if (code !in 200..299) {
                         conn.disconnect()
@@ -250,13 +272,12 @@ class GoogleDriveManager(
                 } else {
                     val boundary = "tail" + System.currentTimeMillis()
                     val meta = JSONObject().put("name", fileName).toString()
-                    val before = "--$boundary\r\n" +
+                    val before = ("--$boundary\r\n" +
                             "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
                             "$meta\r\n" +
                             "--$boundary\r\n" +
-                            "Content-Type: application/json\r\n\r\n"
-                    val after = "\r\n--$boundary--"
-                    val body = (before + json + after).toByteArray(Charsets.UTF_8)
+                            "Content-Type: application/json\r\n\r\n").toByteArray(Charsets.UTF_8)
+                    val after = "\r\n--$boundary--".toByteArray(Charsets.UTF_8)
 
                     val conn = http(
                         "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
@@ -266,8 +287,12 @@ class GoogleDriveManager(
                     conn.setRequestProperty(
                         "Content-Type", "multipart/related; boundary=$boundary"
                     )
-                    conn.setFixedLengthStreamingMode(body.size)
-                    conn.outputStream.use { it.write(body) }
+                    conn.setFixedLengthStreamingMode(before.size + bodyLen + after.size)
+                    conn.outputStream.use { out ->
+                        out.write(before)
+                        tmp.inputStream().use { it.copyTo(out) }
+                        out.write(after)
+                    }
                     val code = conn.responseCode
                     if (code !in 200..299) {
                         conn.disconnect()
@@ -288,6 +313,8 @@ class GoogleDriveManager(
             } catch (e: Exception) {
                 Log.e(TAG, "upload failed", e)
                 Result.failure(e)
+            } finally {
+                runCatching { tmp.delete() }
             }
         }
 
@@ -339,32 +366,31 @@ class GoogleDriveManager(
         }.filter { it.fileId.isNotBlank() }
     }
 
-    /** Downloads a backup's full JSON text from Drive. */
-    suspend fun downloadBackupText(fileId: String): Result<String> =
-        withContext(Dispatchers.IO) {
-            val token = accessToken()
-                ?: return@withContext Result.failure(IllegalStateException("Not signed in"))
-            try {
-                val conn = http(
-                    "https://www.googleapis.com/drive/v3/files/$fileId?alt=media",
-                    "GET", token
-                )
-                val code = conn.responseCode
-                if (code !in 200..299) {
-                    val err = errorBody(conn)
-                    conn.disconnect()
-                    return@withContext Result.failure(
-                        IllegalStateException("Drive download failed (HTTP $code): $err")
-                    )
-                }
-                val text = conn.inputStream.bufferedReader().use { it.readText() }
+    /** Streams a backup's JSON from Drive directly into [dest] (memory-flat). */
+    private fun downloadToFile(fileId: String, dest: File): Result<Unit> {
+        val token = accessToken()
+            ?: return Result.failure(IllegalStateException("Not signed in"))
+        return try {
+            val conn = http(
+                "https://www.googleapis.com/drive/v3/files/$fileId?alt=media",
+                "GET", token
+            )
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val err = errorBody(conn)
                 conn.disconnect()
-                Result.success(text)
-            } catch (e: Exception) {
-                Log.e(TAG, "download failed", e)
-                Result.failure(e)
+                return Result.failure(
+                    IllegalStateException("Drive download failed (HTTP $code): $err")
+                )
             }
+            dest.outputStream().use { out -> conn.inputStream.use { it.copyTo(out) } }
+            conn.disconnect()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "download failed", e)
+            Result.failure(e)
         }
+    }
 
     /** Deletes a backup file from Drive. */
     suspend fun deleteBackup(fileId: String): Boolean = withContext(Dispatchers.IO) {
@@ -393,8 +419,7 @@ class GoogleDriveManager(
             return Result.failure(IllegalStateException("Sign in to Google first"))
         }
         return try {
-            val json = backupManager.buildBackupJson()
-            val res = uploadBackupJson(fileName, json)
+            val res = uploadBackupJson(fileName) { out -> backupManager.writeBackupJson(out) }
             res.map { fileName }
         } catch (e: Exception) {
             Log.e(TAG, "backupNow failed", e)
@@ -407,14 +432,17 @@ class GoogleDriveManager(
      * [BackupManager.importBackup] path (full restore, same validation).
      */
     suspend fun restoreFromDrive(fileId: String): BackupResult = withContext(Dispatchers.IO) {
-        val dl = downloadBackupText(fileId)
-        val text = dl.getOrNull() ?: return@withContext BackupResult.Failure(
-            "Drive download failed: ${dl.exceptionOrNull()?.message}"
-        )
         // importBackup reads via ContentResolver — a file:// Uri works fine.
+        // Stream the download straight to disk: the multi-MB backup never
+        // materializes as a String on the heap.
         val tmp = File(context.cacheDir, "gdrive_restore_${System.currentTimeMillis()}.json")
-        return@withContext try {
-            tmp.writeText(text)
+        val dl = downloadToFile(fileId, tmp)
+        if (dl.isFailure) {
+            return@withContext BackupResult.Failure(
+                "Drive download failed: ${dl.exceptionOrNull()?.message}"
+            )
+        }
+        try {
             backupManager.importBackup(Uri.fromFile(tmp))
         } catch (e: Exception) {
             BackupResult.Failure("Restore failed: ${e.message}", e)

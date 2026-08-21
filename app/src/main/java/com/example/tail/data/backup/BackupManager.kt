@@ -26,6 +26,10 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FilterOutputStream
+import java.io.OutputStream
+import java.io.OutputStreamWriter
+import java.io.Reader
 import java.time.Instant
 
 private const val TAG = "BackupManager"
@@ -131,20 +135,31 @@ class BackupManager(
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * Builds a full backup bundle and writes it to [destUri] as pretty JSON.
-     * Returns a [BackupResult] describing success / failure.
+     * Builds a full backup bundle and STREAMS it to [destUri] as pretty JSON.
+     * Memory-flat: the (potentially 70 MB+) bundle JSON is written
+     * incrementally through the SAF output stream and never materializes as
+     * a String on the heap. Returns a [BackupResult] describing success /
+     * failure.
      */
     suspend fun exportBackup(destUri: Uri): BackupResult = withContext(Dispatchers.IO) {
         try {
-            val json = buildBackupJson()
-
+            var bytesWritten = 0L
             val cr = context.contentResolver
-            cr.openOutputStream(destUri, "wt")?.use { out ->
-                out.bufferedWriter().use { it.write(json) }
+            cr.openOutputStream(destUri, "wt")?.use { raw ->
+                object : FilterOutputStream(raw) {
+                    override fun write(b: Int) {
+                        out.write(b)
+                        bytesWritten += 1
+                    }
+
+                    override fun write(b: ByteArray, off: Int, len: Int) {
+                        out.write(b, off, len)
+                        bytesWritten += len
+                    }
+                }.use { writeBackupJson(it) }
             } ?: return@withContext BackupResult.Failure("Could not open output stream")
 
-            val sizeKb = json.length / 1024
-            BackupResult.Success("Exported backup (${sizeKb} KB)")
+            BackupResult.Success("Exported backup (${bytesWritten / 1024} KB)")
         } catch (e: Exception) {
             Log.e(TAG, "Export failed", e)
             BackupResult.Failure("Export failed: ${e.message}", e)
@@ -152,12 +167,19 @@ class BackupManager(
     }
 
     /**
-     * Builds the full backup bundle and returns it as a JSON string. Public so
-     * alternative transports (e.g. Google Drive upload) can reuse the exact
-     * same wire format as SAF file exports.
+     * Builds the full backup bundle and STREAMS it as pretty JSON into [out].
+     * Memory-flat: Gson serializes incrementally through an
+     * [OutputStreamWriter], so the bundle JSON never becomes a String. (The
+     * previous buildBackupJson() String variant OOM'd: StringWriter's growth
+     * policy needed a ~144 MB contiguous allocation against the 256 MB heap
+     * limit once base64 photos/icons pushed the bundle past ~70 MB.)
+     * Public so alternative transports (e.g. Google Drive upload) can reuse
+     * the exact same wire format as SAF file exports. [out] is closed.
      */
-    suspend fun buildBackupJson(): String = withContext(Dispatchers.IO) {
-        gson.toJson(buildBundle())
+    suspend fun writeBackupJson(out: OutputStream) = withContext(Dispatchers.IO) {
+        OutputStreamWriter(out, Charsets.UTF_8).use { writer ->
+            gson.toJson(buildBundle(), writer)
+        }
     }
 
     /** Reads every data source and assembles a [BackupBundle] in memory. */
@@ -472,17 +494,19 @@ class BackupManager(
      */
     suspend fun importBackup(srcUri: Uri): BackupResult = withContext(Dispatchers.IO) {
         try {
-            val text = context.contentResolver.openInputStream(srcUri)?.use { stream ->
-                stream.bufferedReader().readText()
-            } ?: return@withContext BackupResult.Failure("Could not open input stream")
-
-            if (text.isBlank()) return@withContext BackupResult.Failure("Backup file is empty")
-
-            val bundle = try {
-                gson.fromJson(text, BackupBundle::class.java)
+            // Stream-parse: the multi-MB backup never materializes as a String.
+            val bundle: BackupBundle? = try {
+                context.contentResolver.openInputStream(srcUri)?.use { stream ->
+                    gson.fromJson(stream.bufferedReader(), BackupBundle::class.java)
+                }
             } catch (e: Exception) {
                 return@withContext BackupResult.Failure(
                     "Backup file is not valid JSON: ${e.message}", e
+                )
+            }
+            if (bundle == null) {
+                return@withContext BackupResult.Failure(
+                    "Could not open input stream or backup file is empty"
                 )
             }
 
@@ -511,17 +535,13 @@ class BackupManager(
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * Parses a backup file's raw text into a validated [BackupBundle].
-     * Returns null (and logs) if the text is blank, not valid JSON, missing
-     * the magic marker, or from a newer schema version.
+     * Parses a backup file (streamed via [reader]) into a validated
+     * [BackupBundle]. Returns null (and logs) if the content is blank, not
+     * valid JSON, missing the magic marker, or from a newer schema version.
      */
-    private fun parseBackup(text: String): BackupBundle? {
-        if (text.isBlank()) {
-            Log.w(TAG, "parseBackup: text is blank")
-            return null
-        }
+    private fun parseBackup(reader: Reader): BackupBundle? {
         val bundle = try {
-            gson.fromJson(text, BackupBundle::class.java)
+            gson.fromJson(reader, BackupBundle::class.java)
         } catch (e: Exception) {
             Log.w(TAG, "parseBackup: JSON parse failed: ${e.message}")
             return null
@@ -539,15 +559,14 @@ class BackupManager(
 
     /** Reads and parses a backup file from [srcUri]. Returns null on any failure. */
     suspend fun readBackupBundle(srcUri: Uri): BackupBundle? = withContext(Dispatchers.IO) {
-        val text = try {
+        try {
             context.contentResolver.openInputStream(srcUri)?.use { stream ->
-                stream.bufferedReader().readText()
+                parseBackup(stream.bufferedReader())
             }
         } catch (e: Exception) {
             Log.w(TAG, "readBackupBundle: read failed: ${e.message}")
             null
-        } ?: return@withContext null
-        parseBackup(text)
+        }
     }
 
     /**
