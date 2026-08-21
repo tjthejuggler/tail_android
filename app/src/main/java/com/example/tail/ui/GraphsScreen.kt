@@ -1561,7 +1561,9 @@ private fun HabitLineChart(
                 drawPath(path = areaPath, color = series.color.copy(alpha = 0.08f))
             }
 
-            // Line
+            // Line connecting the raw data points — intentionally faint: the
+            // trend (moving average) line below is the primary visual, so the
+            // raw polyline is kept barely visible as positional context only.
             if (points.size >= 2) {
                 val linePath = Path().apply {
                     moveTo(points.first().x, points.first().y)
@@ -1569,8 +1571,8 @@ private fun HabitLineChart(
                 }
                 drawPath(
                     path = linePath,
-                    color = series.color.copy(alpha = 0.8f),
-                    style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                    color = series.color.copy(alpha = 0.15f),
+                    style = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round)
                 )
             }
 
@@ -1586,8 +1588,10 @@ private fun HabitLineChart(
                     // Show dots for all values when negative values are present
                     val sc = seriesYScales[series]
                     if (displayValue != 0 || isSelected || (sc?.effectiveMin ?: effectiveYMin) < 0) {
+                        // Medium-visibility dots: clearly readable, but secondary
+                        // to the trend line. Selected dots stay fully opaque.
                         drawCircle(
-                            color = if (isSelected) Color.White else series.color,
+                            color = if (isSelected) Color.White else series.color.copy(alpha = 0.75f),
                             radius = dotRadius,
                             center = point
                         )
@@ -1602,12 +1606,16 @@ private fun HabitLineChart(
                 }
             }
 
-            // 7-day moving average
-            if (visibleData.size >= 7 && visTotalDays > 14) {
+            // Trend line (moving average) — the most prominent element on the
+            // chart (thicker and more opaque than the raw polyline and the
+            // dots). Drawn for EVERY range: short ranges (1W/2W) use a smaller
+            // window so a full-width trend line is still produced.
+            val maWindow = if (visTotalDays <= 14) 3 else 7
+            if (visibleData.size >= 2) {
                 drawMovingAverage(
                     data = visibleData,
-                    windowSize = 7,
-                    color = series.color.copy(alpha = 0.4f),
+                    windowSize = maWindow,
+                    color = series.color.copy(alpha = 0.95f),
                     startDate = visStartDate,
                     totalDays = visTotalDays,
                     effectiveYMin = seriesYScales[series]?.effectiveMin ?: effectiveYMin,
@@ -1616,7 +1624,7 @@ private fun HabitLineChart(
                     chartBottom = chartBottom,
                     chartWidth = chartWidth,
                     chartHeight = chartHeight,
-                    strokeWidth = 1.5.dp.toPx(),
+                    strokeWidth = 3.dp.toPx(),
                     metric = series.metric
                 )
             }
@@ -1688,7 +1696,11 @@ private fun HabitLineChart(
 }
 
 /**
- * Draws a 7-day moving average line on the chart.
+ * Draws a moving-average (trend) line on the chart. The first windowSize-1
+ * points use an expanding window (average of however many days exist so far),
+ * so the line starts at the very first data point instead of windowSize-1
+ * days in — which used to leave a noticeable gap at the left edge on short
+ * ranges like 1M.
  */
 private fun DrawScope.drawMovingAverage(
     data: List<HabitViewModel.GraphDataPoint>,
@@ -1705,12 +1717,16 @@ private fun DrawScope.drawMovingAverage(
     strokeWidth: Float,
     metric: String = com.example.tail.data.GRAPH_METRIC_POINTS
 ) {
-    if (data.size < windowSize) return
+    if (data.size < 2) return
 
     val yRange = (effectiveYMax - effectiveYMin).coerceAtLeast(1)
     val maPoints = mutableListOf<Offset>()
-    for (i in windowSize - 1 until data.size) {
-        val windowAvg = data.subList(i - windowSize + 1, i + 1)
+    for (i in data.indices) {
+        // Expanding window at the start of the period: average over however
+        // many days are actually available (1, 2, ... windowSize-1) until the
+        // full window fills, so the trend line spans the entire chart width.
+        val windowStart = maxOf(0, i - windowSize + 1)
+        val windowAvg = data.subList(windowStart, i + 1)
             .map { displayValueForMetric(it, metric).toFloat() }
             .average()
             .toFloat()
@@ -1726,13 +1742,14 @@ private fun DrawScope.drawMovingAverage(
             moveTo(maPoints.first().x, maPoints.first().y)
             for (i in 1 until maPoints.size) lineTo(maPoints[i].x, maPoints[i].y)
         }
+        // Solid stroke (no dash): the trend line must read as the dominant
+        // element, clearly outranking the faint raw polyline and the dots.
         drawPath(
             path = path,
             color = color,
             style = Stroke(
                 width = strokeWidth,
-                cap = StrokeCap.Round,
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
+                cap = StrokeCap.Round
             )
         )
     }

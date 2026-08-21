@@ -72,7 +72,8 @@ class HabitsContentProvider : ContentProvider() {
             } catch (e: Exception) {
                 HABIT_ORDER
             }
-        }
+        }.filter { it.isNotBlank() && !it.startsWith("app_link:") } // drop empty slots & pseudo-habits
+         .distinct()
 
         val cols = projection ?: arrayOf(COL_HABIT_ID, COL_HABIT_NAME)
         val cursor = MatrixCursor(cols)
