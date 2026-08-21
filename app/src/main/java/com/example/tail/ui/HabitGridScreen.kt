@@ -186,24 +186,89 @@ private const val GRID_COLUMNS = 8
 private const val TOTAL_CELLS = 80
 
 // ── Idle shimmer tuning ───────────────────────────────────────────────────────
-// After this long without any interaction, a barely-visible brightness wave
-// rolls diagonally across the habit squares, starting at the lower-right
-// corner and sweeping up to the upper-left corner, then pauses a few
-// seconds and repeats until the next interaction.
-private const val IDLE_SHIMMER_DELAY_MS = 5_000L   // idle time before the wave starts
-private const val IDLE_SHIMMER_SWEEP_MS = 1_300    // duration of one full sweep
-private const val IDLE_SHIMMER_PAUSE_MS = 3_500L   // pause between sweeps
-private const val IDLE_SHIMMER_BAND = 0.22f        // wave width (fraction of diagonal span)
-private const val IDLE_SHIMMER_MAX_ALPHA = 0.07f   // peak brightness — deliberately very slight
+// After a random quiet gap (5–15 s) without any interaction, a barely-visible
+// brightness wave rolls across the habit squares in a randomly chosen
+// direction — from any corner, across from any side, outward from the
+// center, or inward from the edges. The opposite direction immediately
+// follows with no gap, so the pair reads as one long "there and back"
+// shimmer; then a new random direction is chosen after another random gap.
+private const val IDLE_SHIMMER_GAP_MIN_MS = 5_000L   // min quiet time before a wave starts
+private const val IDLE_SHIMMER_GAP_MAX_MS = 15_000L  // max quiet time before a wave starts
+private const val IDLE_SHIMMER_SWEEP_MS = 1_300      // duration of one leg (forward or return) of a pair
+private const val IDLE_SHIMMER_BAND = 0.22f          // wave width (fraction of the sweep span)
+private const val IDLE_SHIMMER_MAX_ALPHA = 0.07f     // peak brightness — deliberately very slight
+
+private const val GRID_ROWS = TOTAL_CELLS / GRID_COLUMNS
 
 /** Grid diagonal span in cells: (rows − 1) + (columns − 1). */
-private const val GRID_DIAGONAL_SPAN =
-    (TOTAL_CELLS / GRID_COLUMNS - 1) + (GRID_COLUMNS - 1)
+private const val GRID_DIAGONAL_SPAN = (GRID_ROWS - 1) + (GRID_COLUMNS - 1)
+
+/** Distance from the grid center to the farthest corner, in cells. */
+private val GRID_CENTER_MAX_DISTANCE = run {
+    val dr = (GRID_ROWS - 1) / 2f
+    val dc = (GRID_COLUMNS - 1) / 2f
+    kotlin.math.sqrt(dr * dr + dc * dc)
+}
 
 /**
- * Per-cell shimmer alpha for sweep progress [t] (0..1) at normalized
- * diagonal position [u] (0 = upper-left corner, 1 = lower-right corner).
- * The wave front enters at the lower-right and exits at the upper-left.
+ * Directions the idle shimmer can travel. Each direction maps a cell's
+ * (row, col) to a normalized sweep coordinate [u] in 0..1, where u = 1 marks
+ * where the wave front enters (lit first) and u = 0 where it exits
+ * (lit last). [opposite] is the return leg that always immediately follows
+ * a sweep, retracing it back to where it came from.
+ */
+private enum class ShimmerDirection {
+    BOTTOM_RIGHT_TO_TOP_LEFT,
+    TOP_LEFT_TO_BOTTOM_RIGHT,
+    BOTTOM_LEFT_TO_TOP_RIGHT,
+    TOP_RIGHT_TO_BOTTOM_LEFT,
+    LEFT_TO_RIGHT,
+    RIGHT_TO_LEFT,
+    TOP_TO_BOTTOM,
+    BOTTOM_TO_TOP,
+    CENTER_OUT,
+    EDGES_IN;
+
+    /** The direction whose wave retraces this one in reverse. */
+    val opposite: ShimmerDirection
+        get() = when (this) {
+            BOTTOM_RIGHT_TO_TOP_LEFT -> TOP_LEFT_TO_BOTTOM_RIGHT
+            TOP_LEFT_TO_BOTTOM_RIGHT -> BOTTOM_RIGHT_TO_TOP_LEFT
+            BOTTOM_LEFT_TO_TOP_RIGHT -> TOP_RIGHT_TO_BOTTOM_LEFT
+            TOP_RIGHT_TO_BOTTOM_LEFT -> BOTTOM_LEFT_TO_TOP_RIGHT
+            LEFT_TO_RIGHT -> RIGHT_TO_LEFT
+            RIGHT_TO_LEFT -> LEFT_TO_RIGHT
+            TOP_TO_BOTTOM -> BOTTOM_TO_TOP
+            BOTTOM_TO_TOP -> TOP_TO_BOTTOM
+            CENTER_OUT -> EDGES_IN
+            EDGES_IN -> CENTER_OUT
+        }
+
+    /** Normalized sweep coordinate of a cell: 1 = lit first, 0 = lit last. */
+    fun u(row: Int, col: Int): Float = when (this) {
+        BOTTOM_RIGHT_TO_TOP_LEFT -> (row + col).toFloat() / GRID_DIAGONAL_SPAN
+        TOP_LEFT_TO_BOTTOM_RIGHT -> 1f - (row + col).toFloat() / GRID_DIAGONAL_SPAN
+        BOTTOM_LEFT_TO_TOP_RIGHT -> (row + (GRID_COLUMNS - 1 - col)).toFloat() / GRID_DIAGONAL_SPAN
+        TOP_RIGHT_TO_BOTTOM_LEFT -> 1f - (row + (GRID_COLUMNS - 1 - col)).toFloat() / GRID_DIAGONAL_SPAN
+        LEFT_TO_RIGHT -> 1f - col.toFloat() / (GRID_COLUMNS - 1)
+        RIGHT_TO_LEFT -> col.toFloat() / (GRID_COLUMNS - 1)
+        TOP_TO_BOTTOM -> 1f - row.toFloat() / (GRID_ROWS - 1)
+        BOTTOM_TO_TOP -> row.toFloat() / (GRID_ROWS - 1)
+        CENTER_OUT -> 1f - centerDistance(row, col)
+        EDGES_IN -> centerDistance(row, col)
+    }
+
+    /** Normalized distance from the grid center (0 = center, 1 = corners). */
+    private fun centerDistance(row: Int, col: Int): Float {
+        val dr = row - (GRID_ROWS - 1) / 2f
+        val dc = col - (GRID_COLUMNS - 1) / 2f
+        return kotlin.math.sqrt(dr * dr + dc * dc) / GRID_CENTER_MAX_DISTANCE
+    }
+}
+
+/**
+ * Per-cell shimmer alpha for sweep progress [t] (0..1) at normalized sweep
+ * position [u] (1 = wave enters here, 0 = wave exits here).
  */
 private fun idleShimmerAlpha(t: Float, u: Float): Float {
     val front = (1f + IDLE_SHIMMER_BAND) - t * (1f + 2f * IDLE_SHIMMER_BAND)
@@ -258,23 +323,37 @@ fun HabitGridScreen(
     val context = LocalContext.current
 
     // ── Idle shimmer ─────────────────────────────────────────────────────────
-    // After IDLE_SHIMMER_DELAY_MS without any pointer activity anywhere on
-    // the screen, a barely-visible brightness wave rolls diagonally across
-    // the habit squares (lower-right → upper-left), pauses a few seconds,
-    // and repeats. Any interaction stops it immediately and restarts the
-    // idle timer. The interaction counter is only read inside snapshotFlow
-    // and the sweep value only inside draw lambdas, so neither the pointer
-    // traffic nor the animation recomposes the grid.
+    // After a random 5–15 s gap without any pointer activity anywhere on the
+    // screen, a barely-visible brightness wave rolls across the habit
+    // squares in a randomly chosen direction (from any corner, across from
+    // any side, outward from the center, or inward from the edges). The
+    // opposite direction immediately follows with no gap, so the pair reads
+    // as one long "there and back" shimmer; a new random direction is then
+    // chosen after another random gap. Any interaction stops the wave
+    // immediately and restarts the idle timer. The interaction counter is
+    // only read inside snapshotFlow and the sweep/direction values only
+    // inside draw lambdas, so neither the pointer traffic nor the animation
+    // recomposes the grid.
     val shimmerInteractionGen = remember { mutableIntStateOf(0) }
     val shimmerSweep = remember { Animatable(0f) }
+    val shimmerDirection = remember { mutableStateOf(ShimmerDirection.BOTTOM_RIGHT_TO_TOP_LEFT) }
     LaunchedEffect(Unit) {
         snapshotFlow { shimmerInteractionGen.intValue }.collectLatest {
             shimmerSweep.snapTo(0f)
-            delay(IDLE_SHIMMER_DELAY_MS)
+            delay(kotlin.random.Random.nextLong(IDLE_SHIMMER_GAP_MIN_MS, IDLE_SHIMMER_GAP_MAX_MS + 1))
             while (true) {
-                shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
-                delay(IDLE_SHIMMER_PAUSE_MS)
+                val forward = ShimmerDirection.entries.random()
+                // Forward leg — sweep in the randomly chosen direction.
+                shimmerDirection.value = forward
                 shimmerSweep.snapTo(0f)
+                shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
+                // Return leg — the opposite wave follows immediately with no
+                // gap, retracing the sweep back to where it came from.
+                shimmerDirection.value = forward.opposite
+                shimmerSweep.snapTo(0f)
+                shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
+                // Quiet period before the next random direction is chosen.
+                delay(kotlin.random.Random.nextLong(IDLE_SHIMMER_GAP_MIN_MS, IDLE_SHIMMER_GAP_MAX_MS + 1))
             }
         }
     }
@@ -907,6 +986,7 @@ fun HabitGridScreen(
                     HabitGrid(
                         habits = habits,
                         shimmerSweep = { shimmerSweep.value },
+                        shimmerDirection = { shimmerDirection.value },
                         editMode = editMode,
                         graphMode = graphMode,
                         highlightedHabit = highlightedHabit,
@@ -2518,7 +2598,9 @@ private fun HabitGrid(
     onHabitLongClick: (Habit) -> Unit,
     onPlaceholderClick: (Int) -> Unit,
     /** Current idle-shimmer sweep progress (0..1); null disables the shimmer. */
-    shimmerSweep: (() -> Float)? = null
+    shimmerSweep: (() -> Float)? = null,
+    /** Current idle-shimmer direction; null disables the shimmer. */
+    shimmerDirection: (() -> ShimmerDirection)? = null
 ) {
     // Build a list of TOTAL_CELLS nullable items (null = placeholder).
     // Habits with an empty name are embedded placeholders (moved to another screen) —
@@ -2537,13 +2619,15 @@ private fun HabitGrid(
             .padding(4.dp)
     ) {
         itemsIndexed(cells) { index, habit ->
-            // This cell's position along the lower-right → upper-left
-            // shimmer diagonal (0 = upper-left corner, 1 = lower-right).
+            // This cell's shimmer alpha. The sweep progress and direction
+            // are both read inside the draw lambda, so a direction change
+            // between the forward and return legs only invalidates draw.
             val cellShimmer: (() -> Float)? = shimmerSweep?.let { sweep ->
-                val row = index / GRID_COLUMNS
-                val col = index % GRID_COLUMNS
-                val u = (row + col).toFloat() / GRID_DIAGONAL_SPAN
-                { idleShimmerAlpha(sweep(), u) }
+                shimmerDirection?.let { direction ->
+                    val row = index / GRID_COLUMNS
+                    val col = index % GRID_COLUMNS
+                    { idleShimmerAlpha(sweep(), direction().u(row, col)) }
+                }
             }
             if (habit != null) {
                 val isEditSelected = editMode && index == selectedEditIndex
