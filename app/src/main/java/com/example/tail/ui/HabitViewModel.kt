@@ -8546,7 +8546,9 @@ class HabitViewModel(
         GarminType.BIKE_MINUTES -> listOf("bike", "cycl")
         GarminType.SWIM_MINUTES -> listOf("swim")
         GarminType.STEPS -> listOf("step")
-        GarminType.SLEEP_SCORE -> listOf("sleep")
+        // "sleep score" is specific so it never steals a "Sleep Length" habit
+        GarminType.SLEEP_SCORE -> listOf("sleep score", "sleep quality")
+        GarminType.SLEEP_DURATION_MINUTES -> listOf("sleep length", "sleep duration", "sleep time")
         GarminType.HRV_LAST_NIGHT, GarminType.HRV_WEEKLY_AVG -> listOf("hrv")
         GarminType.RESTING_HR -> listOf("resting hr", "resting heart")
         GarminType.VO2_MAX -> listOf("vo2")

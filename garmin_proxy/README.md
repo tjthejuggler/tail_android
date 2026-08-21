@@ -301,6 +301,7 @@ curl -X POST "http://localhost:8000/api/v1/force-fetch?days=7" \
 | `hrv_weekly_avg` | Integer | Average HRV over 7 days (ms) | `get_hrv_data()` |
 | `hrv_last_night` | Integer | Last night's HRV (ms) | `get_sleep_data()` |
 | `sleep_score` | Integer | Overall sleep quality (0-100) | `get_sleep_data()` |
+| `sleep_duration_minutes` | Integer | Total sleep time in minutes (deep+light+REM) | `get_sleep_data()` |
 | `steps` | Integer | Daily step count | `get_stats_and_body()` |
 | `altitude_ascent_meters` | Double | Elevation gained in meters | `get_stats_and_body()` |
 | `distance_meters` | Double | Distance traveled in meters | `get_stats_and_body()` |

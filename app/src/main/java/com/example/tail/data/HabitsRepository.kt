@@ -731,7 +731,13 @@ class HabitsRepository {
 
         val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
         for ((date, value) in dateValues) {
-            habitEntries[dateString(date)] = value  // SET, not add
+            if (value <= 0) {
+                // 0 = clear: remove the date's entry entirely (Skin Tracker
+                // sends 0 for days whose photos were all deleted).
+                habitEntries.remove(dateString(date))
+            } else {
+                habitEntries[dateString(date)] = value  // SET, not add
+            }
         }
         db[habitName] = habitEntries.toSortedMap()
 

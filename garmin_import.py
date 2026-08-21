@@ -161,19 +161,26 @@ class GarminDataExtractor:
                     self.data["SLEEP_SCORE"][date] = int(sleep_score)
                 
                 # Extract sleep stages (in seconds, convert to minutes)
+                deep = event.get("deepSleepSeconds", 0)
+                light = event.get("lightSleepSeconds", 0)
+                rem = event.get("remSleepSeconds", 0)
+
+                # Sleep length: prefer the explicit duration field, but the GDPR
+                # export's sleep events don't carry durationInSeconds — fall back
+                # to the sum of the asleep stages (deep + light + REM), which is
+                # exactly what Garmin's live API reports as sleepTimeSeconds.
                 duration = event.get("durationInSeconds", 0)
+                if not duration:
+                    duration = deep + light + rem
                 if duration > 0:
                     self.data["SLEEP_DURATION_MINUTES"][date] = duration // 60
-                
-                deep = event.get("deepSleepSeconds", 0)
+
                 if deep > 0:
                     self.data["DEEP_SLEEP_MINUTES"][date] = deep // 60
-                
-                light = event.get("lightSleepSeconds", 0)
+
                 if light > 0:
                     self.data["LIGHT_SLEEP_MINUTES"][date] = light // 60
-                
-                rem = event.get("remSleepSeconds", 0)
+
                 if rem > 0:
                     self.data["REM_SLEEP_MINUTES"][date] = rem // 60
                 

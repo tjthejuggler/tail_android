@@ -27,6 +27,7 @@ enum class GarminType(val label: String, val description: String) {
     HRV_LAST_NIGHT("HRV Last Night", "Heart rate variability from last night"),
     HRV_WEEKLY_AVG("HRV Weekly Avg", "Average heart rate variability over 7 days"),
     SLEEP_SCORE("Sleep Score", "Overall sleep quality score (0-100)"),
+    SLEEP_DURATION_MINUTES("Sleep Length", "Total sleep time in minutes"),
     STEPS("Steps", "Daily step count"),
     ALTITUDE_ASCENT_METERS("Altitude Ascent", "Total elevation climbed in meters"),
     DISTANCE_METERS("Distance", "Total distance traveled in meters"),
@@ -55,6 +56,7 @@ enum class GarminType(val label: String, val description: String) {
      */
     fun formatDisplayValue(rawValue: Int): String = when (this) {
         DISTANCE_METERS -> "${rawValue / 1000} km"
+        SLEEP_DURATION_MINUTES -> "${rawValue / 60}h${(rawValue % 60).toString().padStart(2, '0')}m"
         FITNESS_AGE, FITNESS_AGE_DISTANCE -> {
             // Convert from hundredths to years and display with 2 decimal places
             val years = rawValue / 100.0
@@ -300,6 +302,11 @@ class GarminRepository(private val context: Context) {
 
         metrics.sleepScore?.let {
             val dayMap = result.getOrPut(GarminType.SLEEP_SCORE) { mutableMapOf() }
+            dayMap[date] = it
+        }
+
+        metrics.sleepDurationMinutes?.let {
+            val dayMap = result.getOrPut(GarminType.SLEEP_DURATION_MINUTES) { mutableMapOf() }
             dayMap[date] = it
         }
 

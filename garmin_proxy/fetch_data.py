@@ -230,6 +230,7 @@ def fetch_daily_metrics(client: Garmin, date_str: str) -> Dict[str, Any]:
         "max_hr": None,
         "hrv_last_night": None,
         "sleep_score": None,
+        "sleep_duration_minutes": None,
         "fitness_age": None,
         "hrv_weekly_avg": None,
         "steps": None,
@@ -294,13 +295,19 @@ def fetch_daily_metrics(client: Garmin, date_str: str) -> Dict[str, Any]:
                     metrics["vo2_max"] = generic["vo2MaxValue"]
     time.sleep(INTER_REQUEST_DELAY)
 
-    # --- Sleep: score + last night's HRV ---
+    # --- Sleep: score + duration + last night's HRV ---
     sleep_data = _safe(client.get_sleep_data, date_str)
     if isinstance(sleep_data, dict):
         if sleep_data.get("avgOvernightHrv") is not None:
             metrics["hrv_last_night"] = int(sleep_data["avgOvernightHrv"])
         sleep_dto = sleep_data.get("dailySleepDTO")
         if isinstance(sleep_dto, dict):
+            # sleepTimeSeconds is total time asleep (deep + light + REM,
+            # excluding awake time) — the same figure Garmin's own sleep
+            # widget shows as the night's sleep length.
+            sleep_seconds = sleep_dto.get("sleepTimeSeconds")
+            if sleep_seconds is not None and sleep_seconds > 0:
+                metrics["sleep_duration_minutes"] = int(sleep_seconds) // 60
             scores = sleep_dto.get("sleepScores")
             if isinstance(scores, dict):
                 overall = scores.get("overall")

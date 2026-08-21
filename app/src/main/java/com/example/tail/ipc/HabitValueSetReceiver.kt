@@ -135,8 +135,9 @@ class HabitValueSetReceiver : BroadcastReceiver() {
 
     /**
      * Parses a JSON object of `{"yyyy-MM-dd": <Int>}` entries into a map.
-     * Skips entries with non-positive values (WAGS guarantees ≥ 1, but we
-     * validate defensively).
+     * A value of **0** is valid and means "clear this date's entry" (Skin
+     * Tracker sends 0 for days whose photos were all deleted). Negative
+     * values are rejected.
      */
     private fun parseDateMinuteJson(json: String): Map<String, Int> {
         val result = mutableMapOf<String, Int>()
@@ -144,7 +145,7 @@ class HabitValueSetReceiver : BroadcastReceiver() {
             val obj = JSONObject(json)
             for (key in obj.keys()) {
                 val minutes = obj.optInt(key, 0)
-                if (minutes > 0) {
+                if (minutes >= 0) {
                     result[key] = minutes
                 }
             }

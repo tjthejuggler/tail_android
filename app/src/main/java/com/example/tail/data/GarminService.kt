@@ -243,6 +243,7 @@ class GarminService {
             hrvWeeklyAvg = json.optInt("hrv_weekly_avg").takeIf { it > 0 },
             hrvLastNight = json.optInt("hrv_last_night").takeIf { it > 0 },
             sleepScore = json.optInt("sleep_score").takeIf { it > 0 },
+            sleepDurationMinutes = json.optInt("sleep_duration_minutes").takeIf { it > 0 },
             steps = json.optInt("steps").takeIf { it > 0 },
             altitudeAscentMeters = json.optInt("altitude_ascent_meters").takeIf { it > 0 },
             distanceMeters = json.optInt("distance_meters").takeIf { it > 0 },
@@ -273,6 +274,8 @@ data class GarminMetricsDto(
     val hrvWeeklyAvg: Int?,
     val hrvLastNight: Int?,
     val sleepScore: Int?,
+    /** Total time asleep in minutes (deep + light + REM, awake excluded). */
+    val sleepDurationMinutes: Int?,
     val steps: Int?,
     val altitudeAscentMeters: Int?,
     val distanceMeters: Int?,
