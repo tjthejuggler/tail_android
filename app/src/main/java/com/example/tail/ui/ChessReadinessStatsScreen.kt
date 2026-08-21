@@ -11,6 +11,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -63,16 +65,23 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.tail.data.ComplianceDay
+import com.example.tail.data.GameFilter
 import com.example.tail.data.RatingHistoryPoint
 import com.example.tail.data.RatingHistorySeries
 import com.example.tail.data.RatingPoolStats
+import com.example.tail.data.ReadinessBlockedRecord
 import com.example.tail.data.ReadinessGameRecord
 import com.example.tail.data.ReadinessStats
 import com.example.tail.data.ReadinessTestRecord
+import com.example.tail.data.computeBucketWinRates
 import com.example.tail.data.computeComplianceSeries
+import com.example.tail.data.computeDayOfWeekStats
+import com.example.tail.data.computeGameCategoryAggregates
+import com.example.tail.data.computeHourlyReadiness
 import com.example.tail.data.computeRatingHistory
 import com.example.tail.data.computeRatingStats
 import com.example.tail.data.computeReadinessStats
+import com.example.tail.data.computeWinRateByCcrsBand
 import com.example.tail.widget.ChessReadinessEngine
 import com.example.tail.widget.ChessReadinessLogStore
 import com.example.tail.widget.ChessReadinessSystemChanges
@@ -85,7 +94,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 // ── Palette (soft/vague orange — a continuation of the Chess Readiness
-//    settings section this screen is reached from) ────────────────────────────
+//    settings section this screen is reached from). The effectiveness
+//    sections file carries private copies of the same warm palette. ─────────
 private val SectionTitleColor = Color(0xFFF2A65A)   // soft orange
 private val LabelColor = Color(0xFFE6C79C)          // warm sand
 private val ValueColor = Color.White
@@ -112,6 +122,17 @@ private fun stateLabel(state: String?): String = when (state) {
     ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name -> "YELLOW"
     ChessReadinessEngine.ReadinessState.RED_LIGHT.name -> "RED"
     else -> "—"
+}
+
+/**
+ * Global variant toggle limiting EVERY game-based stat on this screen.
+ * `key` is the chess.com variant slug matched against
+ * [ReadinessGameRecord.variant] (null = no filtering).
+ */
+private enum class VariantOption(val label: String, val key: String?) {
+    ALL("All games", null),
+    CHESS960("Chess960", "chess960"),
+    STANDARD("Standard", "chess")
 }
 
 /**
@@ -154,41 +175,57 @@ fun ChessReadinessStatsScreen(
         150.dp
     val deltaRowHeight = if (isLandscape) 64 else 46
 
-    var stats by remember { mutableStateOf<ReadinessStats?>(null) }
     var tests by remember { mutableStateOf<List<ReadinessTestRecord>>(emptyList()) }
     var games by remember { mutableStateOf<List<ReadinessGameRecord>>(emptyList()) }
-    var complianceDays by remember { mutableStateOf<List<ComplianceDay>>(emptyList()) }
-    var ratingHistory by remember { mutableStateOf<List<RatingHistorySeries>>(emptyList()) }
-    var ratingPools by remember { mutableStateOf<List<RatingPoolStats>>(emptyList()) }
+    var blocked by remember { mutableStateOf<List<ReadinessBlockedRecord>>(emptyList()) }
     var systemStartMs by remember { mutableStateOf<Long?>(null) }
     var showChart by remember { mutableStateOf(false) }
-    // Which variant's rating pools are shown (Standard vs Chess960);
-    // null = auto-select the most-played variant.
-    var selectedVariant by remember { mutableStateOf<String?>(null) }
+    // Game-subset filter for the grouped time-of-day section; also the
+    // initial filter of the hourly win-rate popup.
+    var bucketFilter by remember { mutableStateOf(GameFilter.ALL) }
+    var showHourlyReadiness by remember { mutableStateOf(false) }
+    var showHourlyWinRate by remember { mutableStateOf(false) }
+    // Global variant filter limiting EVERY game-based stat on the screen
+    // (readiness tests are variant-independent and stay unfiltered).
+    var variantFilter by remember { mutableStateOf(VariantOption.ALL) }
     // Bumped every time the screen resumes, so the data below reloads
     // and the user never sees stale pre-backfill numbers.
     var resumeCount by remember { mutableStateOf(0) }
+    var loaded by remember { mutableStateOf(false) }
 
     // Runs on first composition AND on every resume (via resumeCount).
+    // Only raw data is loaded here; every aggregate is derived below so
+    // toggling the variant filter recomputes instantly without I/O.
     LaunchedEffect(resumeCount) {
         withContext(Dispatchers.IO) {
             // One-time import of the legacy capped test history, so the
             // compliance chart knows when the system was adopted and
             // historical games get an accurate readiness context.
             ChessReadinessLogStore.ensureSeeded(context)
-            val t = ChessReadinessLogStore.loadTests(context)
-            val g = ChessReadinessLogStore.loadGames(context)
-            val b = ChessReadinessLogStore.loadBlocked(context)
-            tests = t
-            games = g
-            val start = t.minOfOrNull { it.timestamp }
-            systemStartMs = start
-            complianceDays = computeComplianceSeries(g, t, start ?: 0L, ZoneId.systemDefault())
-            ratingPools = computeRatingStats(g, t, start ?: 0L)
-            ratingHistory = computeRatingHistory(g)
-            stats = computeReadinessStats(t, g, b, ZoneId.systemDefault())
+            tests = ChessReadinessLogStore.loadTests(context)
+            games = ChessReadinessLogStore.loadGames(context)
+            blocked = ChessReadinessLogStore.loadBlocked(context)
+            systemStartMs = tests.minOfOrNull { it.timestamp }
+            loaded = true
         }
     }
+
+    // Every game-based stat on the screen flows through the variant filter.
+    val visibleGames = remember(games, variantFilter) {
+        val key = variantFilter.key
+        if (key == null) games
+        else games.filter { it.variant.equals(key, ignoreCase = true) }
+    }
+    val stats = remember(tests, visibleGames, blocked) {
+        computeReadinessStats(tests, visibleGames, blocked, ZoneId.systemDefault())
+    }
+    val complianceDays = remember(visibleGames, tests, systemStartMs) {
+        computeComplianceSeries(visibleGames, tests, systemStartMs ?: 0L, ZoneId.systemDefault())
+    }
+    val ratingPools = remember(visibleGames, tests, systemStartMs) {
+        computeRatingStats(visibleGames, tests, systemStartMs ?: 0L)
+    }
+    val ratingHistory = remember(visibleGames) { computeRatingHistory(visibleGames) }
 
     // Reload when the screen resumes — e.g. when returning after the
     // chess.com full-history backfill finished while this screen was open.
@@ -236,7 +273,7 @@ fun ChessReadinessStatsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
-            if (s == null) {
+            if (!loaded) {
                 Spacer(modifier = Modifier.height(48.dp))
                 Text(
                     "Loading readiness log…",
@@ -244,7 +281,7 @@ fun ChessReadinessStatsScreen(
                     fontSize = 14.sp,
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
-            } else if (s.totalTests == 0 && s.totalGames == 0) {
+            } else if (tests.isEmpty() && games.isEmpty()) {
                 Spacer(modifier = Modifier.height(32.dp))
                 StatsSection(title = "♟ Chess Readiness") {
                     Text(
@@ -258,6 +295,30 @@ fun ChessReadinessStatsScreen(
                 }
             } else {
                 Spacer(modifier = Modifier.height(8.dp))
+
+                // ── Global variant filter ─────────────────────────────────
+                StatsSection(title = "🎯 Variant Filter") {
+                    Text(
+                        "Limits every game-based stat on this screen to one " +
+                            "chess.com variant — readiness tests are variant-" +
+                            "independent and stay unfiltered. Chess960 has a " +
+                            "single official rating; Standard has one per speed.",
+                        color = DimColor,
+                        fontSize = 11.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    VariantFilterSelector(
+                        selected = variantFilter,
+                        onSelect = { variantFilter = it },
+                        counts = remember(games) {
+                            VariantOption.entries.associateWith { o ->
+                                val key = o.key
+                                if (key == null) games.size
+                                else games.count { g -> g.variant.equals(key, ignoreCase = true) }
+                            }
+                        }
+                    )
+                }
 
                 // ── Overview ──────────────────────────────────────────────
                 StatsSection(title = "📊 Readiness Overview") {
@@ -324,10 +385,30 @@ fun ChessReadinessStatsScreen(
                 // ── Time of day ───────────────────────────────────────────
                 if (s.totalTests > 0) {
                     StatsSection(title = "🕐 Readiness by Time of Day") {
-                        s.timeBuckets.forEach { b ->
+                        // Games column follows the selected game subset.
+                        val bucketWinRates = remember(visibleGames, bucketFilter) {
+                            computeBucketWinRates(visibleGames, bucketFilter)
+                        }
+                        val filterCounts = remember(visibleGames) {
+                            GameFilter.entries.associateWith { f -> visibleGames.count { f.matches(it) } }
+                        }
+                        Text(
+                            "Games column filter (readiness columns stay on all tests):",
+                            color = DimColor,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        GameFilterSelector(
+                            selected = bucketFilter,
+                            onSelect = { bucketFilter = it },
+                            counts = filterCounts
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        s.timeBuckets.forEachIndexed { i, b ->
                             val isBest = b.testCount > 0 && b.label == s.bestBucketLabel
                             val isWorst = b.testCount > 0 && b.label == s.worstBucketLabel &&
                                 s.bestBucketLabel != s.worstBucketLabel
+                            val bw = bucketWinRates[i]
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -360,8 +441,8 @@ fun ChessReadinessStatsScreen(
                                     modifier = Modifier.weight(1f)
                                 )
                                 Text(
-                                    "${b.gamesPlayed} games" +
-                                        if (b.gamesPlayed > 0) " · ${b.gamesWon * 100 / b.gamesPlayed}% win" else "",
+                                    "${bw.games} games" +
+                                        if (bw.games > 0) " · ${bw.wins * 100 / bw.games}% win" else "",
                                     color = DimColor,
                                     fontSize = 11.sp
                                 )
@@ -374,6 +455,22 @@ fun ChessReadinessStatsScreen(
                             StatRow("Best time of day", s.bestBucketLabel ?: "—", valueColor = GoldValue)
                             StatRow("Worst time of day", s.worstBucketLabel ?: "—", valueColor = RedValue)
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                        ChartLinkRow(
+                            "Average CCRS by hour of day (00–23)",
+                            "24-hour chart 📈"
+                        ) { showHourlyReadiness = true }
+                        ChartLinkRow(
+                            "Win rate by hour of day (00–23)",
+                            "24-hour chart 📈"
+                        ) { showHourlyWinRate = true }
+                        Text(
+                            "Both open a full-screen landscape chart; the win-rate chart " +
+                                "has the same All / Post-test / Approved / Unapproved filters.",
+                            color = DimColor,
+                            fontSize = 11.sp
+                        )
                     }
                 }
 
@@ -436,6 +533,28 @@ fun ChessReadinessStatsScreen(
                     }
                 }
 
+                // ── System effectiveness ────────────────────────────────
+                if (s.totalGames > 0) {
+                    val aggregates = remember(visibleGames, tests) {
+                        computeGameCategoryAggregates(visibleGames, tests)
+                    }
+                    SystemEffectivenessSection(
+                        aggregates = aggregates,
+                        totalGames = s.totalGames,
+                        totalWins = visibleGames.count { it.won }
+                    )
+                    CcrsBandSection(
+                        bands = remember(visibleGames) { computeWinRateByCcrsBand(visibleGames) }
+                    )
+                }
+
+                // ── Day of week ──────────────────────────────────────────
+                if (s.totalTests > 0) {
+                    DayOfWeekSection(
+                        stats = remember(tests, visibleGames) { computeDayOfWeekStats(tests, visibleGames) }
+                    )
+                }
+
                 // ── Compliance over time ─────────────────────────────────
                 val start = systemStartMs
                 if (start != null) {
@@ -492,59 +611,26 @@ fun ChessReadinessStatsScreen(
                 }
 
                 // ── Rating history (entire history) ──────────────────────
-                // Variant filter shared by the two rating sections below
-                // (test-related sections above stay unfiltered — they are
-                // identical for Standard and Chess960).
-                val availableVariants = remember(ratingHistory, ratingPools) {
-                    (ratingHistory.map { it.key } + ratingPools.map { it.key })
-                        .map(::variantOfPoolKey)
-                        .distinct()
-                        .sorted()
-                }
-                val defaultVariant = remember(ratingPools) {
-                    ratingPools
-                        .groupBy { variantOfPoolKey(it.key) }
-                        .maxByOrNull { (_, pools) -> pools.sumOf { it.ratedGames } }
-                        ?.key
-                } ?: "chess960"
-                val activeVariant =
-                    selectedVariant?.takeIf { it in availableVariants } ?: defaultVariant
-                val filteredHistory =
-                    ratingHistory.filter { variantOfPoolKey(it.key) == activeVariant }
-                val filteredPools =
-                    ratingPools.filter { variantOfPoolKey(it.key) == activeVariant }
+                // ratingHistory / ratingPools are already limited by the
+                // global variant filter at the top of the screen (both are
+                // derived from visibleGames).
                 if (ratingHistory.any { it.points.size >= 2 }) {
                     StatsSection(title = "📜 Rating History — Entire History") {
                         Text(
                             "Rating over time from every rated game on chess.com, back to " +
-                                "account creation. Pick a variant below: Standard chess " +
-                                "has a pool per speed, while variants like Chess960 have " +
-                                "a single chess.com rating shared across speeds. The gold " +
-                                "dashed line marks when the readiness test system was " +
-                                "devised.",
+                                "account creation. Standard chess has a pool per speed, " +
+                                "while variants like Chess960 have a single chess.com " +
+                                "rating shared across speeds — use the variant filter at " +
+                                "the top of the screen to focus on one. The gold dashed " +
+                                "line marks when the readiness test system was devised.",
                             color = DimColor,
                             fontSize = 11.sp
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        if (availableVariants.size >= 2) {
-                            VariantSelector(
-                                variants = availableVariants,
-                                selected = activeVariant,
-                                onSelect = { selectedVariant = it }
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
-                        if (filteredHistory.none { it.points.size >= 2 }) {
-                            Text(
-                                "No rated ${variantLabel(activeVariant)} games yet.",
-                                color = DimColor,
-                                fontSize = 12.sp
-                            )
-                        }
                         val markers = systemStartMs
                             ?.let { listOf(it to "♟ system") }
                             ?: emptyList()
-                        filteredHistory.forEach { s ->
+                        ratingHistory.forEach { s ->
                             if (s.points.size < 2) return@forEach
                             Text(
                                 "${s.label} — ${s.points.size} rated games",
@@ -567,7 +653,7 @@ fun ChessReadinessStatsScreen(
                 // ── Rating since readiness system (clickable change markers) ─
                 val startMs = systemStartMs
                 if (startMs != null && startMs > 0) {
-                    val sinceSeries = filteredHistory.mapNotNull { s ->
+                    val sinceSeries = ratingHistory.mapNotNull { s ->
                         val pts = s.points.filter { it.endTimeMs >= startMs }
                         if (pts.size < 2) null else RatingHistorySeries(
                             label = s.label,
@@ -626,8 +712,8 @@ fun ChessReadinessStatsScreen(
                 }
 
                 // ── Rating impact (compliant vs not) ─────────────────────
-                if (filteredPools.isNotEmpty()) {
-                    StatsSection(title = "🏆 Rating Impact — ${variantLabel(activeVariant)}") {
+                if (ratingPools.isNotEmpty()) {
+                    StatsSection(title = "🏆 Rating Impact — ${variantFilter.label}") {
                         Text(
                             "Average rating change per game, split by compliance. Each pair " +
                                 "of bars is one rating pool (Standard per speed; variants " +
@@ -637,7 +723,7 @@ fun ChessReadinessStatsScreen(
                             fontSize = 11.sp
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        RatingDeltaChart(filteredPools, deltaRowHeight)
+                        RatingDeltaChart(ratingPools, deltaRowHeight)
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -649,7 +735,7 @@ fun ChessReadinessStatsScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
                         Spacer(modifier = Modifier.height(4.dp))
-                        filteredPools.forEach { p ->
+                        ratingPools.forEach { p ->
                             Text(
                                 "${p.label} — ${p.ratedGames} rated · now ${p.currentRating ?: "—"}",
                                 color = ValueColor,
@@ -660,11 +746,11 @@ fun ChessReadinessStatsScreen(
                             StatRow("✓ Authorized games", fmtRatingDelta(p.authorized), valueColor = GreenValue)
                             StatRow("✗ Violation games", fmtRatingDelta(p.violations), valueColor = RedValue)
                         }
-                        val aGames = filteredPools.sumOf { it.authorized.games }
-                        val vGames = filteredPools.sumOf { it.violations.games }
+                        val aGames = ratingPools.sumOf { it.authorized.games }
+                        val vGames = ratingPools.sumOf { it.violations.games }
                         if (aGames > 0 && vGames > 0) {
-                            val aAvg = filteredPools.sumOf { it.authorized.totalDelta }.toDouble() / aGames
-                            val vAvg = filteredPools.sumOf { it.violations.totalDelta }.toDouble() / vGames
+                            val aAvg = ratingPools.sumOf { it.authorized.totalDelta }.toDouble() / aGames
+                            val vAvg = ratingPools.sumOf { it.violations.totalDelta }.toDouble() / vGames
                             Spacer(modifier = Modifier.height(4.dp))
                             HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
                             Spacer(modifier = Modifier.height(4.dp))
@@ -702,7 +788,7 @@ fun ChessReadinessStatsScreen(
                     val recentTests = tests.takeLast(40).map {
                         Triple(it.timestamp, "test", it as Any)
                     }
-                    val recentGames = games.takeLast(40).map {
+                    val recentGames = visibleGames.takeLast(40).map {
                         Triple(it.endTimeMs, "game", it as Any)
                     }
                     val merged = (recentTests + recentGames)
@@ -771,48 +857,61 @@ fun ChessReadinessStatsScreen(
         }
     }
 
-    if (showChart && stats != null) {
+    if (showChart) {
         StreakGraphPopup(
             title = "♟ Readiness (avg CCRS/day)",
-            data = stats!!.dailyAvgCcrs,
+            data = stats.dailyAvgCcrs,
             lineColor = Color(0xFFF2994A),
-            currentValue = stats!!.dailyAvgCcrs.lastOrNull()?.second,
+            currentValue = stats.dailyAvgCcrs.lastOrNull()?.second,
             onDismiss = { showChart = false }
+        )
+    }
+
+    if (showHourlyReadiness) {
+        HourlyReadinessChartPopup(
+            hourly = remember(tests) { computeHourlyReadiness(tests) },
+            overallAvgCcrs = stats.avgCcrs,
+            onDismiss = { showHourlyReadiness = false }
+        )
+    }
+
+    if (showHourlyWinRate) {
+        HourlyWinRateChartPopup(
+            games = visibleGames,
+            initialFilter = bucketFilter,
+            onDismiss = { showHourlyWinRate = false }
         )
     }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Variant part of a rating pool key: "chess|BLITZ" → "chess", "chess960" → "chess960". */
-private fun variantOfPoolKey(key: String): String =
-    if (key.startsWith("chess|")) "chess" else key
-
-private fun variantLabel(variant: String): String = when (variant.lowercase()) {
-    "chess" -> "Standard"
-    "chess960" -> "Chess960"
-    else -> variant.replaceFirstChar { it.uppercase() }
-}
-
-/** Segmented Standard/Chess960 toggle shown above the rating charts. */
+/**
+ * Segmented All / Chess960 / Standard toggle at the top of the screen.
+ * Wraps via [FlowRow] so it stays well-formed even on narrow screens.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun VariantSelector(
-    variants: List<String>,
-    selected: String,
-    onSelect: (String) -> Unit
+private fun VariantFilterSelector(
+    selected: VariantOption,
+    onSelect: (VariantOption) -> Unit,
+    counts: Map<VariantOption, Int>
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        variants.forEach { v ->
-            val active = v == selected
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        VariantOption.entries.forEach { o ->
+            val active = o == selected
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
                     .background(if (active) Color(0xFF3A2A14) else Color(0xFF1B140C))
-                    .clickable { onSelect(v) }
+                    .clickable { onSelect(o) }
                     .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
                 Text(
-                    variantLabel(v),
+                    "${o.label} (${counts[o] ?: 0})",
                     color = if (active) GoldValue else LabelColor,
                     fontSize = 12.sp,
                     fontWeight = if (active) FontWeight.Bold else FontWeight.Normal

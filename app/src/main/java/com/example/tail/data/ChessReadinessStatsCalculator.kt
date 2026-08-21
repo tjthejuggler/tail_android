@@ -606,3 +606,290 @@ fun computeRatingHistory(games: List<ReadinessGameRecord>): List<RatingHistorySe
             )
         }
         .sortedByDescending { it.points.size }
+
+// ── Hour-of-day & game-filter analytics ─────────────────────────────────────
+
+/**
+ * Game-subset filters shared by the time-of-day charts. APPROVED and
+ * UNAPPROVED both imply a test existed at play time; together they
+ * partition POST_TEST, and POST_TEST + the pre-test remainder partition ALL.
+ */
+enum class GameFilter(val label: String) {
+    ALL("All games"),
+    POST_TEST("Post-test"),
+    APPROVED("Approved"),
+    UNAPPROVED("Unapproved");
+
+    /** Whether [g] belongs to this subset. */
+    fun matches(g: ReadinessGameRecord): Boolean = when (this) {
+        ALL -> true
+        POST_TEST -> g.stateAtPlay != null
+        APPROVED -> g.authorized
+        UNAPPROVED -> g.stateAtPlay != null && !g.authorized
+    }
+}
+
+/**
+ * Game-speed (time control) filter: Bullet / Blitz / Rapid / All. Note that
+ * for variants like Chess960 chess.com keeps a SINGLE rating across speeds,
+ * so this filter only meaningfully splits win-rate style stats — rating
+ * pools for variants are speed-agnostic by nature.
+ */
+enum class GameSpeed(val label: String) {
+    ALL("All speeds"),
+    BULLET("Bullet"),
+    BLITZ("Blitz"),
+    RAPID("Rapid");
+
+    /** Whether [g]'s classified speed matches this filter. */
+    fun matches(g: ReadinessGameRecord): Boolean =
+        this == ALL || g.type.equals(name, ignoreCase = true)
+}
+
+/** Readiness aggregates for one hour of the day (0–23). */
+data class HourlyReadiness(
+    val hour: Int,
+    val testCount: Int,
+    val avgCcrs: Double,
+    val greenCount: Int
+)
+
+/** Game aggregates for one hour of the day (0–23). */
+data class HourlyWinRate(
+    val hour: Int,
+    val games: Int,
+    val wins: Int
+) {
+    val winRate: Double get() = if (games > 0) wins * 100.0 / games else 0.0
+}
+
+/**
+ * Average CCRS + Green rate per hour of day — one entry for every hour
+ * 0–23 (empty hours carry zero counts), so charts can render all 24 slots.
+ */
+fun computeHourlyReadiness(
+    tests: List<ReadinessTestRecord>,
+    zone: ZoneId = ZoneId.systemDefault()
+): List<HourlyReadiness> {
+    val counts = IntArray(24)
+    val ccrsSum = IntArray(24)
+    val green = IntArray(24)
+    val greenName = ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name
+    for (t in tests) {
+        val h = Instant.ofEpochMilli(t.timestamp).atZone(zone).hour
+        counts[h]++
+        ccrsSum[h] += t.ccrs
+        if (t.state == greenName) green[h]++
+    }
+    return (0..23).map { h ->
+        HourlyReadiness(
+            hour = h,
+            testCount = counts[h],
+            avgCcrs = if (counts[h] > 0) ccrsSum[h].toDouble() / counts[h] else 0.0,
+            greenCount = green[h]
+        )
+    }
+}
+
+/**
+ * Games/wins per hour of day for one [GameFilter] × [GameSpeed] subset —
+ * one entry for every hour 0–23 (empty hours carry zero counts).
+ */
+fun computeHourlyWinRates(
+    games: List<ReadinessGameRecord>,
+    filter: GameFilter = GameFilter.ALL,
+    zone: ZoneId = ZoneId.systemDefault(),
+    speed: GameSpeed = GameSpeed.ALL
+): List<HourlyWinRate> {
+    val g = IntArray(24)
+    val w = IntArray(24)
+    for (game in games) {
+        if (!filter.matches(game) || !speed.matches(game)) continue
+        val h = Instant.ofEpochMilli(game.endTimeMs).atZone(zone).hour
+        g[h]++
+        if (game.won) w[h]++
+    }
+    return (0..23).map { h -> HourlyWinRate(h, g[h], w[h]) }
+}
+
+/**
+ * Games/wins per 4-hour bucket for one [GameFilter] subset. Returns exactly
+ * six entries in the same order as [ReadinessStats.timeBuckets]
+ * (00–04, 04–08, …), with [HourlyWinRate.hour] set to the bucket's start
+ * hour — used to re-color the games column of the grouped time-of-day
+ * section when the user toggles the game filter.
+ */
+fun computeBucketWinRates(
+    games: List<ReadinessGameRecord>,
+    filter: GameFilter = GameFilter.ALL,
+    zone: ZoneId = ZoneId.systemDefault()
+): List<HourlyWinRate> =
+    computeHourlyWinRates(games, filter, zone)
+        .groupBy { it.hour / 4 }
+        .toSortedMap()
+        .map { (bucket, hours) ->
+            HourlyWinRate(
+                hour = bucket * 4,
+                games = hours.sumOf { it.games },
+                wins = hours.sumOf { it.wins }
+            )
+        }
+
+// ── System effectiveness (why each game was / wasn't authorized) ────────────
+
+/**
+ * The compliance lens for every logged game. APPROVED + DENIED + EXPIRED
+ * partition the post-test games; PRE_TEST holds everything played before
+ * the system existed.
+ */
+enum class GameCategory(val label: String, val description: String) {
+    PRE_TEST("Pre-test", "Played before any readiness test existed"),
+    APPROVED("Approved", "Played inside a valid GREEN authorization window"),
+    DENIED("Denied", "A fresh test said Yellow/Red and play happened anyway"),
+    EXPIRED("Expired", "The latest test's window had expired — system bypassed")
+}
+
+/** Win-rate aggregate for one [GameCategory]. */
+data class GameCategoryAggregate(
+    val category: GameCategory,
+    val games: Int,
+    val wins: Int,
+    /** Average CCRS of the test covering these games (null when none did). */
+    val avgCcrsAtPlay: Double?
+) {
+    val winRate: Double get() = if (games > 0) wins * 100.0 / games else 0.0
+}
+
+/**
+ * Classifies every logged game into exactly one [GameCategory] (re-resolving
+ * the readiness context from [tests], since the log records only carry the
+ * flattened authorized flag) and aggregates games / wins / average CCRS at
+ * play per category. This is the core "is the system working?" comparison:
+ * win rate while Approved vs. while Denied / Expired vs. before the system.
+ */
+fun computeGameCategoryAggregates(
+    games: List<ReadinessGameRecord>,
+    tests: List<ReadinessTestRecord>
+): List<GameCategoryAggregate> {
+    data class Acc(var games: Int = 0, var wins: Int = 0, var ccrs: Int = 0, var withCcrs: Int = 0)
+    val acc = GameCategory.entries.associateWith { Acc() }
+    for (g in games) {
+        val (ctx, authorized) = readinessContextAt(tests, g.endTimeMs)
+        val cat = when {
+            authorized -> GameCategory.APPROVED
+            ctx == null -> GameCategory.PRE_TEST
+            g.endTimeMs - ctx.timestamp <= ChessReadinessEngine.SESSION_VALIDITY_MS -> GameCategory.DENIED
+            else -> GameCategory.EXPIRED
+        }
+        val a = acc.getValue(cat)
+        a.games++
+        if (g.won) a.wins++
+        if (ctx != null) {
+            a.ccrs += ctx.ccrs
+            a.withCcrs++
+        }
+    }
+    return GameCategory.entries.map { c ->
+        val a = acc.getValue(c)
+        GameCategoryAggregate(
+            category = c,
+            games = a.games,
+            wins = a.wins,
+            avgCcrsAtPlay = if (a.withCcrs > 0) a.ccrs.toDouble() / a.withCcrs else null
+        )
+    }
+}
+
+// ── Win rate by readiness score at play time ─────────────────────────────────
+
+/** Win-rate aggregate for one CCRS band (readiness score at play time). */
+data class CcrsBandStats(
+    /** Display label, e.g. "70+". */
+    val label: String,
+    val range: IntRange,
+    val games: Int,
+    val wins: Int
+) {
+    val winRate: Double get() = if (games > 0) wins * 100.0 / games else 0.0
+}
+
+/**
+ * Default CCRS bands, aligned with the engine's rest-period thresholds
+ * (40 / 60 / 70): severe, poor, marginal, green-capable.
+ */
+val DEFAULT_CCRS_BANDS = listOf(0..39, 40..59, 60..69, 70..100)
+
+/**
+ * Win rate per CCRS band of the test covering each game (games without a
+ * readiness context are skipped). Shows whether higher measured readiness
+ * actually translates into more wins — the system's core claim.
+ */
+fun computeWinRateByCcrsBand(
+    games: List<ReadinessGameRecord>,
+    bands: List<IntRange> = DEFAULT_CCRS_BANDS
+): List<CcrsBandStats> {
+    val counts = IntArray(bands.size)
+    val wins = IntArray(bands.size)
+    for (g in games) {
+        val c = g.ccrsAtPlay ?: continue
+        val i = bands.indexOfFirst { c in it }
+        if (i >= 0) {
+            counts[i]++
+            if (g.won) wins[i]++
+        }
+    }
+    return bands.mapIndexed { i, r ->
+        CcrsBandStats(
+            label = if (r.last >= 100) "${r.first}+" else "${r.first}–${r.last}",
+            range = r,
+            games = counts[i],
+            wins = wins[i]
+        )
+    }
+}
+
+// ── Day-of-week rhythm ───────────────────────────────────────────────────────
+
+/** Readiness + game aggregates for one day of the week. */
+data class DayOfWeekStats(
+    val day: java.time.DayOfWeek,
+    val testCount: Int,
+    val avgCcrs: Double,
+    val games: Int,
+    val wins: Int
+) {
+    val winRate: Double get() = if (games > 0) wins * 100.0 / games else 0.0
+}
+
+/**
+ * Average CCRS and win rate per day of the week (Monday-first order, one
+ * entry per day, empty days carry zero counts).
+ */
+fun computeDayOfWeekStats(
+    tests: List<ReadinessTestRecord>,
+    games: List<ReadinessGameRecord>,
+    zone: ZoneId = ZoneId.systemDefault()
+): List<DayOfWeekStats> {
+    data class Acc(var tests: Int = 0, var ccrs: Int = 0, var games: Int = 0, var wins: Int = 0)
+    val acc = java.time.DayOfWeek.entries.associateWith { Acc() }
+    for (t in tests) {
+        val a = acc.getValue(Instant.ofEpochMilli(t.timestamp).atZone(zone).dayOfWeek)
+        a.tests++
+        a.ccrs += t.ccrs
+    }
+    for (g in games) {
+        val a = acc.getValue(Instant.ofEpochMilli(g.endTimeMs).atZone(zone).dayOfWeek)
+        a.games++
+        if (g.won) a.wins++
+    }
+    return java.time.DayOfWeek.entries.map { d ->
+        val a = acc.getValue(d)
+        DayOfWeekStats(
+            day = d,
+            testCount = a.tests,
+            avgCcrs = if (a.tests > 0) a.ccrs.toDouble() / a.tests else 0.0,
+            games = a.games,
+            wins = a.wins
+        )
+    }
+}

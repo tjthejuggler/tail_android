@@ -432,4 +432,223 @@ class ChessReadinessStatsCalculatorTest {
         assertEquals(1, history.size)
         assertEquals(listOf(1500, 1510), history[0].points.map { it.rating })
     }
+
+    // ── GameFilter / hourly / bucket analytics ────────────────────────────
+
+    /** Scenario shared by the hourly/filter/effectiveness tests below. */
+    private fun hourlyScenario(): Pair<List<ReadinessTestRecord>, List<ReadinessGameRecord>> {
+        val greenTest = test(ms("2026-08-10", 9), 90, green)   // Monday
+        val redTest = test(ms("2026-08-11", 20), 30, red)      // Tuesday
+        val tests = listOf(greenTest, redTest)
+        val preTest = gameToRecord(game(ms("2026-08-09", 10) / 1000), "me", tests)!!          // Sunday, before any test, won
+        val approved1 = gameToRecord(game(ms("2026-08-10", 9, 20) / 1000), "me", tests)!!     // Monday, in GREEN window, won
+        val approved2 = gameToRecord(
+            game(ms("2026-08-10", 9, 30) / 1000, whiteResult = "checkmated", blackResult = "win"),
+            "me", tests
+        )!!                                                                                   // Monday, in GREEN window, lost
+        val denied = gameToRecord(game(ms("2026-08-11", 20, 15) / 1000), "me", tests)!!       // Tuesday, fresh RED denies, won
+        val expired = gameToRecord(
+            game(ms("2026-08-11", 23, 0) / 1000, whiteResult = "checkmated", blackResult = "win"),
+            "me", tests
+        )!!                                                                                   // Tuesday, window expired, lost
+        return tests to listOf(preTest, approved1, approved2, denied, expired)
+    }
+
+    @Test
+    fun `game filters partition all games`() {
+        val (_, games) = hourlyScenario()
+        assertEquals(5, games.count { GameFilter.ALL.matches(it) })
+        // Post-test = approved + unapproved; pre-test games excluded
+        val postTest = games.filter { GameFilter.POST_TEST.matches(it) }
+        assertEquals(4, postTest.size)
+        assertEquals(
+            postTest.size,
+            games.count { GameFilter.APPROVED.matches(it) } +
+                games.count { GameFilter.UNAPPROVED.matches(it) }
+        )
+        assertEquals(2, games.count { GameFilter.APPROVED.matches(it) })
+        assertEquals(2, games.count { GameFilter.UNAPPROVED.matches(it) })
+    }
+
+    @Test
+    fun `hourly readiness has 24 slots with per-hour aggregates`() {
+        val (tests, _) = hourlyScenario()
+        val hourly = computeHourlyReadiness(tests, zone)
+        assertEquals(24, hourly.size)
+        assertEquals((0..23).toList(), hourly.map { it.hour })
+        val h9 = hourly[9]
+        assertEquals(1, h9.testCount)
+        assertEquals(90.0, h9.avgCcrs, 0.001)
+        assertEquals(1, h9.greenCount)
+        val h20 = hourly[20]
+        assertEquals(1, h20.testCount)
+        assertEquals(30.0, h20.avgCcrs, 0.001)
+        assertEquals(0, h20.greenCount)
+        assertEquals(0, hourly[15].testCount)
+    }
+
+    @Test
+    fun `hourly win rates respect the game filter`() {
+        val (_, games) = hourlyScenario()
+        val all = computeHourlyWinRates(games, GameFilter.ALL, zone)
+        assertEquals(24, all.size)
+        assertEquals(2, all[9].games)
+        assertEquals(1, all[9].wins)
+        assertEquals(1, all[10].games) // the pre-test game
+        assertEquals(50.0, all[9].winRate, 0.001)
+
+        val approved = computeHourlyWinRates(games, GameFilter.APPROVED, zone)
+        assertEquals(2, approved[9].games)
+        assertEquals(0, approved[10].games) // pre-test game excluded
+        assertEquals(0, approved[20].games) // denied game excluded
+
+        val unapproved = computeHourlyWinRates(games, GameFilter.UNAPPROVED, zone)
+        assertEquals(1, unapproved[20].games) // denied
+        assertEquals(1, unapproved[23].games) // expired
+        assertEquals(100.0, unapproved[20].winRate, 0.001)
+
+        val postTest = computeHourlyWinRates(games, GameFilter.POST_TEST, zone)
+        assertEquals(4, postTest.sumOf { it.games })
+        assertEquals(2, postTest.sumOf { it.wins })
+    }
+
+    @Test
+    fun `bucket win rates merge four-hour groups in bucket order`() {
+        val (_, games) = hourlyScenario()
+        val buckets = computeBucketWinRates(games, GameFilter.ALL, zone)
+        assertEquals(6, buckets.size)
+        assertEquals(listOf(0, 4, 8, 12, 16, 20), buckets.map { it.hour })
+        val morning = buckets.first { it.hour == 8 } // hours 8–11: two @9 + one @10
+        assertEquals(3, morning.games)
+        assertEquals(2, morning.wins) // approved win + pre-test win (approved2 lost)
+        val evening = buckets.first { it.hour == 20 } // hours 20–23: denied @20 + expired @23
+        assertEquals(2, evening.games)
+        assertEquals(1, evening.wins)
+        val approvedBuckets = computeBucketWinRates(games, GameFilter.APPROVED, zone)
+        assertEquals(2, approvedBuckets.first { it.hour == 8 }.games)
+        assertEquals(0, approvedBuckets.first { it.hour == 20 }.games)
+    }
+
+    // ── System effectiveness categories ───────────────────────────────────
+
+    @Test
+    fun `game categories split pre-test approved denied and expired`() {
+        val (tests, games) = hourlyScenario()
+        val agg = computeGameCategoryAggregates(games, tests).associateBy { it.category }
+
+        val pre = agg.getValue(GameCategory.PRE_TEST)
+        assertEquals(1, pre.games)
+        assertEquals(1, pre.wins) // default game() helper is a win
+        assertNull(pre.avgCcrsAtPlay)
+
+        val approved = agg.getValue(GameCategory.APPROVED)
+        assertEquals(2, approved.games)
+        assertEquals(1, approved.wins)
+        assertEquals(50.0, approved.winRate, 0.001)
+        assertEquals(90.0, approved.avgCcrsAtPlay!!, 0.001)
+
+        val denied = agg.getValue(GameCategory.DENIED)
+        assertEquals(1, denied.games)
+        assertEquals(1, denied.wins)
+        assertEquals(30.0, denied.avgCcrsAtPlay!!, 0.001)
+
+        val expired = agg.getValue(GameCategory.EXPIRED)
+        assertEquals(1, expired.games)
+        assertEquals(0, expired.wins)
+        assertEquals(30.0, expired.avgCcrsAtPlay!!, 0.001)
+
+        // Categories partition all games
+        assertEquals(5, agg.values.sumOf { it.games })
+    }
+
+    // ── CCRS bands ────────────────────────────────────────────────────────
+
+    @Test
+    fun `ccrs bands bucket post-test games by score at play`() {
+        val (_, games) = hourlyScenario()
+        val bands = computeWinRateByCcrsBand(games)
+        assertEquals(listOf("0–39", "40–59", "60–69", "70+"), bands.map { it.label })
+        val low = bands.first { it.label == "0–39" }
+        assertEquals(2, low.games) // denied + expired, both CCRS 30
+        assertEquals(1, low.wins)
+        val high = bands.first { it.label == "70+" }
+        assertEquals(2, high.games) // both approved, CCRS 90
+        assertEquals(1, high.wins)
+        // The pre-test game has no CCRS context and is skipped everywhere
+        assertEquals(4, bands.sumOf { it.games })
+        assertEquals(0, bands.first { it.label == "40–59" }.games)
+    }
+
+    // ── Day of week ───────────────────────────────────────────────────────
+
+    @Test
+    fun `day of week aggregates tests and games monday first`() {
+        val (tests, games) = hourlyScenario()
+        val stats = computeDayOfWeekStats(tests, games, zone)
+        assertEquals(7, stats.size)
+        assertEquals(java.time.DayOfWeek.MONDAY, stats.first().day)
+        val monday = stats.first()
+        assertEquals(1, monday.testCount)
+        assertEquals(90.0, monday.avgCcrs, 0.001)
+        assertEquals(2, monday.games)
+        assertEquals(1, monday.wins)
+        val tuesday = stats[1]
+        assertEquals(30.0, tuesday.avgCcrs, 0.001)
+        assertEquals(2, tuesday.games)
+        assertEquals(1, tuesday.wins)
+        val sunday = stats.last()
+        assertEquals(0, sunday.testCount)
+        assertEquals(1, sunday.games) // the pre-test game (a win)
+        assertEquals(1, sunday.wins)
+    }
+
+    // ── Speed (bullet/blitz/rapid) filtering ───────────────────────────────
+
+    @Test
+    fun `game speeds match the classified time control`() {
+        val (_, games) = hourlyScenario()
+        // The scenario helper uses the default 180+2 control → all blitz
+        assertEquals(5, games.count { GameSpeed.ALL.matches(it) })
+        assertEquals(5, games.count { GameSpeed.BLITZ.matches(it) })
+        assertEquals(0, games.count { GameSpeed.BULLET.matches(it) })
+        assertEquals(0, games.count { GameSpeed.RAPID.matches(it) })
+    }
+
+    @Test
+    fun `hourly win rates respect the speed filter`() {
+        val (tests, games) = hourlyScenario()
+        val bullet = gameToRecord(
+            game(ms("2026-08-10", 9, 25) / 1000, timeControl = "60+0"),
+            "me", tests
+        )!!                                                                                  // Monday, GREEN window, won
+        val rapid = gameToRecord(
+            game(ms("2026-08-10", 9, 35) / 1000, timeControl = "600+0", whiteResult = "checkmated", blackResult = "win"),
+            "me", tests
+        )!!                                                                                  // Monday, GREEN window, lost
+        val mixed = games + bullet + rapid
+
+        val all = computeHourlyWinRates(mixed, GameFilter.ALL, zone, GameSpeed.ALL)
+        assertEquals(4, all[9].games) // 2 blitz + bullet + rapid
+        assertEquals(2, all[9].wins)
+
+        val blitz = computeHourlyWinRates(mixed, GameFilter.ALL, zone, GameSpeed.BLITZ)
+        assertEquals(2, blitz[9].games)
+        assertEquals(1, blitz[9].wins)
+
+        val bulletOnly = computeHourlyWinRates(mixed, GameFilter.ALL, zone, GameSpeed.BULLET)
+        assertEquals(1, bulletOnly[9].games)
+        assertEquals(1, bulletOnly[9].wins)
+        assertEquals(100.0, bulletOnly[9].winRate, 0.001)
+
+        val rapidOnly = computeHourlyWinRates(mixed, GameFilter.ALL, zone, GameSpeed.RAPID)
+        assertEquals(1, rapidOnly[9].games)
+        assertEquals(0, rapidOnly[9].wins)
+
+        // Speed combines with the game-subset filter: approved + bullet is
+        // exactly the one bullet game played inside the GREEN window.
+        val approvedBullet = computeHourlyWinRates(mixed, GameFilter.APPROVED, zone, GameSpeed.BULLET)
+        assertEquals(1, approvedBullet[9].games)
+        assertEquals(1, approvedBullet[9].wins)
+        assertEquals(0, approvedBullet[10].games) // pre-test game is blitz anyway
+    }
 }
