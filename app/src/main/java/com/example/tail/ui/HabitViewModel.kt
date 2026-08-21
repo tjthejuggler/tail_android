@@ -112,6 +112,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -3717,34 +3719,49 @@ class HabitViewModel(
      * Sets the selected date's minutes for [habitName] in the first-class
      * minutes slot (clamped to ≥ 0), then refreshes the habit list,
      * widgets and listeners.
+     *
+     * Mirrors [setHabitSecondaryCount]: the minutes slot is updated in the
+     * in-memory cache synchronously and the full-file write happens in the
+     * background. The previous implementation reloaded and re-parsed the
+     * ENTIRE habits DB on every keystroke (plus a second full reload via
+     * the HabitIncrementBus collector); concurrent multi-megabyte Gson
+     * parses piled up on Dispatchers.IO and exhausted the heap — an
+     * OutOfMemoryError crash when editing a media habit's minutes.
      */
     fun setHabitMinutesCount(habitName: String, newCount: Int) {
         val uriString = _settings.value.fileUri
         if (uriString.isNullOrEmpty()) return
         val clamped = newCount.coerceAtLeast(0)
+        val minKey = minutesKey(habitName)
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+
+        // Step 1: instant in-memory cache update — no DB reload per keystroke.
+        val updatedDb = cachedPhoneDb.toMutableMap()
+        val entries = updatedDb[minKey]?.toMutableMap() ?: mutableMapOf()
+        if (clamped > 0) entries[dateStr] = clamped else entries.remove(dateStr)
+        if (entries.isEmpty()) updatedDb.remove(minKey) else updatedDb[minKey] = entries.toSortedMap()
+        cachedPhoneDb = updatedDb
+
+        // Step 2: rebuild + disk write in the background. Serialized so a
+        // keystroke burst never overlaps full-file writes, and each write
+        // persists the LATEST cached state (read inside the lock, not
+        // captured), so a slow older write can never clobber a newer one.
         viewModelScope.launch {
-            try {
-                val uri = Uri.parse(uriString)
-                val result = habitsRepo.loadDatabaseResult(uri, context)
-                if (result !is com.example.tail.data.HabitsLoadResult.Success) {
-                    throw com.example.tail.data.HabitsLoadFailedException(result)
-                }
-                val db = result.db.toMutableMap()
-                val minKey = minutesKey(habitName)
-                val dateStr = com.example.tail.data.dateString(_selectedDate.value)
-                val entries = db[minKey]?.toMutableMap() ?: mutableMapOf()
-                if (clamped > 0) entries[dateStr] = clamped else entries.remove(dateStr)
-                if (entries.isEmpty()) db.remove(minKey) else db[minKey] = entries.toSortedMap()
-                habitsRepo.saveDatabase(uri, context, db)
-                cachedPhoneDb = db
+            minutesWriteMutex.withLock {
                 rebuildHabitList()
-                HabitIncrementBus.emit(habitName)
-                HabitListWidgetProvider.refreshAll(context)
-            } catch (e: Exception) {
-                _errorMessage.value = "Failed to set minutes: ${e.message}"
+                try {
+                    habitsRepo.persistDatabase(Uri.parse(uriString), context, cachedPhoneDb)
+                    HabitsDataChangedBus.emit()
+                    HabitListWidgetProvider.refreshAll(context)
+                } catch (e: Exception) {
+                    _errorMessage.value = "Failed to set minutes: ${e.message}"
+                }
             }
         }
     }
+
+    /** Serializes minutes-slot disk writes (see [setHabitMinutesCount]). */
+    private val minutesWriteMutex = Mutex()
 
     /**
      * Toggles the "fall back to minutes" points fallback for a sessions-primary

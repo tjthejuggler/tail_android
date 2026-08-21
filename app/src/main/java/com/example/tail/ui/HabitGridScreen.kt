@@ -6504,15 +6504,14 @@ private fun EditModeValueEditorRow(
     }
     var valueFieldFocused by remember { mutableStateOf(false) }
     // Sync when the edited value changes externally (e.g.
-    // [−]/[+] buttons, bubble timer, or switching tracks).
-    // While the field is focused, an EMPTY text is a legitimate mid-edit
-    // state (the user just cleared it) and must NOT be coerced back to
-    // "0" — that programmatic overwrite moved the cursor in front of the
-    // injected "0", so the next digit typed landed as "50" instead of "5".
+    // [−]/[+] buttons, bubble timer, or switching tracks) — but ONLY
+    // while the field is NOT focused. While focused, the field text is
+    // authoritative: the model value lags the debounced DB write, and
+    // coercing text back to the STALE model snapped every keystroke
+    // back out (the field "fought" the user — editing a media habit's
+    // minutes was impossible). External changes re-sync on focus loss.
     val parsedTrueValue = trueValueText.toIntOrNull()
-    if (!isGarminLinked && parsedTrueValue != editingValue &&
-        (parsedTrueValue != null || !valueFieldFocused)
-    ) {
+    if (!isGarminLinked && !valueFieldFocused && parsedTrueValue != editingValue) {
         trueValueText = editingValue.toString()
     }
     Row(
@@ -6652,10 +6651,13 @@ private fun EditModeMinutesEditorRow(
         var minutesText by remember(habitName) { mutableStateOf(minutesToday.toString()) }
         var minutesFieldFocused by remember { mutableStateOf(false) }
         // Sync when today's minutes change externally (timer, PC widget,
-        // media tracker). While focused, an EMPTY text is a legitimate
-        // mid-edit state and must not be coerced back to "0" (cursor jump).
+        // media tracker) — but ONLY while the field is NOT focused.
+        // While focused the field text is authoritative: the model value
+        // lags the debounced DB write, and coercing text to the STALE
+        // model snapped every keystroke back out (cursor jumps, the
+        // field "fought" the user). External changes re-sync on blur.
         val parsedMinutes = minutesText.toIntOrNull()
-        if (parsedMinutes != minutesToday && (parsedMinutes != null || !minutesFieldFocused)) {
+        if (!minutesFieldFocused && parsedMinutes != minutesToday) {
             minutesText = minutesToday.toString()
         }
         OutlinedTextField(
