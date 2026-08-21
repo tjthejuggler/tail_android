@@ -5367,6 +5367,10 @@ class HabitViewModel(
      * widget needs it to compute effective points (raw ÷ divider) for its
      * square colours; "inverted_binary" / "no_points" mirror the phone's
      * scoring subtypes so the PC scores those habits identically.
+     *
+     * "all_habits" is the phone's FULL habit catalog — the PC settings
+     * screen lists it in its habit picker (toggles queue back as
+     * kind="toggle_pc_widget_habit" events on the bridge).
      */
     private suspend fun pushPcWidgetConfig() {
         val s = _settings.value
@@ -5387,6 +5391,10 @@ class HabitViewModel(
                 habitsArray.put(habitObj)
             }
             root.put("habits", habitsArray)
+            // full catalog — the PC settings screen's habit-picker source
+            val allHabits = JSONArray()
+            getAllHabitNames().forEach { allHabits.put(it) }
+            root.put("all_habits", allHabits)
 
             val resp = BridgeClient().post(bridge.first, bridge.second, "pc_widget/config", root)
             if (resp != null) {

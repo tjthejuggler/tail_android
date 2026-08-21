@@ -211,6 +211,9 @@ def suggest_movie(
 #   phone  → POST /pc_widget/config   (which habits the widget should show)
 #   widget → GET  /pc_widget/config   (localhost poll, same auth token)
 #   widget → POST /pc_widget/event    (timer session / tap, server assigns id)
+#   widget → POST /pc_widget/event    kind="toggle_pc_widget_habit"
+#                                      (settings-screen habit picker: flip a
+#                                      "PC widget" toggle ON/OFF in the app)
 #   phone  → GET  /pc_widget/events   (pull everything not yet acked)
 #   phone  → POST /pc_widget/acks     (applied event ids; bridge prunes them)
 #
@@ -284,10 +287,17 @@ def pc_widget_set_config(payload: Dict[str, Any], api_key: str = Security(verify
                 "inverted_binary": inv if isinstance(inv, bool) else None,
                 "no_points": nop if isinstance(nop, bool) else None,
             })
+    all_raw = payload.get("all_habits")
+    all_habits = ([n.strip() for n in all_raw
+                   if isinstance(n, str) and n.strip()]
+                  if isinstance(all_raw, list) else [])
     body = {
         "version": 1,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
         "habits": clean,
+        # the phone's FULL habit catalog — the PC settings screen's
+        # habit-picker source (empty on older app versions)
+        "all_habits": all_habits,
     }
     _pc_widget_write(PC_WIDGET_CONFIG_PATH, body)
     logger.info(f"pc_widget config updated: {len(clean)} habits")
@@ -304,15 +314,20 @@ async def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(v
     habit = payload.get("habit")
     if not isinstance(habit, str) or not habit.strip():
         raise HTTPException(status_code=400, detail="'habit' is required")
+    kind = payload.get("kind")
     event = {
         "id": "pc-{}-{}".format(int(time.time() * 1000), uuid.uuid4().hex[:6]),
         "habit": habit,
-        "kind": payload.get("kind") if payload.get("kind") in ("session", "tap") else "tap",
+        "kind": kind if kind in ("session", "tap", "toggle_pc_widget_habit") else "tap",
         "date": payload.get("date") or datetime.now().strftime("%Y-%m-%d"),
         "start": payload.get("start") or datetime.now().strftime("%H:%M:%S"),
         "end": payload.get("end") or datetime.now().strftime("%H:%M:%S"),
         "minutes": max(0, int(payload.get("minutes") or 0)),
     }
+    if kind == "toggle_pc_widget_habit":
+        # settings-screen habit picker: the ABSOLUTE desired state, so
+        # at-least-once redelivery stays idempotent on the phone
+        event["enabled"] = bool(payload.get("enabled", True))
     events = _pc_widget_read(PC_WIDGET_EVENTS_PATH).get("events")
     events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
     events.append(event)

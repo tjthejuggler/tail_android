@@ -66,7 +66,11 @@ data class PcHabitEvent(
     val date: LocalDate,
     /** "HH:mm:ss" when the habit happened (session start / tap time), or null. */
     val startTime: String?,
-    val minutes: Int
+    val minutes: Int,
+    /** Raw wire kind — "toggle_pc_widget_habit" marks a settings-screen toggle request. */
+    val kind: String = "",
+    /** ABSOLUTE desired state for toggle events (idempotent redelivery). */
+    val enabled: Boolean? = null
 )
 
 /** Outcome of one [PcEventQueueProcessor.processOnce] pass. */
@@ -104,7 +108,7 @@ object PcEventQueueCodec {
             val map = raw as? Map<*, *> ?: return@mapNotNull null
             val id = (map["id"] as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val habit = (map["habit"] as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val kind = map["kind"] as? String
+            val kind = (map["kind"] as? String) ?: ""
             val isSession = kind == "session"
             val minutes = when (val m = map["minutes"]) {
                 is Number -> m.toInt()
@@ -124,7 +128,9 @@ object PcEventQueueCodec {
                 isSession = isSession,
                 date = date,
                 startTime = start,
-                minutes = minutes
+                minutes = minutes,
+                kind = kind,
+                enabled = map["enabled"] as? Boolean
             )
         }
     }
@@ -236,6 +242,71 @@ class PcEventQueueProcessor(private val context: Context) {
     }
 
     /**
+     * Settings-screen toggle from the PC widget: set the habit's "PC widget"
+     * membership to the event's ABSOLUTE desired state (idempotent under
+     * at-least-once redelivery), force minutes ON when enabling — exactly
+     * what togglePcWidgetHabit does in the app — then push the updated
+     * widget config so the desktop picks it up on its config poll. The
+     * ViewModel's settingsFlow collector propagates the change to the app
+     * UI on its own.
+     */
+    private suspend fun applyPcWidgetToggle(event: PcHabitEvent, settings: AppSettings) {
+        val repo = SettingsRepository(context)
+        val current = settings.pcWidgetHabits.toMutableSet()
+        val target = event.enabled ?: !current.contains(event.habit)
+        if (target) current.add(event.habit) else current.remove(event.habit)
+        repo.savePcWidgetHabits(current)
+        // Enabling forces minutes ON (the widget timer feeds the habit's
+        // `minutes:` slot) — same rule as the app's own toggle.
+        var minutes = settings.minutesEnabledHabits
+        if (target && event.habit in current && event.habit !in minutes &&
+            event.habit !in settings.maxOneHabits) {
+            minutes = minutes + event.habit
+            repo.saveMinutesEnabledHabits(minutes)
+        }
+        val bridge = bridgeConnectionFrom(settings.garminProxyUrl, settings.garminAppToken)
+            ?: return
+        pushWidgetConfig(bridge, settings, current)
+    }
+
+    /**
+     * Builds and POSTs the pc_widget config (a mirror of HabitViewModel
+     * .pushPcWidgetConfig usable outside the ViewModel). "all_habits" is
+     * the phone's full catalog — the PC settings screen's habit-picker
+     * source.
+     */
+    private suspend fun pushWidgetConfig(
+        bridge: Pair<String, String>,
+        settings: AppSettings,
+        pcWidgetHabits: Set<String>
+    ) = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            val db = HabitsRepository().loadDatabase(Uri.parse(settings.fileUri), context)
+            val root = org.json.JSONObject()
+            root.put("version", 1)
+            root.put("updated_at", java.time.Instant.now().toString())
+            val habitsArray = org.json.JSONArray()
+            for (habitName in pcWidgetHabits) {
+                val habitObj = org.json.JSONObject()
+                habitObj.put("name", habitName)
+                settings.habitIcons[habitName]?.let { habitObj.put("icon", it) }
+                habitObj.put("minutes_primary", habitName in settings.widgetTimerMinutesPrimary)
+                habitObj.put("divider", settings.habitDividers[habitName] ?: 1)
+                habitObj.put("inverted_binary", habitName in settings.invertedBinaryHabits)
+                habitObj.put("no_points", habitName in settings.noPointsHabits)
+                habitsArray.put(habitObj)
+            }
+            root.put("habits", habitsArray)
+            val all = org.json.JSONArray()
+            (db.keys + pcWidgetHabits).distinct().sorted().forEach { all.put(it) }
+            root.put("all_habits", all)
+            BridgeClient().post(bridge.first, bridge.second, "pc_widget/config", root)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to push PC widget config after toggle: ${e.message}")
+        }
+    }
+
+    /**
      * Applies one event. Mirrors the semantics of HabitIncrementReceiver and
      * the phone bubble's writeMinutesToHabit:
      *  - session  → +1 session AND +minutes on the habit's secondary-value slot
@@ -255,6 +326,12 @@ class PcEventQueueProcessor(private val context: Context) {
         habitsRepo: HabitsRepository,
         tsRepo: HabitTimestampRepository
     ): Boolean = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (event.kind == "toggle_pc_widget_habit") {
+            // settings-screen habit picker: no increment — flip the app's
+            // "PC widget" toggle and push the updated config back
+            applyPcWidgetToggle(event, settings)
+            return@withContext true
+        }
         val dateStr = dateString(event.date)
         // One read up front for all cap checks.
         val db = habitsRepo.loadDatabase(habitsUri, context)
