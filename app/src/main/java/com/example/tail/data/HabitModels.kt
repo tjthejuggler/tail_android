@@ -301,6 +301,78 @@ fun falseMinutesPrimaryHabits(
     }.toSet()
 }
 
+/**
+ * The five Wags-fed apnea habits migrated to SESSIONS-PRIMARY on Aug-21-2026:
+ * the primary key holds the session count (and drives points, no divider),
+ * while the hold minutes live in the first-class `minutes:` slot (the built-in
+ * minutes value type). Wags reports them via the Protocol v3
+ * `EXTRA_SESSIONS` increment.
+ *
+ * "Until Contraction" and "Contraction Count" (the Contraction Table modes)
+ * deliberately keep the legacy minutes-primary + secondary-sessions pattern.
+ */
+val APNEA_SESSIONS_PRIMARY_HABITS = setOf(
+    "Apnea apb", "Progressive O2", "Apnea Min Breath", "O2 Tables", "CO2 Tables"
+)
+
+/**
+ * One-time data swap for [APNEA_SESSIONS_PRIMARY_HABITS] (Aug-21-2026):
+ * converts each habit from the Wags legacy layout (minutes in the PRIMARY key,
+ * sessions in `secondary_value:`) to sessions-primary (sessions in the PRIMARY
+ * key, minutes in the first-class `minutes:` slot).
+ *
+ * Per habit:
+ *  • PRIMARY ← the legacy `secondary_value:` sessions (zero entries dropped);
+ *    any date with recorded minutes but NO session entry gets sessions = 1 —
+ *    minutes can only come from a real session, and this keeps those days
+ *    "done" for streak/points purposes.
+ *  • `minutes:<habit>` ← the old PRIMARY minutes (zero entries dropped),
+ *    MAX-merged with any data already in the minutes slot.
+ *  • the legacy `secondary_value:<habit>` key is removed.
+ *
+ * IDEMPOTENT: a habit already in the sessions-primary layout (no legacy
+ * `secondary_value:` sessions, but nonzero `minutes:` data — the swap always
+ * creates that slot for habits with minutes, and post-migration it is the
+ * only writer) is left untouched, so a partial-failure retry never corrupts
+ * the already-migrated session counts.
+ *
+ * Pure function: returns the new database; habits with no data at all are
+ * left untouched. Non-target keys are passed through unchanged.
+ */
+fun swapToSessionsPrimary(
+    db: HabitsDatabase,
+    habits: Set<String> = APNEA_SESSIONS_PRIMARY_HABITS
+): Map<String, Map<String, Int>> {
+    val result = db.toMutableMap()
+    for (habit in habits) {
+        val primaryMinutes = db[habit].orEmpty()
+        val legacySessions = db[secondaryValueKey(habit)].orEmpty()
+        val hasLegacySessions = legacySessions.values.any { it > 0 }
+        val hasMinutesSlotData = db[minutesKey(habit)].orEmpty().values.any { it > 0 }
+        when {
+            primaryMinutes.values.none { it > 0 } && !hasLegacySessions && !hasMinutesSlotData ->
+                continue // nothing stored for this habit — nothing to swap
+            !hasLegacySessions && hasMinutesSlotData ->
+                continue // already sessions-primary (idempotent re-run)
+        }
+        // New primary = sessions; infer 1 session for minutes-only days.
+        val sessions = legacySessions.filterValues { it > 0 }.toMutableMap()
+        for ((date, minutes) in primaryMinutes) {
+            if (minutes > 0 && date !in sessions) sessions[date] = 1
+        }
+        if (sessions.isEmpty()) result.remove(habit) else result[habit] = sessions.toSortedMap()
+        // New minutes slot = old primary minutes, max-merged with strays.
+        val minutesSlot = db[minutesKey(habit)].orEmpty().toMutableMap()
+        for ((date, minutes) in primaryMinutes) {
+            if (minutes > 0) minutesSlot[date] = maxOf(minutesSlot[date] ?: 0, minutes)
+        }
+        val minKey = minutesKey(habit)
+        if (minutesSlot.values.none { it > 0 }) result.remove(minKey) else result[minKey] = minutesSlot.toSortedMap()
+        result.remove(secondaryValueKey(habit))
+    }
+    return result
+}
+
 /** Extracts the habit name from a minutes key, or null if [name] is not one. */
 fun minutesHabitName(name: String): String? =
     name.takeIf { it.startsWith(MINUTES_PREFIX) }?.removePrefix(MINUTES_PREFIX)

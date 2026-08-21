@@ -50,6 +50,19 @@ class HabitIncrementReceiver : BroadcastReceiver() {
          * If absent (or if the sending app is old), the receiver falls back to 1.
          */
         const val EXTRA_MINUTES = "EXTRA_MINUTES"
+
+        /**
+         * Protocol v3 — Optional Int extra carrying the number of SESSIONS to
+         * add to the habit's PRIMARY value.
+         *
+         * Sent by WAGS for the sessions-primary apnea habits (free holds,
+         * O₂/CO₂ tables, progressive O₂, min breath). Together with
+         * [EXTRA_MINUTES] the receiver performs ONE atomic write: +sessions on
+         * the habit's own key (the primary/session count) and +minutes on its
+         * first-class `minutes:<habit>` slot. When absent, the receiver falls
+         * back to the v2 behaviour ([EXTRA_MINUTES] as the primary amount).
+         */
+        const val EXTRA_SESSIONS = "EXTRA_SESSIONS"
     }
 
     // Use a SupervisorJob scope so one failed coroutine doesn't cancel the others.
@@ -103,6 +116,34 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                 }
 
                 val uri = Uri.parse(fileUriString)
+
+                // Protocol v3: sessions-primary increment (Wags apnea slots).
+                // ONE atomic write: +sessions on the habit's own key (the
+                // primary value) and +minutes on its first-class minutes:
+                // slot — exactly the layout incrementHabitWithMinutes
+                // persists. Timestamps follow the SESSION count (one per
+                // session), not the minutes.
+                if (intent.hasExtra(EXTRA_SESSIONS)) {
+                    val sessions = intent.getIntExtra(EXTRA_SESSIONS, 1).coerceAtLeast(1)
+                    val minutes = intent.getIntExtra(EXTRA_MINUTES, 0).coerceAtLeast(0)
+                    if (minutes > 0) {
+                        habitsRepo.incrementHabitWithMinutes(uri, appContext, habitName, minutes, sessions)
+                    } else {
+                        habitsRepo.incrementHabit(uri, appContext, habitName, sessions)
+                    }
+                    HabitIncrementBus.emit(habitName)
+                    Log.i(
+                        TAG,
+                        "Incremented habit '$habitName' by $sessions session(s) + $minutes minute(s) via IPC broadcast"
+                    )
+                    try {
+                        HabitTimestampRepository(appContext).addTimestamps(habitName, sessions)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
+                    }
+                    sendHabitIncrementedNotification(appContext, habitName)
+                    return@launch
+                }
 
                 // Protocol v2: resolve the increment amount from EXTRA_MINUTES.
                 // If absent (old sender or count-based slot), default to 1.
@@ -206,18 +247,7 @@ class HabitIncrementReceiver : BroadcastReceiver() {
 
 
                 // Broadcast a generic "habit incremented" event for same-keystore listeners
-                try {
-                    val broadcastIntent = Intent(ACTION_HABIT_INCREMENTED).apply {
-                        putExtra(EXTRA_HABIT_NAME, habitName)
-                    }
-                    appContext.sendBroadcast(
-                        broadcastIntent,
-                        "com.example.tail.permission.TAIL_INTEGRATION"
-                    )
-                    Log.d(TAG, "Sent ACTION_HABIT_INCREMENTED broadcast for '$habitName'")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
-                }
+                sendHabitIncrementedNotification(appContext, habitName)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to increment habit '$habitId': ${e.message}", e)
             } finally {
@@ -226,6 +256,24 @@ class HabitIncrementReceiver : BroadcastReceiver() {
         }
     }
 
+    /**
+     * Broadcasts the generic "habit incremented" event for same-keystore
+     * listeners (Wags uses it to refresh its UI).
+     */
+    private fun sendHabitIncrementedNotification(appContext: Context, habitName: String) {
+        try {
+            val broadcastIntent = Intent(ACTION_HABIT_INCREMENTED).apply {
+                putExtra(EXTRA_HABIT_NAME, habitName)
+            }
+            appContext.sendBroadcast(
+                broadcastIntent,
+                "com.example.tail.permission.TAIL_INTEGRATION"
+            )
+            Log.d(TAG, "Sent ACTION_HABIT_INCREMENTED broadcast for '$habitName'")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
+        }
+    }
 
     /**
      * Resolves [habitId] to a habit name.

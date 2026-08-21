@@ -1311,6 +1311,71 @@ class HabitViewModel(
     }
 
     /**
+     * One-time migration (Aug-21-2026): converts the five Wags-fed apnea
+     * habits ([com.example.tail.data.APNEA_SESSIONS_PRIMARY_HABITS]) from the
+     * legacy Wags layout (minutes = primary value with divider + sessions in
+     * the `secondary_value:` slot with points fallback) to SESSIONS-PRIMARY:
+     *
+     *  • sessions become the PRIMARY value and the sole points source — the
+     *    divider and the points fallback are removed, so points = sessions;
+     *  • minutes move to the first-class `minutes:` slot with the built-in
+     *    minutes value type enabled, so charts keep showing them;
+     *  • the secondary-value feature and its legacy slot are dropped.
+     *
+     * Data swap via [com.example.tail.data.swapToSessionsPrimary]; days with
+     * recorded minutes but no session entry get sessions = 1 so no day loses
+     * its done/points status. Runs AFTER [performWagsMinutesPrimaryRepair] so
+     * stray minutes-slot data has already been merged into the primary key.
+     */
+    private suspend fun performApneaSessionsPrimaryMigration(uri: Uri) {
+        try {
+            val targets = com.example.tail.data.APNEA_SESSIONS_PRIMARY_HABITS
+            val swapped = com.example.tail.data.swapToSessionsPrimary(cachedPhoneDb, targets)
+            if (swapped != cachedPhoneDb) {
+                habitsRepo.saveDatabase(uri, context, swapped)
+                cachedPhoneDb = swapped
+            }
+            val s = _settings.value
+            val secHabits = s.secondaryValueHabits - targets
+            val fallback = s.secondaryValueFallbackHabits - targets
+            val minutesEnabled = s.minutesEnabledHabits + targets
+            val minutesPrimary = s.widgetTimerMinutesPrimary - targets
+            val mpFallbacks = s.minutesPrimaryFallbacks - targets
+            val dividers = s.habitDividers - targets
+            val labels = s.valueDisplayLabels.toMutableMap()
+            for (habit in targets) {
+                val inner = labels[habit]?.toMutableMap() ?: mutableMapOf()
+                inner[GRAPH_METRIC_VALUE1] = "sessions"
+                inner.remove(GRAPH_METRIC_VALUE2)
+                labels[habit] = inner
+            }
+            settingsRepo.saveSecondaryValueHabits(secHabits)
+            settingsRepo.saveSecondaryValueFallbackHabits(fallback)
+            settingsRepo.saveMinutesEnabledHabits(minutesEnabled)
+            settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
+            settingsRepo.saveMinutesPrimaryFallbacks(mpFallbacks)
+            settingsRepo.saveHabitDividers(dividers)
+            settingsRepo.saveValueDisplayLabels(labels)
+            _settings.value = s.copy(
+                secondaryValueHabits = secHabits,
+                secondaryValueFallbackHabits = fallback,
+                minutesEnabledHabits = minutesEnabled,
+                widgetTimerMinutesPrimary = minutesPrimary,
+                minutesPrimaryFallbacks = mpFallbacks,
+                habitDividers = dividers,
+                valueDisplayLabels = labels
+            )
+            settingsRepo.setApneaSessionsPrimaryMigrationDone()
+            Log.i(
+                TAG,
+                "performApneaSessionsPrimaryMigration: migrated ${targets.size} apnea habits to sessions-primary: ${targets.sorted()}"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "performApneaSessionsPrimaryMigration failed (will retry next load): ${e.message}")
+        }
+    }
+
+    /**
      * One-time cleanup: the chess.com sync used to record one timestamp per
      * MINUTE played (the minutes delta was passed to addTimestamps). Trims
      * each chess.com-linked habit's daily timestamp lists down to that day's
@@ -1408,6 +1473,14 @@ class HabitViewModel(
             // sessions = Value2 + zero-minutes points fallback).
             if (!settingsRepo.isWagsMinutesPrimaryRepairDone()) {
                 performWagsMinutesPrimaryRepair(uri)
+            }
+
+            // ── One-time apnea sessions-primary migration ────────────────
+            // The five Wags-fed apnea habits become sessions-primary:
+            // sessions = primary value & points source (no divider, no
+            // fallback); minutes move to the built-in minutes slot.
+            if (!settingsRepo.isApneaSessionsPrimaryMigrationDone()) {
+                performApneaSessionsPrimaryMigration(uri)
             }
 
             // ── One-time chess.com timestamp trim ──────────────────────────
