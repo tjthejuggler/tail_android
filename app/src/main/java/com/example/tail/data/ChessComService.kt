@@ -168,16 +168,35 @@ class ChessComService {
      * chess.com can take a minute or two to publish a just-finished game.
      */
     suspend fun findGameById(username: String, gameId: Long): ChessComGameDetail? =
+        findGameById(listOf(username), gameId)
+
+    /**
+     * Finds a single game by its numeric ID, searching the monthly archives
+     * of EVERY given player (current + previous month each).
+     *
+     * chess.com has no by-ID endpoint, and the per-player monthly archives
+     * update INDEPENDENTLY — a just-finished game can be missing from the
+     * owner's own archive for minutes-to-hours while already being published
+     * under the opponent (verified empirically). The game JSON is symmetric
+     * (it carries both players' ratings/results/accuracies/PGN), so a match
+     * found under ANY participant is complete. Usernames typically come from
+     * the share text ("jugglah vs Dinmuhamed_055"); the configured account
+     * name should always be first so its archive is preferred.
+     */
+    suspend fun findGameById(usernames: List<String>, gameId: Long): ChessComGameDetail? =
         withContext(Dispatchers.IO) {
             val current = java.time.YearMonth.now()
             val months = listOf(current, current.minusMonths(1))
-            for (m in months) {
-                try {
-                    val games = getGameDetailsForMonth(username, m.year, m.monthValue)
-                    val match = games.firstOrNull { it.gameId == gameId }
-                    if (match != null) return@withContext match
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to search ${m} for game $gameId: ${e.message}")
+            val players = usernames.mapNotNull { it.trim().lowercase() }.distinct()
+            for (player in players) {
+                for (m in months) {
+                    try {
+                        val games = getGameDetailsForMonth(player, m.year, m.monthValue)
+                        val match = games.firstOrNull { it.gameId == gameId }
+                        if (match != null) return@withContext match
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to search $player ${m} for game $gameId: ${e.message}")
+                    }
                 }
             }
             null

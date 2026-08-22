@@ -39,7 +39,9 @@ import androidx.lifecycle.lifecycleScope
 import com.example.tail.data.ChessComService
 import com.example.tail.data.SettingsRepository
 import com.example.tail.ui.theme.TailTheme
+import com.example.tail.widget.ChessDeferredGameReconciler
 import com.example.tail.widget.ChessGameAuditMapper
+import com.example.tail.widget.ChessPendingGameStore
 import com.example.tail.widget.ChessPhase2Engine
 import com.example.tail.widget.ChessPhase2Store
 import kotlin.math.roundToInt
@@ -57,15 +59,20 @@ import kotlinx.coroutines.launch
  *
  * This transparent activity then runs the ENTIRE audit automatically:
  *
- *  1. Extracts the chess.com game ID from the shared text.
- *  2. Verifies rated play is currently authorized (Phase 1 green light
- *     still inside its 60-minute window, no Yellow/Red audit since).
- *  3. Skips games that were already audited (re-share detection by ID).
- *  4. Fetches the game from the chess.com archive API (ratings, result,
- *     Game Review accuracy, PGN).
- *  5. Maps it onto [ChessPhase2Engine.GameInput] and runs the audit engine.
- *  6. Persists the audit (accuracy window + session minutes accumulate
- *     automatically) and shows the verdict.
+ *  1. Extracts the chess.com game ID (and both player names) from the
+ *     shared text.
+ *  2. Skips games that were already audited (re-share detection by ID).
+ *  3. Fetches the game from the chess.com archive API — searching BOTH
+ *     players' archives, since chess.com publishes a finished game to the
+ *     two players' monthly archives independently (the opponent's often
+ *     lists it long before the owner's does).
+ *  4. When the game is not in ANY archive yet, parks it in the pending
+ *     queue ([ChessPendingGameStore]) — the deferred pipeline audits it
+ *     automatically once chess.com releases it.
+ *  5. Otherwise [ChessDeferredGameReconciler.processGame] classifies it by
+ *     the readiness state AT THE MOMENT IT ENDED: authorized → full Phase 2
+ *     audit (stamped at the game's end time); unauthorized → recorded as
+ *     unapproved play in the Chess Readiness compliance stats.
  *
  * No manual data entry is required anywhere in the flow.
  */
@@ -87,6 +94,9 @@ class ChessGameShareActivity : ComponentActivity() {
 
     private var gameId: Long = -1
 
+    /** The raw shared text (kept for the player names around " vs "). */
+    private var sharedText: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -104,20 +114,25 @@ class ChessGameShareActivity : ComponentActivity() {
             return
         }
         gameId = parsed
+        this.sharedText = sharedText
 
-        var startState: Ui = Ui.Working("Checking authorization…")
-        if (!ChessPhase2Store.ratedPlayAuthorized(this)) {
-            startState = Ui.Message(
-                title = "Rated play not authorized",
-                message = "Games can only be audited during an active green-light " +
-                    "window.\n\nRun the ♟ Chess Readiness test from the Tail bubble " +
-                    "over the chess app first."
-            )
+        // Drain previously queued shares in the background. This game is
+        // excluded — the dialog below handles it (avoids a duplicate audit).
+        lifecycleScope.launch {
+            try {
+                val username = settingsRepo.settingsFlow.first().chessComUsername.trim()
+                if (username.isNotEmpty()) {
+                    ChessDeferredGameReconciler.reconcilePending(
+                        this@ChessGameShareActivity, username, chessService,
+                        excludeGameId = gameId
+                    )
+                }
+            } catch (_: Exception) { /* best-effort */ }
         }
 
         setContent {
             TailTheme(darkTheme = true) {
-                var state by remember { mutableStateOf(startState) }
+                var state by remember { mutableStateOf<Ui>(Ui.Working("Checking authorization…")) }
                 LaunchedEffect(Unit) {
                     if (state is Ui.Working) runAudit { state = it }
                 }
@@ -135,9 +150,10 @@ class ChessGameShareActivity : ComponentActivity() {
     }
 
     /**
-     * The full pipeline: username lookup → duplicate check → API fetch →
-     * mapping → engine evaluation → persistence. Emits each UI state to
-     * [emit]. Only runs the parts not already decided in [onCreate].
+     * The full pipeline: username lookup → duplicate check → two-player
+     * archive fetch → game-time classification & audit
+     * ([ChessDeferredGameReconciler.processGame]) — or queueing when chess.com
+     * hasn't published the game yet. Emits each UI state to [emit].
      */
     private suspend fun runAudit(emit: (Ui) -> Unit) {
         val username = settingsRepo.settingsFlow.first().chessComUsername.trim()
@@ -164,8 +180,17 @@ class ChessGameShareActivity : ComponentActivity() {
         }
 
         emit(Ui.Working("Fetching game from chess.com…"))
+        // Search BOTH players' archives: chess.com publishes a finished
+        // game to the two players' monthly archives independently — the
+        // opponent's often lists it long before the owner's does.
+        val searchPlayers = (
+            listOf(username) +
+                ChessGameAuditMapper.parseShareUsernames(sharedText ?: "")
+            )
+            .mapNotNull { it.trim().lowercase().takeIf { it.isNotEmpty() } }
+            .distinct()
         val game = try {
-            chessService.findGameById(username, gameId)
+            chessService.findGameById(searchPlayers, gameId)
         } catch (e: Exception) {
             emit(
                 Ui.Message(
@@ -178,73 +203,60 @@ class ChessGameShareActivity : ComponentActivity() {
             return
         }
         if (game == null) {
+            // Not published under either player yet — park it. The
+            // deferred pipeline audits it automatically once chess.com
+            // releases it (no need to share it again).
+            ChessPendingGameStore.enqueue(
+                this, gameId, searchPlayers, System.currentTimeMillis()
+            )
             emit(
                 Ui.Message(
-                    title = "Game not found yet",
-                    message = "chess.com can take a minute or two to publish a " +
-                        "just-finished game. Try sharing it again shortly.",
+                    title = "Game queued for audit",
+                    message = "chess.com hasn't published this game to any archive " +
+                        "yet (the share link can appear before the archives " +
+                        "update). Tail has queued it — the audit will run " +
+                        "automatically once it's available, classified by your " +
+                        "readiness state at the moment the game ended.",
                     retry = true
                 )
             )
             return
         }
 
-        val accHistories = ChessPhase2Engine.TimeControl.entries.associateWith {
-            ChessPhase2Store.accuracyHistory(this, it)
-        }
-        val mapping = ChessGameAuditMapper.buildInput(
-            game = game,
-            username = username,
-            accuracyHistories = accHistories,
-            sessionMinutesBefore = ChessPhase2Store.sessionMinutesUsed(this)
-        )
-        val ready = when (mapping) {
-            is ChessGameAuditMapper.Mapping.NotAuditable -> {
-                emit(Ui.Message(title = "Not auditable", message = mapping.reason))
-                return
-            }
-            is ChessGameAuditMapper.Mapping.Ready -> mapping
-        }
+        when (val outcome =
+            ChessDeferredGameReconciler.processGame(this, username, game)) {
+            is ChessDeferredGameReconciler.GameOutcome.Audited ->
+                emit(Ui.Audited(outcome.result))
 
-        val now = System.currentTimeMillis()
-        val session = ChessPhase2Store.currentSessionAudits(this, now).map {
-            ChessPhase2Engine.SessionGame(
-                timestamp = it.timestamp,
-                timeControl = it.timeControl,
-                outputState = it.outputState,
-                deltaE = it.deltaE,
-                strain = it.strain
+            is ChessDeferredGameReconciler.GameOutcome.AlreadyAudited -> emit(
+                Ui.Message(
+                    title = "Already audited",
+                    message = "This game was already reported — verdict: " +
+                        "${outcome.previous.outputState.replace('_', ' ').lowercase()}."
+                )
+            )
+
+            is ChessDeferredGameReconciler.GameOutcome.NotAuditable -> emit(
+                Ui.Message(title = "Not auditable", message = outcome.reason)
+            )
+
+            is ChessDeferredGameReconciler.GameOutcome.Unauthorized -> emit(
+                Ui.Message(
+                    title = "Played outside authorization",
+                    message = "This rated game ended outside a valid green-light " +
+                        "window" +
+                        (
+                            outcome.stateAtPlay?.let {
+                                " (latest test at play time: " +
+                                    "${it.replace('_', ' ').lowercase()})"
+                            } ?: " (no readiness test was on file yet)"
+                            ) +
+                        ". It has been recorded as unapproved play in your " +
+                        "Chess Readiness stats. Run the ♟ Chess Readiness test " +
+                        "to authorize rated play."
+                )
             )
         }
-        val result = ChessPhase2Engine.evaluate(
-            input = ready.input,
-            sessionHistory = session,
-            now = now,
-            deltaEHistory = ChessPhase2Store.recentDeltaE(this, now),
-            readinessCcrs = ChessPhase2Store.authorizingReadinessCcrs(this, now)
-        )
-
-        if (ready.accuracyKnown && !ready.input.shortGame) {
-            ChessPhase2Store.appendAccuracy(
-                this, ready.input.timeControl, ready.input.caps2Accuracy
-            )
-        }
-        ChessPhase2Store.appendAudit(
-            this,
-            ChessPhase2Store.Phase2Audit(
-                timestamp = now,
-                timeControl = ready.input.timeControl.name,
-                outputState = result.outputState.name,
-                deltaE = result.deltaE,
-                caps2Accuracy = ready.input.caps2Accuracy,
-                accuracyCounted = ready.accuracyKnown && !ready.input.shortGame,
-                gameId = gameId.toString(),
-                estimatedMinutes = ready.estimatedMinutes,
-                strain = result.strain
-            )
-        )
-
-        emit(Ui.Audited(result))
     }
 
     /** Red verdict: exit to the home screen (closes the chess session). */

@@ -79,6 +79,35 @@ class ChessGameAuditMapperTest {
     }
 
     @Test
+    fun `parses both player names from the real share-sheet text`() {
+        val shared = "Check out this #chess game: jugglah vs Dinmuhamed_055 - " +
+            "https://www.chess.com/live/game/173349316168"
+        assertEquals(listOf("jugglah", "Dinmuhamed_055"), M.parseShareUsernames(shared))
+    }
+
+    @Test
+    fun `returns no player names for text without a vs pair`() {
+        assertTrue(M.parseShareUsernames("https://www.chess.com/game/live/42").isEmpty())
+        assertTrue(M.parseShareUsernames("no players here at all").isEmpty())
+    }
+
+    @Test
+    fun `toLightGame projects every field the readiness log needs`() {
+        val light = M.toLightGame(detail())
+        assertEquals("blitz", light.timeClass)
+        assertEquals("180+2", light.timeControl)
+        assertEquals(1_755_300_000L, light.endTime)
+        assertEquals("opponent", light.whiteUsername)
+        assertEquals("jugglah", light.blackUsername)
+        assertEquals("checkmated", light.whiteResult)
+        assertEquals("win", light.blackResult)
+        assertTrue(light.rated)
+        assertEquals("chess", light.rules)
+        assertEquals(1450, light.whiteRating)
+        assertEquals(1500, light.blackRating)
+    }
+
+    @Test
     fun `trailing game id handles trailing slash and rejects non-numeric`() {
         assertEquals(999L, M.trailingGameId("https://www.chess.com/game/live/999/"))
         assertNull(M.trailingGameId("https://www.chess.com/game/live/abc"))

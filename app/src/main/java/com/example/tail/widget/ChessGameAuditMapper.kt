@@ -67,6 +67,29 @@ object ChessGameAuditMapper {
     fun parseSharedGameId(text: String): Long? =
         GAME_URL.find(text)?.groupValues?.get(1)?.toLongOrNull()
 
+    /**
+     * Matches the player pair in chess.com share text:
+     * "Check out this #chess game: jugglah vs Dinmuhamed_055 - https://…"
+     * (chess.com usernames are letters/digits/underscores/hyphens).
+     */
+    private val SHARE_PLAYERS =
+        Regex("([A-Za-z0-9_-]+)\\s+vs\\.?\\s+([A-Za-z0-9_-]+)", RegexOption.IGNORE_CASE)
+
+    /**
+     * The usernames mentioned around " vs " in the shared text (white first,
+     * black second — as chess.com prints them). Empty when the text carries
+     * no player pair. Used to widen the archive search: chess.com publishes
+     * a just-finished game to the OPPONENT's monthly archive long before the
+     * owner's own archive updates, and the game JSON found under either
+     * player is symmetric.
+     */
+    fun parseShareUsernames(text: String): List<String> {
+        val m = SHARE_PLAYERS.find(text) ?: return emptyList()
+        return listOf(m.groupValues[1], m.groupValues[2])
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase() }
+    }
+
     /** The trailing numeric game ID of an archive-API game URL, or null. */
     fun trailingGameId(url: String): Long? =
         url.trimEnd('/').substringAfterLast('/').toLongOrNull()
@@ -184,4 +207,27 @@ object ChessGameAuditMapper {
             estimatedMinutes = minutes
         )
     }
+
+    /**
+     * The light [com.example.tail.data.ChessComGame] projection of a fetched
+     * [com.example.tail.data.ChessComGameDetail] — what the Chess Readiness
+     * activity log ([ChessReadinessLogStore.logGames]) consumes. Lets a game
+     * fetched via the OPPONENT's archive (while the user's own archive lags)
+     * still reach the compliance stats immediately.
+     */
+    fun toLightGame(game: com.example.tail.data.ChessComGameDetail):
+        com.example.tail.data.ChessComGame =
+        com.example.tail.data.ChessComGame(
+            timeClass = game.timeClass,
+            timeControl = game.timeControl,
+            endTime = game.endTime,
+            whiteUsername = game.whiteUsername,
+            blackUsername = game.blackUsername,
+            whiteResult = game.whiteResult,
+            blackResult = game.blackResult,
+            rated = game.rated,
+            rules = game.rules,
+            whiteRating = game.whiteRating,
+            blackRating = game.blackRating
+        )
 }

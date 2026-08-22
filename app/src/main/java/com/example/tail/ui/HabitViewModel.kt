@@ -96,6 +96,7 @@ import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.bridgeConnectionFrom
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.applyDivider
+import com.example.tail.widget.ChessDeferredGameReconciler
 import com.example.tail.widget.ChessReadinessLogStore
 import com.example.tail.widget.HabitListWidgetProvider
 import com.example.tail.data.dateString
@@ -7719,6 +7720,27 @@ class HabitViewModel(
         } catch (e: Exception) {
             Log.e(TAG, "Chess.com sync failed: ${e.message}")
             _chessComSyncStatus.value = "Sync failed: ${e.message?.take(50)}"
+        }
+
+        // Deferred game pipeline: retry shares that were parked because the
+        // game wasn't in any chess.com archive yet. Each poll re-fetches
+        // them; whatever has appeared is classified by the readiness state
+        // at the moment the game ended (approved → full Phase 2 audit,
+        // otherwise → unapproved in the compliance stats).
+        try {
+            val summary = ChessDeferredGameReconciler.reconcilePending(
+                context, s.chessComUsername
+            )
+            if (summary.resolved > 0) {
+                Log.i(
+                    TAG,
+                    "Pending chess games reconciled: ${summary.audited} audited, " +
+                        "${summary.unauthorized} unauthorized, " +
+                        "${summary.stillPending} still waiting"
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Pending chess game reconcile failed: ${e.message}")
         }
     }
 
