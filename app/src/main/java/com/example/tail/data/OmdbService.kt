@@ -222,6 +222,33 @@ class OmdbService {
             raw.trim().removeSuffix("min").trim().toIntOrNull()?.takeIf { it > 0 }
 
         /**
+         * Removes a trailing "(N min)" watch-length annotation, keeping the
+         * display title (episode codes, years and dots are preserved — unlike
+         * [parseTitle], which normalises for lookups). Used by the schedule
+         * timeline to label movie blocks with the watched title.
+         */
+        fun stripDurationAnnotation(text: String): String =
+            DURATION_SUFFIX_RE.replace(text, "").trim()
+
+        /**
+         * Sums the "(N min)" annotations of a movie habit's text log per
+         * calendar day: "YYYY-MM-DD HH:mm:ss" → text entries in, date → total
+         * watched minutes out. Entries without an annotation contribute 0.
+         * This is the source the habit's `minutes:` slot is synced from.
+         */
+        fun aggregateMinutesByDate(textLog: Map<String, String>): Map<String, Int> {
+            val byDate = mutableMapOf<String, Int>()
+            for ((timestamp, text) in textLog) {
+                if (timestamp.length < 10) continue
+                val minutes = parseTitle(text).minutes ?: continue
+                if (minutes <= 0) continue
+                val date = timestamp.substring(0, 10)
+                byDate[date] = (byDate[date] ?: 0) + minutes
+            }
+            return byDate
+        }
+
+        /**
          * Splits [total] into [parts] integer shares as evenly as possible.
          * The remainder is distributed one minute at a time to the earlier
          * shares, so the parts always sum back to [total]. Used by the movie

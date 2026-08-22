@@ -1512,6 +1512,15 @@ class HabitViewModel(
             dbLoaded = true
             
             rebuildHabitList()
+
+            // ── Movie minutes reconciliation ─────────────────────────────
+            // Fill each movie habit's minutes slot from its "(N min)"
+            // annotations, then (once per day) backfill lengths for entries
+            // still missing one — bridge file durations first, OMDb second.
+            viewModelScope.launch {
+                runCatching { syncAllMovieMinutesSlots() }
+                runCatching { maybeRunMovieMinutesBackfill() }
+            }
         } catch (e: Exception) {
             // Load failed (transient SAF/blank file during a Syncthing write, etc.).
             // Leave dbLoaded as-is (do NOT flip it true) so sync writers stay blocked.
@@ -3780,6 +3789,22 @@ class HabitViewModel(
     }
 
     /**
+     * Points earned by ONE schedule instance of [habitName] with [amount]
+     * increment units (divider applied). Null when points are not
+     * attributable per instance — no-points habits, inverted-binary habits
+     * and minutes-primary habits all derive points from day-level values
+     * the schedule timeline cannot split per block.
+     */
+    fun scheduleInstancePoints(habitName: String, amount: Int): Int? {
+        val s = _settings.value
+        if (habitName in s.noPointsHabits) return null
+        if (habitName in s.invertedBinaryHabits) return null
+        if (habitName in s.widgetTimerMinutesPrimary) return null
+        val divider = s.habitDividers[habitName] ?: 1
+        return applyDivider(amount, divider)
+    }
+
+    /**
      * Returns the selected date's minutes for [habitName] from the first-class
      * minutes slot (`minutes:<habit>`).
      */
@@ -5671,8 +5696,12 @@ class HabitViewModel(
                 incrementHabit(habitName, 1, recordTimestamp = !isMovieBridgeHabit(habitName))
 
                 // Movie-bridge habits: reconcile the timestamp store to the
-                // text log so the entry's watch time is the single timestamp.
-                if (isMovieBridgeHabit(habitName)) syncMovieTimestamps(habitName)
+                // text log so the entry's watch time is the single timestamp,
+                // and recompute the minutes slot from "(N min)" annotations.
+                if (isMovieBridgeHabit(habitName)) {
+                    syncMovieTimestamps(habitName)
+                    syncMovieMinutesSlot(habitName)
+                }
 
                 // Trigger async IMDb rating fetch for movie-bridge habits
                 triggerImdbFetchForEntry(habitName, text)
@@ -5749,8 +5778,12 @@ class HabitViewModel(
                 incrementHabit(habitName, 1, recordTimestamp = !isMovieBridgeHabit(habitName))
 
                 // Movie-bridge habits: reconcile the timestamp store to the
-                // text log so each entry's watch time is the single timestamp.
-                if (isMovieBridgeHabit(habitName)) syncMovieTimestamps(habitName)
+                // text log so each entry's watch time is the single timestamp,
+                // and recompute the minutes slot from "(N min)" annotations.
+                if (isMovieBridgeHabit(habitName)) {
+                    syncMovieTimestamps(habitName)
+                    syncMovieMinutesSlot(habitName)
+                }
 
                 // Trigger async IMDb rating fetch for movie-bridge habits
                 texts.forEach { triggerImdbFetchForEntry(habitName, it) }
@@ -6649,14 +6682,85 @@ class HabitViewModel(
     }
 
     /**
-     * Loads a movie-bridge habit's entries for [date] from its text log:
-     * watch time-of-day ("HH:mm:ss") → watched minutes parsed from the
-     * "(N min)" annotations (0 when the entry has no length yet). The
-     * text-log timestamps are the source of truth for the schedule
-     * timeline, so past films appear at their watch time even when no
-     * increment timestamp exists for the day.
+     * Recomputes a movie-bridge habit's minutes slot (`minutes:<habit>`)
+     * from the "(N min)" annotations in its text log: each day's stored
+     * value is SET to the sum of that day's annotated watch lengths, so the
+     * habit's minutes counter always shows the total minutes watched.
+     * Idempotent — days already matching are not rewritten and stale values
+     * (e.g. after an entry edit) are cleared.
      */
-    suspend fun loadMovieEntriesForDay(habitName: String, date: LocalDate): Map<String, Int> {
+    private suspend fun syncMovieMinutesSlot(habitName: String) {
+        if (!dbLoaded) return
+        val uriString = _settings.value.textInputFileUris[habitName] ?: return
+        val log = try {
+            textInputRepo.loadTextLog(Uri.parse(uriString), context)
+        } catch (e: Exception) {
+            Log.w(TAG, "syncMovieMinutesSlot: failed to load text log for '$habitName': ${e.message}")
+            return
+        }
+        val desired = OmdbService.aggregateMinutesByDate(log)
+        val minKey = minutesKey(habitName)
+        val existing = cachedPhoneDb[minKey] ?: emptyMap()
+
+        // Diff only — skip the write when nothing changes.
+        val updates = mutableMapOf<String, Int>()
+        for ((date, minutes) in desired) {
+            if (minutes > 0 && existing[date] != minutes) updates[date] = minutes
+        }
+        val stale = existing.keys.filter { (desired[it] ?: 0) <= 0 }
+        if (updates.isEmpty() && stale.isEmpty()) return
+
+        val mutableDb = cachedPhoneDb.toMutableMap()
+        val entries = mutableDb[minKey]?.toMutableMap() ?: mutableMapOf()
+        for ((date, minutes) in updates) entries[date] = minutes
+        for (date in stale) entries.remove(date)
+        mutableDb[minKey] = entries
+        cachedPhoneDb = mutableDb
+
+        val fileUri = _settings.value.fileUri
+        if (fileUri.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                habitsRepo.persistDatabase(Uri.parse(fileUri), context, mutableDb)
+            }
+        }
+        Log.d(TAG, "Minutes slot synced for '$habitName': ${updates.size} set, ${stale.size} cleared")
+    }
+
+    /** Runs [syncMovieMinutesSlot] for every enabled movie-bridge habit. */
+    suspend fun syncAllMovieMinutesSlots() {
+        val s = _settings.value
+        if (!s.bridgeEnabled) return
+        for (habitName in s.bridgeMovieHabits) {
+            try {
+                syncMovieMinutesSlot(habitName)
+            } catch (e: Exception) {
+                Log.w(TAG, "Minutes slot sync failed for '$habitName': ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * One watched movie on the schedule timeline: its "(N min)" length (0
+     * when the entry has no length yet) and its display title (the entry
+     * text with the length annotation stripped).
+     */
+    data class MovieScheduleEntry(
+        val minutes: Int,
+        val title: String
+    )
+
+    /**
+     * Loads a movie-bridge habit's entries for [date] from its text log:
+     * watch time-of-day ("HH:mm:ss") → [MovieScheduleEntry] with the watched
+     * minutes parsed from the "(N min)" annotations and the movie's display
+     * title. The text-log timestamps are the source of truth for the
+     * schedule timeline, so past films appear at their watch time even when
+     * no increment timestamp exists for the day.
+     */
+    suspend fun loadMovieEntriesForDay(
+        habitName: String,
+        date: LocalDate
+    ): Map<String, MovieScheduleEntry> {
         // The text log is the source of truth — reconcile the timestamp
         // store to it so each entry's watch time IS the habit's timestamp.
         syncMovieTimestamps(habitName)
@@ -6666,7 +6770,12 @@ class HabitViewModel(
         return textInputRepo.loadTextLog(Uri.parse(uriString), context)
             .filterKeys { it.startsWith(datePrefix) && it.length >= 16 }
             .mapKeys { (timestamp, _) -> timestamp.substring(11) }
-            .mapValues { (_, text) -> OmdbService.parseTitle(text).minutes ?: 0 }
+            .mapValues { (_, text) ->
+                MovieScheduleEntry(
+                    minutes = OmdbService.parseTitle(text).minutes ?: 0,
+                    title = OmdbService.stripDurationAnnotation(text)
+                )
+            }
     }
 
     /**
@@ -9187,10 +9296,14 @@ class HabitViewModel(
         return "${movie.title.trim().lowercase()}@$day"
     }
 
-    /** Case/whitespace-insensitive title match against logged entry texts. */
+    /**
+     * Case/whitespace-insensitive title match against logged entry texts.
+     * Compares parsed cache keys so entries carrying a "(N min)" length
+     * annotation still match the bare suggested title.
+     */
     private fun titleLogged(title: String, entries: List<Pair<String, String>>): Boolean {
-        val needle = title.trim().lowercase()
-        return entries.any { it.second.trim().lowercase() == needle }
+        val needle = OmdbService.parseTitle(title).cacheKey
+        return entries.any { OmdbService.parseTitle(it.second).cacheKey == needle }
     }
 
     /** True when the movie's most recent session started within the prompt window. */
@@ -9299,7 +9412,9 @@ class HabitViewModel(
                 title = movie.title,
                 question = "Watched this?",
                 createdAtMillis = System.currentTimeMillis(),
-                payload = entryTime
+                // "HH:mm:ss|<minutes>" — the length lets the answer path
+                // annotate the entry so the minutes slot fills automatically.
+                payload = HabitNotification.moviePayload(entryTime, movie.totalWatchMin ?: 0)
             )
             notificationStore.add(ask)
             com.example.tail.notify.HabitNotifier.postAsk(context, ask)
@@ -9307,6 +9422,15 @@ class HabitViewModel(
             Log.w(TAG, "Failed to register movie ask: ${e.message}")
         }
     }
+
+    /**
+     * The text logged for a confirmed movie: the title plus its "(N min)"
+     * watch length when the bridge knows it, so the schedule block sizes to
+     * the film and the minutes slot fills from the annotation.
+     */
+    private fun annotatedMovieTitle(movie: BridgeMovie): String =
+        movie.totalWatchMin?.takeIf { it > 0 }?.let { "${movie.title} ($it min)" }
+            ?: movie.title
 
     /**
      * Logs [movie] as a watched entry for [habitName] — the flash's Yes action
@@ -9323,7 +9447,7 @@ class HabitViewModel(
     ) {
         markMoviePromptHandled(movie)
         val entryTime = moviePromptEntryTime(movie)
-        saveTextEntries(habitName, listOf(movie.title), null, entryTime)
+        saveTextEntries(habitName, listOf(annotatedMovieTitle(movie)), null, entryTime)
         onLogged(entryTime.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
     }
 
@@ -9392,14 +9516,21 @@ class HabitViewModel(
                 if (ask.type == HabitNotification.TYPE_MOVIE) {
                     markMovieMarkerHandled(ask.id.removePrefix("movie:"))
                     if (yes) {
-                        val time = ask.payload.takeIf { it.isNotBlank() }?.let {
+                        val (payloadTime, payloadMinutes) =
+                            HabitNotification.parseMoviePayload(ask.payload)
+                        val time = payloadTime?.let {
                             try {
                                 java.time.LocalTime.parse(it)
                             } catch (e: Exception) {
                                 java.time.LocalTime.now()
                             }
                         } ?: java.time.LocalTime.now()
-                        saveTextEntries(ask.habitName, listOf(ask.title), null, time)
+                        val text = if (payloadMinutes > 0) {
+                            "${ask.title} ($payloadMinutes min)"
+                        } else {
+                            ask.title
+                        }
+                        saveTextEntries(ask.habitName, listOf(text), null, time)
                         onEntryLogged(time.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
                     } else {
                         onEntryLogged(null)
@@ -9760,25 +9891,74 @@ class HabitViewModel(
     }
 
     /**
+     * Fetches the desktop bridge's recent watch history and indexes the
+     * exact file-probed durations by parsed title: cacheKey → (watch day →
+     * total minutes). Empty when the bridge is unreachable — the caller
+     * then falls back to OMDb runtimes.
+     */
+    private suspend fun fetchBridgeDurations(): Map<String, Map<String, Int>> {
+        if (!_settings.value.bridgeEnabled) return emptyMap()
+        val conn = getBridgeConnection() ?: return emptyMap()
+        return try {
+            movieBridgeService.fetchRecent(conn.first, conn.second, limit = 100)
+                .mapNotNull { movie ->
+                    val minutes = movie.totalWatchMin?.takeIf { it > 0 } ?: return@mapNotNull null
+                    val key = OmdbService.parseTitle(movie.title).cacheKey
+                    key to mapOf(movie.date to minutes)
+                }
+                .groupBy({ it.first }, { it.second })
+                .mapValues { (_, pairs) ->
+                    pairs.reduce { acc, map -> acc + map }  // same title watched on several days
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "Bridge duration fetch failed: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    /**
+     * Looks up a title's bridge minutes for [date], tolerating a ±1 day
+     * offset (a film watched late at night can be confirmed the next
+     * morning, landing the entry on a different day than the bridge's).
+     */
+    private fun bridgeMinutesFor(
+        byDate: Map<String, Int>?,
+        date: String
+    ): Int? {
+        if (byDate == null || byDate.isEmpty()) return null
+        byDate[date]?.let { return it }
+        val localDate = com.example.tail.data.parseDate(date) ?: return null
+        for (offset in listOf(1L, -1L)) {
+            byDate[dateString(localDate.plusDays(offset))]?.let { return it }
+        }
+        return null
+    }
+
+    /**
      * Backfills watch-length minutes for movie-habit entries that lack a
-     * "(N min)" annotation, using runtimes from the same OMDb lookup ladder
-     * as the IMDb ratings (same API response, same daily limit).
+     * "(N min)" annotation.
+     *
+     * ## Resolution order
+     *  1. **Bridge durations** — the desktop watcher probes the actual file
+     *     with ffprobe, so its lengths are exact. Entries are matched by
+     *     parsed title and watch day (±1 day).
+     *  2. **OMDb runtimes** (when an API key is configured) — same lookup
+     *     ladder as the IMDb ratings, same daily limit.
      *
      * ## Split rule
-     * When the same film/episode (same parsed cache key) was logged on more
-     * than one day, its runtime is split evenly across those backlog days —
-     * and within a day, across that day's entries — so a title is never
-     * counted at full length more than once. Entries that already carry a
-     * length are left untouched (the user set those deliberately), as are
-     * titles whose runtime could not be resolved.
+     * Bridge minutes are per title per day, so same-day duplicates split the
+     * day's total evenly. For OMDb (one runtime per title), when the same
+     * film/episode was logged on more than one day, its runtime is split
+     * evenly across those backlog days — and within a day, across that day's
+     * entries — so a title is never counted at full length more than once.
+     * Entries that already carry a length are left untouched (the user set
+     * those deliberately), as are titles whose runtime could not be resolved.
+     *
+     * After annotating, each habit's minutes slot is recomputed from the
+     * annotations so the minutes counter fills automatically.
      */
     fun fetchMovieMinutesBacklog(onProgress: ((String) -> Unit)? = null) {
         val apiKey = _settings.value.omdbApiKey
-        if (apiKey.isBlank()) {
-            _omdbStatus.value = "Enter an OMDb API key first"
-            return
-        }
-
         val movieHabits = _settings.value.bridgeMovieHabits.toList()
         if (movieHabits.isEmpty()) {
             _omdbStatus.value = "No movie habits linked"
@@ -9804,7 +9984,6 @@ class HabitViewModel(
                 _omdbStatus.value = "Scanning movie entries for missing lengths..."
 
                 val perHabit = mutableMapOf<String, MutableList<PendingEntry>>()
-                val titleMap = mutableMapOf<String, ParsedTitle>()
 
                 for (habitName in movieHabits) {
                     val uriString = _settings.value.textInputFileUris[habitName]
@@ -9820,7 +9999,6 @@ class HabitViewModel(
                         if (parsed.title.isBlank()) continue
                         if (parsed.minutes != null) continue  // already has a length
                         list.add(PendingEntry(timestamp, timestamp.substring(0, 10), text, parsed))
-                        titleMap[parsed.cacheKey] = parsed
                     }
                 }
 
@@ -9830,56 +10008,28 @@ class HabitViewModel(
                     return@launch
                 }
 
-                // Resolve runtimes: cache first, then OMDb within the daily limit.
-                // needRuntime=true re-fetches titles whose rating is cached but
-                // whose runtime was never stored (pre-runtime versions).
-                val runtimes = mutableMapOf<String, Int>()
-                val toFetch = mutableListOf<ParsedTitle>()
-                for (cacheKey in titleMap.keys) {
-                    val cached = imdbCache.getRuntime(cacheKey)
-                    if (cached != null) {
-                        runtimes[cacheKey] = cached
-                    } else if (!imdbCache.hasRuntime(cacheKey)) {
-                        toFetch.add(titleMap[cacheKey]!!)
-                    }
-                }
-
-                var fetched = 0
-                for (parsed in toFetch) {
-                    if (imdbCache.remainingCalls() <= 0) break
-                    fetchAndCacheImdbRating(parsed, needRuntime = true)
-                    fetched++
-                    imdbCache.getRuntime(parsed.cacheKey)?.let { runtimes[parsed.cacheKey] = it }
-                    if (fetched % 25 == 0) {
-                        val msg = "Lengths: resolved $fetched / ${toFetch.size} titles..."
-                        _omdbStatus.value = msg
-                        onProgress?.invoke(msg)
-                    }
-                }
-
-                // Split each title's runtime across its distinct dates, then
-                // across the entries within each date, and stage text updates.
-                var updated = 0
+                // ── Pass 1: bridge file durations (exact) ─────────────────
+                _omdbStatus.value = "Fetching lengths from desktop bridge..."
+                val bridgeDurations = fetchBridgeDurations()
+                var bridgeUpdated = 0
+                val omdbPerHabit = mutableMapOf<String, MutableList<PendingEntry>>()
                 for ((habitName, entries) in perHabit) {
-                    val byTitle = entries.groupBy { it.parsed.cacheKey }
                     val updates = mutableMapOf<String, String>()
-                    for ((cacheKey, titleEntries) in byTitle) {
-                        val runtime = runtimes[cacheKey] ?: continue
-                        val distinctDates = titleEntries.map { it.date }.distinct().sorted()
-                        val shareByDate = distinctDates
-                            .zip(OmdbService.splitEvenly(runtime, distinctDates.size))
-                            .toMap()
-                        val byDate = titleEntries.groupBy { it.date }
-                        for ((date, dayEntries) in byDate) {
-                            val share = shareByDate[date] ?: continue
-                            val sortedEntries = dayEntries.sortedBy { it.timestamp }
-                            val entryShares = OmdbService.splitEvenly(share, sortedEntries.size)
-                            sortedEntries.forEachIndexed { idx, entry ->
-                                val minutes = entryShares[idx]
-                                if (minutes > 0) {
-                                    updates[entry.timestamp] = "${entry.rawText} ($minutes min)"
+                    val stillPending = mutableListOf<PendingEntry>()
+                    // Bridge minutes are per (title, day): group accordingly
+                    val groups = entries.groupBy { it.parsed.cacheKey to it.date }
+                    for ((key, dayEntries) in groups) {
+                        val minutes = bridgeMinutesFor(bridgeDurations[key.first], key.second)
+                        if (minutes != null && minutes > 0) {
+                            val sorted = dayEntries.sortedBy { it.timestamp }
+                            val shares = OmdbService.splitEvenly(minutes, sorted.size)
+                            sorted.forEachIndexed { idx, entry ->
+                                if (shares[idx] > 0) {
+                                    updates[entry.timestamp] = "${entry.rawText} (${shares[idx]} min)"
                                 }
                             }
+                        } else {
+                            stillPending += dayEntries
                         }
                     }
                     if (updates.isNotEmpty()) {
@@ -9889,17 +10039,99 @@ class HabitViewModel(
                                 textInputRepo.updateTextEntries(
                                     Uri.parse(uriString), context, updates, habitName
                                 )
-                                updated += updates.size
+                                bridgeUpdated += updates.size
                             } catch (e: Exception) {
-                                Log.w(TAG, "Minutes backfill write failed for '$habitName': ${e.message}")
+                                Log.w(TAG, "Bridge minutes write failed for '$habitName': ${e.message}")
+                            }
+                        }
+                    }
+                    if (stillPending.isNotEmpty()) {
+                        omdbPerHabit[habitName] = stillPending
+                    }
+                }
+
+                // ── Pass 2: OMDb runtimes for whatever is left ────────────
+                var omdbUpdated = 0
+                var toFetch = listOf<ParsedTitle>()
+                var fetched = 0
+                if (omdbPerHabit.isNotEmpty() && apiKey.isNotBlank()) {
+                    val titleMap = mutableMapOf<String, ParsedTitle>()
+                    for (entries in omdbPerHabit.values) {
+                        for (entry in entries) titleMap[entry.parsed.cacheKey] = entry.parsed
+                    }
+
+                    // Resolve runtimes: cache first, then OMDb within the
+                    // daily limit. needRuntime=true re-fetches titles whose
+                    // rating is cached but whose runtime was never stored.
+                    val runtimes = mutableMapOf<String, Int>()
+                    val toFetchList = mutableListOf<ParsedTitle>()
+                    toFetch = toFetchList
+                    for (cacheKey in titleMap.keys) {
+                        val cached = imdbCache.getRuntime(cacheKey)
+                        if (cached != null) {
+                            runtimes[cacheKey] = cached
+                        } else if (!imdbCache.hasRuntime(cacheKey)) {
+                            toFetchList.add(titleMap[cacheKey]!!)
+                        }
+                    }
+
+                    for (parsed in toFetch) {
+                        if (imdbCache.remainingCalls() <= 0) break
+                        fetchAndCacheImdbRating(parsed, needRuntime = true)
+                        fetched++
+                        imdbCache.getRuntime(parsed.cacheKey)?.let { runtimes[parsed.cacheKey] = it }
+                        if (fetched % 25 == 0) {
+                            val msg = "Lengths: resolved $fetched / ${toFetch.size} titles..."
+                            _omdbStatus.value = msg
+                            onProgress?.invoke(msg)
+                        }
+                    }
+
+                    // Split each title's runtime across its distinct dates,
+                    // then across the entries within each date.
+                    for ((habitName, entries) in omdbPerHabit) {
+                        val byTitle = entries.groupBy { it.parsed.cacheKey }
+                        val updates = mutableMapOf<String, String>()
+                        for ((cacheKey, titleEntries) in byTitle) {
+                            val runtime = runtimes[cacheKey] ?: continue
+                            val distinctDates = titleEntries.map { it.date }.distinct().sorted()
+                            val shareByDate = distinctDates
+                                .zip(OmdbService.splitEvenly(runtime, distinctDates.size))
+                                .toMap()
+                            val byDate = titleEntries.groupBy { it.date }
+                            for ((date, dayEntries) in byDate) {
+                                val share = shareByDate[date] ?: continue
+                                val sortedEntries = dayEntries.sortedBy { it.timestamp }
+                                val entryShares = OmdbService.splitEvenly(share, sortedEntries.size)
+                                sortedEntries.forEachIndexed { idx, entry ->
+                                    val minutes = entryShares[idx]
+                                    if (minutes > 0) {
+                                        updates[entry.timestamp] = "${entry.rawText} ($minutes min)"
+                                    }
+                                }
+                            }
+                        }
+                        if (updates.isNotEmpty()) {
+                            val uriString = _settings.value.textInputFileUris[habitName]
+                            if (!uriString.isNullOrEmpty()) {
+                                try {
+                                    textInputRepo.updateTextEntries(
+                                        Uri.parse(uriString), context, updates, habitName
+                                    )
+                                    omdbUpdated += updates.size
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Minutes backfill write failed for '$habitName': ${e.message}")
+                                }
                             }
                         }
                     }
                 }
 
+                val updated = bridgeUpdated + omdbUpdated
                 val deferred = pendingCount - updated
                 _omdbStatus.value = buildString {
                     append("Backfilled lengths on $updated entries")
+                    if (bridgeUpdated > 0) append(" ($bridgeUpdated from bridge)")
                     if (toFetch.size - fetched > 0) {
                         append(" (${toFetch.size - fetched} titles deferred — daily limit)")
                     } else if (deferred > 0) {
@@ -9908,9 +10140,11 @@ class HabitViewModel(
                 }
 
                 rebuildHabitList()
-                // Refresh the graph text-entry cache so the runtime series
+                // Recompute the minutes slots from the new annotations and
+                // refresh the graph text-entry cache so the runtime series
                 // reflects the newly-annotated lengths immediately
                 for (movieHabit in perHabit.keys) {
+                    runCatching { syncMovieMinutesSlot(movieHabit) }
                     loadTextEntriesForGraph(movieHabit)
                 }
             } catch (e: Exception) {
@@ -9920,6 +10154,23 @@ class HabitViewModel(
                 _omdbBacklogRunning.value = false
             }
         }
+    }
+
+    /**
+     * Runs [fetchMovieMinutesBacklog] once per day, automatically after
+     * load, so entries confirmed without a length get annotated (bridge
+     * file durations first, OMDb fallback) and the minutes slot fills
+     * without user action.
+     */
+    private suspend fun maybeRunMovieMinutesBackfill() {
+        val today = dateString(java.time.LocalDate.now())
+        try {
+            if (settingsRepo.getMovieMinutesBackfillDay() == today) return
+            settingsRepo.saveMovieMinutesBackfillDay(today)
+        } catch (e: Exception) {
+            Log.w(TAG, "Movie minutes backfill guard failed: ${e.message}")
+        }
+        fetchMovieMinutesBacklog()
     }
 
     /** Returns the remaining OMDb API calls for today. */

@@ -475,6 +475,9 @@ fun HabitGridScreen(
     var timestampEditorList by remember { mutableStateOf<List<String>>(emptyList()) }
     // Text entries for the currently selected edit-mode habit (for view/edit in edit bar)
     var editModeTextEntries by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    // Schedule block details popup: the tapped block + its instance texts
+    var scheduleDetailsBlock by remember { mutableStateOf<ScheduleBlock?>(null) }
+    var scheduleDetailsTexts by remember { mutableStateOf<List<String>>(emptyList()) }
     // Derive the selected edit habit name at top level for LaunchedEffect
     val editHabitName = if (selectedEditIndex >= 0 && selectedEditIndex < habits.size)
         habits[selectedEditIndex].name?.takeIf { it.isNotEmpty() } else null
@@ -935,18 +938,27 @@ fun HabitGridScreen(
                     selectedDate = selectedDate,
                     isToday = isToday,
                     refreshTrigger = scheduleRefresh,
+                    // Same "Orrery" loading animation as the main screen/map,
+                    // driven by the current day/week/month points tiers.
+                    loadingMetrics = loadingMetrics,
                     timestampRepo = viewModel.timestampRepo,
-                    onEventClick = { habitName ->
-                        timestampScope.launch {
-                            timestampEditorList = viewModel.timestampRepo
-                                .getTimestampsForDay(habitName, selectedDate)
-                            timestampEditorHabitName = habitName
-                            // Load any text logged at those times so the
-                            // editor popup can show/edit it.
-                            if (habitName in settings.textInputHabits) {
-                                viewModel.loadTextEntriesWithTimestamps(habitName, selectedDate) { entries ->
-                                    editModeTextEntries = entries
-                                }
+                    onBlockClick = { block ->
+                        // Instance popup: show what we know about THIS
+                        // block (times, duration, points, logged text) —
+                        // not the whole-habit timestamp editor.
+                        scheduleDetailsTexts = emptyList()
+                        scheduleDetailsBlock = block
+                        viewModel.loadTextEntriesWithTimestamps(block.habitName, selectedDate) { entries ->
+                            // Guard against a stale out-of-order load from
+                            // an earlier tap overwriting the current popup.
+                            if (scheduleDetailsBlock == block) {
+                                val from = block.firstTime
+                                val to = block.lastTime
+                                scheduleDetailsTexts = entries
+                                    .filter { (fullTs, text) ->
+                                        text.isNotBlank() && fullTs.takeLast(8) in from..to
+                                    }
+                                    .map { it.second }
                             }
                         }
                     },
@@ -1490,7 +1502,11 @@ fun HabitGridScreen(
                             // the text logged at each increment time.
                             if (name in settings.textInputHabits) {
                                 viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
-                                    editModeTextEntries = entries
+                                    // Discard out-of-order loads so a stale
+                                    // result never shows another habit's log.
+                                    if (timestampEditorHabitName == name) {
+                                        editModeTextEntries = entries
+                                    }
                                 }
                             }
                         },
@@ -1782,6 +1798,44 @@ fun HabitGridScreen(
     // Timestamp editor dialog — card-based: each same-moment increment group
     // shows its time (underlined = tappable to re-time), the increment amount,
     // and any text logged at that time; the pencil edits amount/text in place
+    // ── Schedule block details popup (the tapped instance) ────────────────
+    scheduleDetailsBlock?.let { block ->
+        ScheduleBlockDetailsDialog(
+            habitName = block.habitName,
+            movieTitle = block.movieTitle,
+            firstTime = block.firstTime,
+            lastTime = block.lastTime,
+            eventCount = block.eventCount,
+            spanMinutes = block.spanMinutes,
+            durationMinutes = block.durationMinutes,
+            amount = block.amount,
+            points = viewModel.scheduleInstancePoints(block.habitName, block.amount),
+            textEntries = scheduleDetailsTexts,
+            onShowAllTimestamps = {
+                val habitName = block.habitName
+                scheduleDetailsBlock = null
+                timestampScope.launch {
+                    timestampEditorList = viewModel.timestampRepo
+                        .getTimestampsForDay(habitName, selectedDate)
+                    timestampEditorHabitName = habitName
+                    // Clear stale text entries first so the editor never
+                    // briefly shows another habit's log (e.g. movie
+                    // titles), then load this habit's — discarding
+                    // out-of-order results.
+                    editModeTextEntries = emptyList()
+                    if (habitName in settings.textInputHabits) {
+                        viewModel.loadTextEntriesWithTimestamps(habitName, selectedDate) { entries ->
+                            if (timestampEditorHabitName == habitName) {
+                                editModeTextEntries = entries
+                            }
+                        }
+                    }
+                }
+            },
+            onDismiss = { scheduleDetailsBlock = null }
+        )
+    }
+
     // (or jumps to the meal editor for meal habits).
     timestampEditorHabitName?.let { habitName ->
         TimestampEditorDialog(

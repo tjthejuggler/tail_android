@@ -5,6 +5,7 @@ import com.example.tail.ui.MIN_SPAN_MINUTES
 import com.example.tail.ui.ScheduleEvent
 import com.example.tail.ui.buildScheduleBlocks
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -24,14 +25,16 @@ class ScheduleBlockMergeTest {
         hour: Int,
         minute: Int,
         amount: Int = 1,
-        durationMinutes: Int = 0
+        durationMinutes: Int = 0,
+        movieTitle: String? = null
     ) = ScheduleEvent(
         habitName = habit,
         time = "%02d:%02d:00".format(hour, minute),
         amount = amount,
         isMeal = false,
         canEditText = false,
-        durationMinutes = durationMinutes
+        durationMinutes = durationMinutes,
+        movieTitle = movieTitle
     )
 
     @Test
@@ -183,5 +186,24 @@ class ScheduleBlockMergeTest {
         assertEquals(2, b.eventCount)
         assertEquals(20 * 60, b.startMinute)
         assertEquals(20 * 60 + 95, b.endMinute)
+    }
+
+    @Test
+    fun `movie title carries into the block and survives merging`() {
+        // Two movie entries inside the merge gap: the titled entry's film
+        // name labels the merged block (first non-null title wins).
+        val blocks = buildScheduleBlocks(
+            listOf(
+                event("Movies", 20, 0, durationMinutes = 95, movieTitle = "Dune"),
+                event("Movies", 20, 25)
+            )
+        )
+        assertEquals("Dune", blocks.single().movieTitle)
+    }
+
+    @Test
+    fun `non-movie blocks carry no movie title`() {
+        val blocks = buildScheduleBlocks(listOf(event("Chess", 9, 0)))
+        assertNull(blocks.single().movieTitle)
     }
 }

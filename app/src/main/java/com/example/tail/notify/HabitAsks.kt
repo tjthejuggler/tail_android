@@ -86,10 +86,14 @@ object HabitAsks {
                 Log.w(TAG, "No text log URI for '${ask.habitName}' — cannot log movie")
                 return
             }
-            val time = ask.payload.takeIf { it.isNotBlank() }?.let { parseTime(it) } ?: LocalTime.now()
+            val (payloadTime, payloadMinutes) = HabitNotification.parseMoviePayload(ask.payload)
+            val time = payloadTime?.let { parseTime(it) } ?: LocalTime.now()
+            // Carry the watch length onto the logged entry so the minutes
+            // slot fills from the annotation at the next sync.
+            val text = if (payloadMinutes > 0) "${ask.title} ($payloadMinutes min)" else ask.title
             try {
                 TextInputRepository().appendTextEntry(
-                    Uri.parse(uriStr), appContext, ask.title, null, time, ask.habitName
+                    Uri.parse(uriStr), appContext, text, null, time, ask.habitName
                 )
                 Log.i(TAG, "Logged movie '${ask.title}' for '${ask.habitName}' from system notification")
             } catch (e: Exception) {

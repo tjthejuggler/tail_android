@@ -35,6 +35,45 @@ class OmdbServiceTest {
         assertNull(OmdbService.parseTitle("Inception").minutes)
     }
 
+    // ── stripDurationAnnotation ────────────────────────────────────────────
+
+    @Test
+    fun stripDurationAnnotation_removesOnlyTheTrailingLength() {
+        assertEquals("Inception", OmdbService.stripDurationAnnotation("Inception (148 min)"))
+        assertEquals("Breaking Bad S05E14", OmdbService.stripDurationAnnotation("Breaking Bad S05E14 (47 min)"))
+        // A release year is NOT a duration annotation — it must survive.
+        assertEquals("A Different Man (2024)", OmdbService.stripDurationAnnotation("A Different Man (2024) (105 min)"))
+    }
+
+    @Test
+    fun stripDurationAnnotation_leavesBareTitlesAlone() {
+        assertEquals("Inception", OmdbService.stripDurationAnnotation("Inception"))
+        assertEquals("", OmdbService.stripDurationAnnotation(""))
+    }
+
+    // ── aggregateMinutesByDate ─────────────────────────────────────────────
+
+    @Test
+    fun aggregateMinutesByDate_sumsAnnotatedEntriesPerDay() {
+        val log = mapOf(
+            "2026-08-20 21:30:00" to "Dune (166 min)",
+            "2026-08-20 23:59:00" to "Fleabag S01E04 (27 min)",
+            "2026-08-21 20:00:00" to "Inception (148 min)"
+        )
+        val byDate = OmdbService.aggregateMinutesByDate(log)
+        assertEquals(193, byDate["2026-08-20"])
+        assertEquals(148, byDate["2026-08-21"])
+    }
+
+    @Test
+    fun aggregateMinutesByDate_skipsUnannotatedEntriesAndBadKeys() {
+        val log = mapOf(
+            "2026-08-20 21:30:00" to "Some Movie", // no "(N min)" → skipped
+            "short" to "Dune (166 min)"            // not a timestamp key → skipped
+        )
+        assertTrue(OmdbService.aggregateMinutesByDate(log).isEmpty())
+    }
+
     // ── parseRuntime ───────────────────────────────────────────────────────
 
     @Test

@@ -1,5 +1,11 @@
 package com.example.tail.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,6 +31,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
@@ -72,7 +82,13 @@ data class ScheduleEvent(
      * annotation on the habit's text entry); 0 when the event carries no
      * length. A block grows to cover this much time on the timeline.
      */
-    val durationMinutes: Int = 0
+    val durationMinutes: Int = 0,
+    /**
+     * Display title of the watched movie (the entry text with its length
+     * annotation stripped); null for non-movie events. Movie blocks label
+     * themselves with the film's name instead of the habit name.
+     */
+    val movieTitle: String? = null
 ) {
     val minuteOfDay: Int by lazy {
         runCatching { LocalTime.parse(time) }.getOrDefault(LocalTime.NOON).let { it.hour * 60 + it.minute }
@@ -101,7 +117,14 @@ data class ScheduleBlock(
     /** "HH:mm:ss" of the last timestamp in the block. */
     val lastTime: String,
     val isMeal: Boolean,
-    val canEditText: Boolean
+    val canEditText: Boolean,
+    /**
+     * Real watch/activity duration minutes driving the block's size; 0 when
+     * the block only occupies the minimum chip span.
+     */
+    val durationMinutes: Int = 0,
+    /** Movie title carried by the block's events; null for non-movie blocks. */
+    val movieTitle: String? = null
 ) {
     /** Timeline minutes the block occupies (always ≥ [MIN_SPAN_MINUTES]). */
     val spanMinutes: Int get() = endMinute - startMinute
@@ -127,6 +150,12 @@ internal val MIN_SPAN_MINUTES = ceil(EVENT_MIN_HEIGHT.value / HOUR_HEIGHT.value 
  * label under the habit name (two text lines ≈ 28dp; 36 min ≈ 38dp).
  */
 private const val TWO_LINE_SPAN_MINUTES = 36
+/**
+ * Movie blocks spanning at least this much time are tall enough to wrap
+ * the film's title over two lines above the habit-name row (three text
+ * rows ≈ 42dp; 60 min ≈ 64dp).
+ */
+private const val MOVIE_TITLE_TWO_LINES_MINUTES = 60
 /**
  * Maximum rectangle width. Chips hug their content — the full habit name
  * plus its labels — and only stop growing at this cap, where the name
@@ -176,7 +205,9 @@ fun buildScheduleBlocks(events: List<ScheduleEvent>): List<ScheduleBlock> {
                 firstTime = group.first().time,
                 lastTime = group.last().time,
                 isMeal = group.first().isMeal,
-                canEditText = group.first().canEditText
+                canEditText = group.first().canEditText,
+                durationMinutes = group.maxOf { it.durationMinutes },
+                movieTitle = group.firstNotNullOfOrNull { it.movieTitle }
             )
             i = j + 1
         }
@@ -227,12 +258,14 @@ fun ScheduleTimelineScreen(
     movieHabits: Set<String> = emptySet(),
     /**
      * Loads a movie habit's entries for the selected day from its text
-     * log: watch time-of-day ("HH:mm:ss") → watched minutes (0 when the
-     * entry has no "(N min)" length yet). Text-log timestamps are the
-     * source of truth for movies, so past films appear even without
+     * log: watch time-of-day ("HH:mm:ss") → [HabitViewModel.MovieScheduleEntry]
+     * carrying the watched minutes (0 when the entry has no "(N min)"
+     * length yet) and the film's display title. Text-log timestamps are
+     * the source of truth for movies, so past films appear even without
      * increment timestamps.
      */
-    loadMovieEntries: suspend (habitName: String) -> Map<String, Int> = { emptyMap() },
+    loadMovieEntries: suspend (habitName: String) -> Map<String, HabitViewModel.MovieScheduleEntry> =
+        { emptyMap() },
     /** Habits linked to Garmin metrics (activity blocks are sized to the activity). */
     garminHabits: Set<String> = emptySet(),
     /**
@@ -247,8 +280,15 @@ fun ScheduleTimelineScreen(
     isToday: Boolean,
     /** Bumped by the host whenever the editor popup closes, to reload. */
     refreshTrigger: Int,
+    /**
+     * Day/week/month points metrics driving the shared "Orrery" loading
+     * animation while the schedule assembles; null falls back to a simple
+     * pulse.
+     */
+    loadingMetrics: LoadingMetrics? = null,
     timestampRepo: HabitTimestampRepository,
-    onEventClick: (habitName: String) -> Unit,
+    /** Opens the details popup for the tapped block — one habit instance. */
+    onBlockClick: (block: ScheduleBlock) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var events by remember { mutableStateOf<List<ScheduleEvent>>(emptyList()) }
@@ -260,7 +300,7 @@ fun ScheduleTimelineScreen(
         val all = timestampRepo.loadAll()
         val dateKey = dateString(selectedDate)
         val known = habitNames.filter { it.isNotEmpty() }.toSet()
-        events = all
+        var mergedEvents = all
             .filterKeys { it in known && it !in timelineExcludedHabits }
             .mapNotNull { (habit, days) ->
                 days[dateKey]?.takeIf { it.isNotEmpty() }?.let { habit to it }
@@ -281,7 +321,7 @@ fun ScheduleTimelineScreen(
         // its watch time, and the "(N min)" length sizes the block — so
         // past films appear even when no increment timestamp exists.
         if (movieHabits.isNotEmpty()) {
-            val merged = events.toMutableList()
+            val merged = mergedEvents.toMutableList()
             for (habit in movieHabits) {
                 if (habit !in known || habit in timelineExcludedHabits) continue
                 val entries = loadMovieEntries(habit)
@@ -295,13 +335,16 @@ fun ScheduleTimelineScreen(
                             entries.keys.none { it.take(5) == event.time.take(5) }
                     }
                 }
-                for ((time, minutes) in entries) {
+                for ((time, entry) in entries) {
                     val idx = merged.indexOfFirst {
                         it.habitName == habit && it.time.take(5) == time.take(5)
                     }
                     if (idx >= 0) {
-                        if (minutes > merged[idx].durationMinutes) {
-                            merged[idx] = merged[idx].copy(durationMinutes = minutes)
+                        if (entry.minutes > merged[idx].durationMinutes) {
+                            merged[idx] = merged[idx].copy(durationMinutes = entry.minutes)
+                        }
+                        if (merged[idx].movieTitle == null && entry.title.isNotBlank()) {
+                            merged[idx] = merged[idx].copy(movieTitle = entry.title)
                         }
                     } else {
                         merged += ScheduleEvent(
@@ -310,19 +353,20 @@ fun ScheduleTimelineScreen(
                             amount = 1,
                             isMeal = habit in mealHabits,
                             canEditText = habit in textInputHabits,
-                            durationMinutes = minutes
+                            durationMinutes = entry.minutes,
+                            movieTitle = entry.title.takeIf { it.isNotBlank() }
                         )
                     }
                 }
             }
-            events = merged
+            mergedEvents = merged
         }
         // Garmin-linked activity habits: place the block at the
         // watch-recorded start time and size it to the activity's
         // minutes, so past runs/rides/swims show at their real time
         // and duration.
         if (garminHabits.isNotEmpty()) {
-            val merged = events.toMutableList()
+            val merged = mergedEvents.toMutableList()
             for (habit in garminHabits) {
                 if (habit !in known || habit in timelineExcludedHabits) continue
                 val (startTime, minutes) = loadGarminActivity(habit) ?: continue
@@ -344,8 +388,12 @@ fun ScheduleTimelineScreen(
                     )
                 }
             }
-            events = merged
+            mergedEvents = merged
         }
+        // Publish ONCE, after movie watch lengths and Garmin activity
+        // durations are in: blocks must never appear at minimum size and
+        // then pop to their full length a beat later.
+        events = mergedEvents
         loading = false
     }
 
@@ -417,7 +465,29 @@ fun ScheduleTimelineScreen(
             )
         }
 
-        if (!loading && events.isEmpty()) {
+        if (loading) {
+            // ── Loading state ──────────────────────────────────────────────
+            // Blocks are held back until every duration (movie watch
+            // lengths, Garmin activities) has loaded, so they never appear
+            // at minimum size and then pop to their full length.
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                val m = loadingMetrics
+                if (m != null) {
+                    HabitLoadingSpinner(
+                        monthlyAverage = m.monthlyAverage,
+                        weeklyAverage = m.weeklyAverage,
+                        todayPoints = m.todayPoints
+                    )
+                } else {
+                    ScheduleLoadingPulse()
+                }
+            }
+        } else if (events.isEmpty()) {
             // ── Empty state ───────────────────────────────────────────────
             Box(
                 modifier = Modifier
@@ -504,7 +574,7 @@ fun ScheduleTimelineScreen(
                                         screenIndexOfHabit[block.habitName]
                                     ),
                                     height = HOUR_HEIGHT * (block.spanMinutes / 60f),
-                                    onClick = { onEventClick(block.habitName) },
+                                    onClick = { onBlockClick(block) },
                                     modifier = Modifier.layoutId(block)
                                 )
                             }
@@ -664,9 +734,12 @@ private fun HourBackdrop(
  * or the first–last range for merged clusters — and a 🍽 marker for meal
  * habits. Blocks tall enough to afford it stack the ×count and time
  * labels under the name (a long name would otherwise squeeze the ×count
- * out of the name row). Every chip hugs its content — the full habit
- * name is shown whenever it fits — and only stops growing at
- * [CHIP_WIDTH], where the name ellipsizes.
+ * out of the name row). Movie blocks instead lead with the film's title
+ * and demote the habit name to the second line — shown only while the
+ * block is tall enough (when just one label fits, the movie name wins).
+ * Every chip hugs its content — the full habit name is shown whenever it
+ * fits — and only stops growing at [CHIP_WIDTH], where the name
+ * ellipsizes.
  */
 @Composable
 private fun EventChip(
@@ -704,7 +777,80 @@ private fun EventChip(
                 .width(3.dp)
                 .background(accent, RoundedCornerShape(1.5.dp))
         )
-        if (twoLine) {
+        if (block.movieTitle != null) {
+            // ── Movie block: the film's name is the headline label ──────
+            if (twoLine) {
+                // Tall enough: movie title on top, habit name + time
+                // underneath. Really tall blocks let the title wrap to a
+                // second line (long film names get more room).
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 10.dp, end = 6.dp)
+                ) {
+                    Text(
+                        text = block.movieTitle,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFFEAEAEA),
+                        maxLines = if (block.spanMinutes >= MOVIE_TITLE_TWO_LINES_MINUTES) 2 else 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = block.habitName,
+                            fontSize = 9.sp,
+                            color = Color(0xFF999999),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (block.amount > 1) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "×${block.amount}",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = accent
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = timeLabel,
+                            fontSize = 9.sp,
+                            color = Color(0xFF999999),
+                            maxLines = 1
+                        )
+                    }
+                }
+            } else {
+                // Short movie block: film name + time only — the movie
+                // name wins the single line over the habit name.
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 10.dp, end = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = block.movieTitle,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFFEAEAEA),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = timeLabel,
+                        fontSize = 9.sp,
+                        color = Color(0xFF999999),
+                        maxLines = 1
+                    )
+                }
+            }
+        } else if (twoLine) {
             // ── Tall block: name on top, ×count + time underneath ───────
             // The ×count lives on the bottom row: a long name (e.g.
             // "Programming sessions") fills the name row to the chip cap,
@@ -787,4 +933,149 @@ private fun EventChip(
             }
         }
     }
+}
+
+/**
+ * Pulsing-dots loading indicator shown while the schedule assembles its
+ * day — blocks are held back until every duration is known, and this
+ * stands in for them meanwhile.
+ */
+@Composable
+private fun ScheduleLoadingPulse() {
+    val pulse = rememberInfiniteTransition(label = "scheduleLoading")
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        repeat(3) { i ->
+            val dotAlpha by pulse.animateFloat(
+                initialValue = 0.25f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(450, delayMillis = i * 150, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "dot$i"
+            )
+            Box(
+                modifier = Modifier
+                    .size(9.dp)
+                    .alpha(dotAlpha)
+                    .background(Color(0xFF66CCFF), CircleShape)
+            )
+        }
+    }
+}
+
+/** One label→value row in [ScheduleBlockDetailsDialog]. */
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(text = label, fontSize = 12.sp, color = Color(0xFF999999))
+        Text(
+            text = value,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color(0xFFEAEAEA),
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/**
+ * Details for ONE tapped schedule block — the specific instance of the
+ * habit (one film, one merged cluster of increments, one Garmin activity):
+ * its start/end times, duration, amount, points and any text logged at
+ * that time. The "All timestamps" button hands off to the full timestamp
+ * editor for the whole habit-day.
+ */
+@Composable
+fun ScheduleBlockDetailsDialog(
+    habitName: String,
+    /** Watched film title for movie blocks; null otherwise. */
+    movieTitle: String?,
+    /** "HH:mm:ss" of the block's first timestamp. */
+    firstTime: String,
+    /** "HH:mm:ss" of the block's last timestamp. */
+    lastTime: String,
+    /** Number of distinct timestamps merged into the block. */
+    eventCount: Int,
+    /** Timeline minutes the block spans (includes the minimum chip span). */
+    spanMinutes: Int,
+    /** Real watch/activity duration minutes; 0 when only the minimum span applies. */
+    durationMinutes: Int,
+    /** Total increment units merged into the block. */
+    amount: Int,
+    /** Points this instance earns (divider applied); null when not applicable. */
+    points: Int?,
+    /** Non-blank text entries logged inside the block's time range. */
+    textEntries: List<String>,
+    /** Open the full timestamp editor for this habit-day. */
+    onShowAllTimestamps: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val startLabel = if (eventCount > 1) "${firstTime.take(5)}–${lastTime.take(5)}" else firstTime.take(5)
+    val endLabel = remember(firstTime, spanMinutes) {
+        runCatching {
+            val t = LocalTime.parse(firstTime).plusMinutes(spanMinutes.toLong())
+            "%02d:%02d".format(t.hour, t.minute)
+        }.getOrNull()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(
+                    text = movieTitle ?: habitName,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFEAEAEA)
+                )
+                if (movieTitle != null) {
+                    Text(text = habitName, fontSize = 12.sp, color = Color(0xFF999999))
+                }
+            }
+        },
+        text = {
+            Column {
+                DetailRow("Time", startLabel)
+                if (endLabel != null) DetailRow("Ends", endLabel)
+                if (durationMinutes > 0) DetailRow("Duration", "$durationMinutes min")
+                if (amount > 1) DetailRow("Amount", "×$amount")
+                if (points != null) DetailRow("Points", "$points pts")
+                if (textEntries.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    textEntries.forEach { text ->
+                        Text(
+                            text = text,
+                            fontSize = 12.sp,
+                            color = Color(0xFFBBBBBB),
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onShowAllTimestamps,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A3A))
+            ) {
+                Text(text = "All timestamps")
+            }
+        },
+        dismissButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003355))
+            ) {
+                Text(text = "Close")
+            }
+        }
+    )
 }

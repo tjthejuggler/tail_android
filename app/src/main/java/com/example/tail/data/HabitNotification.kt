@@ -41,6 +41,27 @@ data class HabitNotification(
         /** Builds the stable id for a scheduled ask of [habitName] on [date]. */
         fun scheduleId(habitName: String, date: String): String =
             "schedule:$habitName:$date"
+
+        /**
+         * Encodes a movie-ask payload: the pre-computed "HH:mm:ss" entry time,
+         * optionally followed by the watch length in minutes ("HH:mm:ss|113").
+         * The length lets the answer path annotate the logged entry with
+         * "(N min)" so the habit's minutes slot fills automatically.
+         */
+        fun moviePayload(time: String, minutes: Int): String =
+            if (minutes > 0) "$time|$minutes" else time
+
+        /**
+         * Decodes a movie-ask payload into its "HH:mm:ss" entry time (null
+         * when absent) and watch minutes (0 when unknown). Tolerates the old
+         * time-only format.
+         */
+        fun parseMoviePayload(payload: String): Pair<String?, Int> {
+            val parts = payload.split('|')
+            val time = parts.getOrNull(0)?.takeIf { it.isNotBlank() }
+            val minutes = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+            return time to minutes
+        }
     }
 }
 

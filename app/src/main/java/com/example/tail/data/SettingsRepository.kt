@@ -111,6 +111,8 @@ private val KEY_MOVIE_PROMPT_HANDLED = stringSetPreferencesKey("movie_prompt_han
 private val KEY_HABIT_SCHEDULE_TIMES = stringPreferencesKey("habit_schedule_times")
 // OMDb API key for IMDb ratings
 private val KEY_OMDB_API_KEY = stringPreferencesKey("omdb_api_key")
+// Day (yyyy-MM-dd) the automatic movie-minutes backlog last ran
+private val KEY_MOVIE_MINUTES_BACKFILL_DAY = stringPreferencesKey("movie_minutes_backfill_day")
 // Voice trigger feature keys
 private val KEY_VOICE_TRIGGER_ENABLED = booleanPreferencesKey("voice_trigger_enabled")
 private val KEY_VOICE_TRIGGER_HABITS = stringSetPreferencesKey("voice_trigger_habits")
@@ -1441,6 +1443,15 @@ class SettingsRepository(private val context: Context) {
     /** Saves the OMDb API key for IMDb rating lookups. */
     suspend fun saveOmdbApiKey(apiKey: String) {
         context.dataStore.edit { prefs -> prefs[KEY_OMDB_API_KEY] = apiKey }
+    }
+
+    /** Day string (yyyy-MM-dd) the automatic movie-minutes backlog last ran, or null. */
+    suspend fun getMovieMinutesBackfillDay(): String? {
+        return context.dataStore.data.map { it[KEY_MOVIE_MINUTES_BACKFILL_DAY] }.first()
+    }
+
+    suspend fun saveMovieMinutesBackfillDay(day: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_MOVIE_MINUTES_BACKFILL_DAY] = day }
     }
 
     // ── Voice Trigger ────────────────────────────────────────────────────

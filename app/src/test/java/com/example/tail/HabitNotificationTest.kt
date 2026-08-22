@@ -29,6 +29,36 @@ class HabitNotificationTest {
         payload = payload
     )
 
+    // ── Movie payload ───────────────────────────────────────────────────────
+
+    @Test
+    fun `movie payload round-trips time and minutes`() {
+        val payload = HabitNotification.moviePayload("21:30:00", 115)
+        assertEquals("21:30:00|115", payload)
+        val (time, minutes) = HabitNotification.parseMoviePayload(payload)
+        assertEquals("21:30:00", time)
+        assertEquals(115, minutes)
+    }
+
+    @Test
+    fun `movie payload without minutes parses to zero minutes`() {
+        val (time, minutes) = HabitNotification.parseMoviePayload("21:30:00")
+        assertEquals("21:30:00", time)
+        assertEquals(0, minutes)
+    }
+
+    @Test
+    fun `movie payload builder omits the pipe when minutes are unknown`() {
+        assertEquals("21:30:00", HabitNotification.moviePayload("21:30:00", 0))
+    }
+
+    @Test
+    fun `parseMoviePayload tolerates garbage`() {
+        val (time, minutes) = HabitNotification.parseMoviePayload("junk|notanumber")
+        assertEquals("junk", time)
+        assertEquals(0, minutes)
+    }
+
     // ── Codec ───────────────────────────────────────────────────────────────
 
     @Test

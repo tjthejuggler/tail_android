@@ -124,6 +124,13 @@ def _duration_min(start: int, end: int) -> Optional[int]:
 
 # ── File duration (ffprobe) ──────────────────────────────────────────────────
 
+# How many days back the repair pass looks for entries missing a duration.
+REPAIR_WINDOW_DAYS = int(os.environ.get("MOVIE_REPAIR_WINDOW_DAYS", "14"))
+
+# KDE trash location — files deleted via Dolphin land here and can still be
+# probed for their length.
+TRASH_FILES_DIR = os.path.expanduser("~/.local/share/Trash/files")
+
 # Cache file durations to avoid re-probing the same file across sessions.
 _file_duration_cache: Dict[str, Optional[int]] = {}
 
@@ -261,7 +268,7 @@ def save_state(last_seen_start: int) -> None:
 
 # ── Processing ───────────────────────────────────────────────────────────────
 
-def build_session(start: int, end: int) -> Dict[str, Any]:
+def build_session(start: int, end: int, filepath: str = "") -> Dict[str, Any]:
     """Build a session record from raw start/end unix timestamps."""
     return {
         "start": _unix_to_str(start),
@@ -269,6 +276,7 @@ def build_session(start: int, end: int) -> Dict[str, Any]:
         "start_unix": start,
         "end_unix": end if end and end > 0 else None,
         "duration_min": _duration_min(start, end),
+        "filepath": filepath,
     }
 
 
@@ -303,15 +311,16 @@ def process_rows(rows: List[Tuple[int, int, str]]) -> List[Dict[str, Any]]:
             }
 
         entry = groups[key]
-        session = build_session(start, end)
-        # KDE Activity DB typically logs start == end (no real stop
-        # detection). Fall back to the actual file length via ffprobe
-        # so the user gets a meaningful duration to confirm or edit.
-        if not session["duration_min"]:
-            file_dur = _get_file_duration_min(filepath)
-            if file_dur is not None:
-                session["duration_min"] = file_dur
-                session["duration_source"] = "file"
+        session = build_session(start, end, filepath)
+        # The file's actual length is the PREFERRED duration source: the KDE
+        # Activity DB usually logs start == end (no real stop detection), and
+        # when it does log a small end−start delta that rounds to 1-2 minutes
+        # it is noise, not a watch time. Only when the file cannot be probed
+        # (already deleted, drive unmounted) do we keep the watch span.
+        file_dur = _get_file_duration_min(filepath)
+        if file_dur is not None:
+            session["duration_min"] = file_dur
+            session["duration_source"] = "file"
         entry["sessions"].append(session)
         if start > entry["_max_start"]:
             entry["_max_start"] = start
@@ -457,6 +466,116 @@ def poll_once() -> int:
     return added
 
 
+# ── Duration repair ──────────────────────────────────────────────────────────
+
+def _recompute_totals(entry: Dict[str, Any]) -> None:
+    """Recompute an entry's derived total from its sessions."""
+    sessions = entry.get("sessions", [])
+    if sessions:
+        entry["last_watched"] = sessions[-1].get("start", entry.get("last_watched", ""))
+    entry["total_watch_min"] = sum(
+        s.get("duration_min") or 0 for s in sessions
+    ) or None
+
+
+def _resolve_filepath_from_kde(raw_name: str) -> Optional[str]:
+    """Look up the full path a video file was played from, by basename."""
+    if not raw_name:
+        return None
+    if not os.path.exists(KDE_DB_PATH):
+        return None
+    conn = sqlite3.connect(f"file:{KDE_DB_PATH}?mode=ro", uri=True)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT targettedResource FROM ResourceEvent "
+            "WHERE targettedResource LIKE ? ORDER BY start DESC LIMIT 1",
+            (f"%{raw_name}",),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+    except sqlite3.OperationalError as e:
+        logger.debug(f"KDE path lookup failed for {raw_name}: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def repair_missing_durations() -> int:
+    """
+    Re-probe files for cache entries that are still missing a duration.
+
+    A duration can be missing when the file was already gone at event time
+    (watcher downtime, unmounted drive, quick delete). For entries inside the
+    repair window this pass retries every poll: the original path is probed
+    first, then the KDE trash (files deleted via Dolphin keep a copy there).
+    Only sessions with NO duration are touched — existing values are never
+    overwritten. Returns the number of sessions repaired.
+    """
+    cache = load_cache()
+    movies = cache.get("movies", [])
+    if not movies:
+        return 0
+
+    cutoff = time.time() - REPAIR_WINDOW_DAYS * 86400
+    repaired = 0
+
+    for entry in movies:
+        # Cheap pre-filter: only entries inside the window
+        last_start = max(
+            (s.get("start_unix") or 0) for s in entry.get("sessions", [])
+        ) if entry.get("sessions") else 0
+        if not last_start or last_start < cutoff:
+            continue
+
+        entry_repaired = False
+        for session in entry.get("sessions", []):
+            if (session.get("duration_min") or 0) > 0:
+                continue  # already has a duration — never overwrite
+            if (session.get("start_unix") or 0) < cutoff:
+                continue
+
+            candidates = []
+            fp = session.get("filepath") or ""
+            if fp:
+                candidates.append(fp)
+            raw = entry.get("raw") or ""
+            if raw:
+                kde_path = _resolve_filepath_from_kde(raw)
+                if kde_path and kde_path not in candidates:
+                    candidates.append(kde_path)
+                trash_path = os.path.join(TRASH_FILES_DIR, raw)
+                if trash_path not in candidates:
+                    candidates.append(trash_path)
+
+            for cand in candidates:
+                dur = _get_file_duration_min(cand)
+                if dur is not None and dur > 0:
+                    session["duration_min"] = dur
+                    session["duration_source"] = "file"
+                    if cand != fp:
+                        session["filepath"] = cand
+                    repaired += 1
+                    entry_repaired = True
+                    logger.info(
+                        f"Repaired duration for '{entry.get('title')}': {dur} min "
+                        f"(source: {cand})"
+                    )
+                    break
+
+        if entry_repaired:
+            _recompute_totals(entry)
+
+    if repaired:
+        cache["metadata"]["last_updated"] = (
+            datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        )
+        save_cache(cache)
+        logger.info(f"Duration repair: fixed {repaired} session(s)")
+
+    return repaired
+
+
 # ── Main loop ────────────────────────────────────────────────────────────────
 
 def run_forever():
@@ -479,6 +598,12 @@ def run_forever():
             n = poll_once()
             if n:
                 logger.info(f"Added {n} new movie(s) to cache")
+            # Retry files that were missing at event time (unmounted drive,
+            # late-appearing file, ...) — cheap: only probes existing files.
+            try:
+                repair_missing_durations()
+            except Exception as e:
+                logger.error(f"Repair error: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Poll error: {e}", exc_info=True)
 
@@ -495,7 +620,10 @@ def run_once():
 
 
 if __name__ == "__main__":
-    if "--once" in sys.argv:
+    if "--repair" in sys.argv:
+        repaired = repair_missing_durations()
+        print(f"Repaired {repaired} session(s)")
+    elif "--once" in sys.argv:
         run_once()
     else:
         run_forever()
