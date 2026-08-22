@@ -9,8 +9,8 @@ This script extracts the following metrics from Garmin exports:
 - **VO2 Max** - From `DI-Connect-Metrics/ActivityVo2Max.json` or `.FIT` files (message type 140)
 - **Fitness Age** - From `DI-Connect-Wellness/*fitnessAgeData.json`
 - **Resting Heart Rate** - From `DI-Connect-Aggregator/UDSFile*.json`
-- **HRV Last Night** - From `DI-Connect-Wellness/*HRV*.json` or `.FIT` files
-- **HRV Weekly Average** - Computed as 7-day rolling average from last night HRV
+- **HRV Last Night** - From the watch's HRV Status `.FIT` summaries (`hrvStatusSummary`, mesg 370) inside the nested `DI-Connect-Uploaded-Files/UploadedFiles_0-_Part*.zip` archives, or `DI-Connect-Wellness/*HRV*.json` files
+- **HRV Weekly Average** - Watch-reported 7-day average from the same HRV Status summaries; nights without one fall back to a computed rolling average
 - **Sleep Score** - From `DI-Connect-Wellness/*_sleepData.json`
 - **Sleep Duration & Stages** - Deep, light, REM, awake minutes
 - **Respiration Rate** - From sleep data
@@ -22,7 +22,7 @@ This script extracts the following metrics from Garmin exports:
 - **Run/Bike/Swim Minutes** - Per-sport activity minutes from `_summarizedActivities.json` durations, categorised by activity type
 - **Floors Climbed** - From elevation data
 - **Min/Max Heart Rate** - Daily heart rate extremes
-- **Stress Level** - From `StressDetailSummary` or `GarminStressDetailSummary` files
+- **Stress Level** - From the `allDayStress` TOTAL aggregator in `DI-Connect-Aggregator/UDSFile*.json` (identical to the live API's `avgStressLevel`), or `StressDetailSummary` files
 - **Altitude Ascent** - From `DI-Connect-Fitness/*_summarizedActivities.json`
 
 ## Installation
@@ -112,12 +112,35 @@ historic run/bike/swim blocks at their real watch start time. JSONs
 compiled with older versions of this script lack this section — recompile
 from the GDPR ZIP to obtain it.
 
+## HRV Status FIT Summaries
+
+The GDPR export contains **no JSON file for nightly HRV**. The data Garmin
+Connect serves day-by-day via its HRV endpoint originates from small
+per-night "HRV Status" uploads (file type 68) that are packed — with tens of
+thousands of other raw watch uploads — inside the nested
+`DI-Connect-Uploaded-Files/UploadedFiles_0-_Part*.zip` archives, under
+generic `you@email_1234567890.fit` names.
+
+The script opens every nested zip, parses each upload, and decodes the
+`hrvStatusSummary` (mesg 370) messages manually (fitparse 1.2.0 predates
+this message): field 1 is `lastNightAverage` and field 0 is `weeklyAverage`,
+both RMSSD in 1/128 ms units, dated by the morning after the night.
+Re-uploaded nights are deduplicated by keeping the newest copy. Values were
+verified to match the live Connect API exactly (88/89 days checked; the
+single miss is the day the export was requested).
+
+A full import parses ~41,000 FIT files and takes about 2 minutes. HRV
+history begins when your watch first recorded HRV Status (2022-08-29 here);
+stress history begins when your watch first recorded all-day stress
+(2020-01-23 here) — Garmin has no earlier data in any format.
+
 ## Garmin Export Structure
 
 The script processes files from the following directories in your Garmin GDPR export:
 
 - `DI-Connect-Wellness/` - Sleep, HRV, fitness age data
-- `DI-Connect-Aggregator/` - Daily metrics (RHR, steps, distance, etc.)
+- `DI-Connect-Aggregator/` - Daily metrics (RHR, steps, distance, stress, etc.)
+- `DI-Connect-Uploaded-Files/` - Nested zips of raw watch `.FIT` uploads (HRV Status summaries)
 - `DI-Connect-Metrics/` - VO2 Max data
 - `DI-Connect-Fitness/` - Activity data (altitude ascent)
 - `DI-Connect-Uploaded-Files/` - Binary `.FIT` files (VO2 Max, HRV_STATUS)

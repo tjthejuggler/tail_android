@@ -12,8 +12,11 @@ Supported Metrics:
     - VO2_MAX: From ActivityVo2Max.json or .FIT files (message type 140)
     - FITNESS_AGE: From fitnessAgeData.json
     - RESTING_HR: From UDSFile daily metrics
-    - HRV_LAST_NIGHT: From HRV JSON files or .FIT files (HRV_STATUS)
-    - HRV_WEEKLY_AVG: Computed 7-day rolling average
+    - HRV_LAST_NIGHT: From HRV JSON files, or from the watch's HRV Status
+      .FIT summaries (hrvStatusSummary, mesg 370) found inside the nested
+      DI-Connect-Uploaded-Files/UploadedFiles_0-_Part*.zip archives
+    - HRV_WEEKLY_AVG: Watch-reported 7-day average from the same HRV Status
+      summaries; nights without one fall back to a computed rolling average
     - SLEEP_SCORE: From sleepData.json
     - SLEEP_DURATION_MINUTES: Total sleep time
     - DEEP_SLEEP_MINUTES, LIGHT_SLEEP_MINUTES, REM_SLEEP_MINUTES, AWAKE_MINUTES
@@ -31,7 +34,8 @@ Supported Metrics:
       blocks are placed at their real watch start time
     - FLOORS_CLIMBED: Elevation climbed in meters (from floorsAscendedInMeters)
     - MIN_HR, MAX_HR: Daily heart rate extremes
-    - STRESS_LEVEL: From StressDetailSummary files
+    - STRESS_LEVEL: From UDSFile allDayStress TOTAL aggregator (matches the
+      live API's avgStressLevel), or StressDetailSummary files
     - ALTITUDE_ASCENT_METERS: From _summarizedActivities.json (elevationGain in cm, converted to m)
 
 Usage:
@@ -44,6 +48,7 @@ See garmin_import_README.md for detailed documentation.
 """
 
 import zipfile
+import io
 import json
 import sys
 from datetime import datetime
@@ -62,6 +67,12 @@ except ImportError:
 
 # Configuration
 TARGET_TZ = ZoneInfo("Europe/Dublin")  # Using Dublin as default, can be changed
+
+# --- FIT profile constants for messages fitparse 1.2.0 does not know ---
+# Names/scales from the official Garmin FIT SDK profile:
+FIT_EPOCH_OFFSET = 631065600  # FIT timestamps: seconds since 1989-12-31 00:00:00 UTC
+MESG_HRV_STATUS_SUMMARY = 370  # hrvStatusSummary: per-night HRV summary
+HRV_SCALE = 128  # RMSSD fields are stored in 1/128 ms units
 
 
 def categorise_activity_type(type_key: str) -> Optional[str]:
@@ -89,6 +100,9 @@ class GarminDataExtractor:
         self.zip_path = zip_path
         self.data: Dict[str, Dict[str, Any]] = defaultdict(dict)
         self.hrv_values: Dict[str, int] = {}  # Store for weekly baseline calculation
+        # file_id.time_created of the newest HRV summary seen per date, so a
+        # re-uploaded night (corrected summary) replaces the older copy.
+        self.hrv_summary_seen: Dict[str, datetime] = {}
         self.processed_activity_ids = set()  # Track processed activities to avoid duplicates
         # Accumulate raw seconds per sport for run/bike/swim minute buckets.
         # Finalised to whole minutes in finalize_activity_minutes().
@@ -254,10 +268,17 @@ class GarminDataExtractor:
                 if max_hr and max_hr > 0:
                     self.data["MAX_HR"][date] = int(max_hr)
                 
-                # Stress level (if available)
+                # Stress level (if available). The GDPR export nests the daily
+                # average inside allDayStress.aggregatorList[type=TOTAL], which
+                # is the same "avgStressLevel" the live Connect API reports.
                 stress_data = entry.get("allDayStress", {})
                 if isinstance(stress_data, dict):
                     avg_stress = stress_data.get("averageStressLevel")
+                    if avg_stress is None:
+                        for agg in stress_data.get("aggregatorList", []) or []:
+                            if isinstance(agg, dict) and agg.get("type") == "TOTAL":
+                                avg_stress = agg.get("averageStressLevel")
+                                break
                     if avg_stress and avg_stress > 0:
                         self.data["STRESS_LEVEL"][date] = int(avg_stress)
         except Exception as e:
@@ -540,6 +561,95 @@ class GarminDataExtractor:
         except Exception as e:
             print(f"Warning: Failed to process FIT file {file_name}: {e}")
     
+    def process_uploaded_files_zip(self, file_name: str, z: zipfile.ZipFile):
+        """Process the nested UploadedFiles_0-_Part*.zip archives.
+
+        Garmin's GDPR export packs every raw watch .FIT upload inside nested
+        zips under DI-Connect-Uploaded-Files/. Among them are small "HRV
+        Status" files (file_id type 68, ~1 per night) whose hrvStatusSummary
+        message carries the nightly and weekly RMSSD averages that Garmin
+        Connect serves day-by-day via its HRV endpoint. There is no JSON
+        equivalent of this data anywhere in the export.
+        """
+        try:
+            nested = zipfile.ZipFile(io.BytesIO(z.read(file_name)))
+        except Exception as e:
+            print(f"Warning: Failed to open nested zip {file_name}: {e}")
+            return
+        for inner_name in nested.namelist():
+            if not inner_name.lower().endswith(".fit"):
+                continue
+            try:
+                self.process_hrv_status_fit(nested.read(inner_name))
+            except Exception:
+                # Unparseable/corrupt uploads are skipped; the vast majority
+                # of files are activities/monitoring with no HRV summary.
+                pass
+
+    def process_hrv_status_fit(self, fit_bytes: bytes):
+        """Extract nightly/weekly HRV from a raw .FIT upload payload.
+
+        fitparse 1.2.0 predates the hrvStatusSummary (mesg 370) and hrvValue
+        (mesg 371) messages, so they surface as "unknown" messages/fields.
+        We decode them manually using the official FIT profile definitions:
+          field 253 = timestamp (FIT epoch seconds; the morning after the night)
+          field 0   = weeklyAverage    (7-day RMSSD average, 1/128 ms units)
+          field 1   = lastNightAverage (last night RMSSD average, 1/128 ms units)
+        """
+        if not FITPARSE_AVAILABLE:
+            return
+        ff = FitFile(io.BytesIO(fit_bytes))
+        file_created = None
+        summary = None
+        for m in ff:
+            mesg_name = m.mesg_type.name if m.mesg_type is not None and hasattr(m.mesg_type, "name") else None
+            if mesg_name == "file_id":
+                fd = m.get("time_created")
+                if fd is not None and not isinstance(fd, (int, float, str, type(None))):
+                    file_created = fd.value
+                # Performance guard: the export contains tens of thousands
+                # of uploads; named (known) file types never carry an HRV
+                # Status summary, so skip them after the header. HRV Status
+                # files use the newer numeric type 68, which fitparse 1.2.0
+                # cannot name — those (and other small unknown-type files)
+                # are scanned in full.
+                ftype = m.get("type")
+                ftype_val = ftype.value if ftype is not None and not isinstance(ftype, (int, float, str, type(None))) else ftype
+                if isinstance(ftype_val, str):
+                    return
+                continue
+            try:
+                num = m.def_mesg.mesg_num
+            except Exception:
+                continue
+            if num == MESG_HRV_STATUS_SUMMARY:
+                summary = {f.name: f.value for f in m}
+        if not summary:
+            return
+
+        ts_raw = summary.get("unknown_253")
+        if not isinstance(ts_raw, (int, float)):
+            return
+        dt = datetime.fromtimestamp(ts_raw + FIT_EPOCH_OFFSET, tz=ZoneInfo("UTC")).astimezone(TARGET_TZ)
+        date = dt.strftime("%Y-%m-%d")
+
+        # The same night can be uploaded more than once (re-syncs); keep the
+        # copy from the newest file so corrected summaries win.
+        seen = self.hrv_summary_seen.get(date)
+        if seen is not None and file_created is not None and seen >= file_created:
+            return
+        self.hrv_summary_seen[date] = file_created or dt
+
+        last_night = summary.get("unknown_1")
+        if isinstance(last_night, (int, float)) and last_night > 0:
+            value = int(round(last_night / HRV_SCALE))
+            self.hrv_values[date] = value
+            self.data["HRV_LAST_NIGHT"][date] = value
+
+        weekly = summary.get("unknown_0")
+        if isinstance(weekly, (int, float)) and weekly > 0:
+            self.data["HRV_WEEKLY_AVG"][date] = int(round(weekly / HRV_SCALE))
+
     def compute_hrv_weekly_baseline(self):
         """Compute 7-day rolling average for HRV."""
         if not self.hrv_values:
@@ -562,7 +672,10 @@ class GarminDataExtractor:
             
             if recent_hrvs:
                 baseline = sum(recent_hrvs) // len(recent_hrvs)
-                self.data["HRV_WEEKLY_AVG"][current_date] = baseline
+                # The watch-reported weeklyAverage (from the HRV Status
+                # summaries) is authoritative; only fill nights where the
+                # watch did not send one.
+                self.data["HRV_WEEKLY_AVG"].setdefault(current_date, baseline)
     
     def process_zip(self):
         """Main processing loop for the ZIP archive."""
@@ -607,6 +720,11 @@ class GarminDataExtractor:
                 # Process binary .FIT files for VO2 Max and HRV_STATUS
                 elif fname_lower.endswith(".fit"):
                     self.process_fit_file(file_name, z)
+
+                # Process the nested UploadedFiles zips (raw watch uploads,
+                # including the per-night HRV Status summaries)
+                elif fname_lower.endswith(".zip") and "uploaded-files" in fname_lower:
+                    self.process_uploaded_files_zip(file_name, z)
         
         print(f"Processed {file_count} files")
         
