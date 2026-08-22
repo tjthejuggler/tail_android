@@ -3753,66 +3753,11 @@ private fun HabitToggleSection(
 
     Spacer(modifier = Modifier.height(6.dp))
 
-    // ── Secondary value toggle ──────────────────────────────────────────
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column {
-            Text(text = "Secondary value", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-            Text(
-                text = if (isSecondaryValue) "Tracks a second value alongside points"
-                       else "Single value only",
-                color = if (isSecondaryValue) Color(0xFF66BB6A) else Color(0xFF888888),
-                fontSize = 10.sp
-            )
-        }
-        Switch(
-            checked = isSecondaryValue,
-            onCheckedChange = { onToggleSecondaryValue(habitName) },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color(0xFF66BB6A),
-                checkedTrackColor = Color(0xFF2E7D32),
-                uncheckedThumbColor = Color(0xFF888888),
-                uncheckedTrackColor = Color(0xFF333333)
-            )
-        )
-    }
-
-    Spacer(modifier = Modifier.height(6.dp))
-
-    // ── Secondary value fallback toggle ─────────────────────────────────
-    // Only meaningful when secondary value is enabled
-    if (isSecondaryValue) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(text = "Fallback to secondary", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                Text(
-                    text = if (isSecondaryValueFallback) "Second value used for points when primary is 0"
-                           else "Primary value only for points",
-                    color = if (isSecondaryValueFallback) Color(0xFF66BB6A) else Color(0xFF888888),
-                    fontSize = 10.sp
-                )
-            }
-            Switch(
-                checked = isSecondaryValueFallback,
-                onCheckedChange = { onToggleSecondaryValueFallback(habitName) },
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color(0xFF66BB6A),
-                    checkedTrackColor = Color(0xFF2E7D32),
-                    uncheckedThumbColor = Color(0xFF888888),
-                    uncheckedTrackColor = Color(0xFF333333)
-                )
-            )
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-    }
+    // (Removed Aug-22-2026) The generic "Secondary value" and "Fallback to
+    // secondary" toggles lived here. The secondary-value track is now reserved
+    // for the special multi-value integrations (chess.com, JugCoach, movie
+    // bridge IMDb ratings), which manage their slots automatically; every
+    // other two-value habit uses the built-in Minutes/Sessions feature.
 
     Spacer(modifier = Modifier.height(6.dp))
 

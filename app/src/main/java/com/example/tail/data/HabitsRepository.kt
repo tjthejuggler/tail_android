@@ -614,6 +614,42 @@ class HabitsRepository {
     }
 
     /**
+     * Applies a SIGNED [deltaMinutes] adjustment to the habit's first-class
+     * `minutes:<habitName>` slot for TODAY, leaving the primary session count
+     * untouched. Used by the Protocol v3 minutes-only broadcast (Wags duration
+     * corrections: the user shortens a just-completed session, so minutes must
+     * be subtracted without un-counting the session).
+     *
+     * The resulting day total is clamped at zero — an over-correction can
+     * never produce negative minutes. No-op for a zero delta.
+     */
+    suspend fun adjustHabitMinutesSlot(
+        uri: Uri,
+        context: Context,
+        habitName: String,
+        deltaMinutes: Int
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        if (deltaMinutes == 0) return@withContext loadDatabase(uri, context)
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "adjustHabitMinutesSlot: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+        val dateStr = dateString(LocalDate.now())
+        val minKey = minutesKey(habitName)
+        val minEntries = db[minKey]?.toMutableMap() ?: mutableMapOf()
+        val current = minEntries[dateStr] ?: 0
+        val updated = (current + deltaMinutes).coerceAtLeast(0)
+        if (updated != current) {
+            if (updated == 0) minEntries.remove(dateStr) else minEntries[dateStr] = updated
+            if (minEntries.isEmpty()) db.remove(minKey) else db[minKey] = minEntries.toSortedMap()
+            saveDatabase(uri, context, db)
+        }
+        db
+    }
+
+    /**
      * Atomically increments MULTIPLE storage keys for today in a single
      * read-modify-write cycle: +[amount] for each entry of [increments]
      * (storage key → amount). Keys with an amount ≤ 0 are skipped.

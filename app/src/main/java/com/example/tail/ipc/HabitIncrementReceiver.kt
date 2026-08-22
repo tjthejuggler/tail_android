@@ -117,29 +117,36 @@ class HabitIncrementReceiver : BroadcastReceiver() {
 
                 val uri = Uri.parse(fileUriString)
 
-                // Protocol v3: sessions-primary increment (Wags apnea slots).
-                // ONE atomic write: +sessions on the habit's own key (the
-                // primary value) and +minutes on its first-class minutes:
-                // slot — exactly the layout incrementHabitWithMinutes
+                // Protocol v3: sessions-primary increment (Wags apnea and
+                // breathing slots). ONE atomic write: +sessions on the habit's
+                // own key (the primary value) and +minutes on its first-class
+                // minutes: slot — exactly the layout incrementHabitWithMinutes
                 // persists. Timestamps follow the SESSION count (one per
                 // session), not the minutes.
+                //
+                // sessions = 0 is the MINUTES-ONLY variant: a possibly signed
+                // minutes delta that touches only the minutes: slot (Wags
+                // duration corrections, and ended-early sessions whose minutes
+                // still count but do not tick the session counter).
                 if (intent.hasExtra(EXTRA_SESSIONS)) {
-                    val sessions = intent.getIntExtra(EXTRA_SESSIONS, 1).coerceAtLeast(1)
-                    val minutes = intent.getIntExtra(EXTRA_MINUTES, 0).coerceAtLeast(0)
-                    if (minutes > 0) {
-                        habitsRepo.incrementHabitWithMinutes(uri, appContext, habitName, minutes, sessions)
-                    } else {
-                        habitsRepo.incrementHabit(uri, appContext, habitName, sessions)
+                    val sessions = intent.getIntExtra(EXTRA_SESSIONS, 1).coerceAtLeast(0)
+                    val minutes = intent.getIntExtra(EXTRA_MINUTES, 0)
+                    when {
+                        sessions == 0 -> habitsRepo.adjustHabitMinutesSlot(uri, appContext, habitName, minutes)
+                        minutes > 0 -> habitsRepo.incrementHabitWithMinutes(uri, appContext, habitName, minutes, sessions)
+                        else -> habitsRepo.incrementHabit(uri, appContext, habitName, sessions)
                     }
                     HabitIncrementBus.emit(habitName)
                     Log.i(
                         TAG,
                         "Incremented habit '$habitName' by $sessions session(s) + $minutes minute(s) via IPC broadcast"
                     )
-                    try {
-                        HabitTimestampRepository(appContext).addTimestamps(habitName, sessions)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
+                    if (sessions > 0) {
+                        try {
+                            HabitTimestampRepository(appContext).addTimestamps(habitName, sessions)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
+                        }
                     }
                     sendHabitIncrementedNotification(appContext, habitName)
                     return@launch

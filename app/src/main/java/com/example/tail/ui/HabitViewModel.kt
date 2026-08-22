@@ -790,37 +790,12 @@ class HabitViewModel(
                         com.example.tail.widget.WidgetTriggerService.updateServiceState(context, triggerCount)
                     }
 
-                    // One-time timer-feature setup for habits that already had a
-                    // trigger app configured before the timer existed: give them
-                    // the "minutes" secondary value, points fallback, and
-                    // minutes-primary default. Guarded on NOT already having a
-                    // secondary value, so a user's later manual primary-value
-                    // choice is never overridden.
-                    val needsSetup = s.widgetTriggerApps.entries
-                        .filter { it.value.isNotBlank() && it.key !in s.secondaryValueHabits }
-                        .map { it.key }
-                    if (needsSetup.isNotEmpty()) {
-                        val secVal = s.secondaryValueHabits + needsSetup
-                        val fallback = s.secondaryValueFallbackHabits + needsSetup
-                        val minutesPrimary = s.widgetTimerMinutesPrimary + needsSetup
-                        val labels = s.valueDisplayLabels.toMutableMap()
-                        needsSetup.forEach { habit ->
-                            labels[habit] = mapOf(
-                                com.example.tail.data.GRAPH_METRIC_VALUE1 to "Sessions",
-                                com.example.tail.data.GRAPH_METRIC_VALUE2 to "Minutes"
-                            )
-                        }
-                        settingsRepo.saveSecondaryValueHabits(secVal)
-                        settingsRepo.saveSecondaryValueFallbackHabits(fallback)
-                        settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
-                        settingsRepo.saveValueDisplayLabels(labels)
-                        _settings.value = _settings.value.copy(
-                            secondaryValueHabits = secVal,
-                            secondaryValueFallbackHabits = fallback,
-                            widgetTimerMinutesPrimary = minutesPrimary,
-                            valueDisplayLabels = labels
-                        )
-                    }
+                    // (Removed Aug-22-2026) The legacy one-time setup that gave
+                    // widget-trigger habits the "minutes" secondary value +
+                    // points fallback + minutes-primary default. Superseded by
+                    // the first-class minutes slot (Aug-18) — timer features now
+                    // enable minutes directly, and this block only re-created
+                    // stale legacy state the minutes-slot migration had removed.
                 }
 
 
@@ -1376,6 +1351,76 @@ class HabitViewModel(
     }
 
     /**
+     * One-time migration (Aug-22-2026): converts the remaining Wags-fed
+     * breathing habits ([com.example.tail.data.BREATHING_SESSIONS_PRIMARY_HABITS]
+     * — Meditations, Resonance Breathing, Until Contraction) from the legacy
+     * Wags layout (minutes = primary value with divider + sessions in the
+     * `secondary_value:` slot with points fallback) to SESSIONS-PRIMARY, the
+     * same layout the five apnea habits got on Aug-21-2026:
+     *
+     *  • sessions become the PRIMARY value and the sole points source — the
+     *    divider and the points fallback are removed, so points = sessions;
+     *  • minutes move to the first-class `minutes:` slot with the built-in
+     *    minutes value type enabled, so charts keep showing them;
+     *  • the secondary-value feature and its legacy slot are dropped.
+     *
+     * "Apnea practiced" is deliberately NOT touched: it keeps its historical
+     * meaning (fed by the O2/CO2 Tables conditional links, never incremented
+     * on its own) and its legacy secondary data stays readable.
+     *
+     * Data swap via [com.example.tail.data.swapToSessionsPrimary]; days with
+     * recorded minutes but no session entry get sessions = 1 so no day loses
+     * its done/points status. Runs AFTER [performApneaSessionsPrimaryMigration].
+     */
+    private suspend fun performBreathingSessionsPrimaryMigration(uri: Uri) {
+        try {
+            val targets = com.example.tail.data.BREATHING_SESSIONS_PRIMARY_HABITS
+            val swapped = com.example.tail.data.swapToSessionsPrimary(cachedPhoneDb, targets)
+            if (swapped != cachedPhoneDb) {
+                habitsRepo.saveDatabase(uri, context, swapped)
+                cachedPhoneDb = swapped
+            }
+            val s = _settings.value
+            val secHabits = s.secondaryValueHabits - targets
+            val fallback = s.secondaryValueFallbackHabits - targets
+            val minutesEnabled = s.minutesEnabledHabits + targets
+            val minutesPrimary = s.widgetTimerMinutesPrimary - targets
+            val mpFallbacks = s.minutesPrimaryFallbacks - targets
+            val dividers = s.habitDividers - targets
+            val labels = s.valueDisplayLabels.toMutableMap()
+            for (habit in targets) {
+                val inner = labels[habit]?.toMutableMap() ?: mutableMapOf()
+                inner[GRAPH_METRIC_VALUE1] = "sessions"
+                inner.remove(GRAPH_METRIC_VALUE2)
+                labels[habit] = inner
+            }
+            settingsRepo.saveSecondaryValueHabits(secHabits)
+            settingsRepo.saveSecondaryValueFallbackHabits(fallback)
+            settingsRepo.saveMinutesEnabledHabits(minutesEnabled)
+            settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
+            settingsRepo.saveMinutesPrimaryFallbacks(mpFallbacks)
+            settingsRepo.saveHabitDividers(dividers)
+            settingsRepo.saveValueDisplayLabels(labels)
+            _settings.value = s.copy(
+                secondaryValueHabits = secHabits,
+                secondaryValueFallbackHabits = fallback,
+                minutesEnabledHabits = minutesEnabled,
+                widgetTimerMinutesPrimary = minutesPrimary,
+                minutesPrimaryFallbacks = mpFallbacks,
+                habitDividers = dividers,
+                valueDisplayLabels = labels
+            )
+            settingsRepo.setBreathingSessionsPrimaryMigrationDone()
+            Log.i(
+                TAG,
+                "performBreathingSessionsPrimaryMigration: migrated ${targets.size} breathing habits to sessions-primary: ${targets.sorted()}"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "performBreathingSessionsPrimaryMigration failed (will retry next load): ${e.message}")
+        }
+    }
+
+    /**
      * One-time cleanup: the chess.com sync used to record one timestamp per
      * MINUTE played (the minutes delta was passed to addTimestamps). Trims
      * each chess.com-linked habit's daily timestamp lists down to that day's
@@ -1481,6 +1526,14 @@ class HabitViewModel(
             // fallback); minutes move to the built-in minutes slot.
             if (!settingsRepo.isApneaSessionsPrimaryMigrationDone()) {
                 performApneaSessionsPrimaryMigration(uri)
+            }
+
+            // ── One-time breathing sessions-primary migration ────────────
+            // Meditations / Resonance Breathing / Until Contraction become
+            // sessions-primary too, completing the secondary-value retirement
+            // for non-special habits.
+            if (!settingsRepo.isBreathingSessionsPrimaryMigrationDone()) {
+                performBreathingSessionsPrimaryMigration(uri)
             }
 
             // ── One-time chess.com timestamp trim ──────────────────────────

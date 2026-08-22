@@ -307,12 +307,25 @@ fun falseMinutesPrimaryHabits(
  * while the hold minutes live in the first-class `minutes:` slot (the built-in
  * minutes value type). Wags reports them via the Protocol v3
  * `EXTRA_SESSIONS` increment.
- *
- * "Until Contraction" and "Contraction Count" (the Contraction Table modes)
- * deliberately keep the legacy minutes-primary + secondary-sessions pattern.
  */
 val APNEA_SESSIONS_PRIMARY_HABITS = setOf(
     "Apnea apb", "Progressive O2", "Apnea Min Breath", "O2 Tables", "CO2 Tables"
+)
+
+/**
+ * The remaining Wags-fed breathing habits migrated to SESSIONS-PRIMARY on
+ * Aug-22-2026, completing the retirement of the generic secondary-value
+ * pattern for non-special habits: sessions become the primary value and
+ * points source (divider + fallback removed), minutes move to the
+ * first-class `minutes:` slot, and Wags switches to the Protocol v3
+ * `EXTRA_SESSIONS` increment.
+ *
+ * "Contraction Count" (the other Contraction Table mode) keeps the legacy
+ * minutes-primary + secondary-sessions pattern — its habit has no session
+ * data and it stays on the v2 protocol.
+ */
+val BREATHING_SESSIONS_PRIMARY_HABITS = setOf(
+    "Meditations", "Resonance Breathing", "Until Contraction"
 )
 
 /**

@@ -194,6 +194,9 @@ private val KEY_MIGRATION_WAGS_MINUTES_PRIMARY_REPAIR_DONE = booleanPreferencesK
 /** True after the one-time apnea sessions-primary migration has run (Aug-21-2026). */
 private val KEY_MIGRATION_APNEA_SESSIONS_PRIMARY_DONE = booleanPreferencesKey("migration_apnea_sessions_primary_done")
 
+/** True after the one-time breathing sessions-primary migration has run (Aug-22-2026). */
+private val KEY_MIGRATION_BREATHING_SESSIONS_PRIMARY_DONE = booleanPreferencesKey("migration_breathing_sessions_primary_done")
+
 // One-time cleanup: chess.com sync used to record one timestamp per MINUTE;
 // trim chess.com-linked habits' daily timestamps to one per game.
 private val KEY_CHESS_TIMESTAMPS_TRIMMED = booleanPreferencesKey("migration_chess_timestamps_trimmed")
@@ -834,6 +837,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setApneaSessionsPrimaryMigrationDone() {
         context.dataStore.edit { it[KEY_MIGRATION_APNEA_SESSIONS_PRIMARY_DONE] = true }
+    }
+
+    /** True after the one-time breathing sessions-primary migration has run. */
+    suspend fun isBreathingSessionsPrimaryMigrationDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_BREATHING_SESSIONS_PRIMARY_DONE] ?: false }.first()
+    }
+
+    suspend fun setBreathingSessionsPrimaryMigrationDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_BREATHING_SESSIONS_PRIMARY_DONE] = true }
     }
 
     suspend fun isChessTimestampsTrimDone(): Boolean {
