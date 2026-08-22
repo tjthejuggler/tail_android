@@ -53,34 +53,95 @@ class HabitTimestampRepository(private val context: Context) {
          */
         private val fileMutex = Mutex()
 
+        /**
+         * Process-wide parse cache for the timestamp file. [loadAll] is called
+         * in hot loops — once per date during movie-timestamp reconciliation
+         * (hundreds of full JSON parses on app open) and once per day switch
+         * on the schedule screen — so re-reading and re-parsing the whole file
+         * each time dominated load times. The snapshot is keyed on the file's
+         * (lastModified, length): two stat() calls, effectively free. Any
+         * writer — this class or anything else touching the file — changes
+         * those stamps and the cache invalidates itself automatically.
+         */
+        private class Snapshot(
+            val lastModified: Long,
+            val length: Long,
+            val data: Map<String, Map<String, List<String>>>
+        )
+
+        @Volatile
+        private var cachedSnapshot: Snapshot? = null
+
         /** Returns a time string for "right now" (HH:mm:ss). */
         fun nowTime(): String = LocalTime.now().format(TIME_FMT)
     }
 
-    /** Load the full timestamp database from disk. */
-    suspend fun loadAll(): Map<String, Map<String, List<String>>> =
+    /** Current (lastModified, length) stamps of the file — two stat() calls. */
+    private fun fileStamps(): Pair<Long, Long> =
+        if (file.exists()) file.lastModified() to file.length() else 0L to 0L
+
+    /**
+     * Returns the parsed timestamp database, from the in-memory snapshot
+     * cache when the file is unchanged since the last parse/read, else fresh
+     * from disk (refreshing the cache). The returned map is shared with the
+     * cache and MUST be treated as read-only; all mutating paths go through
+     * [loadMutable], which deep-copies.
+     */
+    private suspend fun readSnapshot(): Map<String, Map<String, List<String>>> =
         withContext(Dispatchers.IO) {
-            try {
-                if (!file.exists()) return@withContext emptyMap()
-                val text = file.readText()
-                if (text.isBlank()) return@withContext emptyMap()
-                val parsed: Map<String, Map<String, List<String>>>? = gson.fromJson(text, mapType)
-                parsed ?: emptyMap()
-            } catch (e: Exception) {
+            val (mtime, len) = fileStamps()
+            cachedSnapshot?.let { snap ->
+                if (snap.lastModified == mtime && snap.length == len) {
+                    return@withContext snap.data
+                }
+            }
+            val parsed: Map<String, Map<String, List<String>>> = try {
+                if (!file.exists()) emptyMap()
+                else gson.fromJson(file.readText(), mapType) ?: emptyMap()
+            } catch (_: Exception) {
                 emptyMap()
             }
+            cachedSnapshot = Snapshot(mtime, len, parsed)
+            parsed
         }
 
-    /** Save the full timestamp database to disk. */
+    /** Load the full timestamp database (cached — see [readSnapshot]). */
+    suspend fun loadAll(): Map<String, Map<String, List<String>>> = readSnapshot()
+
+    /**
+     * Save the full timestamp database to disk. Write-through: on success the
+     * snapshot cache is refreshed with a deep copy of [data] under the file's
+     * post-write stamps, so the next read skips the disk parse. The copy is
+     * deliberate — some callers keep mutating their map after saving.
+     */
     private suspend fun saveAll(data: Map<String, Map<String, List<String>>>) =
         withContext(Dispatchers.IO) {
+            var saved = false
             try {
                 val json = prettyGson.toJson(data)
                 file.writeText(json)
+                saved = true
             } catch (_: Exception) {
                 // Best-effort
             }
+            if (saved) {
+                val (mtime, len) = fileStamps()
+                cachedSnapshot = Snapshot(mtime, len, deepCopy(data))
+            }
         }
+
+    /** Deep copy so cached/shared structures are never aliased by a mutation. */
+    private fun deepCopy(
+        data: Map<String, Map<String, List<String>>>
+    ): MutableMap<String, MutableMap<String, MutableList<String>>> {
+        val copy = mutableMapOf<String, MutableMap<String, MutableList<String>>>()
+        for ((habit, days) in data) {
+            val daysCopy = mutableMapOf<String, MutableList<String>>()
+            for ((date, times) in days) daysCopy[date] = times.toMutableList()
+            copy[habit] = daysCopy
+        }
+        return copy
+    }
 
     /**
      * Record a timestamp for [habitName] on [date] at [time].
@@ -392,11 +453,11 @@ class HabitTimestampRepository(private val context: Context) {
 
     private suspend fun loadMutable(): MutableMap<String, MutableMap<String, MutableList<String>>> =
         withContext(Dispatchers.IO) {
+            // Always called under fileMutex. Serves from the snapshot cache
+            // when fresh, deep-copying so callers can mutate freely without
+            // ever touching the shared cached structure.
             try {
-                if (!file.exists()) return@withContext mutableMapOf()
-                val text = file.readText()
-                if (text.isBlank()) return@withContext mutableMapOf()
-                gson.fromJson(text, mapType) ?: mutableMapOf()
+                deepCopy(readSnapshot())
             } catch (e: Exception) {
                 mutableMapOf()
             }

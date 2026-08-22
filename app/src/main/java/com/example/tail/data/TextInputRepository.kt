@@ -40,22 +40,87 @@ private const val BACKUP_DIR = "text_input_backups"
  */
 class TextInputRepository {
 
+    companion object {
+        /**
+         * Process-wide parse cache for text logs. [loadTextLog] is called in
+         * hot paths — twice per movie habit on every schedule day switch,
+         * for every habit on app open — and each call is a full SAF stream
+         * read plus JSON parse. The cache is keyed on the document's
+         * (size, lastModified) SAF metadata (one tiny cursor query, no
+         * stream open — the same change-detection strategy DatedEntryRepository
+         * already uses), so any external writer (e.g. the movie bridge via
+         * Syncthing) changes the stamps and the cache invalidates itself.
+         */
+        private class LogCacheKey(val uri: String, val size: Long, val lastModified: Long) {
+            override fun equals(other: Any?): Boolean =
+                other is LogCacheKey && other.uri == uri &&
+                    other.size == size && other.lastModified == lastModified
+            override fun hashCode(): Int = (uri.hashCode() * 31 + size.hashCode()) * 31 + lastModified.hashCode()
+        }
+
+        private class TextLogCache(val key: LogCacheKey, val log: Map<String, String>)
+
+        @Volatile
+        private var textLogCache: TextLogCache? = null
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     //  External SAF file operations
     // ───────────────────────────────────────────────────────────────────────
 
     /**
+     * Queries the document's (size, lastModified) metadata without opening a
+     * stream. Returns null when the stamps cannot be determined — callers
+     * then bypass the cache entirely and behave exactly as before.
+     */
+    private fun queryStamps(uri: Uri, context: Context): LogCacheKey? {
+        return try {
+            val cursor = context.contentResolver.query(
+                uri,
+                arrayOf(
+                    android.provider.OpenableColumns.SIZE,
+                    android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                ),
+                null, null, null
+            ) ?: return null
+            cursor.use {
+                if (!it.moveToFirst()) return null
+                val size = it.getLong(0)
+                val lastModified = try { it.getLong(1) } catch (_: Exception) { -1L }
+                LogCacheKey(uri.toString(), size, lastModified)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
      * Loads the text log from the given SAF URI.
      * Returns an empty map if the file is missing, empty, or malformed.
+     * Served from the metadata-keyed cache when the document is unchanged
+     * since the last parse; the returned map is unmodifiable (callers that
+     * mutate copy it first, e.g. via toMutableMap()).
      */
     suspend fun loadTextLog(uri: Uri, context: Context): Map<String, String> =
         withContext(Dispatchers.IO) {
+            val key = queryStamps(uri, context)
+            if (key != null) {
+                textLogCache?.let { cache ->
+                    if (cache.key == key) return@withContext cache.log
+                }
+            }
             try {
                 val cr = context.contentResolver
                 cr.openInputStream(uri)?.use { stream ->
                     val text = stream.bufferedReader().readText()
                     if (text.isBlank()) return@withContext emptyMap()
-                    gson.fromJson<Map<String, String>>(text, textLogType) ?: emptyMap()
+                    val parsed: Map<String, String> =
+                        gson.fromJson(text, textLogType) ?: emptyMap()
+                    val safe = java.util.Collections.unmodifiableMap(parsed)
+                    if (key != null) {
+                        textLogCache = TextLogCache(key, safe)
+                    }
+                    safe
                 } ?: emptyMap()
             } catch (e: Exception) {
                 emptyMap()
@@ -138,6 +203,10 @@ class TextInputRepository {
     /**
      * Writes the full text log map back to the SAF URI as formatted JSON.
      * Entries are sorted chronologically by timestamp key before saving.
+     * Write-through: on a successful write the metadata cache is refreshed
+     * with the persisted content under the document's post-write stamps, so
+     * the next load skips the SAF stream read. When the stamps cannot be
+     * queried the cache is dropped, forcing a fresh read (never stale data).
      */
     private suspend fun saveTextLog(
         uri: Uri,
@@ -148,8 +217,18 @@ class TextInputRepository {
         val sortedLog = log.toSortedMap()
         val json = prettyGson.toJson(sortedLog)
         val cr = context.contentResolver
+        var saved = false
         cr.openOutputStream(uri, "wt")?.use { stream ->
             stream.bufferedWriter().use { it.write(json) }
+            saved = true
+        }
+        if (saved) {
+            val key = queryStamps(uri, context)
+            if (key != null) {
+                textLogCache = TextLogCache(key, java.util.Collections.unmodifiableMap(sortedLog))
+            } else {
+                textLogCache = null
+            }
         }
     }
 
