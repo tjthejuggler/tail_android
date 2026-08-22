@@ -620,7 +620,7 @@ class StatsOverlayService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Tail Stats Overlay")
             .setContentText("Drag to move · ◢ corner to resize · long-press to open Tail")
-            .setSmallIcon(R.drawable.ic_bubble_notification)
+            .setSmallIcon(R.drawable.ic_stat_tail)
             .setOngoing(true)
             .addAction(
                 Notification.Action.Builder(

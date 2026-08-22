@@ -1388,7 +1388,7 @@ class FloatingBubbleService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Tail Bubble")
             .setContentText("Tap: start/stop timer · Long-press: open Tail · Drag to ✕ to dismiss")
-            .setSmallIcon(R.drawable.ic_bubble_notification)
+            .setSmallIcon(R.drawable.ic_stat_tail)
             .setOngoing(true)
             .addAction(
                 Notification.Action.Builder(

@@ -72,7 +72,7 @@ object HabitNotifier {
 
         val emoji = if (ask.type == HabitNotification.TYPE_MOVIE) "🎬" else "❓"
         val notification = Notification.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_bubble_notification)
+            .setSmallIcon(R.drawable.ic_stat_tail)
             .setContentTitle("$emoji ${ask.title}")
             .setContentText(ask.question)
             .setStyle(Notification.BigTextStyle().bigText(ask.question))

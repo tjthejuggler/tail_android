@@ -467,7 +467,7 @@ class WidgetTriggerService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Tail Widget Monitor")
             .setContentText("Monitoring for trigger apps")
-            .setSmallIcon(com.example.tail.R.drawable.ic_bubble_notification)
+            .setSmallIcon(com.example.tail.R.drawable.ic_stat_tail)
             .setOngoing(true)
             .build()
     }

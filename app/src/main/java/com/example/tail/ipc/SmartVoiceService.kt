@@ -22,6 +22,7 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.widget.Toast
+import com.example.tail.R
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
@@ -702,7 +703,7 @@ class SmartVoiceService : Service() {
             .setContentTitle("🧠→📝 Note saved — $timestamp")
             .setContentText(noteText)
             .setStyle(Notification.BigTextStyle().bigText(noteText))
-            .setSmallIcon(android.R.drawable.ic_menu_edit)
+            .setSmallIcon(R.drawable.ic_stat_tail)
             .setAutoCancel(true)
             .build()
 
@@ -846,7 +847,7 @@ class SmartVoiceService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Tail")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setSmallIcon(R.drawable.ic_stat_tail)
             .setOngoing(true)
             .build()
     }
