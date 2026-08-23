@@ -96,7 +96,7 @@ app/src/main/java/com/example/tail/
 
 ## IPC API (Inter-Process Communication)
 
-*Added: 2026-03-12T20:12Z — Updated: 2026-03-12T21:52Z*
+*Added: 2026-03-12T20:12Z — Updated: 2026-08-23T06:00Z*
 
 Tail exposes a secure IPC API so other apps you own (signed with the **same keystore**) can read the habit list and trigger increments without any user interaction.
 
@@ -174,6 +174,29 @@ sendBroadcast(intent2, "com.example.tail.permission.TAIL_INTEGRATION")
 ```
 
 > **Note:** Pass the permission string as the second argument to `sendBroadcast()` so Android enforces that only Tail can receive it (defence-in-depth on the sender side).
+
+**Optional extras:**
+
+| Extra | Type | Description |
+|-------|------|-------------|
+| `EXTRA_MINUTES` | `Int` | v2 — minutes to add instead of the default +1 (WAGS durations). |
+| `EXTRA_SESSIONS` | `Int` | v3 — session count for sessions-primary habits (WAGS apnea). |
+| `EXTRA_TIMESTAMP` | `Long` | v5 — epoch-millis of the moment the event actually happened (Inuit answer time). The schedule-timeline timestamp is stamped at THAT date/time instead of receive time, so late deliveries land on the correct day. |
+
+---
+
+### 3. BroadcastReceiver — Set Habit Values (backfill) + Answer Times
+
+**Action:** `com.example.tail.ACTION_SET_HABIT_VALUES`
+**Extras:**
+
+| Extra | Type | Description |
+|-------|------|-------------|
+| `EXTRA_HABIT_ID` | `String` | habit name |
+| `EXTRA_VALUES_JSON` | `String` | `{"yyyy-MM-dd": <count:Int>, ...}` — REPLACES each date's stored value (idempotent backfill) |
+| `EXTRA_TIMES_JSON` | `String` | v5, optional — `{"yyyy-MM-dd": ["HH:mm:ss", ...], ...}` — REPLACES each date's schedule-timeline timestamps with the exact times the units were recorded (Inuit sends one time per answered question) |
+
+When `EXTRA_TIMES_JSON` is present, Tail replaces the habit's timestamps for every listed date via `HabitTimestampRepository.setTimestampsForDay`, so backfilled history shows on the schedule timeline at the time of day it actually happened. Close-succession timestamps (≤ 30-minute gaps, chained transitively) merge into a single session block on the timeline — a run of questions answered back-to-back renders as ONE block labelled ×N, not one chip per question. Absent extra → behaviour unchanged (WAGS / Skin Tracker compatibility).
 
 ---
 

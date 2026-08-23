@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.ui.HabitIncrementBus
@@ -33,6 +34,13 @@ private const val TAG = "HabitValueSetReceiver"
  * Extras:
  *  - `EXTRA_HABIT_ID`    — habit name (String)
  *  - `EXTRA_VALUES_JSON` — JSON object: `{"yyyy-MM-dd": <minutes:Int>, ...}`
+ *  - `EXTRA_TIMES_JSON`  — optional (protocol v5, Inuit): JSON object
+ *    `{"yyyy-MM-dd": ["HH:mm:ss", ...], ...}` carrying the exact time of day
+ *    of every unit recorded that day. When present, the habit's timestamps
+ *    for each listed date are REPLACED with these times, so the schedule
+ *    timeline shows the real answer sessions (close-succession answers merge
+ *    into one block there via its 30-minute merge gap). Absent → behaviour
+ *    unchanged (WAGS / Skin Tracker compatibility).
  *
  * Security: declared in the manifest with `android:permission` pointing to the
  * `com.example.tail.permission.TAIL_INTEGRATION` signature permission, so only
@@ -53,6 +61,15 @@ class HabitValueSetReceiver : BroadcastReceiver() {
         const val EXTRA_VALUES_JSON = "EXTRA_VALUES_JSON"
 
         /**
+         * Protocol v5 — optional String extra: JSON object mapping each date
+         * to the list of "HH:mm:ss" times at which units were recorded
+         * (see [HabitTimesPayload]). Sent by Inuit alongside the counts so
+         * backfilled history lands on the schedule timeline at the real
+         * times it happened.
+         */
+        const val EXTRA_TIMES_JSON = "EXTRA_TIMES_JSON"
+
+        /**
          * Serialises concurrent broadcasts so that each SET operation sees the
          * committed result of the previous one. Without this, two broadcasts
          * arriving simultaneously (e.g. resonance + meditation backfill) would
@@ -68,6 +85,7 @@ class HabitValueSetReceiver : BroadcastReceiver() {
 
         val habitName = intent.getStringExtra(EXTRA_HABIT_ID)
         val json = intent.getStringExtra(EXTRA_VALUES_JSON)
+        val timesJson = intent.getStringExtra(EXTRA_TIMES_JSON)
 
         if (habitName.isNullOrBlank() || json.isNullOrBlank()) {
             Log.w(TAG, "Received $ACTION_SET_HABIT_VALUES with missing EXTRA_HABIT_ID or EXTRA_VALUES_JSON — ignoring")
@@ -119,6 +137,26 @@ class HabitValueSetReceiver : BroadcastReceiver() {
                 // the mutex so concurrent broadcasts don't overwrite each other.
                 fileMutex.withLock {
                     habitsRepo.setHabitValuesForDates(uri, appContext, habitName, dateValues)
+                }
+
+                // Protocol v5: replace the habit's timestamps for every date
+                // in the times payload — same SET semantics as the counts, so
+                // the schedule timeline shows backfilled history at the exact
+                // times it happened. The timestamp repository serialises its
+                // own file writes; an empty list for a date clears it.
+                if (!timesJson.isNullOrBlank()) {
+                    val dateTimes = HabitTimesPayload.parse(timesJson)
+                    if (dateTimes.isNotEmpty()) {
+                        val tsRepo = HabitTimestampRepository(appContext)
+                        for ((date, times) in dateTimes) {
+                            tsRepo.setTimestampsForDay(habitName, date, times)
+                        }
+                        Log.i(
+                            TAG,
+                            "Replaced timestamps on ${dateTimes.size} date(s) for '$habitName' " +
+                                "(${dateTimes.values.sumOf { it.size }} stamps)"
+                        )
+                    }
                 }
 
                 // Notify the UI so it reloads

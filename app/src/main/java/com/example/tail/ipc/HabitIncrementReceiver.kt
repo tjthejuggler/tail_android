@@ -51,6 +51,16 @@ class HabitIncrementReceiver : BroadcastReceiver() {
         const val EXTRA_MINUTES = "EXTRA_MINUTES"
 
         /**
+         * Protocol v5 — Optional Long extra carrying the epoch-millis moment
+         * the increment actually HAPPENED at (e.g. the exact time a question
+         * was answered in Inuit), used instead of "now" when recording the
+         * habit's timestamps. This keeps the schedule timeline accurate even
+         * if broadcast delivery is delayed across a midnight boundary, and
+         * stamps the correct day for late-delivered increments.
+         */
+        const val EXTRA_TIMESTAMP = "EXTRA_TIMESTAMP"
+
+        /**
          * Protocol v3 — Optional Int extra carrying the number of SESSIONS to
          * add to the habit's PRIMARY value.
          *
@@ -195,10 +205,27 @@ class HabitIncrementReceiver : BroadcastReceiver() {
 
                 // Record timestamp for IPC-triggered increment — one per unit of
                 // amount so the timestamp editor's increment amounts match the
-                // day's count even for external app integration.
+                // day's count even for external app integration. Protocol v5:
+                // when the sender provides the epoch-millis moment the event
+                // happened (Inuit answer time), stamp THAT date/time instead
+                // of "now" so late deliveries land on the correct day.
                 try {
                     val tsRepo = HabitTimestampRepository(appContext)
-                    tsRepo.addTimestamps(habitName, amount)
+                    val eventMs = if (intent.hasExtra(EXTRA_TIMESTAMP)) {
+                        intent.getLongExtra(EXTRA_TIMESTAMP, 0L)
+                    } else 0L
+                    if (eventMs > 0L) {
+                        val zdt = java.time.Instant.ofEpochMilli(eventMs)
+                            .atZone(java.time.ZoneId.systemDefault())
+                        tsRepo.addTimestamps(
+                            habitName,
+                            amount,
+                            zdt.toLocalDate(),
+                            zdt.toLocalTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+                        )
+                    } else {
+                        tsRepo.addTimestamps(habitName, amount)
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
                 }
