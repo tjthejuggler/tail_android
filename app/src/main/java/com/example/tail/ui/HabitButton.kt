@@ -58,8 +58,10 @@ import androidx.compose.ui.unit.sp
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.GarminType
 import com.example.tail.data.Habit
+import com.example.tail.data.appIconMonochromeOf
 import com.example.tail.data.appLinkPackageName
 import com.example.tail.data.appPackageNameOf
+import com.example.tail.data.loadAppIconBitmap
 import com.example.tail.data.renderTextIconBitmap
 import com.example.tail.data.textIconCharOf
 
@@ -162,16 +164,15 @@ fun HabitButton(
     val aiIconBitmap: Bitmap? = remember(aiIconId) {
         if (aiIconId != null && aiIconRepo != null) aiIconRepo.loadBitmap(aiIconId) else null
     }
-    // Check if this habit uses an installed-app icon (name starts with "app:")
+    // Check if this habit uses an installed-app icon (name starts with "app:"),
+    // and whether the black/white notification-style variant was picked
+    // (name ends with "#mono").
     val appIconPackageName = appPackageNameOf(customIconOverrides[habit.name])
+    val appIconMono = appIconMonochromeOf(customIconOverrides[habit.name])
     val appContext = LocalContext.current
-    val appIconBitmap: Bitmap? = remember(appIconPackageName) {
+    val appIconBitmap: Bitmap? = remember(appIconPackageName, appIconMono) {
         if (appIconPackageName == null) null
-        else try {
-            drawableToBitmap(appContext.packageManager.getApplicationIcon(appIconPackageName))
-        } catch (e: Exception) {
-            null
-        }
+        else loadAppIconBitmap(appContext, appIconPackageName, appIconMono)
     }
     // Check if this habit uses a user-typed letter/emoji icon (name starts with "text:")
     val textIconChar = textIconCharOf(customIconOverrides[habit.name])

@@ -4,9 +4,6 @@ import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.Drawable
 import android.util.Log
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
@@ -14,7 +11,9 @@ import com.example.tail.R
 import com.example.tail.data.AppSettings
 import com.example.tail.data.HABIT_ORDER
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.appIconMonochromeOf
 import com.example.tail.data.appPackageNameOf
+import com.example.tail.data.loadAppIconBitmap
 import com.example.tail.data.renderTextIconBitmap
 import com.example.tail.data.textIconCharOf
 import com.example.tail.ui.getHabitIconRes
@@ -46,26 +45,12 @@ class HabitListRemoteViewsService : RemoteViewsService() {
 private data class WidgetRow(
     val habitName: String,
     val iconResId: Int?,
-    /** Launcher icon of an installed app, when the habit uses an "app:<package>" icon. */
+    /** Icon of an installed app, when the habit uses an "app:<package>" icon
+     *  (full-colour launcher icon, or its black/white "#mono" variant). */
     val iconBitmap: Bitmap? = null,
     /** Greyed out when true (e.g. max-one habit already done today). */
     val dimmed: Boolean
 )
-
-/**
- * Converts an app icon [Drawable] to a [Bitmap] for RemoteViews rendering
- * (setImageViewBitmap accepts drawables only as bitmaps).
- */
-private fun drawableToBitmap(drawable: Drawable): Bitmap {
-    if (drawable is BitmapDrawable) return drawable.bitmap
-    val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 1
-    val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 1
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    drawable.setBounds(0, 0, canvas.width, canvas.height)
-    drawable.draw(canvas)
-    return bitmap
-}
 
 private class HabitListFactory(
     private val context: Context,
@@ -91,21 +76,22 @@ private class HabitListFactory(
 
             val ordered = computeOrderedHabitList(settings, recent, max1Today)
             rows = ordered.map { name ->
-                // App icons are resolved via PackageManager; text icons are
-                // rendered to a greyscale bitmap; skip the resource lookup for
-                // both (getHabitIconRes would fall back to the habit's default
+                // App icons are resolved via PackageManager (full-colour or the
+                // black/white "#mono" variant); text icons are rendered to a
+                // greyscale bitmap; skip the resource lookup for both
+                // (getHabitIconRes would fall back to the habit's default
                 // icon otherwise).
                 val appPkg = appPackageNameOf(settings.habitIcons[name])
+                val appIconMono = appIconMonochromeOf(settings.habitIcons[name])
                 val textChar = textIconCharOf(settings.habitIcons[name])
                 val iconRes = if (appPkg == null && textChar == null)
                     getHabitIconRes(name, settings.habitIcons) else null
                 val appBitmap = if (appPkg != null) {
-                    try {
-                        drawableToBitmap(context.packageManager.getApplicationIcon(appPkg))
-                    } catch (e: Exception) {
+                    val bitmap = loadAppIconBitmap(context, appPkg, appIconMono)
+                    if (bitmap == null) {
                         Log.w(TAG, "App icon not found for $appPkg on widget=$widgetId")
-                        null
                     }
+                    bitmap
                 } else null
                 val textBitmap = if (textChar != null) renderTextIconBitmap(textChar, 96) else null
                 WidgetRow(

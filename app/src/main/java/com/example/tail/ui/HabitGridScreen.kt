@@ -137,6 +137,7 @@ import com.example.tail.data.isActivityEntry
 import com.example.tail.data.launchShortcutEntry
 import com.example.tail.data.parseShortcutEntry
 import com.example.tail.data.queryAppShortcuts
+import com.example.tail.data.appIconMonochromeOf
 import com.example.tail.data.appIconNameOf
 import com.example.tail.data.isAppIconName
 import com.example.tail.data.isTextIconName
@@ -9366,7 +9367,11 @@ private fun TextIconPickerSection(
 /**
  * The "App Icons" section of [IconPickerDialog]: a searchable list of
  * installed apps. Selecting an app stores an "app:<packageName>" icon name,
- * which renderers resolve to the app's launcher icon at draw time.
+ * which renderers resolve to the app's launcher icon at draw time. The style
+ * toggle at the top chooses WHICH icon of the app is stored: the full-colour
+ * launcher icon, or its black/white notification-style icon ("app:<pkg>#mono"
+ * — the adaptive icon's monochrome layer, falling back to a greyscale
+ * rendering of the launcher icon for apps without one).
  */
 @Composable
 private fun AppIconPickerSection(
@@ -9377,6 +9382,10 @@ private fun AppIconPickerSection(
     val context = LocalContext.current
     val appIconRepo = remember { AppIconRepository(context) }
     var searchQuery by remember { mutableStateOf("") }
+    // Which icon style tapping an app selects: false = full-colour launcher
+    // icon, true = black/white notification-style icon. Opens on the style of
+    // the habit's current icon when it already is an app icon.
+    var monoStyle by remember { mutableStateOf(appIconMonochromeOf(currentIconName)) }
     // Null while the installed-app list is loading (first composition only).
     var allApps by remember { mutableStateOf<List<AppIconInfo>?>(null) }
 
@@ -9393,8 +9402,9 @@ private fun AppIconPickerSection(
         }
     }
 
-    // Keep the dialog the same total height as the built-in icons grid.
-    val listHeight = if (aiIconsEnabled) 200.dp else 340.dp
+    // Keep the dialog the same total height as the built-in icons grid
+    // (the style toggle + hint shrink the list accordingly).
+    val listHeight = (if (aiIconsEnabled) 200.dp else 340.dp) - 40.dp
 
     Column(modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
@@ -9411,6 +9421,35 @@ private fun AppIconPickerSection(
                 unfocusedBorderColor = Color(0xFF444444),
                 cursorColor = Color(0xFF66CCFF)
             )
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Icon style toggle: full-colour app icon ↔ black/white notification icon.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            IconPickerModeTab(
+                label = "🎨 App icon",
+                selected = !monoStyle,
+                modifier = Modifier.weight(1f),
+                onClick = { monoStyle = false }
+            )
+            IconPickerModeTab(
+                label = "🖤 B/W icon",
+                selected = monoStyle,
+                modifier = Modifier.weight(1f),
+                onClick = { monoStyle = true }
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = if (monoStyle)
+                "Uses the app's black/white notification icon (greyscale fallback if it has none)"
+            else
+                "Uses the app's full-colour launcher icon",
+            color = Color(0xFF666666),
+            fontSize = 9.sp
         )
         Spacer(modifier = Modifier.height(6.dp))
 
@@ -9434,9 +9473,11 @@ private fun AppIconPickerSection(
                     .height(listHeight)
             ) {
                 lazyItems(filteredApps, key = { it.packageName }) { app ->
-                    val isSelected = appIconNameOf(app.packageName) == currentIconName
-                    val iconBitmap = remember(app.packageName) {
-                        appIconRepo.loadIconBitmap(app.packageName)
+                    val isSelected = appIconNameOf(app.packageName, monoStyle) == currentIconName
+                    // Preview shows exactly what the habit grid will render
+                    // for the currently selected style.
+                    val iconBitmap = remember(app.packageName, monoStyle) {
+                        appIconRepo.loadIconBitmap(app.packageName, monoStyle)
                     }
                     Row(
                         modifier = Modifier
@@ -9444,7 +9485,7 @@ private fun AppIconPickerSection(
                             .clickable(
                                 indication = null,
                                 interactionSource = remember { MutableInteractionSource() }
-                            ) { onIconSelected(appIconNameOf(app.packageName)) }
+                            ) { onIconSelected(appIconNameOf(app.packageName, monoStyle)) }
                             .background(
                                 if (isSelected) Color(0xFF003A3A) else Color.Transparent,
                                 RoundedCornerShape(6.dp)
