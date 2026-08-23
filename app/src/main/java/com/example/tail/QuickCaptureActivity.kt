@@ -1,8 +1,6 @@
 package com.example.tail
 
 import android.Manifest
-import android.app.Activity
-import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -44,9 +42,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.example.tail.data.SettingsRepository
 import com.example.tail.data.meal.MealLogRepository
+import com.example.tail.data.meal.VisionHabitExecutor
 import com.example.tail.data.meal.VisionProcessingWorker
 import com.example.tail.data.meal.VisionQueueRepository
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -93,6 +95,10 @@ class QuickCaptureActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Work over the lock screen (snap a meal without unlocking first)
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
+
         hasCameraPermission = ContextCompat.checkSelfPermission(
             this, Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
@@ -116,6 +122,12 @@ class QuickCaptureActivity : ComponentActivity() {
     /**
      * Captures a photo using the current [ImageCapture] use case, saves it
      * to internal storage, enqueues it for vision processing, and finishes.
+     *
+     * When no explicit target habit was passed in, the single camera-enabled
+     * habit (if exactly one exists) is resolved NOW and written onto the
+     * queue item — making the capture fully deterministic: the worker runs
+     * the exact meal pipeline the manual editor uses, with no LLM habit
+     * guessing involved.
      */
     private fun capturePhoto(targetHabit: String?) {
         val capture = imageCapture ?: run {
@@ -125,6 +137,17 @@ class QuickCaptureActivity : ComponentActivity() {
 
         val mealLogRepo = MealLogRepository(this)
         val queueRepo = VisionQueueRepository(this)
+
+        // Resolve the deterministic target: explicit extra wins; otherwise
+        // exactly-one camera-eligible habit removes all ambiguity. Runs on
+        // the camera executor thread, so blocking here is fine.
+        val resolvedHabit = targetHabit ?: runCatching {
+            runBlocking {
+                val settings = SettingsRepository(this@QuickCaptureActivity)
+                    .settingsFlow.first()
+                VisionHabitExecutor.cameraEligibleHabits(settings).singleOrNull()
+            }
+        }.getOrNull()
 
         // Use a temporary file in cache, then move to meal_images
         val tempFile = File(cacheDir, "capture_${System.currentTimeMillis()}.jpg")
@@ -144,12 +167,12 @@ class QuickCaptureActivity : ComponentActivity() {
                         // Enqueue for vision processing — attaching to the
                         // active meal group when one exists (close-succession
                         // captures merge into one meal / one increment)
-                        val activeGroup = targetHabit?.let {
+                        val activeGroup = resolvedHabit?.let {
                             mealLogRepo.findActiveGroup(it, System.currentTimeMillis())
                         }
                         queueRepo.enqueue(
                             imagePath = relativePath,
-                            habitId = targetHabit,
+                            habitId = resolvedHabit,
                             attachToMealLogId = activeGroup?.id
                         )
 

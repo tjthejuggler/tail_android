@@ -158,8 +158,11 @@ import com.example.tail.data.displayLabelForValue
 import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.appLinkPackageName
 import com.example.tail.data.isAppLink
+import com.example.tail.data.meal.VisionQueueRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import android.graphics.BitmapFactory
@@ -497,6 +500,23 @@ fun HabitGridScreen(
     // Timestamp count for the currently selected edit-mode habit (for showing the button)
     var selectedHabitTimestampCount by remember { mutableIntStateOf(0) }
     val timestampScope = rememberCoroutineScope()
+
+    // ── Quick Capture review banner ─────────────────────────────────────────
+    // Unrecognised quick captures (NEEDS_REVIEW vision-queue items) surface
+    // as a top banner; tapping opens the Quick Capture History where the
+    // intended habit can be assigned and the capture retried.
+    var quickCaptureReviewCount by remember { mutableIntStateOf(0) }
+    var showQuickCaptureHistory by remember { mutableStateOf(false) }
+    val quickCaptureScope = rememberCoroutineScope()
+    fun refreshQuickCaptureReviewCount() {
+        quickCaptureScope.launch {
+            val n = withContext(Dispatchers.IO) {
+                VisionQueueRepository(context).reviewItemCount()
+            }
+            quickCaptureReviewCount = n
+        }
+    }
+    LaunchedEffect(Unit) { refreshQuickCaptureReviewCount() }
 
     // Increment toast state — shows briefly after tapping a habit
     var incrementToastHabit by remember { mutableStateOf<String?>(null) }
@@ -1123,8 +1143,26 @@ fun HabitGridScreen(
                                     // When viewing a different day or habit is timeless, increment without timestamp
                                     val timeless = !isToday || habit.name in settings.timelessHabits
                                     
+                                    // Camera-enabled habit tapped for TODAY → capture-driven
+                                    // increment: the camera opens IMMEDIATELY and this tap
+                                    // performs NO direct increment — the background vision
+                                    // pipeline creates the meal log and performs the
+                                    // increment (merging into an active meal group when one
+                                    // exists, so multiple courses never double-count).
+                                    if (isToday && habit.name in settings.cameraHabits) {
+                                        val cameraIntent = android.content.Intent(
+                                            context,
+                                            com.example.tail.QuickCaptureActivity::class.java
+                                        ).apply {
+                                            putExtra(
+                                                com.example.tail.QuickCaptureActivity.EXTRA_HABIT_NAME,
+                                                habit.name
+                                            )
+                                        }
+                                        context.startActivity(cameraIntent)
+                                    }
                                     // Check if this is a roll forward habit and we're viewing a past date
-                                    if (habit.name in settings.rollForwardHabits && !isToday) {
+                                    else if (habit.name in settings.rollForwardHabits && !isToday) {
                                         // Find the next manual date
                                         val nextManualDate = settings.rollForwardManualDates[habit.name]?.mapNotNull { dateStr ->
                                             com.example.tail.data.parseDate(dateStr)
@@ -1651,6 +1689,47 @@ fun HabitGridScreen(
                     )
                 }
             }
+        }
+    }
+
+    // Quick Capture review banner at top of screen — unrecognised captures
+    if (quickCaptureReviewCount > 0 && !showQuickCaptureHistory) {
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 8.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.tertiaryContainer)
+                .clickable { showQuickCaptureHistory = true }
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                Icons.Default.PhotoCamera,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = if (quickCaptureReviewCount == 1) "1 quick capture needs review"
+                else "$quickCaptureReviewCount quick captures need review",
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                fontSize = 13.sp
+            )
+        }
+    }
+
+    // Quick Capture History full-screen overlay
+    if (showQuickCaptureHistory) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            QuickCaptureHistoryScreen(
+                onNavigateBack = {
+                    showQuickCaptureHistory = false
+                    refreshQuickCaptureReviewCount()
+                }
+            )
         }
     }
 

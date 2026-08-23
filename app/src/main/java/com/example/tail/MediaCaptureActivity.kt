@@ -846,14 +846,33 @@ class MediaCaptureActivity : ComponentActivity() {
             userSystemPrompt = settings.mealSystemPrompt
         )
 
-        // Inject the LLM's learned memory + the valid habit list
-        val memoryPrompt = VisionMemoryRepository(this@MediaCaptureActivity)
-            .buildMemoryPrompt().ifBlank { null }
-        val habitPrompt = VisionHabitExecutor.buildHabitPrompt(settings).ifBlank { null }
+        // ── Deterministic meal routing ─────────────────────────────────────
+        // Same rule the background worker uses: when the capture's target
+        // habit is already known — explicitly (EXTRA_HABIT_NAME) or because
+        // exactly ONE camera-eligible habit exists — and that habit is a
+        // meal habit, the image is unambiguously a meal photo for it. Run
+        // the EXACT pipeline the manual editor uses: plain food-analysis
+        // prompt, no habit list, no learned memory, no habit guessing.
+        val singleCameraHabit = VisionHabitExecutor.cameraEligibleHabits(settings).singleOrNull()
+        val forcedMealHabit = if (targetHabit != null) {
+            targetHabit?.takeIf { settings.mealHabits.contains(it) }
+        } else {
+            singleCameraHabit?.takeIf { settings.mealHabits.contains(it) }
+        }
 
         val imageFile = File(filesDir, relativePath)
         val service = VisionProcessingService()
-        val result = service.processImage(imageFile, config, memoryPrompt, habitPrompt)
+        val result = if (forcedMealHabit != null) {
+            Log.i(TAG, "Deterministic meal pipeline for '$forcedMealHabit'")
+            service.processImage(imageFile, config)
+        } else {
+            // Classification pipeline — inject the learned memory + the
+            // valid habit list so smart auto-detection works.
+            val memoryPrompt = VisionMemoryRepository(this@MediaCaptureActivity)
+                .buildMemoryPrompt().ifBlank { null }
+            val habitPrompt = VisionHabitExecutor.buildHabitPrompt(settings).ifBlank { null }
+            service.processImage(imageFile, config, memoryPrompt, habitPrompt)
+        }
 
         if (result == null) {
             showResult(
@@ -864,7 +883,9 @@ class MediaCaptureActivity : ComponentActivity() {
             return
         }
 
-        val targetHabitName = targetHabit ?: autoRouteHabit(result, settings.mealHabits)
+        val targetHabitName = forcedMealHabit
+            ?: targetHabit
+            ?: autoRouteHabit(result, settings.mealHabits)
 
         // ── FOOD: always log it with the LLM's best-guess specifics and
         // increment the meal habit, then let the user fine-tune the numbers

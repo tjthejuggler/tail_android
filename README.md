@@ -1,6 +1,6 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-08-23T12:42Z
+**Last updated:** 2026-08-23T19:50Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
@@ -10,6 +10,7 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 
 ## Features
 
+- **Quick Capture: fire-and-forget meal camera + review fallback** *(added 2026-08-23T19:50Z)* — the launcher "Quick Capture" shortcut now opens [`QuickCaptureActivity`](app/src/main/java/com/example/tail/QuickCaptureActivity.kt:70) directly (previously it opened MediaCaptureActivity's *inline* classification pipeline, which used a different LLM prompt — with habit-list guessing — than the meal-habit camera and blocked on a wait-then-approve screen; that mismatch was why a shortcut capture could fail to be recognised while the same meal photo from the habit's own camera worked). The capture is now fully deterministic: when exactly one camera habit is enabled, its name is written onto the queue item at capture time and the background [`VisionProcessingWorker`](app/src/main/java/com/example/tail/data/meal/VisionProcessingWorker.kt:54) runs the exact meal pipeline the manual editor uses (plain food-analysis prompt, no habit guessing), creates the meal log, increments the habit, and merges close-succession captures into one meal — snap, lock the screen, done. **Tap-to-capture:** tapping a camera-enabled habit on today's grid now opens the camera immediately instead of incrementing directly (the increment comes from the vision pipeline, so courses never double-count). **Fallback:** any capture the AI can't act on (not recognised as food, no camera habit matched, or processing failed after 3 retries) moves to `NEEDS_REVIEW` — the image is kept in the Quick Capture History ([`QuickCaptureHistoryScreen`](app/src/main/java/com/example/tail/ui/QuickCaptureHistoryScreen.kt:62), reachable from a top banner on the grid and from a system notification posted on next app open), where the intended habit can be assigned and the capture retried or deleted. Review items are never auto-cleaned, stale PROCESSING items are recovered on the next worker pass, and the worker now uses `APPEND_OR_REPLACE` so a capture enqueued mid-pass is never missed. The voice+camera combo screen remains available via `ACTION_MEDIA_CAPTURE` (Tasker).
 - **8×10 habit grid** — 76 habits in exact order matching the desktop app
 - **Color-coded buttons** — 7 color tiers based on today's count (red → orange → green → blue → pink → yellow → glass)
 - **Real habit icons** — 269 PNG icons from the original `py_habits_widget` project imported as Android drawables, tinted white; mapped via `HABIT_ICON` table; custom overrides supported per habit

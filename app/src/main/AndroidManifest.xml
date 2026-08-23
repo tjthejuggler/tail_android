@@ -347,20 +347,32 @@
             android:theme="@style/Theme.Tail.Transparent" />
 
         <!--
-            QuickCaptureActivity: full-screen camera capture for the meal
-            vision pipeline. Launched in-app from the Meal Detail screen.
-            Shows CameraX preview, captures on tap, saves the image to
-            internal storage, enqueues it for LLM vision processing,
-            then finishes immediately.
+            QuickCaptureActivity: FIRE-AND-FORGET camera for the vision
+            pipeline. Launched in-app (Meal Detail screen, camera-enabled
+            habit taps) and system-wide via the launcher "Quick Capture"
+            shortcut / Tasker (ACTION_QUICK_CAPTURE). Shows a CameraX
+            preview, captures on tap, saves the image, enqueues it for
+            background LLM processing, and finishes IMMEDIATELY — no
+            waiting, no approval. Works over the lock screen. When exactly
+            one camera habit is enabled the capture is deterministic: it
+            runs the exact meal pipeline the manual editor uses.
         -->
         <activity
             android:name=".QuickCaptureActivity"
-            android:exported="false"
+            android:exported="true"
+            android:label="@string/shortcut_media_capture_short"
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:taskAffinity=""
             android:screenOrientation="portrait"
-            android:theme="@style/Theme.Tail" />
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.Tail">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_QUICK_CAPTURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <!--
             MediaCaptureActivity: unified launcher that combines voice and

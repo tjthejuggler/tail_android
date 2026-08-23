@@ -202,7 +202,16 @@ enum class VisionQueueStatus {
     /** Completed successfully; a [MealLog] was created. */
     COMPLETED,
     /** Failed after all retries. */
-    FAILED;
+    FAILED,
+    /**
+     * The image could not be acted on automatically (not recognised as
+     * food, no camera habit matched, or processing failed permanently).
+     * The image is KEPT and surfaced in the Quick Capture History so
+     * the user can assign the intended habit and retry — never a silent
+     * dead end. Excluded from [VisionProcessingWorker] processing and
+     * from periodic cleanup until resolved.
+     */
+    NEEDS_REVIEW;
 
     companion object {
         fun fromString(s: String?): VisionQueueStatus =
@@ -239,7 +248,13 @@ data class VisionQueueItem(
      * (close-succession capture grouping / gallery attach) instead of
      * creating a new log — and no additional habit increment happens.
      */
-    val attachToMealLogId: String? = null
+    val attachToMealLogId: String? = null,
+    /**
+     * Human-readable reason the item landed in NEEDS_REVIEW (what the
+     * LLM saw / why processing failed). Shown in the Quick Capture
+     * History so the user can make an informed habit assignment.
+     */
+    val reviewNote: String? = null
 )
 
 // ════════════════════════════════════════════════════════════════════════════

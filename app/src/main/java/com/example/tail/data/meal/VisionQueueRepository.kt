@@ -21,13 +21,18 @@ private const val TAG = "VisionQueueRepo"
  * existing architecture uses internal-storage JSON files for all feature data
  * (see [com.example.tail.data.AiIconRepository] for the same pattern).
  */
-class VisionQueueRepository(private val context: Context) {
+class VisionQueueRepository(
+    /** Storage root holding `vision_queue.json` (injectable for JVM tests). */
+    private val baseDir: File
+) {
+    /** Convenience constructor for production call sites. */
+    constructor(context: Context) : this(context.filesDir)
 
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
     private val listType = object : TypeToken<MutableList<VisionQueueItem>>() {}.type
 
     private val queueFile: File
-        get() = File(context.filesDir, "vision_queue.json")
+        get() = File(baseDir, "vision_queue.json")
 
     /** Loads the full queue. Returns an empty list if the file doesn't exist. */
     @Synchronized
@@ -157,8 +162,101 @@ class VisionQueueRepository(private val context: Context) {
     }
 
     /**
+     * Moves an item into NEEDS_REVIEW so it shows up in the Quick Capture
+     * History with its image kept and [note] explaining what happened.
+     */
+    @Synchronized
+    fun markNeedsReview(id: String, note: String) {
+        val items = loadAll()
+        val idx = items.indexOfFirst { it.id == id }
+        if (idx >= 0) {
+            items[idx] = items[idx].copy(
+                status = VisionQueueStatus.NEEDS_REVIEW,
+                reviewNote = note
+            )
+            saveAll(items)
+            Log.i(TAG, "Item $id needs review: ${note.take(120)}")
+        }
+    }
+
+    /** All items waiting for the user's review, newest first. */
+    @Synchronized
+    fun reviewItems(): List<VisionQueueItem> =
+        loadAll()
+            .filter { it.status == VisionQueueStatus.NEEDS_REVIEW }
+            .sortedByDescending { it.timestamp }
+
+    /** Number of items waiting for review (app-open notification / banner). */
+    @Synchronized
+    fun reviewItemCount(): Int =
+        loadAll().count { it.status == VisionQueueStatus.NEEDS_REVIEW }
+
+    /**
+     * Re-queues a review item for processing, optionally with the habit the
+     * user says the capture was intended for. Resets the retry budget so the
+     * item gets a full set of attempts again.
+     */
+    @Synchronized
+    fun retryWithHabit(id: String, habitId: String?): Boolean {
+        val items = loadAll()
+        val idx = items.indexOfFirst { it.id == id && it.status == VisionQueueStatus.NEEDS_REVIEW }
+        if (idx < 0) return false
+        items[idx] = items[idx].copy(
+            status = VisionQueueStatus.PENDING,
+            habitId = habitId ?: items[idx].habitId,
+            retryCount = 0,
+            errorLog = null,
+            reviewNote = null
+        )
+        saveAll(items)
+        Log.i(TAG, "Item $id re-queued for retry with habit=$habitId")
+        return true
+    }
+
+    /**
+     * Deletes a review item AND its image file. Returns true when the item
+     * was found (the image file is deleted best-effort even if missing).
+     */
+    @Synchronized
+    fun deleteReviewItem(id: String): Boolean {
+        val items = loadAll()
+        val item = items.find { it.id == id }
+        if (item == null) return false
+        items.removeAll { it.id == id }
+        saveAll(items)
+        try {
+            File(baseDir, item.imagePath).delete()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to delete image for item $id", e)
+        }
+        return true
+    }
+
+    /**
+     * Returns items stuck in PROCESSING back to PENDING. Called at the start
+     * of every [VisionProcessingWorker] pass — since only one pass runs at a
+     * time (unique work), any PROCESSING item at that moment was orphaned by
+     * a process death mid-run and would otherwise wait forever.
+     */
+    @Synchronized
+    fun requeueStaleProcessing(): Int {
+        val items = loadAll()
+        var recovered = 0
+        for (i in items.indices) {
+            if (items[i].status == VisionQueueStatus.PROCESSING) {
+                items[i] = items[i].copy(status = VisionQueueStatus.PENDING)
+                recovered++
+            }
+        }
+        if (recovered > 0) saveAll(items)
+        return recovered
+    }
+
+    /**
      * Removes completed and failed items older than the given cutoff.
      * Called periodically to keep the queue file from growing unbounded.
+     * NEEDS_REVIEW items are NEVER cleaned up — they stay in the Quick
+     * Capture History until the user resolves them.
      */
     @Synchronized
     fun cleanupOldItems(olderThanMs: Long = 24 * 60 * 60 * 1000L) {

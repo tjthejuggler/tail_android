@@ -56,6 +56,9 @@ class MainActivity : ComponentActivity() {
 
         /** Chess Readiness stats screen — deep-linked from the floating bubble menu. */
         const val ROUTE_CHESS_READINESS_STATS = "chess_readiness_stats"
+
+        /** Quick Capture History — deep-linked from the review notification. */
+        const val ROUTE_QUICK_CAPTURE_HISTORY = "quick_capture_history"
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -212,6 +215,22 @@ private fun TailApp(
             when (event) {
                 Lifecycle.Event.ON_START  -> {
                     viewModel.onAppStarted()
+                    // Quick captures the AI couldn't act on: notify the user
+                    // so the images can be assigned + retried from the history.
+                    appScope.launch {
+                        try {
+                            val appContext = context.applicationContext
+                            val count = com.example.tail.data.meal.VisionQueueRepository(appContext)
+                                .reviewItemCount()
+                            if (count > 0) {
+                                com.example.tail.notify.QuickCaptureReviewNotifier.post(appContext, count)
+                            } else {
+                                com.example.tail.notify.QuickCaptureReviewNotifier.cancel(appContext)
+                            }
+                        } catch (t: Throwable) {
+                            android.util.Log.w("TailApp", "review-count check threw: ${t.message}", t)
+                        }
+                    }
                     // Run today's auto-backup in the background. Cheap (~1 DataStore
                     // read) when already done today; otherwise it streams the full
                     // bundle to the SAF folder. Errors are logged inside the manager.
@@ -291,6 +310,11 @@ private fun TailApp(
             }
             composable(MainActivity.ROUTE_CHESS_READINESS_STATS) {
                 ChessReadinessStatsScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(MainActivity.ROUTE_QUICK_CAPTURE_HISTORY) {
+                com.example.tail.ui.QuickCaptureHistoryScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

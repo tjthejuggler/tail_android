@@ -29,6 +29,24 @@ private fun visionSeenDescription(result: VisionResult): String {
     return if (desc.isBlank()) "" else "\n${desc.take(120)}"
 }
 
+/**
+ * Failure handler: consumes a retry attempt; when the budget is exhausted
+ * the item moves to NEEDS_REVIEW (Quick Capture History) instead of dying
+ * silently as FAILED.
+ * @return true when the item will be retried.
+ */
+private fun failOrReview(
+    queueRepo: VisionQueueRepository,
+    itemId: String,
+    error: String
+): Boolean {
+    val willRetry = queueRepo.markFailedOrRetry(itemId, error)
+    if (!willRetry) {
+        queueRepo.markNeedsReview(itemId, error)
+    }
+    return willRetry
+}
+
 /** Shows a toast from the background worker (hops to the main thread). */
 private fun notifyCameraResult(context: Context, message: String) {
     try {
@@ -46,10 +64,14 @@ private fun notifyCameraResult(context: Context, message: String) {
  *
  * Requires a connected network (the LLM call needs internet). On success,
  * a [MealLog] is created and the associated meal habit is incremented.
- * On failure, the item is retried up to 3 times before being marked FAILED.
+ * On failure, the item is retried up to 3 times; once the retry budget is
+ * exhausted — or the LLM can't act on the image at all — the item moves to
+ * NEEDS_REVIEW so it lands in the Quick Capture History with its image
+ * kept, ready for the user to assign a habit and retry.
  *
  * Call [enqueue] to trigger processing — safe to call repeatedly (uses
- * [ExistingWorkPolicy.KEEP] so only one processing pass runs at a time).
+ * [ExistingWorkPolicy.APPEND_OR_REPLACE] so a capture enqueued while a
+ * pass is already running still gets its own follow-up pass).
  */
 class VisionProcessingWorker(
     context: Context,
@@ -93,7 +115,10 @@ class VisionProcessingWorker(
         // unambiguously for it (see deterministic meal routing in the loop).
         val singleCameraHabit = VisionHabitExecutor.cameraEligibleHabits(settings).singleOrNull()
 
-        // Cleanup old completed/failed items periodically
+        // Recover items orphaned in PROCESSING by a process death mid-run
+        // (only one pass runs at a time, so any PROCESSING item here is
+        // stale) and clean up old completed/failed entries.
+        queueRepo.requeueStaleProcessing()
         queueRepo.cleanupOldItems()
 
         // Process all pending items
@@ -114,7 +139,7 @@ class VisionProcessingWorker(
                 val imageFile = File(appContext.filesDir, item.imagePath)
                 if (!imageFile.exists()) {
                     Log.e(TAG, "Image file not found: ${item.imagePath}")
-                    queueRepo.markFailedOrRetry(item.id, "Image file not found")
+                    failOrReview(queueRepo, item.id, "Image file not found")
                     failed++
                     continue
                 }
@@ -147,7 +172,7 @@ class VisionProcessingWorker(
                     visionService.processImage(imageFile, config, memoryPrompt, habitPrompt)
                 }
                 if (result == null) {
-                    val willRetry = queueRepo.markFailedOrRetry(item.id, "Vision service returned null")
+                    val willRetry = failOrReview(queueRepo, item.id, "Vision service returned null")
                     failed++
                     Log.w(TAG, "Item ${item.id} failed (willRetry=$willRetry)")
                     continue
@@ -173,9 +198,13 @@ class VisionProcessingWorker(
                     )
                     if (resolved == null) {
                         Log.w(TAG, "Item ${item.id}: proposed habit '${action.habitName}' not found — no action")
-                        queueRepo.markCompleted(item.id, "none")
-                        processed++
-                        notifyCameraResult(appContext, "📷 No camera habit matched$seen")
+                        queueRepo.markNeedsReview(
+                            item.id,
+                            "No camera habit matched. LLM proposed '${action.habitName}'." +
+                                " Saw: ${seen.removePrefix("\n").ifBlank { "unknown" }}"
+                        )
+                        failed++
+                        notifyCameraResult(appContext, "📷 No camera habit matched$seen\nSaved to Quick Capture History")
                     } else {
                         val (realHabit, realSubtype) = resolved
                         val err = VisionHabitExecutor.execute(
@@ -192,7 +221,7 @@ class VisionProcessingWorker(
                                     " +${action.amount}$seen"
                             )
                         } else {
-                            val willRetry = queueRepo.markFailedOrRetry(item.id, err)
+                            val willRetry = failOrReview(queueRepo, item.id, err)
                             failed++
                         }
                     }
@@ -304,7 +333,10 @@ class VisionProcessingWorker(
                         Log.i(TAG, "Processed meal: ${mealLog.title} (${mealLog.calories} cal)")
                     }
                 } else {
-                    // Non-food or uncertain — mark completed without creating a meal log
+                    // Non-food or uncertain — the capture couldn't be acted
+                    // on automatically. NEVER a silent dead end: keep the
+                    // image in the Quick Capture History (NEEDS_REVIEW) so
+                    // the user can assign the intended habit and retry.
                     val notes = when (result.classification) {
                         VisionClassification.NON_FOOD_HABIT ->
                             "Non-food detected: ${result.nonFoodData?.detectedActivity ?: "unknown"}"
@@ -312,24 +344,22 @@ class VisionProcessingWorker(
                             "Uncertain: ${result.processingNotes}"
                         else -> "No food data extracted"
                     }
-                    queueRepo.markCompleted(item.id, "none")
-                    Log.i(TAG, "Item ${item.id} classified as ${result.classification}: $notes")
-                    processed++
-                    // The LLM saw something it couldn't tie to any camera
-                    // habit — tell the user what it saw instead of failing
-                    // silently.
-                    if (result.classification != VisionClassification.FOOD_MEAL) {
-                        val prefix = if (forcedMealHabit != null) {
-                            "📷 Not recognised as food"
-                        } else {
-                            "📷 No camera habit matched"
-                        }
-                        notifyCameraResult(appContext, prefix + visionSeenDescription(result))
+                    queueRepo.markNeedsReview(item.id, notes)
+                    Log.i(TAG, "Item ${item.id} classified as ${result.classification}: $notes — needs review")
+                    failed++
+                    val prefix = if (forcedMealHabit != null) {
+                        "📷 Not recognised as food"
+                    } else {
+                        "📷 No camera habit matched"
                     }
+                    notifyCameraResult(
+                        appContext,
+                        prefix + visionSeenDescription(result) + "\nSaved to Quick Capture History"
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing item ${item.id}", e)
-                queueRepo.markFailedOrRetry(item.id, e.message ?: "Unknown error")
+                failOrReview(queueRepo, item.id, e.message ?: "Unknown error")
                 failed++
             }
         }
@@ -341,7 +371,9 @@ class VisionProcessingWorker(
     companion object {
         /**
          * Enqueues the vision processing worker with a CONNECTED network constraint.
-         * Uses [ExistingWorkPolicy.KEEP] so multiple enqueues collapse into one.
+         * Uses [ExistingWorkPolicy.APPEND_OR_REPLACE] so a capture enqueued
+         * while a pass is already running is guaranteed its own follow-up
+         * pass (KEEP could leave the newest capture unprocessed).
          */
         fun enqueue(context: Context) {
             val constraints = Constraints.Builder()
@@ -354,7 +386,7 @@ class VisionProcessingWorker(
 
             WorkManager.getInstance(context).enqueueUniqueWork(
                 UNIQUE_WORK_NAME,
-                ExistingWorkPolicy.KEEP,
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
                 request
             )
             Log.i(TAG, "Vision processing worker enqueued")
