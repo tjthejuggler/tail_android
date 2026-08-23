@@ -105,10 +105,17 @@ object ChessReadinessLogStore {
      * [gameDedupeKey]), annotating each with the readiness context at the
      * moment it ended. Games the user didn't play, and unclassifiable
      * (daily/correspondence) games, are skipped.
+     *
+     * Every game that lands here as a NEW entry is also fed to
+     * [ChessGuardPenalty.evaluateAndApply] — this is the single choke
+     * point through which every game-detection path (share sheet,
+     * deferred reconciler, monthly archive poll) flows, so an
+     * unauthorized game can never slip past the 24-hour-penalty detector.
      */
     fun logGames(context: Context, games: List<ChessComGame>, username: String): Int {
         if (games.isEmpty() || username.isBlank()) return 0
         var added = 0
+        val newEntries = ArrayList<Triple<String, Long, Boolean>>() // key, endMs, rated
         synchronized(lock) {
             val root = readRoot(context)
             val seeded = seedLegacyTestsLocked(context, root)
@@ -141,9 +148,19 @@ object ChessReadinessLogStore {
                 gamesArr.put(encodeGame(record, key))
                 keyIndex[key] = gamesArr.length() - 1
                 added++
+                newEntries.add(Triple(key, record.endTimeMs, record.rated))
             }
             root.put(KEY_GAMES, gamesArr)
             if (added > 0 || seeded || upgraded) writeRoot(context, root)
+        }
+        // Outside the file lock — the detector writes to its own prefs
+        // store and must never break or block the logging path.
+        for ((key, endMs, rated) in newEntries) {
+            try {
+                ChessGuardPenalty.evaluateAndApply(context, key, endMs, rated)
+            } catch (_: Exception) {
+                // Penalty detection is best-effort on top of logging.
+            }
         }
         return added
     }

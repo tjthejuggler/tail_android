@@ -893,3 +893,88 @@ fun computeDayOfWeekStats(
         )
     }
 }
+
+// ── Readiness-test puzzle telemetry over time ────────────────────────────────
+
+/**
+ * One readiness test's rated-puzzle performance for the over-time chart:
+ * the individual solve times plus their per-test average, with the test's
+ * readiness context so taps can explain WHY a session was fast/slow.
+ */
+data class PuzzleTimePoint(
+    /** Epoch millis when the test was submitted. */
+    val timestampMs: Long,
+    /** Effective solve time (seconds) of each rated puzzle, in order. */
+    val timesSec: List<Int>,
+    val avgSec: Double,
+    val bestSec: Int,
+    val worstSec: Int,
+    /** Readiness state name of the test (GREEN/YELLOW/RED). */
+    val state: String,
+    val ccrs: Int
+)
+
+/**
+ * Chronological series of per-test rated-puzzle solve times. Tests without
+ * puzzle telemetry (legacy imports from before the detailed log existed)
+ * are skipped.
+ */
+fun computePuzzleTimeSeries(
+    tests: List<ReadinessTestRecord>
+): List<PuzzleTimePoint> = tests
+    .filter { it.puzzleTimesSec.isNotEmpty() }
+    .sortedBy { it.timestamp }
+    .map {
+        PuzzleTimePoint(
+            timestampMs = it.timestamp,
+            timesSec = it.puzzleTimesSec,
+            avgSec = it.puzzleTimesSec.average(),
+            bestSec = it.puzzleTimesSec.min(),
+            worstSec = it.puzzleTimesSec.max(),
+            state = it.state,
+            ccrs = it.ccrs
+        )
+    }
+
+/**
+ * One readiness test's Puzzle Rush result for the over-time chart. A run
+ * counts as a new personal best when its score reached the all-time-high
+ * baseline in effect at test time (the baseline is what the engine scored
+ * the run against, so ≥ means it matched or raised the record).
+ */
+data class RushScorePoint(
+    /** Epoch millis when the test was submitted. */
+    val timestampMs: Long,
+    /** Puzzles solved in the 3-minute run. */
+    val score: Int,
+    /** Strikes (three wrong moves end the run early). */
+    val strikes: Int,
+    /** All-time-high baseline in effect at test time. */
+    val allTimeHigh: Int,
+    /** True when this run matched or raised the all-time high. */
+    val isNewHigh: Boolean,
+    /** Readiness state name of the test (GREEN/YELLOW/RED). */
+    val state: String,
+    val ccrs: Int
+)
+
+/**
+ * Chronological series of per-test Puzzle Rush scores. Tests without rush
+ * telemetry (score 0 — legacy imports or aborted runs) are skipped.
+ */
+fun computeRushScoreSeries(
+    tests: List<ReadinessTestRecord>
+): List<RushScorePoint> = tests
+    .filter { it.rushScore > 0 }
+    .sortedBy { it.timestamp }
+    .map {
+        RushScorePoint(
+            timestampMs = it.timestamp,
+            score = it.rushScore,
+            strikes = it.rushStrikes,
+            allTimeHigh = it.rushAllTimeHigh,
+            isNewHigh = it.rushAllTimeHigh > 0 && it.rushScore >= it.rushAllTimeHigh,
+            state = it.state,
+            ccrs = it.ccrs
+        )
+    }

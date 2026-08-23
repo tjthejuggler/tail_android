@@ -253,6 +253,43 @@
         </service>
 
         <!--
+            ChessGuardService: accessibility gate for the Chess Readiness
+            system ("Chess Guard"). Watches TYPE_WINDOW_STATE_CHANGED events
+            only (no window content is ever read) and, when the configured
+            chess app is opened while the enforcement policy says blocked,
+            performs GLOBAL_ACTION_HOME and shows the ChessGuardLockActivity
+            wall. The user must enable it manually in
+            Settings → Accessibility → Tail.
+        -->
+        <service
+            android:name=".widget.ChessGuardService"
+            android:exported="false"
+            android:label="Tail Chess Guard"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/chess_guard_accessibility" />
+        </service>
+
+        <!--
+            ChessGuardLockActivity: full-screen wall shown by the guard when
+            the chess app is opened while blocked. Not in recents, own task,
+            finishes itself the moment the policy turns into an Allow.
+        -->
+        <activity
+            android:name=".widget.ChessGuardLockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Tail" />
+
+        <!--
             ════════════════════════════════════════════════════════════════
             Lock-screen Habit List Widget
             ════════════════════════════════════════════════════════════════

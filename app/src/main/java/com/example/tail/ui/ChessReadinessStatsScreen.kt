@@ -78,7 +78,9 @@ import com.example.tail.data.computeComplianceSeries
 import com.example.tail.data.computeDayOfWeekStats
 import com.example.tail.data.computeGameCategoryAggregates
 import com.example.tail.data.computeHourlyReadiness
+import com.example.tail.data.computePuzzleTimeSeries
 import com.example.tail.data.computeRatingHistory
+import com.example.tail.data.computeRushScoreSeries
 import com.example.tail.data.computeRatingStats
 import com.example.tail.data.computeReadinessStats
 import com.example.tail.data.computeWinRateByCcrsBand
@@ -378,6 +380,100 @@ fun ChessReadinessStatsScreen(
                             "Tap to open the full chart of daily average readiness.",
                             color = DimColor,
                             fontSize = 11.sp
+                        )
+                    }
+                }
+
+                // ── Rated puzzle times over time ───────────────────────────
+                val puzzlePoints = remember(tests) { computePuzzleTimeSeries(tests) }
+                if (puzzlePoints.size >= 2) {
+                    StatsSection(title = "🧩 Rated Puzzle Times Over Time") {
+                        Text(
+                            "Average solve time of the rated puzzles from each readiness " +
+                                "test, oldest to newest. Tap a point for that test's " +
+                                "individual puzzle times and readiness context.",
+                            color = DimColor,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val puzzleChunks = remember(puzzlePoints) {
+                            puzzlePoints.chunked(MAX_POINTS_PER_CHART)
+                        }
+                        puzzleChunks.forEachIndexed { ci, chunk ->
+                            if (puzzleChunks.size > 1) {
+                                Text(
+                                    "${formatDateShort(chunk.first().timestampMs)} – " +
+                                        formatDateShort(chunk.last().timestampMs),
+                                    color = DimColor,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+                            PuzzleTimesChart(chunk, chartHeight)
+                            if (ci < puzzleChunks.size - 1) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val allTimes = puzzlePoints.flatMap { it.timesSec }
+                        val firstAvg = puzzlePoints.take(3).map { it.avgSec }.average()
+                        val lastAvg = puzzlePoints.takeLast(3).map { it.avgSec }.average()
+                        StatRow(
+                            "Average solve time",
+                            "%.1f s".format(allTimes.average()),
+                            valueColor = GoldValue
+                        )
+                        StatRow("Best single puzzle", "${allTimes.min()} s", valueColor = GreenValue)
+                        StatRow("Latest test average", "%.1f s".format(puzzlePoints.last().avgSec))
+                        StatRow(
+                            "Trend (first 3 vs last 3 tests)",
+                            "%+.1f s".format(lastAvg - firstAvg),
+                            valueColor = if (lastAvg <= firstAvg) GreenValue else RedValue
+                        )
+                    }
+                }
+
+                // ── Puzzle rush over time ──────────────────────────────────
+                val rushPoints = remember(tests) { computeRushScoreSeries(tests) }
+                if (rushPoints.size >= 2) {
+                    StatsSection(title = "⚡ Puzzle Rush Over Time") {
+                        Text(
+                            "Puzzle Rush score (puzzles solved in a 3-minute run) from " +
+                                "each readiness test, oldest to newest. Dashed gold line = " +
+                                "all-time record. Tap a point for strikes and record status.",
+                            color = DimColor,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val rushChunks = remember(rushPoints) {
+                            rushPoints.chunked(MAX_POINTS_PER_CHART)
+                        }
+                        rushChunks.forEachIndexed { ci, chunk ->
+                            if (rushChunks.size > 1) {
+                                Text(
+                                    "${formatDateShort(chunk.first().timestampMs)} – " +
+                                        formatDateShort(chunk.last().timestampMs),
+                                    color = DimColor,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+                            RushScoreChart(chunk, chartHeight)
+                            if (ci < rushChunks.size - 1) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val scores = rushPoints.map { it.score }
+                        StatRow("Best score", scores.max().toString(), valueColor = GoldValue)
+                        StatRow("Average score", "%.1f".format(scores.average()))
+                        StatRow("Latest score", rushPoints.last().score.toString())
+                        StatRow(
+                            "All-time record",
+                            rushPoints.maxOf { maxOf(it.score, it.allTimeHigh) }.toString(),
+                            valueColor = GoldValue
                         )
                     }
                 }

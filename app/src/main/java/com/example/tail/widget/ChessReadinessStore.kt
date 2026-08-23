@@ -52,8 +52,23 @@ object ChessReadinessStore {
     private const val KEY_PUZZLE_HABIT = "linked_puzzle_habit"
     private const val KEY_RUSH_HABIT = "linked_rush_habit"
 
+    // ── Chess Guard (hard enforcement) keys ──────────────────────────────
+    // Enforcement state deliberately lives HERE (synchronous prefs), not in
+    // DataStore: the ChessGuardService accessibility callback must never
+    // touch DataStore flows. The chess package is mirrored from DataStore
+    // by the settings view-model / trigger service whenever it changes.
+    private const val KEY_ENFORCEMENT_ENABLED_AT = "enforcement_enabled_at"
+    private const val KEY_PENALTIES = "violation_penalties"
+    private const val KEY_CHESS_PACKAGE = "chess_package_mirror"
+
     /** Only the most recent tests are kept — enough for any 24 h check. */
     private const val MAX_HISTORY = 50
+
+    /** Only the most recent penalties are kept (dedup window). */
+    private const val MAX_PENALTIES = 50
+
+    /** Prefs key for the "how many times the guard kicked you out" counter. */
+    private const val KEY_GUARD_BLOCK_COUNT = "guard_block_count"
 
     /** An untouched session step expires after this long (ms). */
     const val STEP_TIMEOUT_MS = 10L * 60 * 1000
@@ -93,6 +108,9 @@ object ChessReadinessStore {
             })
         }
         prefs(context).edit().putString(KEY_HISTORY, arr.toString()).apply()
+        // A new test can flip the enforcement verdict (new session, new
+        // cool-down) — tell Chess Guard listeners.
+        ChessGuardNotifier.notifyStateChange(context)
     }
 
     /** The most recent test, or null if none was ever recorded. */
@@ -191,10 +209,100 @@ object ChessReadinessStore {
             put("stepStartedAt", session.stepStartedAt)
         }
         prefs(context).edit().putString(KEY_SESSION, o.toString()).apply()
+        // Step transitions change whether the chess app is allowed (the
+        // puzzle/rush steps ARE the anti-deadlock pass).
+        ChessGuardNotifier.notifyStateChange(context)
     }
 
     fun clearSession(context: Context) {
         prefs(context).edit().remove(KEY_SESSION).apply()
+        ChessGuardNotifier.notifyStateChange(context)
+    }
+
+    // ── Chess Guard: enforcement toggle & package mirror ─────────────────
+
+    /**
+     * Epoch millis when hard enforcement was switched ON, 0 = off. Games
+     * that ended BEFORE this moment are never penalized (no retroactive
+     * punishment for the pre-enforcement era).
+     */
+    fun enforcementEnabledAt(context: Context): Long =
+        prefs(context).getLong(KEY_ENFORCEMENT_ENABLED_AT, 0L)
+
+    /** Enables/disables hard enforcement (records the switch-on moment). */
+    fun setEnforcementEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit()
+            .putLong(KEY_ENFORCEMENT_ENABLED_AT, if (enabled) System.currentTimeMillis() else 0L)
+            .apply()
+        ChessGuardNotifier.notifyStateChange(context)
+    }
+
+    /**
+     * The chess app package (mirror of the DataStore `chessReadinessApp`
+     * setting, kept here for synchronous reads by the guard service).
+     * Blank = no chess app configured.
+     */
+    fun chessPackage(context: Context): String =
+        prefs(context).getString(KEY_CHESS_PACKAGE, "") ?: ""
+
+    /** Updates the chess package mirror (idempotent, cheap). */
+    fun saveChessPackage(context: Context, packageName: String) {
+        prefs(context).edit().putString(KEY_CHESS_PACKAGE, packageName.trim()).apply()
+    }
+
+    // ── Chess Guard: violation penalties ─────────────────────────────────
+
+    /** All persisted penalties, oldest first. */
+    fun loadPenalties(context: Context): List<ChessEnforcementPolicy.Penalty> {
+        val raw = prefs(context).getString(KEY_PENALTIES, null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.getJSONObject(i)
+                ChessEnforcementPolicy.Penalty(
+                    timestamp = o.getLong("timestamp"),
+                    gameId = o.optString("gameId", ""),
+                    expiresAt = o.getLong("expiresAt")
+                )
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** True when a penalty was already recorded for this chess.com game. */
+    fun hasPenaltyForGame(context: Context, gameId: String): Boolean =
+        gameId.isNotBlank() &&
+            loadPenalties(context).any { it.gameId == gameId }
+
+    // ── Chess Guard: blocked-attempt counter ─────────────────────────────
+
+    /** How many times the guard kicked the user out of the chess app. */
+    fun guardBlockCount(context: Context): Int =
+        prefs(context).getInt(KEY_GUARD_BLOCK_COUNT, 0)
+
+    /** Increments the blocked-attempt counter (called by the guard service). */
+    fun noteGuardBlock(context: Context) {
+        prefs(context).edit()
+            .putInt(KEY_GUARD_BLOCK_COUNT, guardBlockCount(context) + 1)
+            .apply()
+    }
+
+    /** Appends a penalty (kept newest-last, capped at [MAX_PENALTIES]). */
+    fun appendPenalty(context: Context, penalty: ChessEnforcementPolicy.Penalty) {
+        val penalties = (loadPenalties(context) + penalty)
+            .sortedBy { it.timestamp }
+            .takeLast(MAX_PENALTIES)
+        val arr = JSONArray()
+        penalties.forEach {
+            arr.put(JSONObject().apply {
+                put("timestamp", it.timestamp)
+                put("gameId", it.gameId)
+                put("expiresAt", it.expiresAt)
+            })
+        }
+        prefs(context).edit().putString(KEY_PENALTIES, arr.toString()).apply()
+        ChessGuardNotifier.notifyStateChange(context)
     }
 
     /**

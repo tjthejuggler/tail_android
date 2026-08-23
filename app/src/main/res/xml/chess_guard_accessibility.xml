@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Chess Guard accessibility service configuration.
+
+    - Only TYPE_WINDOW_STATE_CHANGED events are needed (detect that a
+      window of the chess app came to the front). No window CONTENT is
+      ever read (canRetrieveWindowContent stays false) — the guard looks
+      at package names only.
+    - No packageNames filter: the watched chess package is configurable at
+      runtime (mirrored into SharedPreferences), and the XML filter would
+      require a reinstall to change.
+    - FEDBACK_GENERIC is the standard no-op feedback type for event-only
+      services; it is also what ChessGuardService.isEnabled() queries.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/chess_guard_accessibility_description"
+    android:notificationTimeout="100" />

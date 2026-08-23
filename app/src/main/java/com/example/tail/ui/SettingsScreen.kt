@@ -65,6 +65,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -2341,6 +2342,83 @@ private fun ChessReadinessSettingsSection(
                 }
                 Button(onClick = { showAppPicker = true }) {
                     Text(if (chessPkg.isBlank()) "Select App" else "Change", fontSize = 12.sp)
+                }
+            }
+
+            // Chess Guard — hard enforcement layer over the readiness gate
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Chess Guard — Hard Enforcement", fontSize = 14.sp)
+            Text(
+                "Actually locks the chess app instead of just advising: " +
+                    "opening it while blocked (failed test, lockout, or expired " +
+                    "session) instantly returns you to the home screen with a " +
+                    "full-screen explanation. GREEN unlocks everything; YELLOW " +
+                    "opens the app for casual play only (unrated games & " +
+                    "puzzles) with a full-screen warning on entry — a rated " +
+                    "game detected in YELLOW, any game during a lockout, or " +
+                    "playing instead of testing in the re-test window locks " +
+                    "the ENTIRE app for 24 hours. The in-progress test itself " +
+                    "is always allowed (its puzzle steps happen inside the " +
+                    "chess app). Requires the Tail accessibility service below.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            var enforcementOn by remember {
+                mutableStateOf(ChessReadinessStore.enforcementEnabledAt(context) > 0L)
+            }
+            var guardServiceLive by remember {
+                mutableStateOf(com.example.tail.widget.ChessGuardService.isEnabled(context))
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Block the chess app when not GREEN", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        when {
+                            !enforcementOn -> "Enforcement off — advisory only"
+                            !guardServiceLive -> "⚠ Accessibility service not enabled"
+                            else -> "Guard active — stopped you " +
+                                "${ChessReadinessStore.guardBlockCount(context)} time(s)"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when {
+                            !enforcementOn -> MaterialTheme.colorScheme.onSurfaceVariant
+                            !guardServiceLive -> MaterialTheme.colorScheme.error
+                            else -> Color(0xFF66BB6A)
+                        }
+                    )
+                }
+                Switch(
+                    checked = enforcementOn,
+                    onCheckedChange = {
+                        enforcementOn = it
+                        viewModel.setChessEnforcementEnabled(it)
+                        guardServiceLive =
+                            com.example.tail.widget.ChessGuardService.isEnabled(context)
+                    }
+                )
+            }
+            if (enforcementOn && !guardServiceLive) {
+                Row {
+                    Button(onClick = {
+                        context.startActivity(
+                            android.content.Intent(
+                                android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS
+                            )
+                        )
+                    }) {
+                        Text("Enable Accessibility Service", fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedButton(onClick = {
+                        guardServiceLive =
+                            com.example.tail.widget.ChessGuardService.isEnabled(context)
+                    }) {
+                        Text("Re-check", fontSize = 12.sp)
+                    }
                 }
             }
 

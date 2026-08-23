@@ -4942,7 +4942,22 @@ class HabitViewModel(
         viewModelScope.launch {
             settingsRepo.saveChessReadinessApp(packageName)
             _settings.value = _settings.value.copy(chessReadinessApp = packageName)
+            // Mirror into the synchronous prefs store for the Chess Guard
+            // accessibility service (its callback path cannot read DataStore).
+            com.example.tail.widget.ChessReadinessStore.saveChessPackage(context, packageName)
             updateWidgetTriggerService()
+        }
+    }
+
+    /**
+     * Enables or disables Chess Guard — the hard enforcement layer that
+     * keeps the chess app closed while the readiness policy says blocked.
+     * The switch-ON timestamp is recorded so games that ended before
+     * enforcement existed are never penalized retroactively.
+     */
+    fun setChessEnforcementEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            com.example.tail.widget.ChessReadinessStore.setEnforcementEnabled(context, enabled)
         }
     }
 

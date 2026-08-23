@@ -173,6 +173,10 @@ class WidgetTriggerService : Service() {
     /** Whether the bubble is currently shown. */
     private var bubbleActive = false
 
+    /** True after a guard-bypass warning fired for the CURRENT chess
+     *  session (reset when the chess app leaves the foreground). */
+    private var guardBypassWarned = false
+
     /** Whether the polling loop is currently scheduled. */
     private var isPolling = false
 
@@ -234,6 +238,10 @@ class WidgetTriggerService : Service() {
             val newChessPkg = if (settings.chessReadinessEnabled &&
                 settings.chessReadinessApp.isNotBlank()
             ) settings.chessReadinessApp else null
+            // Mirror the chess package (and its enabled-ness) into the
+            // synchronous prefs store — the Chess Guard accessibility
+            // service reads it from there on its callback path.
+            ChessReadinessStore.saveChessPackage(applicationContext, newChessPkg ?: "")
             val newPackages = newByPackage.keys + listOfNotNull(newChessPkg)
 
             // Media habits: package → habits for automatic listening-time
@@ -347,9 +355,24 @@ class WidgetTriggerService : Service() {
 
         if (foregroundPkg != currentForegroundPackage) {
             Log.d(TAG, "Foreground changed: $currentForegroundPackage → $foregroundPkg")
+            val previousForegroundPackage = currentForegroundPackage
             currentForegroundPackage = foregroundPkg
 
             if (foregroundPkg in watchedPackages) {
+                // Chess Guard bypass check: the chess app is open while the
+                // enforcement policy says blocked, but the accessibility
+                // gate is NOT enabled — the user disabled it (or never set
+                // it up). Surface that immediately instead of silently
+                // letting the block be bypassed.
+                if (foregroundPkg == chessReadinessPackage &&
+                    ChessReadinessStore.enforcementEnabledAt(applicationContext) > 0 &&
+                    !ChessGuardService.isEnabled(applicationContext)
+                ) {
+                    val decision = ChessEnforcementPolicy.evaluateNow(applicationContext)
+                    if (decision is ChessEnforcementPolicy.Decision.Block) {
+                        warnGuardBypassed()
+                    }
+                }
                 if (!bubbleActive) {
                     Log.d(TAG, "Trigger app detected ($foregroundPkg) — showing bubble")
                     startBubble(
@@ -362,7 +385,46 @@ class WidgetTriggerService : Service() {
                     Log.d(TAG, "Trigger app left — hiding bubble, stopping timer if running")
                     stopBubble(stopRunningTimer = true)
                 }
+                // Leaving the chess app ends the "bypass session" — a
+                // later re-entry may warn again.
+                if (previousForegroundPackage == chessReadinessPackage) {
+                    guardBypassWarned = false
+                }
             }
+        }
+    }
+
+    /**
+     * Posts (at most once per chess session) a warning that the Chess Guard
+     * accessibility gate is disabled while enforcement is active — the
+     * block is being bypassed right now.
+     */
+    private fun warnGuardBypassed() {
+        if (guardBypassWarned) return
+        guardBypassWarned = true
+        Log.w(TAG, "Chess Guard bypassed: accessibility service disabled while blocked")
+        try {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                "chess_guard",
+                "Chess Guard",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            nm.createNotificationChannel(channel)
+            nm.notify(
+                9914,
+                Notification.Builder(this, "chess_guard")
+                    .setSmallIcon(android.R.drawable.ic_lock_lock)
+                    .setContentTitle("Chess Guard is disabled")
+                    .setContentText(
+                        "The chess app is blocked right now, but the guard service " +
+                            "is turned off. Re-enable it: Settings → Accessibility → Tail."
+                    )
+                    .setAutoCancel(true)
+                    .build()
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Guard bypass warning failed: ${e.message}")
         }
     }
 

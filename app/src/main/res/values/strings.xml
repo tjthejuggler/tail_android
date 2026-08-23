@@ -7,4 +7,7 @@
     <string name="shortcut_media_capture_long">Voice or camera: log a meal or trigger a habit</string>
     <string name="shortcut_floating_bubble_short">Floating Bubble</string>
     <string name="shortcut_floating_bubble_long">Show the Tail bubble over other apps</string>
+
+    <!-- Chess Guard accessibility service (system Settings → Accessibility) -->
+    <string name="chess_guard_accessibility_description">Watches when the chess app is opened. If the Chess Readiness system has blocked chess (failed test, lockout, or violation penalty), Tail immediately returns you to the home screen and shows why. Tail reads window package names only — never window content.</string>
 </resources>

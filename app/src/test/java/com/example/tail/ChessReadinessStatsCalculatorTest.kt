@@ -651,4 +651,52 @@ class ChessReadinessStatsCalculatorTest {
         assertEquals(1, approvedBullet[9].wins)
         assertEquals(0, approvedBullet[10].games) // pre-test game is blitz anyway
     }
+
+    // ── Puzzle telemetry over time ───────────────────────────────────────
+
+    @Test
+    fun `puzzle time series skips tests without telemetry and sorts chronologically`() {
+        val legacy = test(ms("2026-08-10", 9), 80, green)
+            .copy(puzzleTimesSec = emptyList()) // legacy import — no telemetry
+        val later = test(ms("2026-08-11", 9), 75, yellow)
+            .copy(puzzleTimesSec = listOf(50, 70))
+        val earlier = test(ms("2026-08-10", 8), 90, green)
+            .copy(puzzleTimesSec = listOf(20, 30, 40))
+
+        val series = computePuzzleTimeSeries(listOf(later, legacy, earlier))
+
+        assertEquals(2, series.size)
+        assertEquals(earlier.timestamp, series[0].timestampMs)
+        assertEquals(later.timestamp, series[1].timestampMs)
+        assertEquals(listOf(20, 30, 40), series[0].timesSec)
+        assertEquals(30.0, series[0].avgSec, 0.001)
+        assertEquals(20, series[0].bestSec)
+        assertEquals(40, series[0].worstSec)
+        assertEquals(green, series[0].state)
+        assertEquals(90, series[0].ccrs)
+    }
+
+    @Test
+    fun `rush score series skips zero-score tests and flags new highs`() {
+        val aborted = test(ms("2026-08-10", 9), 80, green)
+            .copy(rushScore = 0, rushAllTimeHigh = 18) // aborted run — skipped
+        val first = test(ms("2026-08-10", 8), 90, green)
+            .copy(rushScore = 18, rushStrikes = 0, rushAllTimeHigh = 18)
+        val record = test(ms("2026-08-11", 8), 85, green)
+            .copy(rushScore = 24, rushStrikes = 1, rushAllTimeHigh = 18)
+        val slump = test(ms("2026-08-12", 8), 55, red)
+            .copy(rushScore = 12, rushStrikes = 3, rushAllTimeHigh = 24)
+
+        val series = computeRushScoreSeries(listOf(slump, record, aborted, first))
+
+        assertEquals(3, series.size)
+        assertEquals(first.timestamp, series[0].timestampMs)
+        assertEquals(record.timestamp, series[1].timestampMs)
+        assertEquals(slump.timestamp, series[2].timestampMs)
+        assertTrue(series[0].isNewHigh)   // 18 ≥ baseline 18
+        assertTrue(series[1].isNewHigh)   // 24 ≥ baseline 18 → raised the record
+        assertFalse(series[2].isNewHigh)  // 12 < baseline 24
+        assertEquals(3, series[2].strikes)
+        assertEquals(red, series[2].state)
+    }
 }

@@ -128,6 +128,20 @@ object ChessDeferredGameReconciler {
         }
 
         val gameEndMs = game.endTime * 1000L
+
+        // Authorization is evaluated FIRST — the Chess Guard penalty for
+        // unauthorized play is applied by the logGames call above (single
+        // choke point shared with the archive poller), so this classifier
+        // only decides the audit outcome below.
+        val tests = ChessReadinessStore.loadHistory(context)
+        val authorized = authorizedAtGameEnd(
+            tests = tests,
+            audits = ChessPhase2Store.loadAudits(context).map {
+                AuditStamp(it.timestamp, it.outputState)
+            },
+            gameEndMs = gameEndMs
+        )
+
         val mapping = ChessGameAuditMapper.buildInput(
             game = game,
             username = username,
@@ -142,14 +156,6 @@ object ChessDeferredGameReconciler {
             is ChessGameAuditMapper.Mapping.Ready -> mapping
         }
 
-        val tests = ChessReadinessStore.loadHistory(context)
-        val authorized = authorizedAtGameEnd(
-            tests = tests,
-            audits = ChessPhase2Store.loadAudits(context).map {
-                AuditStamp(it.timestamp, it.outputState)
-            },
-            gameEndMs = gameEndMs
-        )
         if (!authorized) {
             val stateAtPlay = tests
                 .filter { it.timestamp <= gameEndMs }
