@@ -6,10 +6,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Unit tests for the Phase 1 Pre-Session Diagnostic Engine (spec v3.0).
+ * Unit tests for the Phase 1 Pre-Session Diagnostic Engine (spec v3.1).
  * Covers fine-grained sub-score tiers, the adaptive percentile gate
  * (cold start, bar lowering, ceiling/floor clamps, window rules), the
- * strict absolute cutoffs, edge cases and rate limiting.
+ * strict absolute cutoffs, edge cases, rate limiting, the form-relative
+ * objective baselines, the 10-point survey mapping and the
+ * survey-calibration weighting.
  */
 class ChessReadinessEngineTest {
 
@@ -121,7 +123,7 @@ class ChessReadinessEngineTest {
 
     @Test
     fun `rated puzzle speed tiers`() {
-        val p = ChessReadinessEngine::ratedPuzzleScore
+        val p = { times: List<Int> -> ChessReadinessEngine.ratedPuzzleScore(times) }
         assertEquals(25, p(listOf(28, 29, 30)))   // avg 29 → 25
         assertEquals(21, p(listOf(30, 30, 30)))   // avg 30 → 21
         assertEquals(21, p(listOf(44, 44, 44)))
@@ -152,7 +154,7 @@ class ChessReadinessEngineTest {
 
     @Test
     fun `rush ratio bands`() {
-        val p = ChessReadinessEngine::rushScore
+        val p = { s: Int, ath: Int, st: Int -> ChessReadinessEngine.rushScore(s, ath, st) }
         assertEquals(25, p(50, 50, 0)) // 1.00
         assertEquals(25, p(45, 50, 0)) // 0.90
         assertEquals(21, p(40, 50, 0)) // 0.80
@@ -237,27 +239,28 @@ class ChessReadinessEngineTest {
 
     @Test
     fun `five recent tests switch to percentiles`() {
-        // sorted [50,55,60,65,70]: p60 rank 2.4 → 62 (≤ 80, unclamped) ·
-        // p35 rank 1.4 → 57 → ceiling-clamped to ABSOLUTE_YELLOW (55)
+        // sorted [50,55,60,65,70]: p70 rank 2.8 → 60 + 0.8×5 = 64 (≤ 80,
+        // unclamped) · p45 rank 1.8 → 59, clamped down to ABSOLUTE_YELLOW 55
         val t = ChessReadinessEngine.computeThresholds(historyOf(50, 55, 60, 65, 70), NOW)
-        assertEquals(62, t.green)
-        assertEquals(ChessReadinessEngine.ABSOLUTE_YELLOW, t.yellow)
+        assertEquals(64, t.green)
+        assertEquals(55, t.yellow)
         assertEquals(ChessReadinessEngine.ThresholdBasis.PERCENTILE, t.basis)
         assertEquals(5, t.sampleSize)
     }
 
     @Test
     fun `weak recent history lowers the bar below cold start`() {
-        // sorted [40,45,50,50,55]: p60 → 50 · p35 → 47
+        // sorted [40,45,50,50,55]: p70 rank 2.8 → 50 (idx 2/3 both 50) ·
+        // p45 rank 1.8 → 45 + 0.8×5 = 49
         val t = ChessReadinessEngine.computeThresholds(historyOf(40, 45, 50, 50, 55), NOW)
         assertEquals(50, t.green)
-        assertEquals(47, t.yellow)
+        assertEquals(49, t.yellow)
         assertTrue(t.green < ChessReadinessEngine.COLD_START_GREEN)
     }
 
     @Test
     fun `strong history cannot ratchet the bar above the absolute cutoffs`() {
-        // sorted [85,90,95,100,100]: p60 → 97 (clamped to 80) · p35 → 92 (clamped to 55)
+        // sorted [85,90,95,100,100]: p70 → 99 (clamped to 80) · p45 → 94 (clamped to 55)
         val t = ChessReadinessEngine.computeThresholds(historyOf(85, 90, 95, 100, 100), NOW)
         assertEquals(ChessReadinessEngine.ABSOLUTE_GREEN, t.green)
         assertEquals(ChessReadinessEngine.ABSOLUTE_YELLOW, t.yellow)
@@ -265,7 +268,7 @@ class ChessReadinessEngineTest {
 
     @Test
     fun `very weak history sinks only to the floors`() {
-        // sorted [20,25,30,30,35]: p60 → 30 (floored to 45) · p35 → 27 (floored to 30)
+        // sorted [20,25,30,30,35]: p70 → 30 (floored to 45) · p45 → 29 (floored to 30)
         val t = ChessReadinessEngine.computeThresholds(historyOf(20, 25, 30, 30, 35), NOW)
         assertEquals(ChessReadinessEngine.GREEN_FLOOR, t.green)
         assertEquals(ChessReadinessEngine.YELLOW_FLOOR, t.yellow)
@@ -295,9 +298,37 @@ class ChessReadinessEngineTest {
         val scores = IntArray(20) { 51 + it } // 51..70, all recent
         val t = ChessReadinessEngine.computeThresholds(historyOf(*scores), NOW)
         assertEquals(15, t.sampleSize)
-        // The newest 15 are 56..70 — p60 of those: sorted 56..70,
-        // rank 0.6×14 = 8.4 → 64 + 0.4×1 = 64.4 → 64
-        assertEquals(64, t.green)
+        // The newest 15 are 56..70 — p70 of those: sorted 56..70,
+        // rank 0.7×14 = 9.8 → 65 + 0.8×1 = 65.8 → 65
+        assertEquals(65, t.green)
+    }
+
+    @Test
+    fun `green target is user-adjustable and shifts the bars`() {
+        val history = historyOf(50, 55, 60, 65, 70)
+        // Default 30% target → 70th-percentile green (64); 45th → 59
+        // clamped to the absolute Yellow cutoff (55).
+        val strict = ChessReadinessEngine.computeThresholds(history, NOW)
+        assertEquals(64, strict.green)
+        assertEquals(55, strict.yellow)
+        // A lenient 70% target → 30th-percentile green (56); 5th → 51.
+        val lenient = ChessReadinessEngine.computeThresholds(
+            history, NOW, greenTargetFraction = 0.70
+        )
+        assertEquals(56, lenient.green)
+        assertEquals(51, lenient.yellow)
+    }
+
+    @Test
+    fun `target fraction is clamped to the allowed range`() {
+        assertEquals(0.05, ChessReadinessEngine.greenPercentileFor(0.99), 0.001)
+        assertEquals(0.95, ChessReadinessEngine.greenPercentileFor(0.01), 0.001)
+        assertEquals(0.70, ChessReadinessEngine.greenPercentileFor(0.30), 0.001)
+        assertEquals(0.05, ChessReadinessEngine.greenPercentileFor(0.95), 0.001)
+        // Yellow always trails Green by 25 percentile points (floored at 0.02).
+        assertEquals(0.45, ChessReadinessEngine.yellowPercentileFor(0.30), 0.001)
+        assertEquals(0.05, ChessReadinessEngine.yellowPercentileFor(0.70), 0.001)
+        assertEquals(0.02, ChessReadinessEngine.yellowPercentileFor(0.95), 0.001)
     }
 
     // ── Gate decision (stateFor / evaluate with history) ───────────────────
@@ -335,7 +366,7 @@ class ChessReadinessEngineTest {
         assertEquals(60, r.ccrs)
         assertEquals(ChessReadinessEngine.ReadinessState.GREEN_LIGHT, r.state)
         assertEquals(50, r.greenThreshold)
-        assertEquals(47, r.yellowThreshold)
+        assertEquals(49, r.yellowThreshold)
         assertEquals(5, r.thresholdSampleSize)
     }
 
@@ -557,11 +588,11 @@ class ChessReadinessEngineTest {
         assertEquals(0, ChessReadinessEngine.nextAllTimeHigh(0, -1))
     }
 
-    // ── 1–5 clarity sliders (stress / focus / energy, positive end = 5) ────
+    // ── 1–10 clarity sliders (stress / focus / energy, positive end = 10) ──
 
     @Test
     fun `best slider answers map to a 10 clarity average`() {
-        assertEquals(10.0, ChessReadinessEngine.clarityAverageFromSliders(5, 5, 5), 1e-9)
+        assertEquals(10.0, ChessReadinessEngine.clarityAverageFromSliders(10, 10, 10), 1e-9)
     }
 
     @Test
@@ -570,38 +601,40 @@ class ChessReadinessEngineTest {
     }
 
     @Test
-    fun `mid slider answers map to a 5 clarity average`() {
-        assertEquals(5.0, ChessReadinessEngine.clarityAverageFromSliders(3, 3, 3), 1e-9)
+    fun `slider answers map monotonically with exact endpoints`() {
+        // (v − 1) · 10/9: 5 → 40/9, 6 → 50/9 — the two middle positions
+        assertEquals(40.0 / 9.0, ChessReadinessEngine.clarityAverageFromSliders(5, 5, 5), 1e-9)
+        assertEquals(50.0 / 9.0, ChessReadinessEngine.clarityAverageFromSliders(6, 6, 6), 1e-9)
     }
 
     @Test
-    fun `stress slider works like the others - calm at 5 scores highest`() {
-        val calm = ChessReadinessEngine.clarityAverageFromSliders(5, 3, 3)
+    fun `stress slider works like the others - calm at 10 scores highest`() {
+        val calm = ChessReadinessEngine.clarityAverageFromSliders(10, 3, 3)
         val stressed = ChessReadinessEngine.clarityAverageFromSliders(1, 3, 3)
-        assertEquals(20.0 / 3.0, calm, 1e-9)
-        assertEquals(10.0 / 3.0, stressed, 1e-9)
+        assertEquals(130.0 / 27.0, calm, 1e-9)
+        assertEquals(40.0 / 27.0, stressed, 1e-9)
     }
 
     @Test
-    fun `slider inputs outside 1-5 are clamped`() {
-        // stress 0 → 1 (stressed), focus 9 → 5 (max), energy 3 → mid
-        assertEquals(5.0, ChessReadinessEngine.clarityAverageFromSliders(0, 9, 3), 1e-9)
+    fun `slider inputs outside 1-10 are clamped`() {
+        // stress 0 → 1 (stressed → 0), focus 11 → 10 (max → 10), energy 5 → 40/9
+        assertEquals(130.0 / 27.0, ChessReadinessEngine.clarityAverageFromSliders(0, 11, 5), 1e-9)
     }
 
     @Test
     fun `slider mapping feeds the point tiers correctly`() {
-        // (5, 5, 2) → calm 10 + focus 10 + energy 2.5 = 7.5 — 20-pt tier
-        assertEquals(7.5, ChessReadinessEngine.clarityAverageFromSliders(5, 5, 2), 1e-9)
+        // (10, 10, 2) → calm 10 + focus 10 + energy 10/9 = 190/27 ≈ 7.04 — 20-pt tier
+        assertEquals(190.0 / 27.0, ChessReadinessEngine.clarityAverageFromSliders(10, 10, 2), 1e-9)
         assertEquals(
             20,
             ChessReadinessEngine.clarityPoints(
-                ChessReadinessEngine.clarityAverageFromSliders(5, 5, 2)
+                ChessReadinessEngine.clarityAverageFromSliders(10, 10, 2)
             )
         )
         assertEquals(
             15,
             ChessReadinessEngine.clarityPoints(
-                ChessReadinessEngine.clarityAverageFromSliders(3, 3, 3)
+                ChessReadinessEngine.clarityAverageFromSliders(6, 6, 6)
             )
         )
         assertEquals(
@@ -610,5 +643,194 @@ class ChessReadinessEngineTest {
                 ChessReadinessEngine.clarityAverageFromSliders(1, 1, 1)
             )
         )
+    }
+
+    // ── 5→10 point survey migration helper ─────────────────────────────────
+
+    @Test
+    fun `scaleSurveyTo10 doubles 1-5 values and passes everything else through`() {
+        val p = ChessReadinessEngine::scaleSurveyTo10
+        assertEquals(2, p(1))
+        assertEquals(6, p(3))
+        assertEquals(10, p(5))
+        // 0 = legacy "no data" sentinel; 6–10 = already on the new scale
+        assertEquals(0, p(0))
+        assertEquals(7, p(7))
+        assertEquals(10, p(10))
+    }
+
+    // ── Form-relative puzzle tiers (v3.1) ──────────────────────────────────
+
+    @Test
+    fun `rated puzzle form tiers score the ratio to the recent baseline`() {
+        // recentAvgSec = 100 → ratio = avg / 100
+        assertEquals(25, ChessReadinessEngine.ratedPuzzleScore(listOf(50, 55, 57), 100.0)) // 0.54
+        assertEquals(21, ChessReadinessEngine.ratedPuzzleScore(listOf(60, 60, 60), 100.0))  // 0.60
+        assertEquals(17, ChessReadinessEngine.ratedPuzzleScore(listOf(80, 80, 80), 100.0))  // 0.80
+        assertEquals(13, ChessReadinessEngine.ratedPuzzleScore(listOf(100, 100, 100), 100.0)) // 1.00
+        assertEquals(9, ChessReadinessEngine.ratedPuzzleScore(listOf(130, 130, 130), 100.0)) // 1.30
+        assertEquals(4, ChessReadinessEngine.ratedPuzzleScore(listOf(160, 160, 160), 100.0)) // 1.60
+        assertEquals(0, ChessReadinessEngine.ratedPuzzleScore(listOf(175, 175, 175), 100.0)) // 1.75
+    }
+
+    @Test
+    fun `a rising rating no longer erodes the puzzle score`() {
+        // Same FORM (ratio 0.8) at two very different absolute levels:
+        val easyPuzzles = ChessReadinessEngine.ratedPuzzleScore(listOf(40, 40, 40), 50.0)
+        val hardPuzzles = ChessReadinessEngine.ratedPuzzleScore(listOf(120, 120, 120), 150.0)
+        assertEquals(easyPuzzles, hardPuzzles)
+        assertEquals(17, easyPuzzles)
+    }
+
+    @Test
+    fun `absolute puzzle tiers remain the cold-start fallback`() {
+        // No baseline → old absolute behavior
+        assertEquals(21, ChessReadinessEngine.ratedPuzzleScore(listOf(30, 30, 30), null))
+        assertEquals(21, ChessReadinessEngine.ratedPuzzleScore(listOf(30, 30, 30), 0.0))
+    }
+
+    @Test
+    fun `recentPuzzleAvgSec needs three samples and averages the window`() {
+        val E = ChessReadinessEngine
+        fun t(avg: Int?) = ChessReadinessEngine.ReadinessTest(NOW, 60, "X", puzzleAvgSec = avg)
+        assertEquals(null, E.recentPuzzleAvgSec(listOf(t(30), t(50))))
+        assertEquals(40.0, E.recentPuzzleAvgSec(listOf(t(30), t(50), t(40)))!!, 1e-9)
+        // Zero/null records are skipped, not counted — two valid samples
+        // still aren't enough
+        assertEquals(null, E.recentPuzzleAvgSec(listOf(t(null), t(0), t(50), t(50))))
+        assertEquals(50.0, E.recentPuzzleAvgSec(listOf(t(null), t(0), t(50), t(50), t(50)))!!, 1e-9)
+    }
+
+    // ── Form-relative rush baseline (v3.1) ─────────────────────────────────
+
+    @Test
+    fun `rush recent median replaces the ratcheting all-time high`() {
+        // Typical run vs median 30 → ratio 1.0 → 25 pts (vs 13 on ATH 50)
+        assertEquals(25, ChessReadinessEngine.rushScore(30, 50, 0, recentMedian = 30))
+        // ATH fallback still applies when the median is below the floor
+        assertEquals(21, ChessReadinessEngine.rushScore(8, 2, 0, recentMedian = 5))
+        // Median missing → classic ATH behavior
+        assertEquals(13, ChessReadinessEngine.rushScore(30, 50, 0, recentMedian = null))
+    }
+
+    @Test
+    fun `recentRushMedian takes the median of the last ten runs`() {
+        val E = ChessReadinessEngine
+        fun t(rush: Int?) = ChessReadinessEngine.ReadinessTest(NOW, 60, "X", rushScore = rush)
+        assertEquals(null, E.recentRushMedian(listOf(t(30), t(40))))
+        assertEquals(30, E.recentRushMedian(listOf(t(20), t(30), t(40))))          // odd → middle
+        assertEquals(30, E.recentRushMedian(listOf(t(20), t(30), t(30), t(40))))   // even → mean 30
+        assertEquals(35, E.recentRushMedian(listOf(t(20), t(30), t(40), t(50))))   // even → 35
+    }
+
+    // ── Survey calibration weighting (v3.1) ────────────────────────────────
+
+    /** A history test carrying the telemetry the calibration pairs need. */
+    private fun pairedTest(clarity: Double, puzzle: Int, rush: Int) =
+        ChessReadinessEngine.ReadinessTest(
+            NOW, 60, "X",
+            clarityAverage = clarity, pPuzzle = puzzle, pRush = rush
+        )
+
+    @Test
+    fun `calibration is neutral until six paired samples exist`() {
+        val E = ChessReadinessEngine
+        listOf(0, 1, 5).forEach { n ->
+            val c = E.surveyCalibration((1..n).map { pairedTest(7.0, 17, 18) })
+            assertEquals(1.0, c.weight, 1e-9)
+            assertEquals(null, c.mae)
+            assertEquals(null, c.objectiveAnchor)
+            assertEquals(n, c.sampleSize)
+        }
+    }
+
+    @Test
+    fun `perfect survey representation earns full weight`() {
+        // survey 7.0 == objective (17+18)/5 = 7.0 on every pair
+        val c = ChessReadinessEngine.surveyCalibration(
+            (1..8).map { pairedTest(7.0, 17, 18) }
+        )
+        assertEquals(0.0, c.mae!!, 1e-9)
+        assertEquals(1.0, c.weight, 1e-9)
+        assertEquals(7.0, c.objectiveAnchor!!, 1e-9)
+    }
+
+    @Test
+    fun `consistently inflated surveys sink to the minimum weight`() {
+        // survey 9.0 vs objective 6.0 → MAE 3.0 → weight floor 0.35
+        val c = ChessReadinessEngine.surveyCalibration(
+            (1..6).map { pairedTest(9.0, 17, 13) } // (17+13)/5 = 6.0
+        )
+        assertEquals(3.0, c.mae!!, 1e-9)
+        assertEquals(ChessReadinessEngine.CALIBRATION_MIN_WEIGHT, c.weight, 1e-9)
+        assertEquals(6.0, c.objectiveAnchor!!, 1e-9)
+    }
+
+    @Test
+    fun `calibration weight interpolates linearly with the gap`() {
+        val E = ChessReadinessEngine
+        // Uniform gap 0.5 → MAE 0.5 → weight 0.35 + 0.65 × (1 − 0.5/3)
+        val uniform = E.surveyCalibration((1..6).map { pairedTest(7.5, 17, 18) })
+        assertEquals(0.5, uniform.mae!!, 1e-9)
+        assertEquals(0.35 + 0.65 * (1.0 - 0.5 / 3.0), uniform.weight, 1e-9)
+        // Alternating gaps of 1.0 and 2.0 → MAE 1.5 → weight 0.35 + 0.65 × 0.5
+        val mixed = listOf(
+            pairedTest(8.0, 17, 18), // gap 1.0
+            pairedTest(9.0, 17, 18), // gap 2.0
+            pairedTest(8.0, 17, 18),
+            pairedTest(9.0, 17, 18),
+            pairedTest(8.0, 17, 18),
+            pairedTest(9.0, 17, 18)
+        )
+        val m = E.surveyCalibration(mixed)
+        assertEquals(1.5, m.mae!!, 1e-9)
+        assertEquals(0.675, m.weight, 1e-9)
+    }
+
+    @Test
+    fun `effective clarity shrinks toward the objective anchor`() {
+        val E = ChessReadinessEngine
+        // Inflated history → weight 0.35, anchor 6.0
+        val c = E.surveyCalibration((1..6).map { pairedTest(9.0, 17, 13) })
+        // Reported 9.0 → 0.35×9.0 + 0.65×6.0 = 7.05 — the 20-pt tier, not 25
+        assertEquals(7.05, E.effectiveClarityAverage(9.0, c), 1e-9)
+        assertEquals(20, E.clarityPoints(E.effectiveClarityAverage(9.0, c)))
+        // Neutral calibration (no anchor) passes the report through
+        val neutral = ChessReadinessEngine.SurveyCalibration(1.0, null, 0, null)
+        assertEquals(9.0, E.effectiveClarityAverage(9.0, neutral), 1e-9)
+        // Out-of-range reports are clamped
+        assertEquals(10.0, E.effectiveClarityAverage(99.0, neutral), 1e-9)
+    }
+
+    @Test
+    fun `evaluate wires calibration and baselines into the composite`() {
+        val E = ChessReadinessEngine
+        // History: inflated surveys (9.0 vs objective 6.0), typical puzzle
+        // avg 100 s, typical rush 30 — enough samples for everything.
+        val history = (1..6).map {
+            ChessReadinessEngine.ReadinessTest(
+                NOW - it * DAY, 60, "X",
+                clarityAverage = 9.0, puzzleAvgSec = 100, rushScore = 30,
+                pPuzzle = 17, pRush = 13
+            )
+        }
+        val r = E.evaluate(
+            input(
+                clarityAvg = 9.0,             // inflated report
+                puzzleTimes = listOf(50, 50, 50), // avg 50 vs recent 100 → ratio 0.5 → 25
+                rush = 30,                        // vs median 30 → ratio 1.0 → 25
+                ath = 50
+            ),
+            NOW, history
+        )
+        // Clarity shrunk to 7.05 → 20 pts, not the 25 an honest-math 9.0 would give
+        assertEquals(20, r.sClarity)
+        assertEquals(9.0, r.clarityReported, 1e-9)
+        assertEquals(7.05, r.clarityEffective, 1e-9)
+        assertEquals(E.CALIBRATION_MIN_WEIGHT, r.surveyWeight, 1e-9)
+        assertEquals(3.0, r.surveyMae!!, 1e-9)
+        assertEquals(6, r.surveySampleSize)
+        assertEquals(25, r.pPuzzle)
+        assertEquals(25, r.pRush)
     }
 }

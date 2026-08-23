@@ -42,7 +42,7 @@ data class ReadinessTestRecord(
     /** Sleep score 0–100 (Garmin or manual). */
     val sleepScore: Int,
     val sleepFromGarmin: Boolean,
-    /** Clarity sliders, raw 1–5 (stress / focus / energy). */
+    /** Clarity sliders, raw 1–10 (stress / focus / energy; legacy 1–5 records are 2×-migrated on load). */
     val stress: Int,
     val focus: Int,
     val energy: Int,

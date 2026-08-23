@@ -12,7 +12,10 @@ package com.example.tail.widget
  *
  * The user's chosen rules (2026-08-23 design session, revised twice same day):
  *  - GREEN session active (≤ [ChessReadinessEngine.SESSION_VALIDITY_MS]
- *    since a GREEN test) → app ALLOWED (rated play authorized).
+ *    since a GREEN test) → app ALLOWED (rated play authorized) — unless
+ *    a Phase 2 audit filed AFTER that test already pulled the brake:
+ *    PIVOT_TO_DRILLS downgrades the session to casual-only (yellow
+ *    entry warning), TERMINATE_SESSION blocks until a new test opens.
  *  - YELLOW session still inside its validity → app ALLOWED for CASUAL
  *    play only (unrated games, bots, puzzles). Rated play stays
  *    prohibited: the guard shows a full-screen warning on entry, and a
@@ -71,6 +74,11 @@ object ChessEnforcementPolicy {
          * play (unrated / puzzles) allowed, rated play prohibited.
          */
         YELLOW_SESSION,
+        /**
+         * Phase 2 audit TERMINATED the session — all play (casual
+         * included) stops until a new readiness test is possible.
+         */
+        SESSION_TERMINATED,
         /** Latest test failed (RED) — mandatory recovery rest. */
         REST_PERIOD,
         /** Re-test cool-down after a passed test. */
@@ -115,13 +123,18 @@ object ChessEnforcementPolicy {
      * @param session in-progress readiness wizard session, if any
      * @param penalties persisted violation penalties
      * @param now epoch ms "now"
+     * @param lastAudit most recent Phase 2 audit, if any — a PIVOT or
+     *        TERMINATE verdict filed after the last Phase 1 test limits
+     *        the session that test authorized (mirrors the reconciler's
+     *        "no Yellow/Red audit since the green test" rule).
      */
     fun evaluate(
         enforcementEnabledAt: Long,
         history: List<ChessReadinessEngine.ReadinessTest>,
         session: ReadinessSession?,
         penalties: List<Penalty>,
-        now: Long
+        now: Long,
+        lastAudit: ChessPhase2Store.Phase2Audit? = null
     ): Decision {
         if (enforcementEnabledAt <= 0L) {
             return Decision.Allow(Reason.FEATURE_OFF)
@@ -142,13 +155,36 @@ object ChessEnforcementPolicy {
             }
 
         // 2. Active GREEN session → the only state where chess is freely
-        //    usable (rated play authorized by the engine).
+        //    usable (rated play authorized by the engine) — UNLESS a
+        //    Phase 2 audit filed after the test already pulled the brake:
+        //    PIVOT_TO_DRILLS (rated play prohibited) downgrades the
+        //    session to casual-only with the yellow entry warning, and
+        //    TERMINATE_SESSION stops all play until a new test is
+        //    possible. Without this, a bad audited game right after a
+        //    GREEN pass kept the app fully unlocked for the whole
+        //    60-minute window.
         val last = history.maxByOrNull { it.timestamp }
+        val auditAfterTest = lastAudit
+            ?.takeIf { last != null && it.timestamp > last.timestamp }
         if (last != null &&
             last.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name &&
             now - last.timestamp < ChessReadinessEngine.SESSION_VALIDITY_MS
         ) {
-            return Decision.Allow(Reason.GREEN_SESSION)
+            return when {
+                auditAfterTest?.outputState ==
+                    ChessPhase2Engine.OutputState.TERMINATE_SESSION.name ->
+                    Decision.Block(
+                        Reason.SESSION_TERMINATED,
+                        retryAt = last.timestamp + ChessReadinessEngine.COOLDOWN_MS,
+                        message = "Phase 2 audit TERMINATED the session — stop all " +
+                            "play and study. The app re-opens for your next readiness " +
+                            "test when the cool-down ends."
+                    )
+                auditAfterTest?.outputState ==
+                    ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS.name ->
+                    Decision.Allow(Reason.YELLOW_SESSION)
+                else -> Decision.Allow(Reason.GREEN_SESSION)
+            }
         }
 
         // 3. In-progress readiness test at a chess-app step → allow, bounded
@@ -171,7 +207,20 @@ object ChessEnforcementPolicy {
             last.state == ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name &&
             now - last.timestamp < ChessReadinessEngine.SESSION_VALIDITY_MS
         ) {
-            return Decision.Allow(Reason.YELLOW_SESSION)
+            // A TERMINATE verdict after the test stops even casual play.
+            return if (auditAfterTest?.outputState ==
+                ChessPhase2Engine.OutputState.TERMINATE_SESSION.name
+            ) {
+                Decision.Block(
+                    Reason.SESSION_TERMINATED,
+                    retryAt = last.timestamp + ChessReadinessEngine.COOLDOWN_MS,
+                    message = "Phase 2 audit TERMINATED the session — stop all " +
+                        "play and study. The app re-opens for your next readiness " +
+                        "test when the cool-down ends."
+                )
+            } else {
+                Decision.Allow(Reason.YELLOW_SESSION)
+            }
         }
 
         // 5. Otherwise mirror the engine's re-test gate: while a new test is
@@ -216,7 +265,8 @@ object ChessEnforcementPolicy {
         history = ChessReadinessStore.loadHistory(context),
         session = ChessReadinessStore.loadSession(context),
         penalties = ChessReadinessStore.loadPenalties(context),
-        now = System.currentTimeMillis()
+        now = System.currentTimeMillis(),
+        lastAudit = ChessPhase2Store.loadAudits(context).maxByOrNull { it.timestamp }
     )
 }
 

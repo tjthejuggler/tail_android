@@ -31,7 +31,7 @@ import kotlinx.coroutines.withContext
  * Step-by-step flow (progress persisted in [ChessReadinessStore] so the
  * overlay can close between steps and resume when the user taps the bubble):
  *  1. SLEEP — Garmin sleep score (or manual entry)
- *  2. CLARITY — three 1–5 sliders: stress / focus / energy
+ *  2. CLARITY — three 1–10 sliders: stress / focus / energy
  *  3. PUZZLES — three rated puzzles (go solve → come back → report)
  *  4. RUSH — one 3-minute Puzzle Rush (go play → come back → report)
  *  5. RESULT — CCRS 0–100 with the Green/Yellow/Red authorization
@@ -62,9 +62,9 @@ class ChessReadinessOverlay(service: Context) {
     private var stepStartedAt = 0L
     private var sleepScore: Int? = null
     private var sleepFromGarmin = false
-    private var stress = 3
-    private var focus = 3
-    private var energy = 3
+    private var stress = 6
+    private var focus = 6
+    private var energy = 6
     private var puzzleIndex = 0
     private var puzzleTimes = emptyList<Int>()
     private var puzzleSolved: Boolean? = null
@@ -258,10 +258,10 @@ class ChessReadinessOverlay(service: Context) {
     }
 
     private fun renderClarity() {
-        dialog.setContent("♟ Chess Readiness", "Step 2 · Rate yourself 1–5") {
-            slider("Stress", "stressed", "calm", stress) { stress = it }
-            slider("Focus", "scattered", "sharp", focus) { focus = it }
-            slider("Energy", "drained", "energized", energy) { energy = it }
+        dialog.setContent("♟ Chess Readiness", "Step 2 · Rate yourself 1–10") {
+            slider("Stress", "stressed", "calm", stress, maxValue = 10) { stress = it }
+            slider("Focus", "scattered", "sharp", focus, maxValue = 10) { focus = it }
+            slider("Energy", "drained", "energized", energy, maxValue = 10) { energy = it }
             primaryButton("Next") {
                 persist(SessionStep.PUZZLE_GO, puzzleIdx = 0)
                 puzzleIndex = 0
@@ -427,10 +427,26 @@ class ChessReadinessOverlay(service: Context) {
             is ChessReadinessEngine.GateStatus.Allowed -> {
                 // History drives the adaptive percentile pass bars; the new
                 // test is appended only after evaluation, so it is not in it.
-                val r = ChessReadinessEngine.evaluate(input, now, history)
+                val r = ChessReadinessEngine.evaluate(
+                    input, now, history,
+                    greenTargetFraction =
+                        ChessReadinessStore.greenTargetPercent(context) / 100.0
+                )
                 ChessReadinessStore.appendTest(
                     context,
-                    ChessReadinessEngine.ReadinessTest(r.timestamp, r.ccrs, r.state.name)
+                    ChessReadinessEngine.ReadinessTest(
+                        timestamp = r.timestamp,
+                        ccrs = r.ccrs,
+                        state = r.state.name,
+                        // v3.1 telemetry — feeds the form-relative baselines
+                        // and the survey calibration of FUTURE tests.
+                        clarityAverage = input.clarityAverage,
+                        puzzleAvgSec = if (input.puzzleTimesSec.isEmpty()) null
+                        else Math.round(input.puzzleTimesSec.average()).toInt(),
+                        rushScore = input.rushScore,
+                        pPuzzle = r.pPuzzle,
+                        pRush = r.pRush
+                    )
                 )
                 // Permanent detailed telemetry log (stats screen source of truth):
                 // full inputs + sub-scores + session duration.
@@ -482,6 +498,17 @@ class ChessReadinessOverlay(service: Context) {
                 ChessReadinessEngine.ThresholdBasis.PERCENTILE
             ) "your last ${r.thresholdSampleSize} tests" else "cold start"
             hint("Pass bar — Green ≥ ${r.greenThreshold} · Yellow ≥ ${r.yellowThreshold} ($basis)")
+            // Survey-calibration transparency: the survey only counts as
+            // much as it has historically deserved.
+            val trustPct = Math.round(r.surveyWeight * 100).toInt()
+            hint(
+                if (r.surveyMae != null)
+                    "Survey trust ${trustPct}% · avg gap ${"%.1f".format(r.surveyMae)} " +
+                        "(last ${r.surveySampleSize} tests)"
+                else
+                    "Survey trust ${trustPct}% — calibrating " +
+                        "(${r.surveySampleSize}/${ChessReadinessEngine.CALIBRATION_MIN_SAMPLES} tests)"
+            )
             spacer(8)
             val validUntil = Instant.ofEpochMilli(r.validUntil)
                 .atZone(ZoneId.systemDefault())

@@ -1,6 +1,8 @@
 package com.example.tail
 
 import com.example.tail.widget.ChessEnforcementPolicy
+import com.example.tail.widget.ChessPhase2Engine
+import com.example.tail.widget.ChessPhase2Store
 import com.example.tail.widget.ChessReadinessEngine
 import com.example.tail.widget.ChessReadinessStore
 import com.example.tail.widget.ReadinessSession
@@ -44,18 +46,32 @@ class ChessEnforcementPolicyTest {
         stepStartedAt = now - updatedMinutesAgo * minute
     )
 
+    private fun audit(
+        minutesAgo: Long,
+        outputState: ChessPhase2Engine.OutputState
+    ) = ChessPhase2Store.Phase2Audit(
+        timestamp = now - minutesAgo * minute,
+        timeControl = "RAPID",
+        outputState = outputState.name,
+        deltaE = -0.5,
+        caps2Accuracy = 60.0,
+        accuracyCounted = true
+    )
+
     private fun evaluate(
         history: List<ChessReadinessEngine.ReadinessTest> = emptyList(),
         session: ReadinessSession? = null,
         penalties: List<ChessEnforcementPolicy.Penalty> = emptyList(),
-        enforcementEnabledAt: Long = enabledAt
+        enforcementEnabledAt: Long = enabledAt,
+        lastAudit: ChessPhase2Store.Phase2Audit? = null
     ): ChessEnforcementPolicy.Decision =
         ChessEnforcementPolicy.evaluate(
             enforcementEnabledAt = enforcementEnabledAt,
             history = history,
             session = session,
             penalties = penalties,
-            now = now
+            now = now,
+            lastAudit = lastAudit
         )
 
     // ── Feature toggle ──────────────────────────────────────────────────
@@ -266,5 +282,89 @@ class ChessEnforcementPolicyTest {
         // User's rule (2026-08-23): an unauthorized game costs the whole
         // next day — the earlier 2-hour deterrent was too easy to sit out.
         assertEquals(24L * 60 * 60 * 1000, ChessEnforcementPolicy.PENALTY_DURATION_MS)
+    }
+
+    // ── Phase 2 audits limiting an active session ────────────────────────
+
+    @Test
+    fun `pivot audit after a green test downgrades to casual-only`() {
+        // The user passed the readiness test, then a bad audited game
+        // PIVOTED the session — re-entering the chess app must show the
+        // yellow casual-only warning, not stay fully unlocked.
+        val decision = evaluate(
+            history = listOf(test(20, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+            lastAudit = audit(10, ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS)
+        )
+        assertTrue(decision is ChessEnforcementPolicy.Decision.Allow)
+        assertEquals(
+            ChessEnforcementPolicy.Reason.YELLOW_SESSION,
+            (decision as ChessEnforcementPolicy.Decision.Allow).reason
+        )
+    }
+
+    @Test
+    fun `terminate audit after a green test blocks until re-test opens`() {
+        val decision = evaluate(
+            history = listOf(test(20, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+            lastAudit = audit(10, ChessPhase2Engine.OutputState.TERMINATE_SESSION)
+        )
+        assertTrue(decision is ChessEnforcementPolicy.Decision.Block)
+        val block = decision as ChessEnforcementPolicy.Decision.Block
+        assertEquals(ChessEnforcementPolicy.Reason.SESSION_TERMINATED, block.reason)
+        // Green test 20 min ago → the 60-min cool-down ends in 40 min.
+        assertEquals(now - 20 * minute + ChessReadinessEngine.COOLDOWN_MS, block.retryAt)
+    }
+
+    @Test
+    fun `continue audit after a green test leaves the session green`() {
+        val decision = evaluate(
+            history = listOf(test(20, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+            lastAudit = audit(10, ChessPhase2Engine.OutputState.CONTINUE_RATED)
+        )
+        assertTrue(decision is ChessEnforcementPolicy.Decision.Allow)
+        assertEquals(
+            ChessEnforcementPolicy.Reason.GREEN_SESSION,
+            (decision as ChessEnforcementPolicy.Decision.Allow).reason
+        )
+    }
+
+    @Test
+    fun `audit older than the last test does not limit the session`() {
+        // The green test came AFTER the audit — a fresh pass re-authorized play.
+        val decision = evaluate(
+            history = listOf(test(5, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+            lastAudit = audit(30, ChessPhase2Engine.OutputState.TERMINATE_SESSION)
+        )
+        assertTrue(decision is ChessEnforcementPolicy.Decision.Allow)
+        assertEquals(
+            ChessEnforcementPolicy.Reason.GREEN_SESSION,
+            (decision as ChessEnforcementPolicy.Decision.Allow).reason
+        )
+    }
+
+    @Test
+    fun `terminate audit after a yellow test blocks casual play too`() {
+        val decision = evaluate(
+            history = listOf(test(15, 60, ChessReadinessEngine.ReadinessState.YELLOW_LIGHT)),
+            lastAudit = audit(5, ChessPhase2Engine.OutputState.TERMINATE_SESSION)
+        )
+        assertTrue(decision is ChessEnforcementPolicy.Decision.Block)
+        assertEquals(
+            ChessEnforcementPolicy.Reason.SESSION_TERMINATED,
+            (decision as ChessEnforcementPolicy.Decision.Block).reason
+        )
+    }
+
+    @Test
+    fun `pivot audit after a yellow test stays casual-only`() {
+        val decision = evaluate(
+            history = listOf(test(15, 60, ChessReadinessEngine.ReadinessState.YELLOW_LIGHT)),
+            lastAudit = audit(5, ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS)
+        )
+        assertTrue(decision is ChessEnforcementPolicy.Decision.Allow)
+        assertEquals(
+            ChessEnforcementPolicy.Reason.YELLOW_SESSION,
+            (decision as ChessEnforcementPolicy.Decision.Allow).reason
+        )
     }
 }

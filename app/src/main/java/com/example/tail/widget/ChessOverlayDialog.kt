@@ -356,20 +356,22 @@ class ChessOverlayDialog(private val context: Context) {
         }
 
         /**
-         * A discrete 5-point slider (1–5). Every point is always reachable —
-         * the SeekBar snaps to integers over max = 4.
+         * A discrete slider over 1..[maxValue] (default 5-point). Every
+         * point is always reachable — the SeekBar snaps to integers over
+         * max = [maxValue] − 1.
          */
         fun slider(
             label: String,
             lowAnchor: String,
             highAnchor: String,
             initial: Int,
+            maxValue: Int = 5,
             onChange: (Int) -> Unit
         ) {
             val wrap = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 
             val valueText = TextView(context).apply {
-                text = "$initial / 5"
+                text = "$initial / $maxValue"
                 setTextColor(C.ACCENT); textSize = 13f
                 setTypeface(null, Typeface.BOLD)
             }
@@ -383,14 +385,14 @@ class ChessOverlayDialog(private val context: Context) {
             wrap.addView(labelRow)
 
             val seek = SeekBar(context).apply {
-                max = 4
-                progress = (initial - 1).coerceIn(0, 4)
+                max = maxValue - 1
+                progress = (initial - 1).coerceIn(0, maxValue - 1)
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(
                         bar: SeekBar?, value: Int, fromUser: Boolean
                     ) {
                         val v = value + 1
-                        valueText.text = "$v / 5"
+                        valueText.text = "$v / $maxValue"
                         onChange(v)
                     }
 

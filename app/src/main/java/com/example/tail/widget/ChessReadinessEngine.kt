@@ -1,5 +1,7 @@
 package com.example.tail.widget
 
+import kotlin.math.abs
+
 /**
  * ════════════════════════════════════════════════════════════════════════
  *  Phase 1 Pre-Session Diagnostic Protocol Engine (spec v3.0)
@@ -36,6 +38,32 @@ package com.example.tail.widget
  *  - COLD START: with fewer than [MIN_HISTORY_SAMPLE] recent tests the
  *    fixed (gentler than v2.1) defaults [COLD_START_GREEN] /
  *    [COLD_START_YELLOW] apply until enough history exists.
+ *
+ * v3.1 changes (user feedback — the rising chess.com puzzle rating makes
+ * the served puzzles harder, mechanically lowering the objective
+ * sub-scores, and the 60th-percentile Green bar passed only ~40% of
+ * attempts):
+ *  - FORM-RELATIVE OBJECTIVE SCORING: the rated-puzzle tiers and the
+ *    Puzzle Rush ratio are now measured against the user's OWN recent
+ *    baselines (recent average solve time / recent median rush score),
+ *    so improvement — which raises puzzle difficulty and the all-time
+ *    high — no longer erodes the composite. The absolute tiers remain
+ *    as the cold-start fallback.
+ *  - USER-ADJUSTABLE PASS-RATE TARGET (corrected same day to ~30%):
+ *    the Green bar sits at the (1 − target) percentile of the recent
+ *    window, so ~target of attempts pass on a stationary distribution
+ *    (default 30% — only top-of-form days clear it); Yellow trails 25
+ *    percentile points below Green. Adjustable in Settings → ♟ Chess
+ *    Readiness, with a warning that discourages frequent changes.
+ *  - 10-POINT SELF-SURVEY: the clarity sliders went from 5 to 10
+ *    positions (stored 1–5 records were migrated ×2 — see
+ *    [scaleSurveyTo10]).
+ *  - CALIBRATION-WEIGHTED SURVEY: how much the self-survey counts now
+ *    depends on how accurately it has historically matched the
+ *    objective results (mean |survey − objective| gap over the last
+ *    ≤ [CALIBRATION_WINDOW] paired tests). Accurate self-reports — good
+ *    OR bad — earn full weight; inflated or noisy reports are shrunk
+ *    toward the objective anchor, so over-rating yourself never pays.
  *
  * The engine is PURE — no Android dependencies — so it is unit-testable.
  * Persistence lives in [ChessReadinessStore]; UI lives in
@@ -123,11 +151,63 @@ object ChessReadinessEngine {
     const val COLD_START_GREEN = 75
     const val COLD_START_YELLOW = 55
 
-    /** Which percentile of the recent window maps to the GREEN bar. */
-    const val GREEN_PERCENTILE = 0.60
+    /**
+     * The share of readiness tests that should pass GREEN — the user's
+     * target pass rate, ADJUSTABLE IN SETTINGS (Settings → ♟ Chess
+     * Readiness → Green Pass-Rate Target; changes are discouraged with
+     * a stability warning). The Green bar is placed at the
+     * (1 − target) percentile of the recent window so that, on a
+     * stationary score distribution, ~target of attempts clear it.
+     * Default 0.30 — the corrected request ("only let me play ~30% of
+     * the time, at the top of my form"); the original "~70%" was a
+     * misspeak for the opposite.
+     */
+    const val DEFAULT_GREEN_TARGET = 0.30
 
-    /** Which percentile of the recent window maps to the YELLOW bar. */
-    const val YELLOW_PERCENTILE = 0.35
+    /** Allowed range for the user-set Green pass-rate target (fraction). */
+    const val MIN_GREEN_TARGET = 0.05
+    const val MAX_GREEN_TARGET = 0.95
+
+    /**
+     * Green-bar percentile derived from a target pass fraction: the
+     * (1 − target) percentile, so ~target of a stationary distribution
+     * clears the bar.
+     */
+    fun greenPercentileFor(targetFraction: Double): Double =
+        1.0 - targetFraction.coerceIn(MIN_GREEN_TARGET, MAX_GREEN_TARGET)
+
+    /**
+     * Yellow-bar percentile derived from a target pass fraction: always
+     * 25 percentile points below the Green bar, keeping a casual-only
+     * band for roughly the next ~25% of attempts.
+     */
+    fun yellowPercentileFor(targetFraction: Double): Double =
+        (greenPercentileFor(targetFraction) - 0.25).coerceAtLeast(0.02)
+
+    // ── Form-relative baselines (v3.1) ────────────────────────────────────
+
+    /** How many recent tests feed the puzzle-time / rush-score baselines. */
+    const val BASELINE_WINDOW = 10
+
+    /** Minimum recent samples before the relative baselines replace cold start. */
+    const val MIN_BASELINE_SAMPLES = 3
+
+    // ── Survey calibration (v3.1) ─────────────────────────────────────────
+
+    /** How many paired tests (survey + objective) feed the calibration metric. */
+    const val CALIBRATION_WINDOW = 20
+
+    /** Minimum paired samples before the survey is down-weighted at all. */
+    const val CALIBRATION_MIN_SAMPLES = 6
+
+    /**
+     * Mean |survey − objective| gap (on the 0–10 scale) at which the
+     * survey weight bottoms out at [CALIBRATION_MIN_WEIGHT].
+     */
+    const val CALIBRATION_MAE_FULL = 3.0
+
+    /** Floor for the survey weight — the self-report always keeps some voice. */
+    const val CALIBRATION_MIN_WEIGHT = 0.35
 
     // ── Input models ───────────────────────────────────────────────────────
 
@@ -173,22 +253,34 @@ object ChessReadinessEngine {
     }
 
     /**
-     * Maps the raw 1–5 clarity slider answers (stress / focus / energy) to
-     * the 0–10 "higher = better" clarity average consumed by
+     * Maps the raw 1–10 clarity slider answers (stress / focus / energy)
+     * to the 0–10 "higher = better" clarity average consumed by
      * [clarityPoints].
      *
-     * All three sliders share one convention — the positive end is 5 on
-     * the right: stress 1 = very stressed → 0 … 5 = very calm → 10, and
-     * focus / energy map 1 → 0 … 5 → 10. With three discrete 5-point
-     * sliders every value is always selectable (no missed ticks).
+     * All three sliders share one convention — the positive end is 10 on
+     * the right: stress 1 = very stressed → 0 … 10 = very calm → 10, and
+     * focus / energy map 1 → 0 … 10 → 10. The mapping (v − 1) · 10/9
+     * keeps both endpoints exact and every one of the 10 positions
+     * distinct. (v3.0 stored 1–5 sliders; persisted records were
+     * migrated ×2 so the stored scale matches — see [scaleSurveyTo10].)
      */
     fun clarityAverageFromSliders(stress: Int, focus: Int, energy: Int): Double {
-        fun to10(v: Int): Double = (v.coerceIn(1, 5) - 1) * 2.5
+        fun to10(v: Int): Double = (v.coerceIn(1, 10) - 1) * (10.0 / 9.0)
         val calm10 = to10(stress)
         val focus10 = to10(focus)
         val energy10 = to10(energy)
         return (calm10 + focus10 + energy10) / 3.0
     }
+
+    /**
+     * One-time 5-point → 10-point survey migration: a stored slider value
+     * 1–5 doubles to 2–10; 0 (the "no data" sentinel of legacy seeded
+     * records) and anything already on the 10-point scale pass through
+     * untouched. Used by both persistence layers ([ChessReadinessStore]
+     * for in-progress sessions, [ChessReadinessLogStore] for the
+     * permanent telemetry log).
+     */
+    fun scaleSurveyTo10(value: Int): Int = if (value in 1..5) value * 2 else value
 
     /** All questionnaire inputs for a single Phase 1 test submission. */
     data class ReadinessInput(
@@ -267,7 +359,19 @@ object ChessReadinessEngine {
         /** Composite score 0–100. */
         val ccrs: Int,
         /** Authorization state name (see [ReadinessState]). */
-        val state: String
+        val state: String,
+        // ── Optional telemetry (v3.1) — drives the form-relative baselines
+        // and the survey-calibration weighting. Null on legacy records.
+        /** Survey clarity average 0–10 reported with this test. */
+        val clarityAverage: Double? = null,
+        /** Average effective rated-puzzle solve time (seconds). */
+        val puzzleAvgSec: Int? = null,
+        /** Puzzle Rush score reported with this test. */
+        val rushScore: Int? = null,
+        /** Rated-puzzle sub-score 0–25. */
+        val pPuzzle: Int? = null,
+        /** Puzzle-Rush sub-score 0–25. */
+        val pRush: Int? = null
     )
 
     /** What the adaptive thresholds were derived from. */
@@ -304,7 +408,18 @@ object ChessReadinessEngine {
         /** Whether the bars came from recent-history percentiles. */
         val thresholdBasis: ThresholdBasis,
         /** How many recent tests fed the percentiles (0 for cold start). */
-        val thresholdSampleSize: Int
+        val thresholdSampleSize: Int,
+        // ── Survey calibration transparency (v3.1) ──
+        /** The clarity average the user actually reported (0–10). */
+        val clarityReported: Double,
+        /** The clarity average used for scoring, after calibration shrinkage. */
+        val clarityEffective: Double,
+        /** How much weight the survey carried ([CALIBRATION_MIN_WEIGHT], 1]. */
+        val surveyWeight: Double,
+        /** Mean |survey − objective| gap behind the weight (null = too few samples). */
+        val surveyMae: Double?,
+        /** How many paired tests fed the calibration (may be < [CALIBRATION_MIN_SAMPLES]). */
+        val surveySampleSize: Int
     )
 
     /**
@@ -352,8 +467,9 @@ object ChessReadinessEngine {
      *  1. Take the tests submitted inside the last [HISTORY_WINDOW_DAYS]
      *     days (at most the newest [HISTORY_WINDOW_TESTS] of them).
      *  2. If fewer than [MIN_HISTORY_SAMPLE] remain → cold-start defaults.
-     *  3. Otherwise GREEN = [GREEN_PERCENTILE]-percentile and
-     *     YELLOW = [YELLOW_PERCENTILE]-percentile of those scores,
+     *  3. Otherwise GREEN = [greenPercentileFor]-percentile and
+     *     YELLOW = [yellowPercentileFor]-percentile of those scores
+     *     (both derived from [greenTargetFraction]),
      *     clamped to [[GREEN_FLOOR], [ABSOLUTE_GREEN]] and
      *     [[YELLOW_FLOOR], [ABSOLUTE_YELLOW]] respectively.
      *
@@ -364,7 +480,11 @@ object ChessReadinessEngine {
      * a run of weak tests automatically lowers the bar — "relatively
      * better than usual" becomes enough to play.
      */
-    fun computeThresholds(history: List<ReadinessTest>, now: Long): ReadinessThreshold {
+    fun computeThresholds(
+        history: List<ReadinessTest>,
+        now: Long,
+        greenTargetFraction: Double = DEFAULT_GREEN_TARGET
+    ): ReadinessThreshold {
         val cutoff = now - HISTORY_WINDOW_DAYS * 24L * 60 * 60 * 1000
         val window = history
             .filter { it.timestamp >= cutoff && it.timestamp <= now }
@@ -381,10 +501,10 @@ object ChessReadinessEngine {
             )
         }
 
-        val green = percentileOf(window, GREEN_PERCENTILE)
+        val green = percentileOf(window, greenPercentileFor(greenTargetFraction))
             .toInt()
             .coerceIn(GREEN_FLOOR, ABSOLUTE_GREEN)
-        val yellow = percentileOf(window, YELLOW_PERCENTILE)
+        val yellow = percentileOf(window, yellowPercentileFor(greenTargetFraction))
             .toInt()
             .coerceIn(YELLOW_FLOOR, ABSOLUTE_YELLOW)
             // Defensive: keep YELLOW strictly below GREEN so the casual
@@ -498,8 +618,23 @@ object ChessReadinessEngine {
     /**
      * Sub-component 3: Cold-Start Tactical Score over the standard rated
      * puzzles. The caller passes one effective time per puzzle (a failed
-     * puzzle = [PUZZLE_FAIL_TIME_SEC]); the average maps to points across
-     * 7 speed tiers — quickness/slowness now matters in fine steps:
+     * puzzle = [PUZZLE_FAIL_TIME_SEC]).
+     *
+     * With [recentAvgSec] — the user's own recent average solve time, see
+     * [recentPuzzleAvgSec] — the score measures FORM: the ratio of
+     * today's average to the user's recent typical, so a rising chess.com
+     * puzzle rating (harder served puzzles → mechanically slower times)
+     * no longer erodes this component:
+     *  - ratio < 0.55 → 25   (much sharper than usual)
+     *  - < 0.75       → 21
+     *  - < 0.95       → 17
+     *  - < 1.15       → 13
+     *  - < 1.40       → 9
+     *  - < 1.70       → 4
+     *  - otherwise    → 0    (clearly off form / failing)
+     *
+     * Without a baseline (cold start, legacy records) the absolute speed
+     * tiers apply as before:
      *  - avg < 30 s  → 25   (blitz-sharp)
      *  - < 45 s      → 21
      *  - < 60 s      → 17
@@ -508,9 +643,21 @@ object ChessReadinessEngine {
      *  - < 150 s     → 4
      *  - otherwise   → 0    (grinding / failing)
      */
-    fun ratedPuzzleScore(timesSec: List<Int>): Int {
+    fun ratedPuzzleScore(timesSec: List<Int>, recentAvgSec: Double? = null): Int {
         if (timesSec.isEmpty()) return 0
         val avg = timesSec.map { it.coerceAtLeast(0) }.average()
+        if (recentAvgSec != null && recentAvgSec > 0.0) {
+            val ratio = avg / recentAvgSec
+            return when {
+                ratio < 0.55 -> 25
+                ratio < 0.75 -> 21
+                ratio < 0.95 -> 17
+                ratio < 1.15 -> 13
+                ratio < 1.40 -> 9
+                ratio < 1.70 -> 4
+                else -> 0
+            }
+        }
         return when {
             avg < 30 -> 25
             avg < 45 -> 21
@@ -525,14 +672,25 @@ object ChessReadinessEngine {
     /**
      * Sub-component 4: 3-Minute Puzzle Rush Score.
      *
-     * The ratio of this run to the effective baseline (all-time best with a
-     * cold-start floor) picks one of 6 bands (25 / 21 / 17 / 13 / 8 / 4 / 0);
-     * each strike then deducts [RUSH_STRIKE_PENALTY] points from the band,
-     * floored at 0. This keeps a strong run that happens to include
-     * mistakes from being zeroed out.
+     * The ratio of this run to the effective baseline picks one of 6 bands
+     * (25 / 21 / 17 / 13 / 8 / 4 / 0); each strike then deducts
+     * [RUSH_STRIKE_PENALTY] points from the band, floored at 0. This
+     * keeps a strong run that happens to include mistakes from being
+     * zeroed out.
+     *
+     * v3.1: when [recentMedian] — the median of the user's own recent
+     * rush scores, see [recentRushMedian] — is available it replaces the
+     * all-time high as the baseline. The all-time high only ever ratchets
+     * UP (a max grows faster than typical performance), so the typical
+     * ratio decayed over time; the recent median tracks current form and
+     * is immune to that ratchet. The all-time high (with its cold-start
+     * floor) remains the fallback baseline.
      */
-    fun rushScore(score: Int, allTimeHigh: Int, strikes: Int): Int {
-        val effectiveBaseline = maxOf(allTimeHigh, RUSH_BASELINE_FLOOR)
+    fun rushScore(score: Int, allTimeHigh: Int, strikes: Int, recentMedian: Int? = null): Int {
+        val effectiveBaseline = if (recentMedian != null && recentMedian >= RUSH_BASELINE_FLOOR)
+            recentMedian
+        else
+            maxOf(allTimeHigh, RUSH_BASELINE_FLOOR)
         val ratio = score.toDouble() / effectiveBaseline
         val band = when {
             ratio >= 0.90 -> 25
@@ -555,6 +713,104 @@ object ChessReadinessEngine {
     fun nextAllTimeHigh(current: Int, submittedScore: Int): Int =
         maxOf(current, submittedScore.coerceAtLeast(0))
 
+    // ── Form-relative baselines & survey calibration (v3.1) ───────────────
+
+    /**
+     * Mean of the last ≤ [BASELINE_WINDOW] recorded puzzle averages
+     * (null = not enough samples → absolute-tier cold start).
+     */
+    fun recentPuzzleAvgSec(history: List<ReadinessTest>): Double? =
+        history.mapNotNull { it.puzzleAvgSec?.takeIf { v -> v > 0 } }
+            .takeLast(BASELINE_WINDOW)
+            .let { if (it.size >= MIN_BASELINE_SAMPLES) it.average() else null }
+
+    /**
+     * Median of the last ≤ [BASELINE_WINDOW] recorded rush scores
+     * (null = not enough samples → all-time-high cold start).
+     */
+    fun recentRushMedian(history: List<ReadinessTest>): Int? {
+        val scores = history.mapNotNull { it.rushScore?.takeIf { v -> v > 0 } }
+            .takeLast(BASELINE_WINDOW)
+        if (scores.size < MIN_BASELINE_SAMPLES) return null
+        val sorted = scores.sorted()
+        val mid = sorted.size / 2
+        return if (sorted.size % 2 == 1) sorted[mid]
+        else Math.round((sorted[mid - 1] + sorted[mid]) / 2.0).toInt()
+    }
+
+    /** Survey-vs-objective calibration state for one evaluation. */
+    data class SurveyCalibration(
+        /**
+         * The weight the current self-survey deserves in
+         * [effectiveClarityAverage], in [CALIBRATION_MIN_WEIGHT, 1].
+         */
+        val weight: Double,
+        /**
+         * Mean |survey − objective| gap over the paired window, on the
+         * 0–10 scale. Null when too few paired samples exist (weight is
+         * then the neutral 1.0).
+         */
+        val mae: Double?,
+        /** How many paired tests fed the metric. */
+        val sampleSize: Int,
+        /**
+         * Mean objective level of the paired window (0–10) — the anchor
+         * an uncalibrated survey is shrunk toward. Null when weight is
+         * the neutral default.
+         */
+        val objectiveAnchor: Double?
+    )
+
+    /**
+     * Measures how accurately the user's self-survey has been representing
+     * their actual objective results (rated puzzles + Puzzle Rush, mapped
+     * to the same 0–10 scale) and converts that accuracy into the weight
+     * the survey deserves on the NEXT test:
+     *
+     *  - pairs = (clarityAverage, (pPuzzle + pRush) / 5) of the last
+     *    ≤ [CALIBRATION_WINDOW] tests that carry both values;
+     *  - MAE = mean |survey − objective| — this catches BOTH noise (reports
+     *    that don't covary with results) and level bias (consistently
+     *    inflated reports), unlike a plain correlation which is blind to
+     *    uniform inflation;
+     *  - weight = [CALIBRATION_MIN_WEIGHT] + (1 − MIN) · clamp(1 − MAE /
+     *    [CALIBRATION_MAE_FULL]) — perfect representation → 1.0, ≥ 3
+     *    points mean error → the floor.
+     *
+     * With fewer than [CALIBRATION_MIN_SAMPLES] pairs the neutral default
+     * (weight 1.0, no anchor) applies — the survey is trusted until there
+     * is evidence it shouldn't be.
+     */
+    fun surveyCalibration(history: List<ReadinessTest>): SurveyCalibration {
+        val pairs = history
+            .filter { it.clarityAverage != null && it.pPuzzle != null && it.pRush != null }
+            .takeLast(CALIBRATION_WINDOW)
+            .map { it.clarityAverage!! to (it.pPuzzle!! + it.pRush!!) / 5.0 }
+        if (pairs.size < CALIBRATION_MIN_SAMPLES) {
+            return SurveyCalibration(weight = 1.0, mae = null, sampleSize = pairs.size, objectiveAnchor = null)
+        }
+        val mae = pairs.sumOf { abs(it.first - it.second) } / pairs.size
+        val anchor = pairs.sumOf { it.second } / pairs.size
+        val weight = CALIBRATION_MIN_WEIGHT +
+            (1.0 - CALIBRATION_MIN_WEIGHT) * (1.0 - mae / CALIBRATION_MAE_FULL).coerceIn(0.0, 1.0)
+        return SurveyCalibration(weight, mae, pairs.size, anchor)
+    }
+
+    /**
+     * The clarity average actually used for scoring: the reported value
+     * blended with the objective anchor according to the calibration
+     * weight. A fully calibrated survey passes through untouched; an
+     * uninformative one is shrunk toward the level the objective results
+     * say is real — so inflating the sliders never buys clarity points,
+     * and honest low reports during a slump keep the survey's full voice.
+     */
+    fun effectiveClarityAverage(reported: Double, calibration: SurveyCalibration): Double {
+        val r = reported.coerceIn(0.0, 10.0)
+        val anchor = calibration.objectiveAnchor ?: return r
+        return (calibration.weight * r + (1.0 - calibration.weight) * anchor)
+            .coerceIn(0.0, 10.0)
+    }
+
     // ── Master evaluation ──────────────────────────────────────────────────
 
     /**
@@ -570,15 +826,21 @@ object ChessReadinessEngine {
     fun evaluate(
         input: ReadinessInput,
         now: Long,
-        history: List<ReadinessTest> = emptyList()
+        history: List<ReadinessTest> = emptyList(),
+        greenTargetFraction: Double = DEFAULT_GREEN_TARGET
     ): ReadinessResult {
         val sSleep = sleepPoints(input.sleepScore)
-        val sClarity = clarityPoints(input.clarityAverage)
-        val pPuzzle = ratedPuzzleScore(input.puzzleTimesSec)
-        val pRush = rushScore(input.rushScore, input.rushAllTimeHigh, input.rushStrikes)
+        val calibration = surveyCalibration(history)
+        val clarityEffective = effectiveClarityAverage(input.clarityAverage, calibration)
+        val sClarity = clarityPoints(clarityEffective)
+        val pPuzzle = ratedPuzzleScore(input.puzzleTimesSec, recentPuzzleAvgSec(history))
+        val pRush = rushScore(
+            input.rushScore, input.rushAllTimeHigh, input.rushStrikes,
+            recentRushMedian(history)
+        )
 
         val ccrs = (sSleep + sClarity + pPuzzle + pRush).coerceIn(0, 100)
-        val threshold = computeThresholds(history, now)
+        val threshold = computeThresholds(history, now, greenTargetFraction)
         return ReadinessResult(
             timestamp = now,
             ccrs = ccrs,
@@ -591,7 +853,12 @@ object ChessReadinessEngine {
             greenThreshold = threshold.green,
             yellowThreshold = threshold.yellow,
             thresholdBasis = threshold.basis,
-            thresholdSampleSize = threshold.sampleSize
+            thresholdSampleSize = threshold.sampleSize,
+            clarityReported = input.clarityAverage.coerceIn(0.0, 10.0),
+            clarityEffective = clarityEffective,
+            surveyWeight = calibration.weight,
+            surveyMae = calibration.mae,
+            surveySampleSize = calibration.sampleSize
         )
     }
 }

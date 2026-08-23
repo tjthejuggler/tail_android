@@ -44,6 +44,14 @@ object ChessReadinessLogStore {
     private const val KEY_BACKFILL_AT = "backfillAt"
 
     /**
+     * One-time 5→10 point survey migration marker: tests written before
+     * v3.1 stored stress/focus/energy on the 1–5 scale; on first touch
+     * after the upgrade every stored value is doubled (see
+     * [ChessReadinessEngine.scaleSurveyTo10]) and this flag is set.
+     */
+    private const val KEY_SURVEY_SCALE10 = "surveyScale10"
+
+    /**
      * Soft cap on stored events (oldest are trimmed first). Generous on
      * purpose: the one-time full-history backfill must be able to hold a
      * user's ENTIRE chess.com game history, not just recent months.
@@ -93,6 +101,7 @@ object ChessReadinessLogStore {
         )
         synchronized(lock) {
             val root = readRoot(context)
+            migrateSurveyScaleLocked(root)
             val arr = root.optJSONArray(KEY_TESTS) ?: JSONArray()
             arr.put(encodeTest(record))
             root.put(KEY_TESTS, arr)
@@ -118,6 +127,7 @@ object ChessReadinessLogStore {
         val newEntries = ArrayList<Triple<String, Long, Boolean>>() // key, endMs, rated
         synchronized(lock) {
             val root = readRoot(context)
+            val migrated = migrateSurveyScaleLocked(root)
             val seeded = seedLegacyTestsLocked(context, root)
             val gamesArr = root.optJSONArray(KEY_GAMES) ?: JSONArray()
             val keyIndex = HashMap<String, Int>(gamesArr.length())
@@ -151,7 +161,7 @@ object ChessReadinessLogStore {
                 newEntries.add(Triple(key, record.endTimeMs, record.rated))
             }
             root.put(KEY_GAMES, gamesArr)
-            if (added > 0 || seeded || upgraded) writeRoot(context, root)
+            if (added > 0 || seeded || upgraded || migrated) writeRoot(context, root)
         }
         // Outside the file lock — the detector writes to its own prefs
         // store and must never break or block the logging path.
@@ -176,7 +186,9 @@ object ChessReadinessLogStore {
     fun ensureSeeded(context: Context) {
         synchronized(lock) {
             val root = readRoot(context)
-            if (seedLegacyTestsLocked(context, root)) writeRoot(context, root)
+            val migrated = migrateSurveyScaleLocked(root)
+            val seeded = seedLegacyTestsLocked(context, root)
+            if (seeded || migrated) writeRoot(context, root)
         }
     }
 
@@ -259,7 +271,11 @@ object ChessReadinessLogStore {
     // ── Reading ─────────────────────────────────────────────────────────────
 
     fun loadTests(context: Context): List<ReadinessTestRecord> =
-        synchronized(lock) { loadTestsLocked(readRoot(context)) }
+        synchronized(lock) {
+            val root = readRoot(context)
+            if (migrateSurveyScaleLocked(root)) writeRoot(context, root)
+            loadTestsLocked(root)
+        }
 
     fun loadGames(context: Context): List<ReadinessGameRecord> =
         synchronized(lock) {
@@ -288,6 +304,27 @@ object ChessReadinessLogStore {
         if (f.exists()) JSONObject(f.readText()) else JSONObject()
     } catch (_: Exception) {
         JSONObject() // corrupt file → start fresh rather than crash logging
+    }
+
+    /**
+     * Doubles every stored 1–5 survey value to the 10-point scale (idem-
+     * potent via [KEY_SURVEY_SCALE10]). Values of 0 are the "no data"
+     * sentinel of legacy seeded records and pass through untouched. True
+     * when the root was mutated and needs persisting.
+     */
+    private fun migrateSurveyScaleLocked(root: JSONObject): Boolean {
+        if (root.optBoolean(KEY_SURVEY_SCALE10, false)) return false
+        val arr = root.optJSONArray(KEY_TESTS)
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                for (key in listOf("stress", "focus", "energy")) {
+                    o.put(key, ChessReadinessEngine.scaleSurveyTo10(o.optInt(key, 0)))
+                }
+            }
+        }
+        root.put(KEY_SURVEY_SCALE10, true)
+        return true
     }
 
     /** Persists the root, trimming the oldest events past [MAX_EVENTS]. */
@@ -348,9 +385,9 @@ object ChessReadinessLogStore {
             pRush = o.optInt("pRush", 0),
             sleepScore = o.optInt("sleepScore", 0),
             sleepFromGarmin = o.optBoolean("sleepFromGarmin", false),
-            stress = o.optInt("stress", 3),
-            focus = o.optInt("focus", 3),
-            energy = o.optInt("energy", 3),
+            stress = o.optInt("stress", 6),
+            focus = o.optInt("focus", 6),
+            energy = o.optInt("energy", 6),
             puzzleTimesSec = o.optJSONArray("puzzleTimesSec")?.let { arr ->
                 (0 until arr.length()).map { arr.getInt(it) }
             } ?: emptyList(),

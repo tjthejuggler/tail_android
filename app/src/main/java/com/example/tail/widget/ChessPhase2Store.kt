@@ -155,6 +155,10 @@ object ChessPhase2Store {
             })
         }
         prefs(context).edit().putString(KEY_AUDITS, arr.toString()).apply()
+        // The newest audit can flip the enforcement decision (a PIVOT or
+        // TERMINATE verdict after the last test limits the session) —
+        // keep the guard and external automation in sync.
+        ChessGuardNotifier.notifyStateChange(context)
     }
 
     /** The most recent audit of a specific chess.com game, or null (re-share detection). */

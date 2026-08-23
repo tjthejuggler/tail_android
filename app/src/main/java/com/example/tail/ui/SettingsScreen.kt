@@ -2422,6 +2422,92 @@ private fun ChessReadinessSettingsSection(
                 }
             }
 
+            // Green pass-rate target — how often the gate should let you
+            // through. User-adjustable, but changing it is deliberately
+            // friction-loaded: the confirm step shows how long the current
+            // target has been held and how much evidence has accumulated
+            // under it, because frequent changes make it impossible to see
+            // how the rating responds to a given pass rate.
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Green Pass-Rate Target", fontSize = 14.sp)
+            Text(
+                "The share of your readiness tests that should end GREEN " +
+                    "(rated play authorized). The Green bar is placed so that, " +
+                    "on average, about this share of attempts pass — lower = " +
+                    "stricter. The Yellow casual-only band always covers " +
+                    "roughly the next 25% below it.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            var greenTarget by remember {
+                mutableStateOf(ChessReadinessStore.greenTargetPercent(context))
+            }
+            var pendingGreenTarget by remember { mutableStateOf<Int?>(null) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "$greenTarget%",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    modifier = Modifier.width(48.dp)
+                )
+                Slider(
+                    value = greenTarget.toFloat(),
+                    onValueChange = { greenTarget = (it / 5f).toInt() * 5 },
+                    valueRange = 5f..95f,
+                    steps = 17, // snaps to 5% increments (5, 10, …, 95)
+                    modifier = Modifier.weight(1f)
+                )
+                Button(onClick = { pendingGreenTarget = greenTarget }) {
+                    Text("Apply", fontSize = 12.sp)
+                }
+            }
+            pendingGreenTarget?.let { pending ->
+                val changedAt = remember(pending) {
+                    ChessReadinessStore.greenTargetChangedAt(context)
+                }
+                val evidence = remember(pending) {
+                    val tests = ChessReadinessStore.loadHistory(context)
+                        .count { changedAt == 0L || it.timestamp >= changedAt }
+                    val games = com.example.tail.widget.ChessReadinessLogStore
+                        .loadGames(context)
+                        .count { changedAt == 0L || it.endTimeMs >= changedAt }
+                    tests to games
+                }
+                val heldDays = if (changedAt > 0L) {
+                    (System.currentTimeMillis() - changedAt) / 86_400_000L
+                } else -1L
+                Text(
+                    "⚠ Frequent changes make it impossible to tell how your " +
+                        "rating responds to a given pass rate — hold one value " +
+                        "long enough to log plenty of games (a few weeks at " +
+                        "least)." +
+                        if (heldDays >= 0) " Current target held for $heldDays " +
+                            "day(s): ${evidence.first} test(s) and " +
+                            "${evidence.second} game(s) logged under it."
+                        else " No change recorded yet: ${evidence.first} " +
+                            "test(s) and ${evidence.second} game(s) logged.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row {
+                    Button(onClick = {
+                        ChessReadinessStore.saveGreenTargetPercent(context, pending)
+                        pendingGreenTarget = null
+                    }) {
+                        Text("Confirm change", fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedButton(onClick = {
+                        greenTarget = ChessReadinessStore.greenTargetPercent(context)
+                        pendingGreenTarget = null
+                    }) {
+                        Text("Cancel", fontSize = 12.sp)
+                    }
+                }
+            }
+
             // 3-Minute Puzzle Rush all-time best (readiness baseline)
             Spacer(modifier = Modifier.height(12.dp))
             Text("3-Minute Puzzle Rush — All-Time Best", fontSize = 14.sp)

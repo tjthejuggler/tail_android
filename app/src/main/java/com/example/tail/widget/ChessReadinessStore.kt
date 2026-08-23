@@ -35,7 +35,7 @@ data class ReadinessSession(
     /** Sleep score 0–100 from Garmin, or entered manually (null = not yet). */
     val sleepScore: Int?,
     val sleepFromGarmin: Boolean,
-    /** Clarity slider answers, raw 1–5 (stress / focus / energy; empty = not yet answered). */
+    /** Clarity slider answers, raw 1–10 (stress / focus / energy; empty = not yet answered). */
     val clarityScores: List<Int>,
     /** Effective solve times of the puzzles completed so far. */
     val puzzleTimesSec: List<Int>,
@@ -87,7 +87,13 @@ object ChessReadinessStore {
                 ChessReadinessEngine.ReadinessTest(
                     timestamp = o.getLong("timestamp"),
                     ccrs = o.getInt("ccrs"),
-                    state = o.optString("state", "")
+                    state = o.optString("state", ""),
+                    // Optional v3.1 telemetry — absent on legacy records.
+                    clarityAverage = o.optNullableDouble("clarityAverage"),
+                    puzzleAvgSec = o.optNullableInt("puzzleAvgSec"),
+                    rushScore = o.optNullableInt("rushScore"),
+                    pPuzzle = o.optNullableInt("pPuzzle"),
+                    pRush = o.optNullableInt("pRush")
                 )
             }
         } catch (_: Exception) {
@@ -105,6 +111,11 @@ object ChessReadinessStore {
                 put("timestamp", it.timestamp)
                 put("ccrs", it.ccrs)
                 put("state", it.state)
+                it.clarityAverage?.let { v -> put("clarityAverage", v) }
+                it.puzzleAvgSec?.let { v -> put("puzzleAvgSec", v) }
+                it.rushScore?.let { v -> put("rushScore", v) }
+                it.pPuzzle?.let { v -> put("pPuzzle", v) }
+                it.pRush?.let { v -> put("pRush", v) }
             })
         }
         prefs(context).edit().putString(KEY_HISTORY, arr.toString()).apply()
@@ -178,7 +189,11 @@ object ChessReadinessStore {
                     // Sessions saved before the anchor flip stored stress
                     // inverted (1 = calm); the marker below is only written
                     // by the new convention.
-                    legacyStressInverted = !o.optBoolean("clarityV2", false)
+                    legacyStressInverted = !o.optBoolean("clarityV2", false),
+                    // Sessions saved before the 10-point survey stored 1–5
+                    // sliders; the marker below is only written by the new
+                    // convention.
+                    legacyFivePoint = !o.optBoolean("clarityV3", false)
                 ),
                 puzzleTimesSec = o.optJSONArray("puzzleTimesSec")?.let { arr ->
                     (0 until arr.length()).map { arr.getInt(it) }
@@ -205,6 +220,7 @@ object ChessReadinessStore {
             put("sleepFromGarmin", session.sleepFromGarmin)
             put("clarityScores", JSONArray(session.clarityScores))
             put("clarityV2", true)
+            put("clarityV3", true)
             put("puzzleTimesSec", JSONArray(session.puzzleTimesSec))
             put("stepStartedAt", session.stepStartedAt)
         }
@@ -235,6 +251,40 @@ object ChessReadinessStore {
             .putLong(KEY_ENFORCEMENT_ENABLED_AT, if (enabled) System.currentTimeMillis() else 0L)
             .apply()
         ChessGuardNotifier.notifyStateChange(context)
+    }
+
+    // ── Green pass-rate target (user setting) ─────────────────────────────
+
+    private const val KEY_GREEN_TARGET = "greenTargetPercent"
+    private const val KEY_GREEN_TARGET_AT = "greenTargetChangedAt"
+
+    /**
+     * The user's target share of GREEN readiness outcomes, in whole
+     * percent (5–95). Drives the adaptive Green bar via
+     * [ChessReadinessEngine.greenPercentileFor]. Default 30%.
+     */
+    fun greenTargetPercent(context: Context): Int =
+        prefs(context).getInt(KEY_GREEN_TARGET, (ChessReadinessEngine.DEFAULT_GREEN_TARGET * 100).toInt())
+
+    /** Epoch ms the target was last changed (0 = never changed). */
+    fun greenTargetChangedAt(context: Context): Long =
+        prefs(context).getLong(KEY_GREEN_TARGET_AT, 0L)
+
+    /**
+     * Saves a new Green pass-rate target (whole percent, clamped to
+     * 5–95) and stamps the change moment — the settings UI warns
+     * against changing it too often, using this stamp plus the count
+     * of tests and games logged since.
+     */
+    fun saveGreenTargetPercent(context: Context, percent: Int) {
+        val p = percent.coerceIn(
+            (ChessReadinessEngine.MIN_GREEN_TARGET * 100).toInt(),
+            (ChessReadinessEngine.MAX_GREEN_TARGET * 100).toInt()
+        )
+        prefs(context).edit()
+            .putInt(KEY_GREEN_TARGET, p)
+            .putLong(KEY_GREEN_TARGET_AT, System.currentTimeMillis())
+            .apply()
     }
 
     /**
@@ -307,24 +357,45 @@ object ChessReadinessStore {
 
     /**
      * Normalizes persisted clarity answers to the current 3-slider format
-     * (stress / focus / energy, each 1–5, positive end = 5). Legacy
+     * (stress / focus / energy, each 1–10, positive end = 10). Legacy
      * sessions stored four 0–10 values (focus / calm / energy / alertness)
      * — those are converted; 3-slider sessions written before the anchor
      * flip stored stress inverted (1 = calm) and are re-inverted via
-     * [legacyStressInverted]; anything else is dropped (the user simply
-     * re-answers the step).
+     * [legacyStressInverted]; sessions written before the 10-point survey
+     * (v3.1) stored 1–5 sliders and are doubled via
+     * [ChessReadinessEngine.scaleSurveyTo10] when [legacyFivePoint];
+     * anything else is dropped (the user simply re-answers the step).
      */
     private fun normalizeClarity(
         raw: List<Int>,
-        legacyStressInverted: Boolean = false
-    ): List<Int> = when {
-        raw.size == 3 && raw.all { it in 1..5 } ->
-            if (legacyStressInverted) listOf(6 - raw[0], raw[1], raw[2]) else raw
-        raw.size == 4 -> listOf(
-            Math.round(raw[1] / 2.0).toInt().coerceIn(1, 5), // calm 0–10 → stress 1–5 (5 = calm)
-            Math.round(raw[0] / 2.0).toInt().coerceIn(1, 5), // focus
-            Math.round(raw[2] / 2.0).toInt().coerceIn(1, 5)  // energy
-        )
-        else -> emptyList()
+        legacyStressInverted: Boolean = false,
+        legacyFivePoint: Boolean = false
+    ): List<Int> {
+        val base = when {
+            raw.size == 3 && raw.all { it in 1..10 } ->
+                // The pre-anchor-flip inversion only ever produced 1–5
+                // values — never touch an already-10-point session.
+                if (legacyStressInverted && raw.all { it in 1..5 })
+                    listOf(6 - raw[0], raw[1], raw[2])
+                else raw
+            raw.size == 4 -> listOf(
+                Math.round(raw[1] / 2.0).toInt().coerceIn(1, 5), // calm 0–10 → stress 1–5 (5 = calm)
+                Math.round(raw[0] / 2.0).toInt().coerceIn(1, 5), // focus
+                Math.round(raw[2] / 2.0).toInt().coerceIn(1, 5)  // energy
+            )
+            else -> emptyList()
+        }
+        if (base.isEmpty()) return base
+        val scaled = if (legacyFivePoint)
+            base.map { ChessReadinessEngine.scaleSurveyTo10(it) }
+        else base
+        return if (scaled.all { it in 1..10 }) scaled else emptyList()
     }
 }
+
+/** Nullable JSON readers for the optional v3.1 history telemetry. */
+private fun JSONObject.optNullableDouble(key: String): Double? =
+    if (has(key) && !isNull(key)) optDouble(key) else null
+
+private fun JSONObject.optNullableInt(key: String): Int? =
+    if (has(key) && !isNull(key)) optInt(key) else null
