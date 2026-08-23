@@ -174,8 +174,19 @@ private fun extractCountry(label: String, ignoredNames: Set<String> = emptySet()
 const val ACTION_HABIT_INCREMENTED = "com.example.tail.ACTION_HABIT_INCREMENTED"
 /** String extra: the name of the habit that was incremented. */
 const val EXTRA_HABIT_NAME = "EXTRA_HABIT_NAME"
-/** Signature permission required to receive the broadcast. */
-private const val PERMISSION_TAIL_INTEGRATION = "com.example.tail.permission.TAIL_INTEGRATION"
+/**
+ * Int extra: the count delta that was actually applied to the habit.
+ * 0 means the increment was a no-op (e.g. a max-1 cap) or a minutes-only
+ * adjustment — count-based listeners should ignore those.
+ */
+const val EXTRA_AMOUNT = "EXTRA_AMOUNT"
+/**
+ * String extra: the package name of the app that originated the increment,
+ * present only when the increment arrived via an external IPC broadcast.
+ * Propagated on the outbound broadcast so the originator can recognise and
+ * ignore its own echo (prevents VILD ⇄ Tail increment loops).
+ */
+const val EXTRA_SOURCE = "EXTRA_SOURCE"
 
 /**
  * Main ViewModel: owns habits list + settings state, delegates I/O to repositories.
@@ -1775,15 +1786,8 @@ class HabitViewModel(
      * apps (e.g. VILD) can receive it. The broadcast is fire-and-forget — if no
      * receiver is registered, it's silently dropped.
      */
-    private fun sendHabitIncrementedBroadcast(habitName: String) {
-        try {
-            val intent = Intent(ACTION_HABIT_INCREMENTED).apply {
-                putExtra(EXTRA_HABIT_NAME, habitName)
-            }
-            context.sendBroadcast(intent, PERMISSION_TAIL_INTEGRATION)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
-        }
+    private fun sendHabitIncrementedBroadcast(habitName: String, amount: Int = 1) {
+        com.example.tail.ipc.HabitIncrementAnnouncer.announce(context, habitName, amount)
     }
 
     fun setScreensRelayFileUri(uri: Uri) {
@@ -2092,7 +2096,7 @@ class HabitViewModel(
 
         // Step 6: broadcast a generic "habit incremented" event so same-keystore apps
         // (e.g. VILD) can react — e.g. auto-switch from night to day mode on wake-up.
-        sendHabitIncrementedBroadcast(habitName)
+        sendHabitIncrementedBroadcast(habitName, storedDelta.coerceAtLeast(0))
     }
 
     /**
@@ -2209,7 +2213,7 @@ class HabitViewModel(
             }
         }
 
-        sendHabitIncrementedBroadcast(habitName)
+        sendHabitIncrementedBroadcast(habitName, storedDelta.coerceAtLeast(0))
     }
 
     /**

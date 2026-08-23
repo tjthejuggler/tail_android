@@ -129,6 +129,7 @@ object HabitAsks {
                 Log.w(TAG, "Failed to record timestamp for '${ask.habitName}': ${e.message}")
             }
             Log.i(TAG, "Incremented '${ask.habitName}' for confirmed movie")
+            com.example.tail.ipc.HabitIncrementAnnouncer.announce(appContext, ask.habitName, 1)
             return
         }
 
@@ -158,6 +159,7 @@ object HabitAsks {
             Log.w(TAG, "Failed to record timestamp for '${ask.habitName}': ${e.message}")
         }
         Log.i(TAG, "Incremented '${ask.habitName}' from notification answer")
+        com.example.tail.ipc.HabitIncrementAnnouncer.announce(appContext, ask.habitName, 1)
     }
 
     private fun parseTime(hms: String): LocalTime? {

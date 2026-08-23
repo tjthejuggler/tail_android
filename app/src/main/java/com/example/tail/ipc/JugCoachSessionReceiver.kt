@@ -5,8 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import com.example.tail.ui.ACTION_HABIT_INCREMENTED
-import com.example.tail.ui.EXTRA_HABIT_NAME
 import com.example.tail.ui.HabitIncrementBus
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
@@ -180,18 +178,7 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
 
 
                 // Broadcast a generic "habit incremented" event for same-keystore listeners
-                try {
-                    val broadcastIntent = Intent(ACTION_HABIT_INCREMENTED).apply {
-                        putExtra(EXTRA_HABIT_NAME, habitName)
-                    }
-                    appContext.sendBroadcast(
-                        broadcastIntent,
-                        "com.example.tail.permission.TAIL_INTEGRATION"
-                    )
-                    Log.d(TAG, "Sent ACTION_HABIT_INCREMENTED broadcast for '$habitName'")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
-                }
+                HabitIncrementAnnouncer.announce(appContext, habitName, binaryIncrement.coerceAtLeast(0))
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to record JugCoach session for '$habitName': ${e.message}", e)
             } finally {

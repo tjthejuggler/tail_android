@@ -126,6 +126,7 @@ class WidgetInputActivity : ComponentActivity() {
                         incrementAmount
                     )
                     HabitIncrementBus.emit(habitName)
+                    com.example.tail.ipc.HabitIncrementAnnouncer.announce(applicationContext, habitName, incrementAmount)
 
                     // 2b. Record a timestamp for this increment (always, since this
                     //     is a today-increment from the widget).

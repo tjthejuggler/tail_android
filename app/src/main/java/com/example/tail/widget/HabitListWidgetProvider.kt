@@ -358,6 +358,9 @@ class HabitListWidgetProvider : AppWidgetProvider() {
                         } catch (e: Exception) {
                             Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
                         }
+                        // Announce the increment to same-keystore listeners (e.g. VILD
+                        // reverse-syncs widget taps into its own day log).
+                        com.example.tail.ipc.HabitIncrementAnnouncer.announce(appCtx, habitName, 1)
                     }
                 } else {
                     Log.w(TAG, "No habits file URI configured — widget tap ignored for '$habitName'")

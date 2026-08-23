@@ -829,4 +829,59 @@ SET VALUES FOR DATES:
 
 ---
 
-*This guide covers the complete IPC surface of Tail as of 2026-08-08 (Protocol v2). The endpoints (ContentProvider + BroadcastReceiver + SetValuesReceiver) are the only supported integration points. Direct file access to `habitsdb_phone.txt` is not recommended as it bypasses Tail's atomic read-modify-write logic and risks data corruption.*
+## Part 11 — Protocol v4: Reverse Sync (Tail → Your App)
+
+**Added:** 2026-08-22 · First consumer: VILD (bidirectional reality-check sync)
+
+Everything above is *your app → Tail*. Protocol v4 adds the other direction: **Tail announces every successful habit increment**, so your app can apply increments the user makes *inside Tail* (main UI tap, home-screen widget, widget text input, habit-ask notification answer, voice service, JugCoach session, or another app's IPC increment) to its own state. VILD uses this to keep its "Reality Check Read/Done" day log in step when the user increments the mapped habits in Tail.
+
+### Endpoint Details
+
+| Property | Value |
+|----------|-------|
+| Action | `com.example.tail.ACTION_HABIT_INCREMENTED` |
+| Extra: `EXTRA_HABIT_NAME` | `String` — the habit that was incremented |
+| Extra: `EXTRA_AMOUNT` | `Int` — the count delta actually applied. `0` = no-op (max-1 cap) or minutes-only adjustment; count-based listeners should ignore it |
+| Extra: `EXTRA_SOURCE` | `String` — *optional.* The originating app's package name, present only when the increment arrived via an external `ACTION_INCREMENT_HABIT` broadcast |
+| Sender permission arg | `com.example.tail.permission.TAIL_INTEGRATION` (only same-keystore apps can receive) |
+
+All announcements go through one helper, `HabitIncrementAnnouncer` (`app/src/main/java/com/example/tail/ipc/HabitIncrementAnnouncer.kt`), so the event is identical no matter which increment path fired it.
+
+### Echo Suppression (Read This If You Increment Bidirectionally)
+
+If your app both *sends* increments (Part 3) and *applies* announcements (this part), you **must** suppress echoes or you will double-count — and if applying an announcement triggers another increment broadcast, the two apps will ping-pong forever:
+
+1. When sending `ACTION_INCREMENT_HABIT`, add `putExtra("EXTRA_SOURCE", context.packageName)`.
+2. Tail propagates that extra onto the `ACTION_HABIT_INCREMENTED` announcement.
+3. In your receiver, ignore announcements where `EXTRA_SOURCE` equals your own package name — that is Tail confirming your own increment.
+
+VILD's `TailHabitSyncReceiver` (`VILD/app/src/main/java/com/example/vild/ipc/TailHabitSyncReceiver.kt`) is the reference implementation.
+
+### Receiver Manifest Entry
+
+```xml
+<receiver
+    android:name=".ipc.TailHabitSyncReceiver"
+    android:exported="true"
+    android:permission="com.example.tail.permission.TAIL_INTEGRATION">
+    <intent-filter>
+        <action android:name="com.example.tail.ACTION_HABIT_INCREMENTED" />
+    </intent-filter>
+</receiver>
+```
+
+### v4 Quick Reference (additions)
+
+```
+ANNOUNCEMENT (Tail → you):
+              Action:  com.example.tail.ACTION_HABIT_INCREMENTED
+              Extras:  EXTRA_HABIT_NAME = "Habit Name" (String)
+                       EXTRA_AMOUNT     = 1              (Int, 0 = no-op)
+                       EXTRA_SOURCE     = "com.your.app" (String, optional —
+                                         present iff the increment came from
+                                         an external app; ignore your own echoes)
+```
+
+---
+
+*This guide covers the complete IPC surface of Tail as of 2026-08-22 (Protocol v4). The endpoints (ContentProvider + BroadcastReceiver + SetValuesReceiver + increment announcements) are the only supported integration points. Direct file access to `habitsdb_phone.txt` is not recommended as it bypasses Tail's atomic read-modify-write logic and risks data corruption.*

@@ -32,8 +32,6 @@ import com.example.tail.data.SubtypeTimedMigrator
 import com.example.tail.data.SpotifyTrack
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
-import com.example.tail.ui.ACTION_HABIT_INCREMENTED
-import com.example.tail.ui.EXTRA_HABIT_NAME
 import com.example.tail.ui.HabitIncrementBus
 import com.example.tail.ui.VoiceNoteBus
 import com.example.tail.ui.VoiceTranscriptBus
@@ -577,17 +575,7 @@ class SmartVoiceService : Service() {
                     }
 
                     // Broadcast habit-incremented event
-                    try {
-                        val broadcastIntent = Intent(ACTION_HABIT_INCREMENTED).apply {
-                            putExtra(EXTRA_HABIT_NAME, habitName)
-                        }
-                        applicationContext.sendBroadcast(
-                            broadcastIntent,
-                            "com.example.tail.permission.TAIL_INTEGRATION"
-                        )
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
-                    }
+                    HabitIncrementAnnouncer.announce(applicationContext, habitName, incrementAmount)
 
                     // Build TTS confirmation part for this habit
                     val ttsPart = if (subtypeName != null && incrementAmount > 1) {

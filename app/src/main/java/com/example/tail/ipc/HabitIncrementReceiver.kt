@@ -5,8 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import com.example.tail.ui.ACTION_HABIT_INCREMENTED
-import com.example.tail.ui.EXTRA_HABIT_NAME
+import com.example.tail.ui.EXTRA_SOURCE
 import com.example.tail.ui.HabitIncrementBus
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
@@ -89,6 +88,10 @@ class HabitIncrementReceiver : BroadcastReceiver() {
             return
         }
 
+        // Protocol v4 — echo suppression: remember which app sent this increment
+        // so the outbound ACTION_HABIT_INCREMENTED broadcast can carry it back.
+        val sourcePackage = intent.getStringExtra(EXTRA_SOURCE)
+
         // goAsync() lets us do I/O without the system killing the receiver after onReceive returns.
         val pendingResult = goAsync()
 
@@ -148,7 +151,7 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                             Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
                         }
                     }
-                    sendHabitIncrementedNotification(appContext, habitName)
+                    HabitIncrementAnnouncer.announce(appContext, habitName, sessions, sourcePackage)
                     return@launch
                 }
 
@@ -254,7 +257,7 @@ class HabitIncrementReceiver : BroadcastReceiver() {
 
 
                 // Broadcast a generic "habit incremented" event for same-keystore listeners
-                sendHabitIncrementedNotification(appContext, habitName)
+                HabitIncrementAnnouncer.announce(appContext, habitName, amount, sourcePackage)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to increment habit '$habitId': ${e.message}", e)
             } finally {
@@ -263,24 +266,6 @@ class HabitIncrementReceiver : BroadcastReceiver() {
         }
     }
 
-    /**
-     * Broadcasts the generic "habit incremented" event for same-keystore
-     * listeners (Wags uses it to refresh its UI).
-     */
-    private fun sendHabitIncrementedNotification(appContext: Context, habitName: String) {
-        try {
-            val broadcastIntent = Intent(ACTION_HABIT_INCREMENTED).apply {
-                putExtra(EXTRA_HABIT_NAME, habitName)
-            }
-            appContext.sendBroadcast(
-                broadcastIntent,
-                "com.example.tail.permission.TAIL_INTEGRATION"
-            )
-            Log.d(TAG, "Sent ACTION_HABIT_INCREMENTED broadcast for '$habitName'")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to send habit-incremented broadcast: ${e.message}")
-        }
-    }
 
     /**
      * Resolves [habitId] to a habit name.
