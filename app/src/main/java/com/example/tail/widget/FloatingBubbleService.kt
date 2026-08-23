@@ -172,6 +172,12 @@ class FloatingBubbleService : Service() {
     private var longPressConsumed = false
     private val longPressRunnable = Runnable { onBubbleLongPressed() }
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // NOT cancelled in onDestroy: stopping the timer and immediately leaving
+    // the trigger app (or any other stopSelf()) used to cancel the in-flight
+    // minutes write — serviceScope is torn down in onDestroy — killing the
+    // save with "Job was cancelled" and losing the recorded minutes.
+    private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val settingsRepo by lazy { SettingsRepository(applicationContext) }
     private val habitsRepo by lazy { HabitsRepository() }
 
@@ -979,30 +985,6 @@ class FloatingBubbleService : Service() {
                 })
             }
 
-            // Stats — opens the Tail app straight on the Chess Readiness
-            // stats screen (ratings over time, authorization windows, …).
-            val statsItem = TextView(this).apply {
-                text = "📊 Stats"
-                textSize = 15f
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
-                background = GradientDrawable().apply {
-                    setColor(0xFF1A2A3A.toInt())
-                    cornerRadius = 8f * density
-                    setStroke(1, 0xFF5588AA.toInt())
-                }
-                setOnClickListener {
-                    hideHabitPickerMenu()
-                    openChessReadinessStats()
-                }
-            }
-            menu.addView(statsItem, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = 6.dp()
-            })
         }
 
         habits.forEachIndexed { index, habit ->
@@ -1091,16 +1073,6 @@ class FloatingBubbleService : Service() {
     // closing a dialog hands focus straight back to it.
     private var chessReadinessOverlay: ChessReadinessOverlay? = null
     private var chessStatusOverlay: ChessStatusOverlay? = null
-
-    /** Opens the Tail app directly on the Chess Readiness stats screen. */
-    private fun openChessReadinessStats() {
-        try {
-            val intent = Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(MainActivity.EXTRA_OPEN_ROUTE, MainActivity.ROUTE_CHESS_READINESS_STATS)
-            startActivity(intent)
-        } catch (e: Exception) { /* never crash the bubble */ }
-    }
 
     /** Shows the Phase 1 readiness wizard as a floating overlay dialog. */
     private fun openChessReadiness() {
@@ -1302,7 +1274,9 @@ class FloatingBubbleService : Service() {
      * and lose the session increment.)
      */
     private fun writeMinutesToHabit(habit: String, minutes: Int, onFinished: (() -> Unit)? = null) {
-        serviceScope.launch {
+        // persistenceScope (NOT serviceScope): the write must survive a
+        // stopSelf() that lands while it is still in flight.
+        persistenceScope.launch {
             try {
                 val settings = settingsRepo.settingsFlow.first()
                 val uriStr = settings.fileUri
@@ -1319,14 +1293,20 @@ class FloatingBubbleService : Service() {
                     Uri.parse(uriStr), applicationContext, habit, minutes, 1
                 )
 
-                HabitIncrementBus.emit(habit)
-                HabitListWidgetProvider.refreshAll(applicationContext)
+                // The save HAS landed here. Everything below is UI refresh:
+                // if the service is being torn down concurrently (bubble
+                // dismissed, trigger app left), these may fail — and that
+                // must NOT surface as "Failed to save minutes".
+                try {
+                    HabitIncrementBus.emit(habit)
+                    HabitListWidgetProvider.refreshAll(applicationContext)
 
-                // Day totals straight from the just-saved state
-                val today = dateString(LocalDate.now())
-                val totalMinutes = db[secondaryValueKey(habit)]?.get(today) ?: minutes
-                val totalSessions = db[habit]?.get(today) ?: 1
-                showIncrementFlash(habit, minutes, totalMinutes, 1, totalSessions)
+                    // Day totals straight from the just-saved state
+                    val today = dateString(LocalDate.now())
+                    val totalMinutes = db[secondaryValueKey(habit)]?.get(today) ?: minutes
+                    val totalSessions = db[habit]?.get(today) ?: 1
+                    showIncrementFlash(habit, minutes, totalMinutes, 1, totalSessions)
+                } catch (e: Exception) { /* UI-only — save already succeeded */ }
             } catch (e: Exception) {
                 Toast.makeText(this@FloatingBubbleService, "Failed to save minutes: ${e.message}", Toast.LENGTH_LONG).show()
             } finally {
