@@ -490,7 +490,26 @@ class ChessReadinessOverlay(service: Context) {
             if (r.state == ChessReadinessEngine.ReadinessState.RED_LIGHT) {
                 primaryButton("Leave", danger = true) { leaveChess() }
             } else {
-                primaryButton("Back to chess") { dismiss() }
+                primaryButton("Back to chess") {
+                    // Landing in the chess app with rated play prohibited.
+                    // The app is ALREADY the foreground app behind this
+                    // overlay (no activity was started), so no new
+                    // window-state event will fire — show the casual-only
+                    // warning NOW instead of staying silent until the
+                    // next leave-and-return.
+                    if (r.state == ChessReadinessEngine.ReadinessState.YELLOW_LIGHT &&
+                        ChessReadinessStore.enforcementEnabledAt(context) > 0L
+                    ) {
+                        ChessGuardReactions.markYellowWarned()
+                        try {
+                            ChessGuardWallOverlay.showWarning(context)
+                        } catch (_: Exception) {
+                            // Overlay grant missing — the guard re-warns on
+                            // the next real entry into the chess app.
+                        }
+                    }
+                    dismiss()
+                }
             }
         }
     }

@@ -343,6 +343,23 @@ class WidgetTriggerService : Service() {
         // still-open trigger app would be "forgotten" and the bubble hidden.
         if (foregroundPkg == null) return
 
+        // ── Chess Guard backstop ────────────────────────────────────────
+        // The accessibility gate reacts instantly, but OEM launchers do
+        // not always deliver TYPE_WINDOW_STATE_CHANGED for an app brought
+        // back to the front via the recents switcher — this poll sees
+        // EVERY real foreground transition within one interval, so the
+        // YELLOW casual-only warning / RED lock wall can never be
+        // silently skipped. Idempotent: duplicate reports are no-ops.
+        val chessPkg = chessReadinessPackage
+        if (chessPkg != null &&
+            ChessReadinessStore.enforcementEnabledAt(applicationContext) > 0L
+        ) {
+            ChessGuardReactions.noteChessForeground(
+                applicationContext,
+                foregroundPkg == chessPkg
+            )
+        }
+
         // Ignore our own app coming to the foreground
         if (foregroundPkg == packageName) {
             if (bubbleActive) {

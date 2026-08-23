@@ -24,8 +24,13 @@ import android.view.accessibility.AccessibilityEvent
  *      blocked and counting down to the next possible test;
  *   3. counts the blocked attempt (shown in Settings).
  *
- * The reaction is debounced ([REACT_DEBOUNCE_MS]) so a burst of window
- * events from one app launch produces one kick, not a storm.
+ * Reactions are coordinated by [ChessGuardReactions] (shared with the
+ * [WidgetTriggerService] UsageStats poll, which backstops this event
+ * path — OEM launchers do not always deliver TYPE_WINDOW_STATE_CHANGED
+ * for an app brought back to the front via the recents switcher). The
+ * coordinator reacts once per foreground "stint": a burst of window
+ * events from one launch produces one reaction, and leaving the chess
+ * app re-arms the YELLOW entry warning.
  *
  * Why accessibility and not just the existing UsageStats polling? Events
  * arrive instantly (no 2 s poll lag), the service is system-bound (survives
@@ -49,16 +54,6 @@ class ChessGuardService : AccessibilityService() {
     companion object {
         private const val TAG = "ChessGuardService"
 
-        /** Minimum gap between two kick-out reactions (ms). */
-        private const val REACT_DEBOUNCE_MS = 2000L
-
-        /**
-         * Minimum gap between two YELLOW entry warnings (ms). Longer than
-         * the kick debounce so a real leave-and-return still re-warns,
-         * while one launch's burst of window events shows it once.
-         */
-        private const val WARN_DEBOUNCE_MS = 30_000L
-
         /** True while the system has this service bound & enabled. */
         @Volatile
         var isRunning = false
@@ -80,12 +75,6 @@ class ChessGuardService : AccessibilityService() {
             } == true }
         }
     }
-
-    /** Last time a kick-out reaction fired (0 = never). */
-    private var lastReactAt = 0L
-
-    /** Last time the YELLOW entry warning was shown (0 = never). */
-    private var lastWarnAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -113,74 +102,21 @@ class ChessGuardService : AccessibilityService() {
 
         val pkg = event.packageName?.toString() ?: return
         val chessPkg = ChessReadinessStore.chessPackage(applicationContext)
-        if (chessPkg.isBlank() || pkg != chessPkg) return
-        if (ChessReadinessStore.enforcementEnabledAt(applicationContext) <= 0L) return
+        if (chessPkg.isBlank()) return
 
-        val decision = try {
-            ChessEnforcementPolicy.evaluateNow(applicationContext)
-        } catch (e: Exception) {
-            Log.e(TAG, "Policy evaluation failed — failing open (no block)", e)
-            return
-        }
-
-        // YELLOW session: the app stays open (casual play allowed), but a
-        // full-screen warning spells out what a rated game would cost —
-        // the automatic 24-hour lockout. No kick, no block.
-        if (decision is ChessEnforcementPolicy.Decision.Allow &&
-            decision.reason == ChessEnforcementPolicy.Reason.YELLOW_SESSION
-        ) {
-            val now = System.currentTimeMillis()
-            if (now - lastWarnAt < WARN_DEBOUNCE_MS) return
-            lastWarnAt = now
-            Log.d(TAG, "Chess app opened during YELLOW — showing casual-play warning")
-            try {
-                ChessGuardWallOverlay.showWarning(applicationContext)
-            } catch (e: Exception) {
-                Log.w(TAG, "Yellow warning overlay failed: ${e.message}")
+        if (pkg == chessPkg) {
+            // A chess window came to the front. One launch fires a burst
+            // of these (splash → main → in-app dialogs); the coordinator
+            // reacts once per foreground stint and re-arms only after a
+            // real leave. The HOME kick is only possible from here.
+            ChessGuardReactions.noteChessForeground(applicationContext, true) {
+                performGlobalAction(GLOBAL_ACTION_HOME)
             }
-            return
-        }
-
-        if (decision !is ChessEnforcementPolicy.Decision.Block) return
-
-        val now = System.currentTimeMillis()
-        if (now - lastReactAt < REACT_DEBOUNCE_MS) return
-        lastReactAt = now
-
-        Log.d(TAG, "Chess app opened while blocked (${decision.reason}) — kicking out")
-        ChessReadinessStore.noteGuardBlock(applicationContext)
-
-        // 1. Yank focus off the chess app immediately.
-        performGlobalAction(GLOBAL_ACTION_HOME)
-
-        // 2. Show the wall — OVERLAY FIRST. Background-activity-launch
-        //    (BAL) restrictions can silently refuse startActivity from a
-        //    service context (observed on One UI: the chess app "opens
-        //    and immediately closes" with no explanation), while a
-        //    SYSTEM_ALERT_WINDOW overlay added via the WindowManager is
-        //    not subject to BAL — and Tail already holds the overlay
-        //    grant for the floating bubble. The lock activity remains
-        //    the fallback when the overlay grant is missing.
-        val overlayShown = try {
-            ChessGuardWallOverlay.show(applicationContext, decision)
-        } catch (e: Exception) {
-            Log.w(TAG, "Wall overlay failed: ${e.message}")
-            false
-        }
-        if (!overlayShown) {
-            try {
-                startActivity(
-                    Intent(applicationContext, ChessGuardLockActivity::class.java).apply {
-                        addFlags(
-                            Intent.FLAG_ACTIVITY_NEW_TASK or
-                                Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS or
-                                Intent.FLAG_ACTIVITY_NO_ANIMATION
-                        )
-                    }
-                )
-            } catch (e: Exception) {
-                Log.w(TAG, "Lock screen launch failed (home action already fired): ${e.message}")
-            }
+        } else {
+            // Any other window on top (launcher, SystemUI, another app)
+            // ends the chess stint: re-arms the YELLOW entry warning and
+            // takes a lingering warning overlay down.
+            ChessGuardReactions.noteChessForeground(applicationContext, false)
         }
     }
 

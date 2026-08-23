@@ -58,6 +58,8 @@ object ChessGuardWallOverlay {
 
     private var warningWm: WindowManager? = null
     private var warningView: LinearLayout? = null
+    private var warningContext: Context? = null
+    private var warningCountdownView: TextView? = null
 
     private val tick = object : Runnable {
         override fun run() {
@@ -76,6 +78,56 @@ object ChessGuardWallOverlay {
                     handler.postDelayed(this, 1000L)
                 }
             }
+        }
+    }
+
+    /**
+     * Live tick for the YELLOW warning: refreshes the "next readiness
+     * test" line every second (cool-down counting down → flips to
+     * "available now" the moment the re-test gate opens).
+     */
+    private val warningTick = object : Runnable {
+        override fun run() {
+            val context = warningContext ?: return
+            val view = warningCountdownView ?: return
+            val line = formatNextTestLine(context)
+            if (line != null) view.text = line // null → keep previous text
+            handler.postDelayed(this, 1000L)
+        }
+    }
+
+    /**
+     * The YELLOW warning's "when can I re-test" line, straight from the
+     * engine's re-test gate. Null when the look fails (tick keeps the
+     * previous text instead of flashing empty).
+     */
+    private fun formatNextTestLine(context: Context): String? {
+        val now = System.currentTimeMillis()
+        return try {
+            when (
+                val gate = ChessReadinessEngine.checkGate(
+                    ChessReadinessStore.loadHistory(context), now
+                )
+            ) {
+                is ChessReadinessEngine.GateStatus.Allowed ->
+                    "✅ Readiness test available NOW — pass it to re-earn GREEN."
+                is ChessReadinessEngine.GateStatus.Blocked -> {
+                    val remaining = gate.error.retryAt - now
+                    if (remaining <= 0) {
+                        "✅ Readiness test available NOW — pass it to re-earn GREEN."
+                    } else {
+                        val totalMin = ((remaining + 59999L) / 60000L).toInt().coerceAtLeast(1)
+                        val h = totalMin / 60
+                        val m = totalMin % 60
+                        val wait = if (h > 0) "$h h $m min" else "$m min"
+                        val at = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                            .format(java.util.Date(gate.error.retryAt))
+                        "⏱ Next readiness test in $wait ($at)"
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -186,8 +238,9 @@ object ChessGuardWallOverlay {
      * Full-screen YELLOW entry warning — NOT a block. Shown when the chess
      * app opens during a YELLOW session: casual play is allowed, but the
      * message spells out that one rated game triggers the automatic
-     * 24-hour lockout. Dismissable ("Got it" button); no live tick — the
-     * underlying state is an Allow, so there is nothing to count down to.
+     * 24-hour lockout. Dismissable ("Got it" button). A live tick keeps
+     * the "next readiness test" line counting down and flips it to
+     * "available now" the moment the re-test gate opens.
      */
     fun showWarning(context: Context): Boolean {
         if (!Settings.canDrawOverlays(context)) return false
@@ -218,6 +271,13 @@ object ChessGuardWallOverlay {
             gravity = Gravity.CENTER
             setPadding(0, pad, 0, 0)
         }
+        val nextTest = TextView(context).apply {
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#FDE68A"))
+            gravity = Gravity.CENTER
+            setPadding(0, pad / 2, 0, 0)
+        }
         val gotIt = Button(context).apply {
             text = "Got it — casual only"
             setOnClickListener { dismissWarning() }
@@ -235,6 +295,12 @@ object ChessGuardWallOverlay {
             )
             addView(
                 message,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                nextTest,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 )
@@ -263,6 +329,12 @@ object ChessGuardWallOverlay {
             windowManager.addView(root, params)
             warningWm = windowManager
             warningView = root
+            warningContext = context.applicationContext
+            warningCountdownView = nextTest
+            nextTest.text = formatNextTestLine(context)
+                ?: "⏱ Next readiness test: check the readiness widget."
+            handler.removeCallbacks(warningTick)
+            handler.postDelayed(warningTick, 1000L)
             true
         } catch (_: Exception) {
             false
@@ -271,8 +343,11 @@ object ChessGuardWallOverlay {
 
     /** Removes the YELLOW warning (Got it button or service gone). */
     fun dismissWarning() {
+        handler.removeCallbacks(warningTick)
         val view = warningView
         warningView = null
+        warningContext = null
+        warningCountdownView = null
         if (view != null) {
             try {
                 warningWm?.removeView(view)
