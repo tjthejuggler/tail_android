@@ -115,6 +115,11 @@ class AppIconRepository(private val context: Context) {
  * uses for notification badges), otherwise a greyscale rendering of the
  * launcher icon — the same desaturation text icons use (see
  * [renderTextIconBitmap]).
+ *
+ * All variants are cropped to their visible content (see [cropToContent]) so
+ * the glyph fills the habit cell the same way the built-in icons do — an
+ * uncropped adaptive icon keeps its launcher padding (glyph in the middle of
+ * a 108 dp canvas) and renders noticeably small at the 20 dp habit-cell size.
  */
 fun loadAppIconBitmap(context: Context, packageName: String, monochrome: Boolean): Bitmap? {
     return try {
@@ -125,9 +130,14 @@ fun loadAppIconBitmap(context: Context, packageName: String, monochrome: Boolean
                 drawable.monochrome
             else null
         when {
-            !monochrome -> drawableToAppBitmap(drawable)
-            monoLayer != null -> whiteMaskBitmap(drawableToAppBitmap(monoLayer))
-            else -> greyscaleBitmap(drawableToAppBitmap(drawable))
+            !monochrome -> cropToContent(drawableToAppBitmap(drawable))
+            monoLayer != null -> whiteGlyphBitmap(cropToContent(drawableToAppBitmap(monoLayer)))
+            // No monochrome layer and an adaptive icon: greyscaling the whole
+            // icon (background + foreground) would yield a grey square, so use
+            // just the foreground layer — the actual glyph.
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && drawable is AdaptiveIconDrawable ->
+                greyscaleBitmap(cropToContent(drawableToAppBitmap(drawable.foreground)))
+            else -> greyscaleBitmap(cropToContent(drawableToAppBitmap(drawable)))
         }
     } catch (e: Exception) {
         null
@@ -161,30 +171,60 @@ private fun greyscaleBitmap(source: Bitmap): Bitmap {
 }
 
 /**
- * Ensures a monochrome glyph is WHITE while preserving its anti-aliased
- * alpha: the adaptive-icon monochrome layer may be authored in any solid
- * colour, and a dark glyph would be invisible on the app's dark habit grid.
+ * Forces a monochrome glyph to pure WHITE while preserving its anti-aliased
+ * alpha — exactly what a status-bar notification icon looks like, and the
+ * same treatment the built-in habit icons get (they are tinted white).
+ *
+ * The adaptive-icon monochrome layer may be authored in ANY colour (e.g. the
+ * Inuit app ships a light-blue layer). A dark glyph would be invisible on the
+ * dark habit grid, and a light-coloured glyph would stay coloured instead of
+ * black/white, so the colour is always discarded regardless of luminance.
  */
-private fun whiteMaskBitmap(source: Bitmap): Bitmap {
-    var luminanceSum = 0L
-    var visiblePixels = 0
-    for (x in 0 until source.width) {
-        for (y in 0 until source.height) {
-            val pixel = source.getPixel(x, y)
-            if (Color.alpha(pixel) > 32) {
-                luminanceSum += (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
-                visiblePixels++
+private fun whiteGlyphBitmap(source: Bitmap): Bitmap {
+    val width = source.width
+    val height = source.height
+    val pixels = IntArray(width * height)
+    source.getPixels(pixels, 0, width, 0, 0, width, height)
+    for (i in pixels.indices) {
+        val pixel = pixels[i]
+        pixels[i] = (pixel and 0xFF000000.toInt()) or 0xFFFFFF // keep alpha byte, force white
+    }
+    val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    result.setPixels(pixels, 0, width, 0, 0, width, height)
+    return result
+}
+
+/**
+ * Crops transparent margins off an icon bitmap so the visible glyph fills the
+ * habit cell. Adaptive icons draw their glyph in the centre of a 108 dp
+ * canvas (the launcher safe zone is only the middle ~66 dp), so rendering
+ * them uncropped makes the glyph appear ~40% smaller than the built-in
+ * icons at the same cell size. Icons with no transparent margins (e.g.
+ * full-bleed colour launcher icons) are returned unchanged.
+ */
+private fun cropToContent(source: Bitmap): Bitmap {
+    val width = source.width
+    val height = source.height
+    val pixels = IntArray(width * height)
+    source.getPixels(pixels, 0, width, 0, 0, width, height)
+    var minX = width
+    var minY = height
+    var maxX = -1
+    var maxY = -1
+    for (y in 0 until height) {
+        val rowOffset = y * width
+        for (x in 0 until width) {
+            if (Color.alpha(pixels[rowOffset + x]) > 16) {
+                if (x < minX) minX = x
+                if (x > maxX) maxX = x
+                if (y < minY) minY = y
+                if (y > maxY) maxY = y
             }
         }
     }
-    // Already light (or fully transparent) — keep the glyph as authored.
-    if (visiblePixels == 0 || luminanceSum / visiblePixels >= 128) return source
-    val result = source.copy(Bitmap.Config.ARGB_8888, true)
-    for (x in 0 until result.width) {
-        for (y in 0 until result.height) {
-            val pixel = result.getPixel(x, y)
-            result.setPixel(x, y, Color.argb(Color.alpha(pixel), 255, 255, 255))
-        }
+    // Fully transparent, or content already reaches every edge — nothing to crop.
+    if (maxX < 0 || (minX == 0 && minY == 0 && maxX == width - 1 && maxY == height - 1)) {
+        return source
     }
-    return result
+    return Bitmap.createBitmap(source, minX, minY, maxX - minX + 1, maxY - minY + 1)
 }
