@@ -5706,6 +5706,13 @@ class HabitViewModel(
             val allHabits = JSONArray()
             getAllHabitNames().forEach { allHabits.put(it) }
             root.put("all_habits", allHabits)
+            // capability flag: the PC history dialog only queues
+            // session_edit/session_delete corrections once it sees this
+            // list (older phones that never push it keep the widget in
+            // local-only edit mode)
+            root.put("event_kinds", JSONArray(
+                listOf("session", "tap", "toggle_pc_widget_habit",
+                       "session_edit", "session_delete")))
 
             val resp = BridgeClient().post(bridge.first, bridge.second, "pc_widget/config", root)
             if (resp != null) {

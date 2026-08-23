@@ -703,6 +703,41 @@ class HabitsRepository {
     }
 
     /**
+     * Signed variant of [incrementHabitSlotsForDate] for PC-widget history
+     * corrections: NEGATIVE deltas remove, positive ones add, and every
+     * value clamps at zero (a correction must be able to undo an earlier
+     * increment, but never drive a slot negative). Keys whose value lands
+     * on zero drop out entirely, exactly like [adjustHabitMinutesSlot].
+     */
+    suspend fun adjustHabitSlotsForDate(
+        uri: Uri,
+        context: Context,
+        deltas: Map<String, Int>,
+        date: LocalDate
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        if (deltas.values.all { it == 0 }) return@withContext loadDatabase(uri, context)
+
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "adjustHabitSlots: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+        val dateStr = dateString(date)
+
+        for ((key, amount) in deltas) {
+            if (amount == 0) continue
+            val entries = db[key]?.toMutableMap() ?: mutableMapOf()
+            val updated = ((entries[dateStr] ?: 0) + amount).coerceAtLeast(0)
+            if (updated == 0) entries.remove(dateStr) else entries[dateStr] = updated
+            if (entries.isEmpty()) db.remove(key) else db[key] = entries.toSortedMap()
+        }
+
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
      * **Protocol v2** — SETS (replaces) the stored value for a habit on [date]
      * to [value], then saves. Unlike [incrementHabitForDate] which adds, this
      * method overwrites whatever value was previously stored for that date.

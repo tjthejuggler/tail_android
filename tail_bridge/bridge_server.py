@@ -318,7 +318,8 @@ async def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(v
     event = {
         "id": "pc-{}-{}".format(int(time.time() * 1000), uuid.uuid4().hex[:6]),
         "habit": habit,
-        "kind": kind if kind in ("session", "tap", "toggle_pc_widget_habit") else "tap",
+        "kind": kind if kind in ("session", "tap", "toggle_pc_widget_habit",
+                                 "session_edit", "session_delete") else "tap",
         "date": payload.get("date") or datetime.now().strftime("%Y-%m-%d"),
         "start": payload.get("start") or datetime.now().strftime("%H:%M:%S"),
         "end": payload.get("end") or datetime.now().strftime("%H:%M:%S"),
@@ -328,6 +329,14 @@ async def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(v
         # settings-screen habit picker: the ABSOLUTE desired state, so
         # at-least-once redelivery stays idempotent on the phone
         event["enabled"] = bool(payload.get("enabled", True))
+    if kind in ("session_edit", "session_delete"):
+        # history-dialog corrections: the phone undoes `orig` (exactly
+        # what it originally applied) and, for session_edit, applies
+        # this event's corrected times; ref_id ties the correction to
+        # the original bridge event id
+        event["ref_id"] = str(payload.get("ref_id") or "")
+        orig = payload.get("orig")
+        event["orig"] = orig if isinstance(orig, dict) else {}
     events = _pc_widget_read(PC_WIDGET_EVENTS_PATH).get("events")
     events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
     events.append(event)

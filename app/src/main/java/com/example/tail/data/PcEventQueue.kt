@@ -70,7 +70,20 @@ data class PcHabitEvent(
     /** Raw wire kind — "toggle_pc_widget_habit" marks a settings-screen toggle request. */
     val kind: String = "",
     /** ABSOLUTE desired state for toggle events (idempotent redelivery). */
-    val enabled: Boolean? = null
+    val enabled: Boolean? = null,
+    /** Bridge id of the event a correction (session_edit/session_delete) targets. */
+    val refId: String = "",
+    /** What the phone originally applied — the correction undoes exactly this. */
+    val orig: PcEventOrig? = null
+)
+
+/** Original payload a correction event undoes (mirrors the PC's history log). */
+data class PcEventOrig(
+    val date: LocalDate?,
+    val start: String?,
+    val end: String?,
+    val minutes: Int,
+    val kind: String
 )
 
 /** Outcome of one [PcEventQueueProcessor.processOnce] pass. */
@@ -122,6 +135,24 @@ object PcEventQueueCodec {
                 null
             } ?: return@mapNotNull null
             val start = (map["start"] as? String)?.takeIf { timeRe.matches(it) }
+            val origMap = map["orig"] as? Map<*, *>
+            val orig = if (origMap != null) {
+                PcEventOrig(
+                    date = try {
+                        LocalDate.parse(origMap["date"] as? String)
+                    } catch (e: Exception) {
+                        null
+                    },
+                    start = (origMap["start"] as? String)?.takeIf { timeRe.matches(it) },
+                    end = (origMap["end"] as? String)?.takeIf { timeRe.matches(it) },
+                    minutes = when (val m = origMap["minutes"]) {
+                        is Number -> m.toInt()
+                        is String -> m.toIntOrNull() ?: 0
+                        else -> 0
+                    }.coerceAtLeast(0),
+                    kind = origMap["kind"] as? String ?: "tap"
+                )
+            } else null
             PcHabitEvent(
                 id = id,
                 habit = habit,
@@ -130,7 +161,9 @@ object PcEventQueueCodec {
                 startTime = start,
                 minutes = minutes,
                 kind = kind,
-                enabled = map["enabled"] as? Boolean
+                enabled = map["enabled"] as? Boolean,
+                refId = (map["ref_id"] as? String) ?: "",
+                orig = orig
             )
         }
     }
@@ -300,6 +333,14 @@ class PcEventQueueProcessor(private val context: Context) {
             val all = org.json.JSONArray()
             (db.keys + pcWidgetHabits).distinct().sorted().forEach { all.put(it) }
             root.put("all_habits", all)
+            // capability flag: the PC history dialog only queues
+            // session_edit/session_delete corrections once it sees this
+            // list — older phones that never push it keep the widget in
+            // local-only edit mode (their bridge would degrade the
+            // corrections to taps and double-count)
+            root.put("event_kinds", org.json.JSONArray(
+                listOf("session", "tap", "toggle_pc_widget_habit",
+                       "session_edit", "session_delete")))
             BridgeClient().post(bridge.first, bridge.second, "pc_widget/config", root)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to push PC widget config after toggle: ${e.message}")
@@ -331,6 +372,11 @@ class PcEventQueueProcessor(private val context: Context) {
             // "PC widget" toggle and push the updated config back
             applyPcWidgetToggle(event, settings)
             return@withContext true
+        }
+        if (event.kind == "session_edit" || event.kind == "session_delete") {
+            // history-dialog correction: undo the original, then (for
+            // session_edit) apply the corrected values
+            return@withContext applyCorrection(event, settings, habitsUri, habitsRepo, tsRepo)
         }
         val dateStr = dateString(event.date)
         // One read up front for all cap checks.
@@ -405,5 +451,94 @@ class PcEventQueueProcessor(private val context: Context) {
             }
         }
         appliedAny
+    }
+
+    /**
+     * History-dialog correction from the PC widget.
+     *
+     * session_delete → undo [PcHabitEvent.orig] entirely.
+     * session_edit   → undo `orig`, then apply the corrected session the
+     *                  event itself carries (+1 and +minutes, or a plain
+     *                  +1 when the corrected duration is 0).
+     *
+     * Undo = signed slot deltas (clamped at zero by the repository) plus
+     * removing the timestamp the original apply wrote. Sessions were
+     * always applied, so they always undo; a tap under the max-one cap
+     * may have been SKIPPED at apply time — its undo is guarded by the
+     * timestamp that apply actually wrote (no timestamp → nothing was
+     * applied → nothing to undo). Timeless habits keep no such trace,
+     * so their tap undo falls back to the clamped delta.
+     *
+     * LIMITATION: conditional-link feeds the original event triggered
+     * are not retro-adjusted (the feed amount depended on the source
+     * count at original apply time, which is no longer knowable).
+     */
+    private suspend fun applyCorrection(
+        event: PcHabitEvent,
+        settings: AppSettings,
+        habitsUri: Uri,
+        habitsRepo: HabitsRepository,
+        tsRepo: HabitTimestampRepository
+    ): Boolean = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val orig = event.orig
+        if (orig == null) {
+            Log.w(TAG, "PC correction ${event.id} carries no orig payload — skipped")
+            return@withContext false
+        }
+        val origDate = orig.date ?: event.date
+        val origWasSession = orig.kind == "session" && orig.minutes > 0
+        val undoDeltas = mutableMapOf<String, Int>()
+        val applyDeltas = mutableMapOf<String, Int>()
+
+        if (origWasSession) {
+            undoDeltas[event.habit] = -1
+            undoDeltas[minutesKey(event.habit)] = -orig.minutes
+        } else {
+            // tap: undo only when it was actually applied (a max-one
+            // capped tap was acked as skipped — undoing it would wrongly
+            // decrement the count)
+            val appliedIt = event.habit in settings.timelessHabits ||
+                (orig.start != null &&
+                    tsRepo.getTimestampsForDay(event.habit, origDate).contains(orig.start))
+            if (appliedIt) {
+                undoDeltas[event.habit] = -1
+            } else {
+                Log.i(TAG, "PC correction ${event.id}: original tap was capped/skipped — count untouched")
+            }
+        }
+
+        if (orig.start != null && event.habit !in settings.timelessHabits) {
+            try {
+                tsRepo.deleteTimestampsAtTime(event.habit, origDate, orig.start)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to remove original timestamp: ${e.message}")
+            }
+        }
+
+        if (event.kind == "session_edit") {
+            applyDeltas[event.habit] = 1
+            if (event.minutes > 0) {
+                applyDeltas[minutesKey(event.habit)] = event.minutes
+            }
+            if (event.habit !in settings.timelessHabits) {
+                val time = event.startTime ?: HabitTimestampRepository.nowTime()
+                try {
+                    tsRepo.addTimestamp(event.habit, event.date, time)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to record corrected timestamp: ${e.message}")
+                }
+            }
+        }
+
+        // two separate atomic writes: an edit that moved the session
+        // across midnight must undo on the original date and apply on
+        // the corrected one
+        if (undoDeltas.values.any { it != 0 }) {
+            habitsRepo.adjustHabitSlotsForDate(habitsUri, context, undoDeltas, origDate)
+        }
+        if (applyDeltas.values.any { it != 0 }) {
+            habitsRepo.adjustHabitSlotsForDate(habitsUri, context, applyDeltas, event.date)
+        }
+        true
     }
 }
