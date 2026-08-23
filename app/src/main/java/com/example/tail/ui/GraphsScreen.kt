@@ -986,22 +986,29 @@ private fun GraphMetricToggleRow(
                             interpMenuMetric = null
                         }
                     )
-                    GraphPrimaryValueOption(
-                        label = viewModel.customValueLabel(
-                            habitName,
-                            com.example.tail.data.GRAPH_METRIC_MINUTES
-                        ) ?: "Minutes value",
-                        selected = minutesPrimary,
-                        onClick = {
-                            // Selecting minutes carries legacy value-1
-                            // history into the minutes slot (when that
-                            // slot is empty) and makes minutes the
-                            // primary value; the minutes toggle turns
-                            // on with it.
-                            viewModel.migrateValue1ToMinutesPrimary(habitName)
-                            interpMenuMetric = null
-                        }
-                    )
+                    // Garmin-linked habits have no minutes-slot migration:
+                    // their Value1 series comes from the Garmin cache, and
+                    // duration-typed links (Sleep Length) already render
+                    // with the h:mm duration axis — so the option is hidden.
+                    if (!viewModel.settings.value.garminHabitLinks.containsKey(habitName)) {
+                        GraphPrimaryValueOption(
+                            label = viewModel.customValueLabel(
+                                habitName,
+                                com.example.tail.data.GRAPH_METRIC_MINUTES
+                            ) ?: "Minutes value",
+                            selected = minutesPrimary,
+                            onClick = {
+                                // Selecting minutes carries legacy value-1
+                                // history into the minutes slot (when that
+                                // slot is empty) and makes minutes the
+                                // primary value; the minutes toggle turns
+                                // on with it. Value-1 data is COPIED, never
+                                // deleted.
+                                viewModel.migrateValue1ToMinutesPrimary(habitName)
+                                interpMenuMetric = null
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -1054,6 +1061,32 @@ private fun formatRuntimeMinutes(totalMinutes: Int): String {
         else -> "${m}m"
     }
 }
+
+/** True for metrics whose values are durations in minutes (daily minutes, movie runtime). */
+private fun isMinutesMetric(metric: String): Boolean =
+    metric == com.example.tail.data.GRAPH_METRIC_MINUTES ||
+    metric == com.example.tail.data.GRAPH_METRIC_RUNTIME
+
+/**
+ * True when a series plots a duration in minutes: the dedicated minutes /
+ * runtime metrics, or the Value1 series of a habit linked to a duration-typed
+ * Garmin metric (Sleep Length reports raw sleep minutes) — those values are
+ * minutes too and get the same h:mm axis treatment.
+ */
+private fun isMinutesSeries(series: GraphSeries, garminHabitLinks: Map<String, String>): Boolean {
+    if (isMinutesMetric(series.metric)) return true
+    if (series.metric != com.example.tail.data.GRAPH_METRIC_VALUE1) return false
+    val garminType = garminHabitLinks[series.habitName]
+        ?.let { com.example.tail.data.GarminType.fromKey(it) }
+    return garminType == com.example.tail.data.GarminType.SLEEP_DURATION_MINUTES
+}
+
+/**
+ * Formats a minute total as h:mm for chart axis labels, e.g. 90 → "1:30",
+ * 5 → "0:05". Applied when a minute-based chart has values over an hour.
+ */
+private fun formatMinutesAsHourMinute(totalMinutes: Int): String =
+    "${totalMinutes / 60}:${(totalMinutes % 60).toString().padStart(2, '0')}"
 
 /** Returns the human-readable label for a metric key. */
 fun metricLabel(metric: String): String = when (metric) {
@@ -1378,8 +1411,8 @@ private fun HabitLineChart(
 
         if (useMultiScale) {
             // ── Per-series coloured Y-axis labels ──────────────────────────
-            seriesData.forEach { series ->
-                val sc = seriesYScales[series] ?: return@forEach
+            seriesData.forEachIndexed { seriesIdx, series ->
+                val sc = seriesYScales[series] ?: return@forEachIndexed
                 val seriesColor = series.color
                 val colorInt = android.graphics.Color.argb(
                     255,
@@ -1402,6 +1435,10 @@ private fun HabitLineChart(
                 } else {
                     sc.ticks
                 }
+                // Minute-based series switch their axis labels to h:mm
+                // (e.g. 90 → "1:30") once the series' values exceed an hour.
+                val useHourLabels = isMinutesSeries(series, garminHabitLinks) &&
+                    seriesMaxValues[seriesIdx] > 60
                 for (tick in displayTicks) {
                     val y = chartBottom - ((tick - sc.effectiveMin).toFloat() / sc.range) * chartHeight
                     drawLine(
@@ -1410,10 +1447,11 @@ private fun HabitLineChart(
                         end = Offset(chartRight, y),
                         strokeWidth = 0.5.dp.toPx()
                     )
-                    val tickLabel = if (needsDecimalFormatting) {
-                        String.format("%.2f", tick / 100.0)
-                    } else {
-                        tick.toString()
+                    val tickLabel = when {
+                        needsDecimalFormatting ->
+                            String.format("%.2f", tick / 100.0)
+                        useHourLabels -> formatMinutesAsHourMinute(tick)
+                        else -> tick.toString()
                     }
                     val labelX = if (sc.onRight) chartRight + 4.dp.toPx()
                                  else chartLeft - 4.dp.toPx()
@@ -1423,6 +1461,11 @@ private fun HabitLineChart(
                 }
             }
         } else {
+            // Minute-based charts switch their left-axis labels to h:mm
+            // (e.g. 90 → "1:30") once any visible value exceeds an hour.
+            val useHourAxisLabels = globalMax > 60 &&
+                seriesData.isNotEmpty() &&
+                seriesData.all { isMinutesSeries(it, garminHabitLinks) }
             for (tick in yTicks) {
                 val y = chartBottom - ((tick - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
                 drawLine(
@@ -1432,11 +1475,12 @@ private fun HabitLineChart(
                     strokeWidth = 0.5.dp.toPx(),
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
                 )
-                val tickLabel = if (needsDecimalFormatting) {
-                    // Convert from hundredths of a year to years with 2 decimal places
-                    String.format("%.2f", tick / 100.0)
-                } else {
-                    tick.toString()
+                val tickLabel = when {
+                    needsDecimalFormatting ->
+                        // Convert from hundredths of a year to years with 2 decimal places
+                        String.format("%.2f", tick / 100.0)
+                    useHourAxisLabels -> formatMinutesAsHourMinute(tick)
+                    else -> tick.toString()
                 }
                 drawContext.canvas.nativeCanvas.drawText(
                     tickLabel,

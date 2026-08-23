@@ -194,6 +194,9 @@ private val KEY_MIGRATION_WAGS_MINUTES_PRIMARY_REPAIR_DONE = booleanPreferencesK
 /** True after the one-time apnea sessions-primary migration has run (Aug-21-2026). */
 private val KEY_MIGRATION_APNEA_SESSIONS_PRIMARY_DONE = booleanPreferencesKey("migration_apnea_sessions_primary_done")
 
+/** True after the one-time broken minutes-migration repair has run (Aug-23-2026). */
+private val KEY_MIGRATION_BROKEN_MINUTES_MIGRATION_REPAIR_DONE = booleanPreferencesKey("migration_broken_minutes_migration_repair_done")
+
 /** True after the one-time breathing sessions-primary migration has run (Aug-22-2026). */
 private val KEY_MIGRATION_BREATHING_SESSIONS_PRIMARY_DONE = booleanPreferencesKey("migration_breathing_sessions_primary_done")
 
@@ -828,6 +831,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setWagsMinutesPrimaryRepairDone() {
         context.dataStore.edit { it[KEY_MIGRATION_WAGS_MINUTES_PRIMARY_REPAIR_DONE] = true }
+    }
+
+    /** True after the one-time broken minutes-migration repair has run. */
+    suspend fun isBrokenMinutesMigrationRepairDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_BROKEN_MINUTES_MIGRATION_REPAIR_DONE] ?: false }.first()
+    }
+
+    suspend fun setBrokenMinutesMigrationRepairDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_BROKEN_MINUTES_MIGRATION_REPAIR_DONE] = true }
     }
 
     /** True after the one-time apnea sessions-primary migration has run. */

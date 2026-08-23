@@ -302,6 +302,43 @@ fun falseMinutesPrimaryHabits(
 }
 
 /**
+ * Identifies habits broken by the pre-Aug-23-2026 graph long-press
+ * "Minutes value" migration: that action MOVED the primary-key history into
+ * the first-class `minutes:` slot and DELETED the primary key. Without the
+ * primary key the graph renders nothing at all for any metric (the graph
+ * loader needs the key to exist) — most visibly for Garmin-linked habits,
+ * whose raw values live in the Garmin cache while the JSON key only holds
+ * the derived per-day points.
+ *
+ * Targets minutes-primary habits that are NOT timer-fed (timer habits
+ * legitimately run minutes-primary with their sessions in the primary key)
+ * and either
+ *  • are Garmin-linked (no legitimate path to minutes-primary), or
+ *  • have a missing/empty primary key while `minutes:` holds data — the
+ *    exact footprint the destructive migration left behind.
+ */
+fun brokenMinutesMigrationHabits(
+    widgetTimerMinutesPrimary: Set<String>,
+    garminHabitLinks: Map<String, String>,
+    pcWidgetHabits: Set<String>,
+    widgetTriggerHabits: Set<String>,
+    mediaHabits: Set<String>,
+    bridgeMovieHabits: Set<String>,
+    chessLinked: Set<String>,
+    db: HabitsDatabase
+): Set<String> {
+    val timerFed = pcWidgetHabits + widgetTriggerHabits + mediaHabits +
+        bridgeMovieHabits + chessLinked
+    return widgetTimerMinutesPrimary.filter { habit ->
+        if (habit in timerFed) return@filter false
+        if (habit in garminHabitLinks) return@filter true
+        val primaryEmpty = db[habit].orEmpty().values.all { it == 0 }
+        val minutesHasData = db[minutesKey(habit)].orEmpty().values.any { it > 0 }
+        primaryEmpty && minutesHasData
+    }.toSet()
+}
+
+/**
  * The five Wags-fed apnea habits migrated to SESSIONS-PRIMARY on Aug-21-2026:
  * the primary key holds the session count (and drives points, no divider),
  * while the hold minutes live in the first-class `minutes:` slot (the built-in

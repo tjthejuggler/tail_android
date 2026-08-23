@@ -1298,6 +1298,96 @@ class HabitViewModel(
     }
 
     /**
+     * One-time repair (Aug-23-2026) for habits broken by the graph long-press
+     * "Minutes value" migration: that action MOVED the primary-key history
+     * into the first-class `minutes:` slot and DELETED the primary key, which
+     * blanks the graph for every metric (the graph loader needs the primary
+     * key to exist). Most visibly hit Garmin-linked habits — e.g. a Sleep
+     * Length habit whose raw minute values live in the Garmin cache while the
+     * JSON key only held the derived per-day points.
+     *
+     * For every broken habit ([com.example.tail.data.brokenMinutesMigrationHabits]):
+     * • the migrated `minutes:` data is max-merged back into the primary key
+     *   (nothing entered between breakage and repair is lost), then the slot
+     *   is dropped;
+     * • the minutes-primary and minutes-enabled flags are cleared;
+     * • the graph metric selection is pointed back at Value1 so the restored
+     *   history (or the live Garmin series) is visible immediately.
+     */
+    private suspend fun performBrokenMinutesMigrationRepair(uri: Uri) {
+        try {
+            val s = _settings.value
+            val chessLinked = setOf(
+                com.example.tail.widget.ChessReadinessStore.linkedPuzzleHabit(context),
+                com.example.tail.widget.ChessReadinessStore.linkedRushHabit(context)
+            ).filter { it.isNotBlank() }
+            val targets = com.example.tail.data.brokenMinutesMigrationHabits(
+                widgetTimerMinutesPrimary = s.widgetTimerMinutesPrimary,
+                garminHabitLinks = s.garminHabitLinks,
+                pcWidgetHabits = s.pcWidgetHabits,
+                widgetTriggerHabits = s.widgetTriggerHabits,
+                mediaHabits = s.mediaHabits,
+                bridgeMovieHabits = s.bridgeMovieHabits,
+                chessLinked = chessLinked.toSet(),
+                db = cachedPhoneDb
+            )
+            if (targets.isEmpty()) {
+                settingsRepo.setBrokenMinutesMigrationRepairDone()
+                Log.i(TAG, "performBrokenMinutesMigrationRepair: nothing to repair")
+                return
+            }
+            // Max-merge the migrated minutes-slot data back into the primary
+            // key, then drop the slot so no data is orphaned.
+            val db = cachedPhoneDb.toMutableMap()
+            var dbChanged = false
+            for (habit in targets) {
+                val stray = db[minutesKey(habit)] ?: continue
+                val merged = (db[habit] ?: emptyMap()).toMutableMap()
+                for ((d, v) in stray) merged[d] = maxOf(merged[d] ?: 0, v)
+                db[habit] = merged
+                db.remove(minutesKey(habit))
+                dbChanged = true
+            }
+            if (dbChanged) {
+                habitsRepo.saveDatabase(uri, context, db)
+                cachedPhoneDb = db
+            }
+            val minutesPrimary = s.widgetTimerMinutesPrimary - targets
+            val minutesEnabled = s.minutesEnabledHabits - targets
+            settingsRepo.saveWidgetTimerMinutesPrimary(minutesPrimary)
+            settingsRepo.saveMinutesEnabledHabits(minutesEnabled)
+            // Point the graph back at Value1 so the restored history (or the
+            // live Garmin series) shows immediately.
+            val selection = s.graphMetricSelection.toMutableMap()
+            var selectionChanged = false
+            for (habit in targets) {
+                val metrics = selection[habit]?.toMutableSet() ?: continue
+                if (GRAPH_METRIC_MINUTES in metrics) {
+                    metrics.remove(GRAPH_METRIC_MINUTES)
+                    metrics.add(GRAPH_METRIC_VALUE1)
+                    selection[habit] = metrics
+                    selectionChanged = true
+                }
+            }
+            if (selectionChanged) {
+                settingsRepo.saveGraphMetricSelection(selection)
+            }
+            _settings.value = _settings.value.copy(
+                widgetTimerMinutesPrimary = minutesPrimary,
+                minutesEnabledHabits = minutesEnabled,
+                graphMetricSelection = selection
+            )
+            settingsRepo.setBrokenMinutesMigrationRepairDone()
+            Log.i(
+                TAG,
+                "performBrokenMinutesMigrationRepair: restored ${targets.size} habits: ${targets.sorted()}"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "performBrokenMinutesMigrationRepair failed (will retry next load): ${e.message}")
+        }
+    }
+
+    /**
      * One-time migration (Aug-21-2026): converts the five Wags-fed apnea
      * habits ([com.example.tail.data.APNEA_SESSIONS_PRIMARY_HABITS]) from the
      * legacy Wags layout (minutes = primary value with divider + sessions in
@@ -1530,6 +1620,15 @@ class HabitViewModel(
             // sessions = Value2 + zero-minutes points fallback).
             if (!settingsRepo.isWagsMinutesPrimaryRepairDone()) {
                 performWagsMinutesPrimaryRepair(uri)
+            }
+
+            // ── One-time broken minutes-migration repair ────────────────
+            // The graph long-press "Minutes value" action used to MOVE the
+            // primary-key history into `minutes:` and delete the primary key,
+            // blanking the graph (most visibly for Garmin-linked habits).
+            // Restore the primary key and clear the flags.
+            if (!settingsRepo.isBrokenMinutesMigrationRepairDone()) {
+                performBrokenMinutesMigrationRepair(uri)
             }
 
             // ── One-time apnea sessions-primary migration ────────────────
@@ -4464,14 +4563,21 @@ class HabitViewModel(
      * Transitions a legacy single-value habit to minutes-primary, carrying the
      * historical data over. Such habits had a single generic count that was
      * minutes all along, so choosing "Minutes value" in the graph's long-press
-     * chooser MOVES that history from the value-1 slot into the habit's
-     * minutes slot, empties the value-1 slot, and makes minutes the primary
-     * value (the minutes toggle turns on with it).
+     * chooser COPIES that history from the value-1 slot into the habit's
+     * minutes slot — the value-1 slot is ALWAYS kept (deleting it blanks the
+     * graph for every metric; see the Aug-23-2026 repair) — and makes minutes
+     * the primary value (the minutes toggle turns on with it).
      *
-     * The data move only happens while the minutes slot is empty — a habit
+     * The data copy only happens while the minutes slot is empty — a habit
      * with real (timer-fed) minutes data keeps it and only the primary flag
      * flips. The habit's graph metric selection swaps value1 → minutes so the
-     * migrated history is visible immediately.
+     * carried-over history is visible immediately.
+     *
+     * Garmin-linked habits are pure view semantics: their Value1 series comes
+     * from the Garmin cache (the JSON key only holds the derived per-day
+     * points), so there is no history to carry over and no flags to flip —
+     * duration-typed Garmin series (e.g. Sleep Length) already render with
+     * the h:mm duration axis in the graph.
      */
     fun migrateValue1ToMinutesPrimary(habitName: String) {
         val uriStr = _settings.value.fileUri
@@ -4481,35 +4587,52 @@ class HabitViewModel(
             return
         }
         viewModelScope.launch {
+            // Garmin-linked habits: nothing to migrate — the live Garmin
+            // series already IS the value, and flipping the minutes-primary
+            // flag would only redirect points at an empty minutes slot.
+            if (_settings.value.garminHabitLinks.containsKey(habitName)) {
+                Log.i(
+                    TAG,
+                    "migrateValue1ToMinutesPrimary: '$habitName' is Garmin-linked — " +
+                        "value already treated as minutes, no data migration"
+                )
+                return@launch
+            }
             val minKey = minutesKey(habitName)
             val existingMinutes = cachedPhoneDb[minKey]
             val minutesEmpty = existingMinutes == null || existingMinutes.values.all { it == 0 }
             val value1Data = cachedPhoneDb[habitName]
+            var copiedToMinutes = false
             if (minutesEmpty && !value1Data.isNullOrEmpty() && dbLoaded) {
                 val mutableDb = cachedPhoneDb.toMutableMap()
+                // COPY, never move: the value-1 history stays in place and
+                // the minutes slot gets a duplicate. The primary key must
+                // survive — deleting it blanks the graph for EVERY metric.
                 mutableDb[minKey] = value1Data
-                mutableDb.remove(habitName)
                 cachedPhoneDb = mutableDb
                 withContext(Dispatchers.IO) {
                     habitsRepo.persistDatabase(Uri.parse(uriStr), context, mutableDb)
                 }
                 HabitsDataChangedBus.emit()
+                copiedToMinutes = true
                 Log.i(
                     TAG,
-                    "migrateValue1ToMinutesPrimary: moved ${value1Data.size} days " +
-                        "of value-1 data to minutes for '$habitName'"
+                    "migrateValue1ToMinutesPrimary: copied ${value1Data.size} days " +
+                        "of value-1 data to minutes for '$habitName' (value-1 kept)"
                 )
             }
-            // Swap the graph selection value1 → minutes so the migrated
-            // history shows immediately (also refreshes cached series).
-            val selection = _settings.value.graphMetricSelection.toMutableMap()
-            val currentSet = getSelectedMetrics(habitName).toMutableSet()
-            val hadValue1 = currentSet.remove(GRAPH_METRIC_VALUE1)
-            val addedMinutes = currentSet.add(GRAPH_METRIC_MINUTES)
-            if (hadValue1 || addedMinutes) {
-                selection[habitName] = currentSet
-                settingsRepo.saveGraphMetricSelection(selection)
-                _settings.value = _settings.value.copy(graphMetricSelection = selection)
+            // Swap the graph selection value1 → minutes only when the minutes
+            // slot now holds the carried-over history.
+            if (copiedToMinutes) {
+                val selection = _settings.value.graphMetricSelection.toMutableMap()
+                val currentSet = getSelectedMetrics(habitName).toMutableSet()
+                val hadValue1 = currentSet.remove(GRAPH_METRIC_VALUE1)
+                val addedMinutes = currentSet.add(GRAPH_METRIC_MINUTES)
+                if (hadValue1 || addedMinutes) {
+                    selection[habitName] = currentSet
+                    settingsRepo.saveGraphMetricSelection(selection)
+                    _settings.value = _settings.value.copy(graphMetricSelection = selection)
+                }
             }
             // Minutes becomes the primary value (enables the minutes toggle).
             setWidgetTimerPrimaryValue(habitName, true)
@@ -6277,7 +6400,13 @@ class HabitViewModel(
         textFilter: String = ""
     ): List<GraphDataPoint> {
         val isMeal = isMealHabit(habitName)
-        val entries = cachedPhoneDb[habitName] ?: if (isMeal) emptyMap() else return emptyList()
+        // Garmin-linked habits keep their raw values in the Garmin cache; the
+        // JSON key only holds the derived per-day points (and may not exist
+        // yet). A missing key must not blank the whole graph — fall through
+        // with empty entries so the Garmin series still renders.
+        val isGarminLinked = _settings.value.garminHabitLinks.containsKey(habitName)
+        val entries = cachedPhoneDb[habitName]
+            ?: if (isMeal || isGarminLinked) emptyMap() else return emptyList()
         val divider = _settings.value.habitDividers[habitName] ?: 1
 
         // Secondary values (stored under "secondary_value:<habitName>" in the DB)
