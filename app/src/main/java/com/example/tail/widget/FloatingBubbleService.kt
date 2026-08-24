@@ -1072,15 +1072,28 @@ class FloatingBubbleService : Service() {
     // activity is started, so the chess app stays the focused, dominant app;
     // closing a dialog hands focus straight back to it.
     private var chessReadinessOverlay: ChessReadinessOverlay? = null
+    private var chessReadinessV2Overlay: ChessReadinessV2Overlay? = null
     private var chessStatusOverlay: ChessStatusOverlay? = null
 
-    /** Shows the Phase 1 readiness wizard as a floating overlay dialog. */
+    /**
+     * Shows the Phase 1 readiness wizard as a floating overlay dialog.
+     * Branches on the settings toggle: v1 keeps the original diagnostic,
+     * v2 opens the neurobiological gate wizard (HRV/RHR Z-scores, PVT-B,
+     * ACWR, priming). Both record into the same shared history.
+     */
     private fun openChessReadiness() {
         try {
             chessStatusOverlay?.dismiss()
             chessStatusOverlay = null
             chessReadinessOverlay?.dismiss()
-            chessReadinessOverlay = ChessReadinessOverlay(this).also { it.show() }
+            chessReadinessOverlay = null
+            chessReadinessV2Overlay?.dismiss()
+            chessReadinessV2Overlay = null
+            if (ChessReadinessV2Store.isV2(this)) {
+                chessReadinessV2Overlay = ChessReadinessV2Overlay(this).also { it.show() }
+            } else {
+                chessReadinessOverlay = ChessReadinessOverlay(this).also { it.show() }
+            }
         } catch (e: Exception) { /* never crash the bubble */ }
     }
 
@@ -1089,6 +1102,8 @@ class FloatingBubbleService : Service() {
         try {
             chessReadinessOverlay?.dismiss()
             chessReadinessOverlay = null
+            chessReadinessV2Overlay?.dismiss()
+            chessReadinessV2Overlay = null
             chessStatusOverlay?.dismiss()
             chessStatusOverlay = ChessStatusOverlay(this).also { it.show() }
         } catch (e: Exception) { /* never crash the bubble */ }
@@ -1097,8 +1112,10 @@ class FloatingBubbleService : Service() {
     /** Removes any open chess overlay dialog (e.g. when the service dies). */
     private fun dismissChessOverlays() {
         try { chessReadinessOverlay?.dismiss() } catch (_: Exception) {}
+        try { chessReadinessV2Overlay?.dismiss() } catch (_: Exception) {}
         try { chessStatusOverlay?.dismiss() } catch (_: Exception) {}
         chessReadinessOverlay = null
+        chessReadinessV2Overlay = null
         chessStatusOverlay = null
     }
 

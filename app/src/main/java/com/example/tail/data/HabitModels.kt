@@ -1404,6 +1404,16 @@ data class AppSettings(
     val chessReadinessApp: String = "",
 
     /**
+     * Which readiness engine the chess flow uses: "v1" (the original
+     * sleep / clarity / puzzles / rush diagnostic — default) or "v2" (the
+     * neurobiological gate: Garmin HRV/RHR Z-scores, a 3-minute PVT-B
+     * vigilance test, cognitive-load ACWR and mate-in-one priming). Both
+     * versions share the same history, Chess Guard enforcement and
+     * game-audit rules.
+     */
+    val chessReadinessVersion: String = "v1",
+
+    /**
      * Widget-timer habits where MINUTES is the primary value.
      *
      * For habits in this set, the timer minutes (stored in the secondary-value

@@ -141,6 +141,8 @@ private val KEY_MAP_BEGIN_DATE = stringPreferencesKey("map_begin_date")
 // Chess Readiness feature (Phase 1 diagnostic over the floating bubble)
 private val KEY_CHESS_READINESS_ENABLED = booleanPreferencesKey("chess_readiness_enabled")
 private val KEY_CHESS_READINESS_APP = stringPreferencesKey("chess_readiness_app")
+// Which readiness engine the chess flow uses: "v1" (original) or "v2".
+private val KEY_CHESS_READINESS_VERSION = stringPreferencesKey("chess_readiness_version")
 // Stored as "habitName\x000|||habitName\x001" pairs (0 = points, 1 = value/raw, 2 = value2)
 private val KEY_GRAPH_VALUE_MODE_HABITS = stringPreferencesKey("graph_value_mode_habits")
 // Multi-select graph metrics: "habitName\x00metric1,metric2|||habitName\x00metric1"
@@ -1016,6 +1018,8 @@ class SettingsRepository(private val context: Context) {
             mediaApps = decodeFileUriMap(prefs[KEY_MEDIA_APPS] ?: ""),
             chessReadinessEnabled = prefs[KEY_CHESS_READINESS_ENABLED] ?: false,
             chessReadinessApp = prefs[KEY_CHESS_READINESS_APP] ?: "",
+            chessReadinessVersion = prefs[KEY_CHESS_READINESS_VERSION]
+                ?.takeIf { it == "v2" } ?: "v1",
             gdriveAutoEnabled = prefs[KEY_GDRIVE_AUTO_ENABLED] ?: false,
             gdriveAccountName = prefs[KEY_GDRIVE_ACCOUNT_NAME] ?: "",
             gdriveLastBackupDate = prefs[KEY_GDRIVE_LAST_DATE] ?: "",
@@ -1727,6 +1731,13 @@ class SettingsRepository(private val context: Context) {
     /** Saves the package name of the app associated with Chess Readiness. */
     suspend fun saveChessReadinessApp(packageName: String) {
         context.dataStore.edit { prefs -> prefs[KEY_CHESS_READINESS_APP] = packageName }
+    }
+
+    /** Saves which readiness engine the chess flow uses ("v1" or "v2"). */
+    suspend fun saveChessReadinessVersion(version: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CHESS_READINESS_VERSION] = if (version == "v2") "v2" else "v1"
+        }
     }
 
     // ── Google Drive Backup ──────────────────────────────────────────────

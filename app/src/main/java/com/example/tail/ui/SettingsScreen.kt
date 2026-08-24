@@ -2326,6 +2326,35 @@ private fun ChessReadinessSettingsSection(
 
         // Associated app picker (only when enabled)
         if (enabled) {
+            // Readiness engine version selector (original v1 / neurobiological v2)
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Readiness Test Version", fontSize = 14.sp)
+            Text(
+                "v1 — the original sleep / clarity / puzzles / rush diagnostic.\n" +
+                    "v2 — neurobiological gate: Garmin HRV & resting-HR Z-scores, " +
+                    "a 3-minute vigilance test (PVT-B), cognitive load balancing " +
+                    "(ACWR) and — when fully cleared — mate-in-one priming before " +
+                    "you play. Both versions share the same history, Chess Guard " +
+                    "enforcement and game-audit rules.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            listOf(
+                "v1" to "v1 — Original diagnostic",
+                "v2" to "v2 — Neurobiological gate"
+            ).forEach { (value, label) ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = settings.chessReadinessVersion == value,
+                        onClick = { viewModel.setChessReadinessVersion(value) }
+                    )
+                    Text(label, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),

@@ -4950,6 +4950,26 @@ class HabitViewModel(
     }
 
     /**
+     * Switches the chess readiness engine between "v1" (the original
+     * diagnostic) and "v2" (the neurobiological gate). Persisted to DataStore
+     * and mirrored into the synchronous v2 prefs store so the floating bubble
+     * service can branch without reading DataStore on the window-manager path.
+     */
+    fun setChessReadinessVersion(version: String) {
+        viewModelScope.launch {
+            val normalized =
+                if (version == com.example.tail.widget.ChessReadinessV2Store.VERSION_V2) {
+                    com.example.tail.widget.ChessReadinessV2Store.VERSION_V2
+                } else {
+                    com.example.tail.widget.ChessReadinessV2Store.VERSION_V1
+                }
+            settingsRepo.saveChessReadinessVersion(normalized)
+            _settings.value = _settings.value.copy(chessReadinessVersion = normalized)
+            com.example.tail.widget.ChessReadinessV2Store.saveReadinessVersion(context, normalized)
+        }
+    }
+
+    /**
      * Enables or disables Chess Guard — the hard enforcement layer that
      * keeps the chess app closed while the readiness policy says blocked.
      * The switch-ON timestamp is recorded so games that ended before
