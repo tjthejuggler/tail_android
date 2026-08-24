@@ -2,19 +2,18 @@
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-        Static shortcut for "Quick Capture" — FIRE-AND-FORGET camera.
+        Static shortcut for "Quick Capture" — the full VOICE + CAMERA combo.
         Appears FIRST in the launcher long-press menu and Samsung Routines.
 
-        Launches QuickCaptureActivity: CameraX preview, one tap to capture,
-        then the activity finishes IMMEDIATELY. The image is queued and the
-        background VisionProcessingWorker runs the SAME deterministic meal
-        pipeline the in-app meal habit camera uses (no waiting, no approval,
-        no LLM habit guessing when a single camera habit is enabled). If the
-        image can't be acted on, it lands in the Quick Capture History with
-        a notification on next app open.
-
-        The old voice+camera combo remains available via MediaCaptureActivity
-        (explicit intent / Tasker ACTION_MEDIA_CAPTURE).
+        Launches MediaCaptureActivity: voice starts IMMEDIATELY (say a
+        habit or a note and the screen closes itself) while the camera
+        preview fills the screen. TAP the shutter = FIRE-AND-FORGET — the
+        photo is queued and the background VisionProcessingWorker runs the
+        deterministic meal pipeline (no waiting, no approval; images the
+        AI can't act on land in the Quick Capture History with a
+        notification on next app open). HOLD the shutter = tandem teaching
+        (photo + spoken instruction). Tasker's explicit intent to this same
+        activity gets the identical behaviour.
     -->
     <shortcut
         android:shortcutId="media_capture"
@@ -23,9 +22,9 @@
         android:shortcutLongLabel="@string/shortcut_media_capture_long"
         android:icon="@android:drawable/ic_menu_camera">
         <intent
-            android:action="com.example.tail.ACTION_QUICK_CAPTURE"
+            android:action="com.example.tail.ACTION_MEDIA_CAPTURE"
             android:targetPackage="com.example.tail"
-            android:targetClass="com.example.tail.QuickCaptureActivity" />
+            android:targetClass="com.example.tail.MediaCaptureActivity" />
         <categories android:name="android.shortcut.conversation" />
     </shortcut>
 

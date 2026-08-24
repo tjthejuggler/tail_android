@@ -98,6 +98,7 @@ import com.example.tail.ui.VoiceTranscriptBus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -184,6 +185,15 @@ sealed class CaptureState {
  *    incremented immediately.
  *
  * Works on the lock screen (`showWhenLocked` + `turnScreenOn`).
+ *
+ * ── FIRE-AND-FORGET TAP CAPTURE ────────────────────────────────────────
+ * TAPPING the capture button (or tapping a gallery photo) NEVER blocks:
+ * the image is enqueued for the background VisionProcessingWorker and the
+ * activity finishes immediately — no Processing screen, no result overlay,
+ * no approval. Failures land in the Quick Capture History with a
+ * notification on next app open. HOLDING the button keeps the interactive
+ * tandem-teaching flow (photo + spoken instruction), and voice input
+ * (habit increments / notes) works exactly as before.
  *
  * Pass [EXTRA_DIRECT_CAMERA] = true to skip voice and open camera directly
  * (useful for Tasker / Samsung Routines automation).
@@ -275,13 +285,10 @@ class MediaCaptureActivity : ComponentActivity() {
                         vibrateTandemReady()
                         captureState = CaptureState.AwaitingVoice(relativePath)
                     } else {
+                        // TAP on a gallery photo = fire-and-forget analyse,
+                        // identical to a tap-capture: queue it and close.
                         stopVoiceService()
-                        captureState = CaptureState.Processing
-                        val mealLogRepo = MealLogRepository(this@MediaCaptureActivity)
-                        val queueRepo = VisionQueueRepository(this@MediaCaptureActivity)
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            processCaptureInline(relativePath, targetHabit, mealLogRepo, queueRepo)
-                        }
+                        enqueueFireAndForget(relativePath)
                     }
                 }
             } catch (e: Exception) {
@@ -524,9 +531,13 @@ class MediaCaptureActivity : ComponentActivity() {
     // ── Camera mode (tap) ───────────────────────────────────────────────
 
     /**
-     * Captures a photo, stops voice, then processes the image **inline**
-     * through the vision pipeline (same code path as the Settings test
-     * button). The result is shown in a [CaptureState.Result] overlay.
+     * TAP capture — FIRE-AND-FORGET. Saves the photo, enqueues it for the
+     * background [VisionProcessingWorker] (deterministic target: explicit
+     * extra wins, else the single camera-eligible habit; attaches to the
+     * active meal group so close-succession captures merge into one meal)
+     * and finishes IMMEDIATELY. No Processing screen, no result overlay,
+     * no approval — anything the AI can't act on lands in the Quick
+     * Capture History. HOLD the button for tandem teaching instead.
      */
     private fun capturePhoto(targetHabit: String?) {
         if (captureInProgress) return
@@ -558,23 +569,46 @@ class MediaCaptureActivity : ComponentActivity() {
                         tempFile.delete()
                         val relativePath = mealLogRepo.saveImageBytes(bytes)
 
-                        runOnUiThread { captureState = CaptureState.Processing }
+                        // Resolve the deterministic target here on the
+                        // camera executor thread (blocking is fine):
+                        // explicit extra wins; otherwise exactly-one
+                        // camera-eligible habit removes all ambiguity.
+                        val resolvedHabit = targetHabit ?: runCatching {
+                            runBlocking {
+                                val settings = SettingsRepository(this@MediaCaptureActivity)
+                                    .settingsFlow.first()
+                                VisionHabitExecutor.cameraEligibleHabits(settings)
+                                    .singleOrNull()
+                            }
+                        }.getOrNull()
 
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            processCaptureInline(
-                                relativePath,
-                                targetHabit,
-                                mealLogRepo,
-                                queueRepo
-                            )
+                        val activeGroup = resolvedHabit?.let {
+                            mealLogRepo.findActiveGroup(it, System.currentTimeMillis())
+                        }
+                        queueRepo.enqueue(
+                            imagePath = relativePath,
+                            habitId = resolvedHabit,
+                            attachToMealLogId = activeGroup?.id
+                        )
+                        VisionProcessingWorker.enqueue(this@MediaCaptureActivity)
+
+                        runOnUiThread {
+                            Toast.makeText(
+                                this@MediaCaptureActivity,
+                                "📸 Captured & Queued",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            finish()
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to save captured image", e)
                         runOnUiThread {
-                            captureState = CaptureState.Result(
-                                "❌ Capture failed: ${e.message?.take(200)}",
-                                isSuccess = false
-                            )
+                            Toast.makeText(
+                                this@MediaCaptureActivity,
+                                "Capture failed: ${e.message}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            finish()
                         }
                     }
                 }
@@ -582,10 +616,12 @@ class MediaCaptureActivity : ComponentActivity() {
                 override fun onError(exception: ImageCaptureException) {
                     Log.e(TAG, "Camera capture error", exception)
                     runOnUiThread {
-                        captureState = CaptureState.Result(
-                            "❌ Capture error: ${exception.message?.take(200)}",
-                            isSuccess = false
-                        )
+                        Toast.makeText(
+                            this@MediaCaptureActivity,
+                            "Capture error: ${exception.message}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        finish()
                     }
                 }
             }
@@ -797,6 +833,50 @@ class MediaCaptureActivity : ComponentActivity() {
             append("\n\nManage memories in Settings → Vision Memory.")
         }
         showResult(display, incError == null, title = "Learned")
+    }
+
+    // ── Fire-and-forget queueing ────────────────────────────────────────
+
+    /**
+     * FIRE-AND-FORGET: queue [relativePath] for the background
+     * [VisionProcessingWorker] and finish. Deterministic target resolution
+     * (explicit habit extra wins, else the single camera-eligible habit)
+     * and active-meal-group attachment happen here, so the worker runs the
+     * plain meal pipeline with no habit guessing. Anything the AI can't
+     * act on lands in the Quick Capture History (notification on next app
+     * open) — this screen never blocks on a result.
+     */
+    private fun enqueueFireAndForget(relativePath: String) {
+        handler.removeCallbacks(autoFinishTimeout)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val settings = runCatching {
+                    SettingsRepository(this@MediaCaptureActivity).settingsFlow.first()
+                }.getOrNull()
+                val resolvedHabit = targetHabit
+                    ?: settings?.let { VisionHabitExecutor.cameraEligibleHabits(it).singleOrNull() }
+                val mealLogRepo = MealLogRepository(this@MediaCaptureActivity)
+                val activeGroup = resolvedHabit?.let {
+                    mealLogRepo.findActiveGroup(it, System.currentTimeMillis())
+                }
+                VisionQueueRepository(this@MediaCaptureActivity).enqueue(
+                    imagePath = relativePath,
+                    habitId = resolvedHabit,
+                    attachToMealLogId = activeGroup?.id
+                )
+                VisionProcessingWorker.enqueue(this@MediaCaptureActivity)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to enqueue captured image", e)
+            }
+            runOnUiThread {
+                Toast.makeText(
+                    this@MediaCaptureActivity,
+                    "📸 Captured & Queued",
+                    Toast.LENGTH_SHORT
+                ).show()
+                finish()
+            }
+        }
     }
 
     // ── Inline vision processing ────────────────────────────────────────

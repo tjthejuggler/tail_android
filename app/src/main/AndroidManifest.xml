@@ -375,13 +375,16 @@
         </activity>
 
         <!--
-            MediaCaptureActivity: unified launcher that combines voice and
-            camera. Voice starts IMMEDIATELY (SmartVoiceService with vibration).
-            A transparent overlay with a camera button is shown briefly so the
-            user can switch to camera mode if desired. Works on the lock screen.
-            Camera mode captures a photo, processes it inline through the vision
-            pipeline (same code path as the Settings test button), shows the LLM
-            result, and the user dismisses to return to their previous screen.
+            MediaCaptureActivity: unified quick capture — voice AND camera.
+            Voice starts IMMEDIATELY (SmartVoiceService with vibration);
+            saying a habit or note closes the screen by itself. TAPPING the
+            capture button is FIRE-AND-FORGET: the photo is queued for the
+            background VisionProcessingWorker and the activity finishes
+            immediately (no Processing/result/approval screens; failures
+            land in the Quick Capture History). HOLDING the button runs the
+            interactive tandem-teaching flow (photo + spoken instruction).
+            Works on the lock screen. Launched by the launcher shortcut,
+            Tasker explicit intents, and Samsung Routines.
         -->
         <activity
             android:name=".MediaCaptureActivity"
