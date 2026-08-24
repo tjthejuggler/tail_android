@@ -499,6 +499,8 @@ fun HabitGridScreen(
     // Subtype increment dialog state
     var subtypeDialogHabit by remember { mutableStateOf<Habit?>(null) }
     var subtypeDialogBreakdown by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    // Weights input dialog state (weights-type habits)
+    var weightsDialogHabit by remember { mutableStateOf<Habit?>(null) }
     var showCalendarPicker by remember { mutableStateOf(false) }
     var showAddScreenDialog by remember { mutableStateOf(false) }
     // Index of screen being renamed (-1 = none)
@@ -1186,6 +1188,7 @@ fun HabitGridScreen(
                                         subtypeDialogHabit = habit
                                     }
                                 }
+                                habit.name in settings.weightsHabits -> weightsDialogHabit = habit
                                 habit.name in settings.textInputHabits -> {
                                     val showOpts = habit.name in settings.textInputOptionsHabits
                                     val isMovieLinked = habit.name in settings.bridgeMovieHabits &&
@@ -1584,6 +1587,8 @@ fun HabitGridScreen(
                         onSetSubtypes = { name, types -> viewModel.setHabitSubtypes(name, types) },
                         mealHabits = settings.mealHabits,
                         onToggleMeal = { name -> viewModel.toggleMealHabit(name) },
+                        weightsHabits = settings.weightsHabits,
+                        onToggleWeights = { name -> viewModel.toggleWeightsHabit(name) },
                         onOpenMealDetails = { name ->
                             mealDialogFromTap = false
                             mealDialogHabit = name
@@ -2267,6 +2272,19 @@ fun HabitGridScreen(
                 onDismiss = { subtypeDialogHabit = null }
             )
         }
+    }
+
+    // Weights input dialog (weights-type habits)
+    weightsDialogHabit?.let { habit ->
+        WeightsInputDialog(
+            habitName = habit.name,
+            defaultUnit = settings.graphWeightUnit,
+            onConfirm = { weightGrams, reps, machine ->
+                viewModel.saveWeightsEntry(habit.name, weightGrams, reps, machine)
+                weightsDialogHabit = null
+            },
+            onDismiss = { weightsDialogHabit = null }
+        )
     }
 
     // Meal detail dialog
@@ -4022,6 +4040,42 @@ private fun MealToggleSection(
 }
 
 /**
+ * Toggle for the "Weights" habit type: when enabled, tapping the habit opens
+ * the weights input dialog (kg/lb unit + weight + reps + machine/free), and
+ * the graph shows weight & reps curves filterable by machine/free.
+ */
+@Composable
+private fun WeightsToggleSection(
+    habitName: String,
+    isWeights: Boolean,
+    onToggleWeights: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "🏋️ Weights Habit", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isWeights) "Tap logs weight × reps (machine/free)" else "Normal counter",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isWeights,
+            onCheckedChange = { onToggleWeights(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF8BC34A),
+                checkedTrackColor = Color(0xFF1B3A1B),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+}
+
+/**
  * "Meal Detail" button for meal habits — opens the meal detail editor
  * (vision logging setup). Rendered at the top of the SETTINGS section in
  * [EditModeControlBar] so it is immediately visible instead of buried in
@@ -4939,6 +4993,9 @@ private fun EditModeControlBar(
     onSetSubtypes: (String, List<String>) -> Unit,
     mealHabits: Set<String> = emptySet(),
     onToggleMeal: (String) -> Unit = {},
+    /** Weights-type habits (kg/lb + reps machine/free logging on tap). */
+    weightsHabits: Set<String> = emptySet(),
+    onToggleWeights: (String) -> Unit = {},
     onOpenMealDetails: (String) -> Unit = {},
     /** Habits excluded from the day timeline (retrospective hour-by-hour view). */
     timelineExcludedHabits: Set<String> = emptySet(),
@@ -6341,6 +6398,14 @@ private fun EditModeControlBar(
                         scheduleTimes = habitScheduleTimes,
                         onSetScheduleTime = onSetHabitScheduleTime
                     )
+
+                    // ── Weights habit type ─────────────────────────────────────
+                    WeightsToggleSection(
+                        habitName = selectedHabitName,
+                        isWeights = selectedHabitName in weightsHabits,
+                        onToggleWeights = onToggleWeights
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     // ── Special habit types (collapsible) ──────────────────────
                     // Meal, Chess.com, Media, Garmin, GitHub and Movie Bridge —

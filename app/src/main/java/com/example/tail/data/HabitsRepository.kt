@@ -703,6 +703,63 @@ class HabitsRepository {
     }
 
     /**
+     * Atomically saves the weight/reps SLOTS of one weights-habit log entry
+     * for [date] in a single read-modify-write cycle (same anti-interleaving
+     * rationale as [incrementHabitSlotsForDate]):
+     *
+     * - the category's WEIGHT slot (grams) keeps the day's MAXIMUM — logging
+     *   "60 kg × 8" twice, or after "50 kg", still shows 60 kg for the day,
+     * - the category's REPS slot adds [reps] (total reps of the day).
+     *
+     * Machine weights live in `secondary_value:` / `secondary_value2:`,
+     * free weights in `secondary_value3:` / `secondary_value4:`.
+     *
+     * The habit's own count (+1 per logged entry) is NOT touched here — the
+     * caller routes it through the regular increment path so timestamps,
+     * broadcasts and conditional feeds all fire (see HabitViewModel.saveWeightsEntry).
+     */
+    suspend fun saveWeightsSlotsForDate(
+        uri: Uri,
+        context: Context,
+        habitName: String,
+        weightGrams: Int,
+        reps: Int,
+        machine: Boolean,
+        date: LocalDate
+    ): HabitsDatabase = withContext(Dispatchers.IO) {
+        if (weightGrams <= 0 && reps <= 0) return@withContext loadDatabase(uri, context)
+
+        val loadResult = loadDatabaseResult(uri, context)
+        if (loadResult !is HabitsLoadResult.Success) {
+            Log.w(TAG, "saveWeightsSlots: load did not succeed ($loadResult), refusing to save and throwing")
+            throw HabitsLoadFailedException(loadResult)
+        }
+        val db = loadResult.db.toMutableMap()
+        val dateStr = dateString(date)
+
+        // Weight slot: keep the day's heaviest value (max-merge)
+        if (weightGrams > 0) {
+            val weightKey = if (machine) secondaryValueKey(habitName)
+            else secondaryValueSlotKey(habitName, 3)
+            val entries = db[weightKey]?.toMutableMap() ?: mutableMapOf()
+            entries[dateStr] = maxOf(entries[dateStr] ?: 0, weightGrams)
+            db[weightKey] = entries.toSortedMap()
+        }
+
+        // Reps slot: accumulate the day's total
+        if (reps > 0) {
+            val repsKey = if (machine) secondaryValueSlotKey(habitName, 2)
+            else secondaryValueSlotKey(habitName, 4)
+            val entries = db[repsKey]?.toMutableMap() ?: mutableMapOf()
+            entries[dateStr] = (entries[dateStr] ?: 0) + reps
+            db[repsKey] = entries.toSortedMap()
+        }
+
+        saveDatabase(uri, context, db)
+        db
+    }
+
+    /**
      * Signed variant of [incrementHabitSlotsForDate] for PC-widget history
      * corrections: NEGATIVE deltas remove, positive ones add, and every
      * value clamps at zero (a correction must be able to undo an earlier

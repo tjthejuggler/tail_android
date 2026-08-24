@@ -2,6 +2,7 @@ package com.example.tail.data
 
 import com.example.tail.wallpaper.WallpaperMetric
 import com.example.tail.wallpaper.WallpaperTarget
+import kotlin.math.roundToInt
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Long-press action constants
@@ -624,6 +625,10 @@ fun defaultLabelForValueKey(valueKey: String): String = when (valueKey) {
     GRAPH_METRIC_GITHUB_COMMITS -> "Commits"
     GRAPH_METRIC_GITHUB_ADDITIONS -> "Additions"
     GRAPH_METRIC_GITHUB_DELETIONS -> "Deletions"
+    GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT -> "Machine Wt"
+    GRAPH_METRIC_WEIGHTS_FREE_WEIGHT -> "Free Wt"
+    GRAPH_METRIC_WEIGHTS_MACHINE_REPS -> "Machine Reps"
+    GRAPH_METRIC_WEIGHTS_FREE_REPS -> "Free Reps"
     else -> valueKey
 }
 
@@ -716,6 +721,60 @@ const val GRAPH_METRIC_GITHUB_COMMITS = "github_commits"
 const val GRAPH_METRIC_GITHUB_ADDITIONS = "github_additions"
 /** Lines deleted per day (GitHub habits only). */
 const val GRAPH_METRIC_GITHUB_DELETIONS = "github_deletions"
+
+// ── Weights habit type (machine / free weight logging) ───────────────────────
+/**
+ * Weights-habit graph metrics. A weights habit stores four secondary-value
+ * slots (weight in GRAMS so both kg and lb inputs round-trip losslessly at
+ * 1 g precision; reps are plain counts):
+ *
+ * - `weights_machine_weight` → `secondary_value:`  (heaviest machine weight of the day, grams)
+ * - `weights_machine_reps`   → `secondary_value2:` (total machine reps of the day)
+ * - `weights_free_weight`    → `secondary_value3:` (heaviest free weight of the day, grams)
+ * - `weights_free_reps`      → `secondary_value4:` (total free reps of the day)
+ *
+ * The graph converts grams to the user's chosen display unit (kg or lb) at
+ * read time — see [gramsToDisplayTenths].
+ */
+const val GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT = "weights_machine_weight"
+const val GRAPH_METRIC_WEIGHTS_FREE_WEIGHT = "weights_free_weight"
+const val GRAPH_METRIC_WEIGHTS_MACHINE_REPS = "weights_machine_reps"
+const val GRAPH_METRIC_WEIGHTS_FREE_REPS = "weights_free_reps"
+
+/** Display-unit keys for the weights graph toggle. */
+const val WEIGHT_UNIT_KG = "kg"
+const val WEIGHT_UNIT_LB = "lb"
+
+/** Exact grams per pound (international avoirdupois definition). */
+const val GRAMS_PER_LB = 453.59237
+
+/** Converts a weight entered in kilograms to integer grams (round-to-nearest). */
+fun kgToGrams(kg: Double): Int = (kg * 1000).roundToInt()
+
+/** Converts a weight entered in pounds to integer grams (round-to-nearest). */
+fun lbToGrams(lb: Double): Int = (lb * GRAMS_PER_LB).roundToInt()
+
+/**
+ * Converts stored grams to the graph's display unit, scaled ×10 so the Int
+ * graph pipeline keeps one decimal of precision (kg → hectograms, lb →
+ * tenths of a pound). Round-to-nearest, matching the JugCoach seconds→minutes
+ * conversion convention.
+ */
+fun gramsToDisplayTenths(grams: Int, unit: String): Int = when (unit) {
+    WEIGHT_UNIT_LB -> (grams * 10.0 / GRAMS_PER_LB).roundToInt()
+    else -> (grams + 50) / 100
+}
+
+/** Formats a ×10-scaled weight value with one decimal, e.g. 625 → "62.5". */
+fun formatWeightTenths(tenths: Int): String = String.format("%.1f", tenths / 10.0)
+
+/** True if [metric] is one of the two weights WEIGHT metrics (not reps). */
+fun isWeightsWeightMetric(metric: String): Boolean =
+    metric == GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT || metric == GRAPH_METRIC_WEIGHTS_FREE_WEIGHT
+
+/** True if [metric] is one of the two FREE-weights metrics (weight or reps). */
+fun isWeightsFreeMetric(metric: String): Boolean =
+    metric == GRAPH_METRIC_WEIGHTS_FREE_WEIGHT || metric == GRAPH_METRIC_WEIGHTS_FREE_REPS
 
 /**
  * A selectable graph metric option shown as a toggle button.
@@ -1306,6 +1365,10 @@ data class AppSettings(
     val mealSystemPrompt: String = "",
     /** Habits that have the "Meal" type enabled. */
     val mealHabits: Set<String> = emptySet(),
+    /** Habits that have the "Weights" type enabled (machine/free weight + reps logging). */
+    val weightsHabits: Set<String> = emptySet(),
+    /** Graph display unit for weights habits: [WEIGHT_UNIT_KG] (default) or [WEIGHT_UNIT_LB]. */
+    val graphWeightUnit: String = WEIGHT_UNIT_KG,
 
     // ── AI Assistant settings ───────────────────────────────────────────
     /** Base URL for the AI Assistant LLM API (OpenAI-compatible, e.g. "https://api.z.ai/api/coding/paas/v4"). */

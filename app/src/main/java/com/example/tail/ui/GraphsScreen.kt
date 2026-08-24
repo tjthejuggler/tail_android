@@ -282,6 +282,48 @@ fun GraphsPanel(
             }
         }
 
+        // ── kg/lb unit toggle — shown when a weights habit is graphed ─────
+        // Stored gram values convert to the selected unit at graph-read
+        // time, so toggling re-renders every weights series converted.
+        if (graphSelectedHabits.any { viewModel.isWeightsHabit(it) }) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Weight unit:",
+                    color = Color(0xFF88AA88),
+                    fontSize = 11.sp
+                )
+                listOf(
+                    com.example.tail.data.WEIGHT_UNIT_KG to "kg",
+                    com.example.tail.data.WEIGHT_UNIT_LB to "lb"
+                ).forEach { (unitKey, unitLabel) ->
+                    val isActive = settings.graphWeightUnit == unitKey
+                    Text(
+                        text = unitLabel,
+                        color = if (isActive) Color(0xFF000000) else Color(0xFF88AA88),
+                        fontSize = 11.sp,
+                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .background(
+                                if (isActive) Color(0xFF66DD66) else Color(0xFF1A2E1A),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) { viewModel.setGraphWeightUnit(unitKey) }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+
         // ── Multi-select metric toggles — one row per selected habit ────────────
         // Multiple metrics can be active simultaneously; each renders as a
         // separate line. Every selected habit gets its own row of buttons, so
@@ -340,7 +382,7 @@ fun GraphsPanel(
 
             // Collect data for all selected habits × selected metrics.
             // Each (habit, metric) pair becomes a separate line on the chart.
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, currentDay, textFilter, metricSelection, interpolateZeroMetrics, textEntriesCache) {
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, currentDay, textFilter, metricSelection, interpolateZeroMetrics, textEntriesCache, settings.graphWeightUnit) {
                 graphSelectedHabits.toList().flatMap { habitName ->
                     val data = viewModel.getGraphData(habitName, fullStartDate, fullEndDate, textFilter)
                     val metrics = viewModel.getSelectedMetrics(habitName)
@@ -439,6 +481,9 @@ fun GraphsPanel(
                                 String.format("%.1f", point.value / 10.0)
                             } else if (point.metric == com.example.tail.data.GRAPH_METRIC_RUNTIME && point.value > 0) {
                                 formatRuntimeMinutes(point.value)
+                            } else if (com.example.tail.data.isWeightsWeightMetric(point.metric) && point.value > 0) {
+                                // ×10-scaled display unit (kg or lb per the graph toggle)
+                                com.example.tail.data.formatWeightTenths(point.value) + " " + settings.graphWeightUnit
                             } else {
                                 point.value.toString()
                             }
@@ -774,6 +819,10 @@ private fun displayValueForMetric(
     com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_DROP -> dp.jugcoachTimeDrop ?: 0
     com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_CATCH -> dp.jugcoachCatchesCatch ?: 0
     com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_DROP -> dp.jugcoachCatchesDrop ?: 0
+    com.example.tail.data.GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT -> dp.weightsMachineWeight ?: 0
+    com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_WEIGHT -> dp.weightsFreeWeight ?: 0
+    com.example.tail.data.GRAPH_METRIC_WEIGHTS_MACHINE_REPS -> dp.weightsMachineReps ?: 0
+    com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_REPS -> dp.weightsFreeReps ?: 0
     else -> dp.pointsValue
 }
 
@@ -787,6 +836,8 @@ fun formatTooltipValue(value: Int, metric: String): String {
             String.format("%.1f", value / 10.0)
         metric == com.example.tail.data.GRAPH_METRIC_RUNTIME && value > 0 ->
             formatRuntimeMinutes(value)
+        com.example.tail.data.isWeightsWeightMetric(metric) ->
+            com.example.tail.data.formatWeightTenths(value)
         else -> value.toString()
     }
 }
@@ -823,6 +874,18 @@ private fun buildSeriesColorMap(
                 GRAPH_COLORS[sequentialColorIdx++ % GRAPH_COLORS.size]
             }
             map[habitName to metricKey] = color
+        }
+    }
+    // Weights pairing: the free-weight / free-reps curve reuses its machine
+    // counterpart's color at reduced alpha, so the pair reads as one color
+    // family with a subtle lightness difference (plus hollow dots on the
+    // chart) — machine vs free stays distinguishable but not loud.
+    graphSelectedHabits.toList().forEach { habitName ->
+        map[habitName to com.example.tail.data.GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT]?.let { machineWt ->
+            map[habitName to com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_WEIGHT] = machineWt.copy(alpha = 0.55f)
+        }
+        map[habitName to com.example.tail.data.GRAPH_METRIC_WEIGHTS_MACHINE_REPS]?.let { machineReps ->
+            map[habitName to com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_REPS] = machineReps.copy(alpha = 0.55f)
         }
     }
     return map
@@ -1110,6 +1173,10 @@ fun metricLabel(metric: String): String = when (metric) {
     com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_DROP -> "Time·Drop (min)"
     com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_CATCH -> "Catches·Catch"
     com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_DROP -> "Catches·Drop"
+    com.example.tail.data.GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT -> "Machine Wt"
+    com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_WEIGHT -> "Free Wt"
+    com.example.tail.data.GRAPH_METRIC_WEIGHTS_MACHINE_REPS -> "Machine Reps"
+    com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_REPS -> "Free Reps"
     else -> "Points"
 }
 
@@ -1439,6 +1506,8 @@ private fun HabitLineChart(
                 // (e.g. 90 → "1:30") once the series' values exceed an hour.
                 val useHourLabels = isMinutesSeries(series, garminHabitLinks) &&
                     seriesMaxValues[seriesIdx] > 60
+                // Weight series show one decimal (values are ×10-scaled units)
+                val isWeightsWeightSeries = com.example.tail.data.isWeightsWeightMetric(series.metric)
                 for (tick in displayTicks) {
                     val y = chartBottom - ((tick - sc.effectiveMin).toFloat() / sc.range) * chartHeight
                     drawLine(
@@ -1450,6 +1519,7 @@ private fun HabitLineChart(
                     val tickLabel = when {
                         needsDecimalFormatting ->
                             String.format("%.2f", tick / 100.0)
+                        isWeightsWeightSeries -> com.example.tail.data.formatWeightTenths(tick)
                         useHourLabels -> formatMinutesAsHourMinute(tick)
                         else -> tick.toString()
                     }
@@ -1466,6 +1536,9 @@ private fun HabitLineChart(
             val useHourAxisLabels = globalMax > 60 &&
                 seriesData.isNotEmpty() &&
                 seriesData.all { isMinutesSeries(it, garminHabitLinks) }
+            // Weight charts show one decimal (values are ×10-scaled units)
+            val useWeightAxisLabels = seriesData.isNotEmpty() &&
+                seriesData.all { com.example.tail.data.isWeightsWeightMetric(it.metric) }
             for (tick in yTicks) {
                 val y = chartBottom - ((tick - effectiveYMin).toFloat() / yRange.coerceAtLeast(1)) * chartHeight
                 drawLine(
@@ -1479,6 +1552,7 @@ private fun HabitLineChart(
                     needsDecimalFormatting ->
                         // Convert from hundredths of a year to years with 2 decimal places
                         String.format("%.2f", tick / 100.0)
+                    useWeightAxisLabels -> com.example.tail.data.formatWeightTenths(tick)
                     useHourAxisLabels -> formatMinutesAsHourMinute(tick)
                     else -> tick.toString()
                 }
@@ -1634,17 +1708,29 @@ private fun HabitLineChart(
                     if (displayValue != 0 || isSelected || (sc?.effectiveMin ?: effectiveYMin) < 0) {
                         // Medium-visibility dots: clearly readable, but secondary
                         // to the trend line. Selected dots stay fully opaque.
-                        drawCircle(
-                            color = if (isSelected) Color.White else series.color.copy(alpha = 0.75f),
-                            radius = dotRadius,
-                            center = point
-                        )
-                        if (isSelected) {
+                        // Free-weight series draw HOLLOW (stroked) dots — the
+                        // subtle machine/free distinction when both curves are
+                        // shown together on the chart.
+                        if (com.example.tail.data.isWeightsFreeMetric(series.metric) && !isSelected) {
                             drawCircle(
-                                color = series.color,
-                                radius = dotRadius - 1.5.dp.toPx(),
+                                color = series.color.copy(alpha = 0.9f),
+                                radius = dotRadius,
+                                center = point,
+                                style = Stroke(width = 1.5.dp.toPx())
+                            )
+                        } else {
+                            drawCircle(
+                                color = if (isSelected) Color.White else series.color.copy(alpha = 0.75f),
+                                radius = dotRadius,
                                 center = point
                             )
+                            if (isSelected) {
+                                drawCircle(
+                                    color = series.color,
+                                    radius = dotRadius - 1.5.dp.toPx(),
+                                    center = point
+                                )
+                            }
                         }
                     }
                 }
@@ -1882,11 +1968,13 @@ private fun StatsSummary(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                StatChip("Total", total.toString(), Color(0xFF88CCFF),
+                // Weight metrics are ×10-scaled (one decimal) — format accordingly
+                val isWtMetric = com.example.tail.data.isWeightsWeightMetric(series.metric)
+                StatChip("Total", if (isWtMetric) com.example.tail.data.formatWeightTenths(total) else total.toString(), Color(0xFF88CCFF),
                     onInfoClick = { infoPopupText = "Sum of all daily values in the selected time period. Days with no activity count as 0." })
-                StatChip("Avg", "%.1f".format(avg), Color(0xFF81C784),
+                StatChip("Avg", if (isWtMetric) com.example.tail.data.formatWeightTenths(avg.roundToInt()) else "%.1f".format(avg), Color(0xFF81C784),
                     onInfoClick = { infoPopupText = "Calendar-day average: total ÷ number of days in the period. Days with no activity are included as 0, matching the (current) values in the info panel below." })
-                StatChip("Max", max.toString(), Color(0xFFFFD54F),
+                StatChip("Max", if (isWtMetric) com.example.tail.data.formatWeightTenths(max) else max.toString(), Color(0xFFFFD54F),
                     onInfoClick = { infoPopupText = "The highest single-day value recorded within the selected time period." })
                 StatChip("Active", "$daysActive/$totalDays", Color(0xFFBA68C8),
                     onInfoClick = { infoPopupText = "Days with non-zero values out of total days in the period. Shows how many days you actually did this habit." })

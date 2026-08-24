@@ -219,6 +219,8 @@ private val KEY_MEAL_API_KEY = stringPreferencesKey("meal_api_key")
 private val KEY_MEAL_MODEL = stringPreferencesKey("meal_model")
 private val KEY_MEAL_SYSTEM_PROMPT = stringPreferencesKey("meal_system_prompt")
 private val KEY_MEAL_HABITS = stringSetPreferencesKey("meal_habits")
+private val KEY_WEIGHTS_HABITS = stringSetPreferencesKey("weights_habits")
+private val KEY_GRAPH_WEIGHT_UNIT = stringPreferencesKey("graph_weight_unit")
 private val KEY_AI_ASSISTANT_BASE_URL = stringPreferencesKey("ai_assistant_base_url")
 private val KEY_AI_ASSISTANT_API_KEY = stringPreferencesKey("ai_assistant_api_key")
 private val KEY_AI_ASSISTANT_MODEL = stringPreferencesKey("ai_assistant_model")
@@ -1001,6 +1003,8 @@ class SettingsRepository(private val context: Context) {
             mealModel = prefs[KEY_MEAL_MODEL] ?: "",
             mealSystemPrompt = prefs[KEY_MEAL_SYSTEM_PROMPT] ?: "",
             mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet(),
+            weightsHabits = prefs[KEY_WEIGHTS_HABITS] ?: emptySet(),
+            graphWeightUnit = prefs[KEY_GRAPH_WEIGHT_UNIT] ?: WEIGHT_UNIT_KG,
             aiAssistantBaseUrl = prefs[KEY_AI_ASSISTANT_BASE_URL] ?: "",
             aiAssistantApiKey = prefs[KEY_AI_ASSISTANT_API_KEY] ?: "",
             aiAssistantModel = prefs[KEY_AI_ASSISTANT_MODEL] ?: "",
@@ -1653,6 +1657,16 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that have the "Meal" type enabled. */
     suspend fun saveMealHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_MEAL_HABITS] = habits }
+    }
+
+    /** Saves the set of habits that have the "Weights" type enabled. */
+    suspend fun saveWeightsHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_WEIGHTS_HABITS] = habits }
+    }
+
+    /** Saves the graph display unit for weights habits ("kg" or "lb"). */
+    suspend fun saveGraphWeightUnit(unit: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_GRAPH_WEIGHT_UNIT] = unit }
     }
 
     /** Saves the set of habits excluded from the day timeline. */

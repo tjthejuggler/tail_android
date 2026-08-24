@@ -83,6 +83,11 @@ import com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_CATCH
 import com.example.tail.data.GRAPH_METRIC_JUGCOACH_TIME_DROP
 import com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_CATCH
 import com.example.tail.data.GRAPH_METRIC_JUGCOACH_CATCHES_DROP
+import com.example.tail.data.GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT
+import com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_WEIGHT
+import com.example.tail.data.GRAPH_METRIC_WEIGHTS_MACHINE_REPS
+import com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_REPS
+import com.example.tail.data.gramsToDisplayTenths
 import com.example.tail.data.GraphMetricOption
 import com.example.tail.data.OmdbService
 import com.example.tail.data.OmdbOutcome
@@ -3482,6 +3487,39 @@ class HabitViewModel(
         }
     }
 
+    // ── Weights habit type (machine / free weight + reps logging) ─────────
+
+    /**
+     * Saves a weights-habit log entry: +1 on the habit's own count via the
+     * regular increment path (instant UI update, timestamps, broadcast,
+     * conditional feeds), then an atomic slot write — the category's weight
+     * slot (grams) keeps the day's maximum and the reps slot accumulates.
+     * See [HabitsRepository.saveWeightsSlotsForDate].
+     */
+    fun saveWeightsEntry(habitName: String, weightGrams: Int, reps: Int, machine: Boolean) {
+        if (weightGrams <= 0 && reps <= 0) return
+        val uriString = _settings.value.fileUri
+        if (uriString.isNullOrEmpty()) return
+
+        // One logged entry → +1 on the habit's own count
+        incrementHabit(habitName, 1)
+
+        // Weight (day max, grams) + reps (day total) slots — atomic write
+        viewModelScope.launch {
+            try {
+                val updatedDb = habitsRepo.saveWeightsSlotsForDate(
+                    Uri.parse(uriString), context, habitName,
+                    weightGrams, reps, machine, _selectedDate.value
+                )
+                cachedPhoneDb = updatedDb
+                rebuildHabitList()
+                HabitsDataChangedBus.emit()
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to save weights entry: ${e.message}"
+            }
+        }
+    }
+
     // ── Timed habit settings ──────────────────────────────────────────────
 
     /** Toggles the "timed" feature on/off for [habitName]. */
@@ -5408,6 +5446,7 @@ class HabitViewModel(
                     rollForwardHabits = settings.rollForwardHabits.replaceElement(oldName, newName),
                     rollForwardManualDates = settings.rollForwardManualDates.replaceKey(oldName, newName),
                     mealHabits = settings.mealHabits.replaceElement(oldName, newName),
+                    weightsHabits = settings.weightsHabits.replaceElement(oldName, newName),
                     cameraHabits = settings.cameraHabits.replaceElement(oldName, newName),
                     habitAppAssociations = settings.habitAppAssociations.replaceKey(oldName, newName),
                     habitLongPressActions = settings.habitLongPressActions.replaceKey(oldName, newName),
@@ -5475,6 +5514,7 @@ class HabitViewModel(
                 settingsRepo.saveRollForwardHabits(newSettings.rollForwardHabits)
                 settingsRepo.saveRollForwardManualDates(newSettings.rollForwardManualDates)
                 settingsRepo.saveMealHabits(newSettings.mealHabits)
+                settingsRepo.saveWeightsHabits(newSettings.weightsHabits)
                 settingsRepo.saveCameraHabits(newSettings.cameraHabits)
                 settingsRepo.saveHabitAppAssociations(newSettings.habitAppAssociations)
                 settingsRepo.saveHabitLongPressActions(newSettings.habitLongPressActions)
@@ -6182,6 +6222,18 @@ class HabitViewModel(
     }
 
     /**
+     * Sets the graph display unit for weights habits ("kg" or "lb"). Stored
+     * gram values are converted at graph-read time, so toggling re-renders
+     * every weights series in the new unit.
+     */
+    fun setGraphWeightUnit(unit: String) {
+        viewModelScope.launch {
+            settingsRepo.saveGraphWeightUnit(unit)
+            _settings.value = _settings.value.copy(graphWeightUnit = unit)
+        }
+    }
+
+    /**
      * Custom zoom date range set by pinch-to-zoom gesture.
      * When non-null, overrides the time period selection (which becomes null/deselected).
      */
@@ -6298,6 +6350,11 @@ class HabitViewModel(
         return habitName in _settings.value.mealHabits
     }
 
+    /** Returns true if [habitName] has the "Weights" type enabled. */
+    fun isWeightsHabit(habitName: String): Boolean {
+        return habitName in _settings.value.weightsHabits
+    }
+
     /**
      * Returns the list of selectable graph metrics for [habitName], depending
      * on its type. All habits get Points + Value1. Secondary-value habits also
@@ -6308,8 +6365,9 @@ class HabitViewModel(
         val metrics = mutableListOf(
             GraphMetricOption(GRAPH_METRIC_POINTS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_POINTS, labels))
         )
-        // GitHub habits use labeled metric buttons instead of generic "Value 1"
-        if (!isGithubHabit(habitName)) {
+        // GitHub habits use labeled metric buttons instead of generic "Value 1";
+        // weights habits get their own labeled buttons below instead
+        if (!isGithubHabit(habitName) && !isWeightsHabit(habitName)) {
             val v1 = GraphMetricOption(GRAPH_METRIC_VALUE1, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE1, labels))
             val v2 = GraphMetricOption(GRAPH_METRIC_VALUE2, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_VALUE2, labels))
             val hasV2 = hasSecondaryValue(habitName) ||
@@ -6368,6 +6426,16 @@ class HabitViewModel(
             metrics.add(GraphMetricOption(GRAPH_METRIC_JUGCOACH_CATCHES_CATCH, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_JUGCOACH_CATCHES_CATCH, labels)))
             metrics.add(GraphMetricOption(GRAPH_METRIC_JUGCOACH_CATCHES_DROP, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_JUGCOACH_CATCHES_DROP, labels)))
         }
+        // Weights habit metrics — machine/free weight (stored grams, shown in
+        // the graph's kg/lb display unit) and machine/free reps. These reuse
+        // the generic secondary-value slots internally, which is why the
+        // generic Value 1 / Value 2 buttons are hidden for weights habits.
+        if (isWeightsHabit(habitName)) {
+            metrics.add(GraphMetricOption(GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_WEIGHTS_FREE_WEIGHT, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_WEIGHTS_FREE_WEIGHT, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_WEIGHTS_MACHINE_REPS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_WEIGHTS_MACHINE_REPS, labels)))
+            metrics.add(GraphMetricOption(GRAPH_METRIC_WEIGHTS_FREE_REPS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_WEIGHTS_FREE_REPS, labels)))
+        }
         return metrics
     }
 
@@ -6389,6 +6457,12 @@ class HabitViewModel(
                 return migrated
             }
             return stored
+        }
+
+        // Weights habits default to BOTH weight curves (machine + free) so the
+        // two categories show together; reps are opt-in via the metric buttons.
+        if (isWeightsHabit(habitName)) {
+            return setOf(GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT, GRAPH_METRIC_WEIGHTS_FREE_WEIGHT)
         }
 
         // Legacy migration: convert old single-select mode to a set
@@ -6484,9 +6558,11 @@ class HabitViewModel(
      * is present in the cached DB. Only the JugCoach integration writes slots
      * 3–6 (chess.com writes slot 2 only for chess-linked habits, which are
      * never JugCoach-mapped), so key presence is a reliable detector.
+     * Weights habits are excluded — they legitimately own slots 2–4.
      */
     fun isJugcoachHabit(habitName: String): Boolean =
-        (2..6).any { cachedPhoneDb.containsKey(secondaryValueSlotKey(habitName, it)) }
+        habitName !in _settings.value.weightsHabits &&
+            (2..6).any { cachedPhoneDb.containsKey(secondaryValueSlotKey(habitName, it)) }
 
     data class GraphDataPoint(
         val date: LocalDate,
@@ -6524,7 +6600,16 @@ class HabitViewModel(
         /** Catches in runs that ended in a catch (`secondary_value5:`). */
         val jugcoachCatchesCatch: Int? = null,
         /** Catches in runs that ended in a drop (`secondary_value6:`). */
-        val jugcoachCatchesDrop: Int? = null
+        val jugcoachCatchesDrop: Int? = null,
+        // ── Weights habit data (grams → display-unit tenths, see getGraphData) ──
+        /** Heaviest machine weight of the day, ×10 in the display unit (kg or lb). */
+        val weightsMachineWeight: Int? = null,
+        /** Heaviest free weight of the day, ×10 in the display unit (kg or lb). */
+        val weightsFreeWeight: Int? = null,
+        /** Total machine reps of the day. */
+        val weightsMachineReps: Int? = null,
+        /** Total free reps of the day. */
+        val weightsFreeReps: Int? = null
     )
 
     /**
@@ -6594,6 +6679,18 @@ class HabitViewModel(
             (2..6).associate { slot -> slot to cachedPhoneDb[secondaryValueSlotKey(habitName, slot)] }
         } else null
         val jugcoachTimeEntries = if (isJugcoach) cachedPhoneDb[secondaryValueKey(habitName)] else null
+        // Weights habit slots — machine weight (`secondary_value:`) / reps
+        // (`secondary_value2:`), free weight (`secondary_value3:`) / reps
+        // (`secondary_value4:`). Weights are STORED in grams and converted to
+        // the graph's display unit (×10 scaled) here, so every consumer
+        // (series, tooltips, stats, interpolation) works in the selected unit
+        // while raw storage stays unit-agnostic.
+        val isWeights = isWeightsHabit(habitName)
+        val weightsUnit = _settings.value.graphWeightUnit
+        val weightsMachineWeightEntries = if (isWeights) cachedPhoneDb[secondaryValueKey(habitName)] else null
+        val weightsMachineRepsEntries = if (isWeights) cachedPhoneDb[secondaryValueSlotKey(habitName, 2)] else null
+        val weightsFreeWeightEntries = if (isWeights) cachedPhoneDb[secondaryValueSlotKey(habitName, 3)] else null
+        val weightsFreeRepsEntries = if (isWeights) cachedPhoneDb[secondaryValueSlotKey(habitName, 4)] else null
         val useSecondaryFallback = habitName in _settings.value.secondaryValueFallbackHabits
         val minutesPrimary = habitName in _settings.value.widgetTimerMinutesPrimary
         // First-class minutes slot (`minutes:<habitName>`) — exists for every
@@ -6751,7 +6848,11 @@ class HabitViewModel(
                     jugcoachTimeCatch = jugcoachSlotEntries?.get(3)?.get(ds)?.let { (it + 30) / 60 },
                     jugcoachTimeDrop = jugcoachSlotEntries?.get(4)?.get(ds)?.let { (it + 30) / 60 },
                     jugcoachCatchesCatch = jugcoachSlotEntries?.get(5)?.get(ds),
-                    jugcoachCatchesDrop = jugcoachSlotEntries?.get(6)?.get(ds)
+                    jugcoachCatchesDrop = jugcoachSlotEntries?.get(6)?.get(ds),
+                    weightsMachineWeight = weightsMachineWeightEntries?.get(ds)?.let { gramsToDisplayTenths(it, weightsUnit) },
+                    weightsFreeWeight = weightsFreeWeightEntries?.get(ds)?.let { gramsToDisplayTenths(it, weightsUnit) },
+                    weightsMachineReps = weightsMachineRepsEntries?.get(ds),
+                    weightsFreeReps = weightsFreeRepsEntries?.get(ds)
                 )
             )
             cursor = cursor.plusDays(1)
@@ -6794,6 +6895,10 @@ class HabitViewModel(
         GRAPH_METRIC_JUGCOACH_TIME_DROP -> dp.jugcoachTimeDrop ?: 0
         GRAPH_METRIC_JUGCOACH_CATCHES_CATCH -> dp.jugcoachCatchesCatch ?: 0
         GRAPH_METRIC_JUGCOACH_CATCHES_DROP -> dp.jugcoachCatchesDrop ?: 0
+        GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT -> dp.weightsMachineWeight ?: 0
+        GRAPH_METRIC_WEIGHTS_FREE_WEIGHT -> dp.weightsFreeWeight ?: 0
+        GRAPH_METRIC_WEIGHTS_MACHINE_REPS -> dp.weightsMachineReps ?: 0
+        GRAPH_METRIC_WEIGHTS_FREE_REPS -> dp.weightsFreeReps ?: 0
         else -> dp.pointsValue
     }
 
@@ -6823,6 +6928,10 @@ class HabitViewModel(
         GRAPH_METRIC_JUGCOACH_TIME_DROP -> dp.copy(jugcoachTimeDrop = value)
         GRAPH_METRIC_JUGCOACH_CATCHES_CATCH -> dp.copy(jugcoachCatchesCatch = value)
         GRAPH_METRIC_JUGCOACH_CATCHES_DROP -> dp.copy(jugcoachCatchesDrop = value)
+        GRAPH_METRIC_WEIGHTS_MACHINE_WEIGHT -> dp.copy(weightsMachineWeight = value)
+        GRAPH_METRIC_WEIGHTS_FREE_WEIGHT -> dp.copy(weightsFreeWeight = value)
+        GRAPH_METRIC_WEIGHTS_MACHINE_REPS -> dp.copy(weightsMachineReps = value)
+        GRAPH_METRIC_WEIGHTS_FREE_REPS -> dp.copy(weightsFreeReps = value)
         else -> dp.copy(pointsValue = value)
     }
 
@@ -11530,6 +11639,20 @@ class HabitViewModel(
             }
             settingsRepo.saveMealHabits(current)
             _settings.value = _settings.value.copy(mealHabits = current)
+        }
+    }
+
+    /** Toggles the "Weights" type on/off for [habitName]. */
+    fun toggleWeightsHabit(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.weightsHabits.toMutableSet()
+            if (habitName in current) {
+                current.remove(habitName)
+            } else {
+                current.add(habitName)
+            }
+            settingsRepo.saveWeightsHabits(current)
+            _settings.value = _settings.value.copy(weightsHabits = current)
         }
     }
 
