@@ -179,6 +179,7 @@ data class SettingsSection(
     val mealSystemPrompt: String = "",
     val mealHabits: List<String> = emptyList(),
     val weightsHabits: List<String> = emptyList(),
+    val weightsRecentExercises: Map<String, List<String>> = emptyMap(),
     val cameraHabits: List<String> = emptyList(),
     val appLinks: Map<String, String> = emptyMap(),
     val habitAppAssociations: Map<String, List<String>> = emptyMap(),

@@ -839,6 +839,7 @@ class BackupManager(
         )
         settingsRepo.saveMealHabits(s.mealHabits.toSet())
         settingsRepo.saveWeightsHabits(s.weightsHabits.toSet())
+        settingsRepo.saveWeightsRecentExercises(s.weightsRecentExercises)
         settingsRepo.saveCameraHabits(s.cameraHabits.toSet())
         settingsRepo.saveAppLinks(s.appLinks)
         settingsRepo.saveHabitAppAssociations(s.habitAppAssociations)
@@ -1215,6 +1216,7 @@ class BackupManager(
         mealSystemPrompt = s.mealSystemPrompt,
         mealHabits = s.mealHabits.toList(),
         weightsHabits = s.weightsHabits.toList(),
+        weightsRecentExercises = s.weightsRecentExercises,
         cameraHabits = s.cameraHabits.toList(),
         appLinks = s.appLinks,
         habitAppAssociations = s.habitAppAssociations,

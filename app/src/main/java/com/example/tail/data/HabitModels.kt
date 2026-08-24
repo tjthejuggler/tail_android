@@ -777,6 +777,21 @@ fun isWeightsFreeMetric(metric: String): Boolean =
     metric == GRAPH_METRIC_WEIGHTS_FREE_WEIGHT || metric == GRAPH_METRIC_WEIGHTS_FREE_REPS
 
 /**
+ * One day's aggregated weights slots for a habit (canonical units: grams for
+ * weights, plain rep counts). Used by the edit-mode "today's weights" summary
+ * row and its day-editor dialog.
+ */
+data class WeightsDayValues(
+    val machineWeightGrams: Int = 0,
+    val machineReps: Int = 0,
+    val freeWeightGrams: Int = 0,
+    val freeReps: Int = 0
+) {
+    val hasAny: Boolean get() =
+        machineWeightGrams > 0 || machineReps > 0 || freeWeightGrams > 0 || freeReps > 0
+}
+
+/**
  * A selectable graph metric option shown as a toggle button.
  * [key] is persisted in [AppSettings.graphMetricSelection].
  */
@@ -1369,6 +1384,8 @@ data class AppSettings(
     val weightsHabits: Set<String> = emptySet(),
     /** Graph display unit for weights habits: [WEIGHT_UNIT_KG] (default) or [WEIGHT_UNIT_LB]. */
     val graphWeightUnit: String = WEIGHT_UNIT_KG,
+    /** Most recently used exercise/machine names per weights habit (most recent first, capped at 10). */
+    val weightsRecentExercises: Map<String, List<String>> = emptyMap(),
 
     // ── AI Assistant settings ───────────────────────────────────────────
     /** Base URL for the AI Assistant LLM API (OpenAI-compatible, e.g. "https://api.z.ai/api/coding/paas/v4"). */

@@ -1150,6 +1150,7 @@ fun HabitGridScreen(
                         appLinks = settings.appLinks,
                         habitAppAssociations = settings.habitAppAssociations,
                         mealHabits = settings.mealHabits,
+                        weightsHabits = settings.weightsHabits,
                         bridgeMovieHabits = if (settings.bridgeEnabled) settings.bridgeMovieHabits else emptySet(),
                         chessComHabitLinks = settings.chessComHabitLinks,
                         habitLongPressActions = settings.habitLongPressActions,
@@ -1600,6 +1601,16 @@ fun HabitGridScreen(
                         onToggleMeal = { name -> viewModel.toggleMealHabit(name) },
                         weightsHabits = settings.weightsHabits,
                         onToggleWeights = { name -> viewModel.toggleWeightsHabit(name) },
+                        weightsDayValues = selectedHabitName
+                            ?.takeIf { it in settings.weightsHabits }
+                            ?.let { viewModel.getWeightsDayValues(it) },
+                        weightsUnit = settings.graphWeightUnit,
+                        onSetWeightsDayValues = { name, values, exerciseName ->
+                            viewModel.setWeightsDayValues(name, values, exerciseName)
+                        },
+                        weightsRecentExercises = selectedHabitName
+                            ?.let { settings.weightsRecentExercises[it] } ?: emptyList(),
+                        onDeleteWeightsDay = { name -> viewModel.deleteWeightsDay(name) },
                         onOpenMealDetails = { name ->
                             mealDialogFromTap = false
                             mealDialogHabit = name
@@ -2290,8 +2301,9 @@ fun HabitGridScreen(
         WeightsInputDialog(
             habitName = habit.name,
             defaultUnit = settings.graphWeightUnit,
-            onConfirm = { weightGrams, reps, machine ->
-                viewModel.saveWeightsEntry(habit.name, weightGrams, reps, machine)
+            recentExercises = settings.weightsRecentExercises[habit.name] ?: emptyList(),
+            onConfirm = { weightGrams, reps, machine, exerciseName ->
+                viewModel.saveWeightsEntry(habit.name, weightGrams, reps, machine, exerciseName)
                 weightsDialogHabit = null
             },
             onDismiss = { weightsDialogHabit = null }
@@ -3277,6 +3289,8 @@ private fun HabitGrid(
     habitAppAssociations: Map<String, List<String>> = emptyMap(),
     /** Meal habits (camera/details long-press actions, meal dialog on tap). */
     mealHabits: Set<String> = emptySet(),
+    /** Weights-type habits (weights input dialog on tap, 🏋️ corner badge). */
+    weightsHabits: Set<String> = emptySet(),
     /** Movie-bridge-linked habits (auto-filled from the tail_bridge watcher). */
     bridgeMovieHabits: Set<String> = emptySet(),
     /** Map of habit name → chess.com time control for chess.com-linked habits. */
@@ -3362,6 +3376,7 @@ private fun HabitGrid(
                         habit.name in mealHabits -> HabitSpecialBadge.MEAL
                         habit.name in garminHabitLinks -> HabitSpecialBadge.GARMIN
                         habit.name in chessComHabitLinks -> HabitSpecialBadge.CHESS
+                        habit.name in weightsHabits -> HabitSpecialBadge.WEIGHTS
                         else -> null
                     }
                     HabitButton(
@@ -5010,6 +5025,16 @@ private fun EditModeControlBar(
     /** Weights-type habits (kg/lb + reps machine/free logging on tap). */
     weightsHabits: Set<String> = emptySet(),
     onToggleWeights: (String) -> Unit = {},
+    /** Weights habits: the selected date's slot values (null = not a weights habit). */
+    weightsDayValues: com.example.tail.data.WeightsDayValues? = null,
+    /** Display unit ("kg"/"lb") for the weights day summary + editor. */
+    weightsUnit: String = "kg",
+    /** Called when the user saves the weights day editor (habitName, values, exerciseName). */
+    onSetWeightsDayValues: (String, com.example.tail.data.WeightsDayValues, String) -> Unit = { _, _, _ -> },
+    /** Previously used exercise/machine names for the selected weights habit (quick choices). */
+    weightsRecentExercises: List<String> = emptyList(),
+    /** Called when the user deletes ALL weights data for a day (habitName). */
+    onDeleteWeightsDay: (String) -> Unit = {},
     onOpenMealDetails: (String) -> Unit = {},
     /** Habits excluded from the day timeline (retrospective hour-by-hour view). */
     timelineExcludedHabits: Set<String> = emptySet(),
@@ -5298,6 +5323,20 @@ private fun EditModeControlBar(
                     onSetCount = onSetCount,
                     onSetCountWithRollForward = onSetCountWithRollForward
                 )
+                // Weights habits: the selected date's slot summary + day
+                // editor, right under the header count row.
+                if (selectedHabitName != null && weightsDayValues != null) {
+                    EditModeWeightsSummarySection(
+                        habitName = selectedHabitName,
+                        values = weightsDayValues,
+                        unit = weightsUnit,
+                        recentExercises = weightsRecentExercises,
+                        onSetValues = { v, exerciseName ->
+                            onSetWeightsDayValues(selectedHabitName, v, exerciseName)
+                        },
+                        onDeleteDay = { onDeleteWeightsDay(selectedHabitName) }
+                    )
+                }
                 // Value editor row — for timer habits (two value tracks:
                 // sessions + minutes) a dropdown picks which value to edit,
                 // defaulting to the habit's PRIMARY value. Single-track
@@ -6649,6 +6688,82 @@ private fun EditModeHabitHeaderRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * Edit-mode summary of the selected date's weights slots for a weights
+ * habit, shown at the top of the settings. Tapping opens the day editor
+ * ([WeightsDayEditorDialog]) which overwrites the day's aggregated
+ * machine/free weight + reps values.
+ */
+@Composable
+private fun EditModeWeightsSummarySection(
+    habitName: String,
+    values: com.example.tail.data.WeightsDayValues,
+    unit: String,
+    /** Previously used exercise/machine names on this habit, most recent first. */
+    recentExercises: List<String> = emptyList(),
+    onSetValues: (com.example.tail.data.WeightsDayValues, String) -> Unit,
+    /** Called when the user deletes ALL weights data for the selected day. */
+    onDeleteDay: () -> Unit
+) {
+    var showEditor by remember { mutableStateOf(false) }
+
+    fun weightLabel(grams: Int): String {
+        if (grams <= 0) return "—"
+        val tenths = com.example.tail.data.gramsToDisplayTenths(grams, unit)
+        return if (tenths % 10 == 0) "${tenths / 10} $unit"
+        else "${com.example.tail.data.formatWeightTenths(tenths)} $unit"
+    }
+    val summary = if (!values.hasAny) {
+        "No weights logged for this day"
+    } else buildString {
+        if (values.machineWeightGrams > 0 || values.machineReps > 0) {
+            if (isNotEmpty()) append(" · ")
+            append("Machine ${weightLabel(values.machineWeightGrams)} × ${values.machineReps} reps")
+        }
+        if (values.freeWeightGrams > 0 || values.freeReps > 0) {
+            if (isNotEmpty()) append(" · ")
+            append("Free ${weightLabel(values.freeWeightGrams)} × ${values.freeReps} reps")
+        }
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showEditor = true },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = "🏋️", fontSize = 12.sp)
+        Spacer(modifier = Modifier.width(6.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Today's weights — tap to edit",
+                color = Color(0xFF88AACC),
+                fontSize = 10.sp
+            )
+            Text(text = summary, color = Color(0xFFCCCCCC), fontSize = 11.sp)
+        }
+    }
+
+    if (showEditor) {
+        WeightsDayEditorDialog(
+            habitName = habitName,
+            initial = values,
+            recentExercises = recentExercises,
+            defaultUnit = unit,
+            onConfirm = { newValues, exerciseName ->
+                onSetValues(newValues, exerciseName)
+                showEditor = false
+            },
+            onDelete = {
+                onDeleteDay()
+                showEditor = false
+            },
+            onDismiss = { showEditor = false }
+        )
     }
 }
 
@@ -9085,7 +9200,7 @@ private fun GarminLinkToggleSection(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column {
-            Text(text = "❤️ Garmin", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(text = "⌚ Garmin", color = Color(0xFFCCCCCC), fontSize = 12.sp)
             Text(
                 text = if (isGarminLinked) {
                     val typeName = GarminType.fromKey(currentGarminLink)?.label ?: currentGarminLink

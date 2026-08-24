@@ -221,6 +221,8 @@ private val KEY_MEAL_SYSTEM_PROMPT = stringPreferencesKey("meal_system_prompt")
 private val KEY_MEAL_HABITS = stringSetPreferencesKey("meal_habits")
 private val KEY_WEIGHTS_HABITS = stringSetPreferencesKey("weights_habits")
 private val KEY_GRAPH_WEIGHT_UNIT = stringPreferencesKey("graph_weight_unit")
+// Most recently used exercise/machine names per weights habit — same "habit\x00a,b|||" format as subtypes
+private val KEY_WEIGHTS_RECENT_EXERCISES = stringPreferencesKey("weights_recent_exercises")
 private val KEY_AI_ASSISTANT_BASE_URL = stringPreferencesKey("ai_assistant_base_url")
 private val KEY_AI_ASSISTANT_API_KEY = stringPreferencesKey("ai_assistant_api_key")
 private val KEY_AI_ASSISTANT_MODEL = stringPreferencesKey("ai_assistant_model")
@@ -1005,6 +1007,7 @@ class SettingsRepository(private val context: Context) {
             mealHabits = prefs[KEY_MEAL_HABITS] ?: emptySet(),
             weightsHabits = prefs[KEY_WEIGHTS_HABITS] ?: emptySet(),
             graphWeightUnit = prefs[KEY_GRAPH_WEIGHT_UNIT] ?: WEIGHT_UNIT_KG,
+            weightsRecentExercises = decodeSubtypesMap(prefs[KEY_WEIGHTS_RECENT_EXERCISES] ?: ""),
             aiAssistantBaseUrl = prefs[KEY_AI_ASSISTANT_BASE_URL] ?: "",
             aiAssistantApiKey = prefs[KEY_AI_ASSISTANT_API_KEY] ?: "",
             aiAssistantModel = prefs[KEY_AI_ASSISTANT_MODEL] ?: "",
@@ -1667,6 +1670,13 @@ class SettingsRepository(private val context: Context) {
     /** Saves the graph display unit for weights habits ("kg" or "lb"). */
     suspend fun saveGraphWeightUnit(unit: String) {
         context.dataStore.edit { prefs -> prefs[KEY_GRAPH_WEIGHT_UNIT] = unit }
+    }
+
+    /** Saves the most recently used exercise/machine names per weights habit (most recent first). */
+    suspend fun saveWeightsRecentExercises(recent: Map<String, List<String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_WEIGHTS_RECENT_EXERCISES] = encodeSubtypesMap(recent)
+        }
     }
 
     /** Saves the set of habits excluded from the day timeline. */

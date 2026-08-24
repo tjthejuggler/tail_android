@@ -90,6 +90,7 @@ import com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_REPS
 import com.example.tail.data.gramsToDisplayTenths
 import com.example.tail.data.GraphMetricOption
 import com.example.tail.data.OmdbService
+import com.example.tail.data.WeightsDayValues
 import com.example.tail.data.OmdbOutcome
 import com.example.tail.data.ImdbRatingCache
 import com.example.tail.data.ParsedTitle
@@ -3507,33 +3508,167 @@ class HabitViewModel(
 
     // ── Weights habit type (machine / free weight + reps logging) ─────────
 
+    /** Records an exercise/machine name for quick re-entry (most recent first, capped at 10). */
+    private fun recordRecentExercise(habitName: String, trimmedExercise: String) {
+        if (trimmedExercise.isEmpty()) return
+        viewModelScope.launch {
+            val current = _settings.value.weightsRecentExercises.toMutableMap()
+            val existing = current[habitName]?.toMutableList() ?: mutableListOf()
+            existing.remove(trimmedExercise)          // move-to-front on re-use
+            existing.add(0, trimmedExercise)
+            if (existing.size > 10) existing.subList(10, existing.size).clear()
+            current[habitName] = existing
+            settingsRepo.saveWeightsRecentExercises(current)
+            _settings.value = _settings.value.copy(weightsRecentExercises = current)
+        }
+    }
+
     /**
-     * Saves a weights-habit log entry: +1 on the habit's own count via the
-     * regular increment path (instant UI update, timestamps, broadcast,
-     * conditional feeds), then an atomic slot write — the category's weight
-     * slot (grams) keeps the day's maximum and the reps slot accumulates.
-     * See [HabitsRepository.saveWeightsSlotsForDate].
+     * Saves a weights-habit log entry: the slot writes (weight max-merge +
+     * reps accumulate) are applied to the in-memory DB FIRST, then the +1 on
+     * the habit's own count is routed through the regular increment path —
+     * whose single background persist then carries count + slots in ONE
+     * atomic disk write. (The previous shape — incrementHabit's async
+     * persist racing a separate disk load-modify-save for the slots — could
+     * interleave and silently lose the +1 or the slots.)
      */
-    fun saveWeightsEntry(habitName: String, weightGrams: Int, reps: Int, machine: Boolean) {
+    fun saveWeightsEntry(
+        habitName: String,
+        weightGrams: Int,
+        reps: Int,
+        machine: Boolean,
+        exerciseName: String = ""
+    ) {
         if (weightGrams <= 0 && reps <= 0) return
         val uriString = _settings.value.fileUri
         if (uriString.isNullOrEmpty()) return
 
-        // One logged entry → +1 on the habit's own count
+        // Slot writes FIRST: the increment path below snapshots
+        // cachedPhoneDb (applyIncrementToDb) and persists that snapshot,
+        // so the slots must already be in it.
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        val countBefore = cachedPhoneDb[habitName]?.get(dateStr) ?: 0
+        cachedPhoneDb = habitsRepo.applyWeightsSlotsToDb(
+            cachedPhoneDb, habitName, weightGrams, reps, machine, _selectedDate.value
+        )
+
+        // One logged entry → +1 on the habit's own count (instant UI update,
+        // timestamps, broadcast, conditional feeds; persists count + slots
+        // together in one write).
         incrementHabit(habitName, 1)
 
-        // Weight (day max, grams) + reps (day total) slots — atomic write
-        viewModelScope.launch {
-            try {
-                val updatedDb = habitsRepo.saveWeightsSlotsForDate(
-                    Uri.parse(uriString), context, habitName,
-                    weightGrams, reps, machine, _selectedDate.value
-                )
-                cachedPhoneDb = updatedDb
+        // incrementHabit early-returns WITHOUT persisting when the count
+        // cannot change (max-1 cap already at 1, unchanged point tier). In
+        // that case persist the slot writes ourselves so they are not lost.
+        val countAfter = cachedPhoneDb[habitName]?.get(dateStr) ?: 0
+        if (countAfter == countBefore) {
+            viewModelScope.launch {
                 rebuildHabitList()
+                try {
+                    habitsRepo.persistDatabase(Uri.parse(uriString), context, cachedPhoneDb)
+                    HabitsDataChangedBus.emit()
+                } catch (e: Exception) {
+                    _errorMessage.value = "Failed to save weights entry: ${e.message}"
+                }
+            }
+        }
+
+        // Remember the exercise/machine name for quick re-entry (most recent first)
+        recordRecentExercise(habitName, exerciseName.trim())
+    }
+
+    /** Returns the selected date's aggregated weights slots for a weights habit. */
+    fun getWeightsDayValues(habitName: String): WeightsDayValues {
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        fun slot(key: String) = cachedPhoneDb[key]?.get(dateStr) ?: 0
+        return WeightsDayValues(
+            machineWeightGrams = slot(com.example.tail.data.secondaryValueKey(habitName)),
+            machineReps = slot(com.example.tail.data.secondaryValueSlotKey(habitName, 2)),
+            freeWeightGrams = slot(com.example.tail.data.secondaryValueSlotKey(habitName, 3)),
+            freeReps = slot(com.example.tail.data.secondaryValueSlotKey(habitName, 4))
+        )
+    }
+
+    /**
+     * Overwrites the selected date's weights slots absolutely (edit-mode day
+     * editor). Zero values clear the slot for the day. The habit's own count
+     * (number of logged entries) is not touched.
+     */
+    fun setWeightsDayValues(habitName: String, values: WeightsDayValues, exerciseName: String = "") {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            _errorMessage.value = "No file selected. Please pick a file in Settings."
+            return
+        }
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        val updatedDb = cachedPhoneDb.toMutableMap()
+        fun setSlot(key: String, value: Int) {
+            val entries = updatedDb[key]?.toMutableMap() ?: mutableMapOf()
+            if (value > 0) entries[dateStr] = value else entries.remove(dateStr)
+            if (entries.isEmpty()) updatedDb.remove(key) else updatedDb[key] = entries.toSortedMap()
+        }
+        setSlot(com.example.tail.data.secondaryValueKey(habitName), values.machineWeightGrams.coerceAtLeast(0))
+        setSlot(com.example.tail.data.secondaryValueSlotKey(habitName, 2), values.machineReps.coerceAtLeast(0))
+        setSlot(com.example.tail.data.secondaryValueSlotKey(habitName, 3), values.freeWeightGrams.coerceAtLeast(0))
+        setSlot(com.example.tail.data.secondaryValueSlotKey(habitName, 4), values.freeReps.coerceAtLeast(0))
+        cachedPhoneDb = updatedDb
+        viewModelScope.launch {
+            rebuildHabitList()
+            try {
+                habitsRepo.persistDatabase(Uri.parse(uriString), context, updatedDb)
                 HabitsDataChangedBus.emit()
             } catch (e: Exception) {
-                _errorMessage.value = "Failed to save weights entry: ${e.message}"
+                _errorMessage.value = "Failed to save weights values: ${e.message}"
+            }
+        }
+
+        // Keep the exercise quick-choices fresh when an edited entry names one
+        recordRecentExercise(habitName, exerciseName.trim())
+    }
+
+    /**
+     * Removes ALL weights data for [habitName] on the selected date: the four
+     * slots (machine/free weight + reps), the day's count (increment) and its
+     * timestamps — the "totally remove it for a day" edit-screen action.
+     */
+    fun deleteWeightsDay(habitName: String) {
+        val uriString = _settings.value.fileUri
+        if (uriString.isEmpty()) {
+            _errorMessage.value = "No file selected. Please pick a file in Settings."
+            return
+        }
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        val updatedDb = cachedPhoneDb.toMutableMap()
+
+        // Clear the four weights slots for the day
+        for (key in listOf(
+            com.example.tail.data.secondaryValueKey(habitName),
+            com.example.tail.data.secondaryValueSlotKey(habitName, 2),
+            com.example.tail.data.secondaryValueSlotKey(habitName, 3),
+            com.example.tail.data.secondaryValueSlotKey(habitName, 4)
+        )) {
+            val entries = updatedDb[key]?.toMutableMap() ?: continue
+            entries.remove(dateStr)
+            if (entries.isEmpty()) updatedDb.remove(key) else updatedDb[key] = entries
+        }
+
+        // Remove the day's increment (count)
+        updatedDb[habitName]?.let { entries ->
+            val mutable = entries.toMutableMap()
+            mutable.remove(dateStr)
+            if (mutable.isEmpty()) updatedDb.remove(habitName) else updatedDb[habitName] = mutable
+        }
+
+        cachedPhoneDb = updatedDb
+        viewModelScope.launch {
+            rebuildHabitList()
+            // Also drop the day's timestamps (separate store, no DB race)
+            timestampRepo.setTimestampsForDay(habitName, _selectedDate.value, emptyList())
+            try {
+                habitsRepo.persistDatabase(Uri.parse(uriString), context, updatedDb)
+                HabitsDataChangedBus.emit()
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to delete weights day: ${e.message}"
             }
         }
     }
@@ -5465,6 +5600,7 @@ class HabitViewModel(
                     rollForwardManualDates = settings.rollForwardManualDates.replaceKey(oldName, newName),
                     mealHabits = settings.mealHabits.replaceElement(oldName, newName),
                     weightsHabits = settings.weightsHabits.replaceElement(oldName, newName),
+                    weightsRecentExercises = settings.weightsRecentExercises.replaceKey(oldName, newName),
                     cameraHabits = settings.cameraHabits.replaceElement(oldName, newName),
                     habitAppAssociations = settings.habitAppAssociations.replaceKey(oldName, newName),
                     habitLongPressActions = settings.habitLongPressActions.replaceKey(oldName, newName),
@@ -5533,6 +5669,7 @@ class HabitViewModel(
                 settingsRepo.saveRollForwardManualDates(newSettings.rollForwardManualDates)
                 settingsRepo.saveMealHabits(newSettings.mealHabits)
                 settingsRepo.saveWeightsHabits(newSettings.weightsHabits)
+                settingsRepo.saveWeightsRecentExercises(newSettings.weightsRecentExercises)
                 settingsRepo.saveCameraHabits(newSettings.cameraHabits)
                 settingsRepo.saveHabitAppAssociations(newSettings.habitAppAssociations)
                 settingsRepo.saveHabitLongPressActions(newSettings.habitLongPressActions)

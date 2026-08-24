@@ -703,9 +703,8 @@ class HabitsRepository {
     }
 
     /**
-     * Atomically saves the weight/reps SLOTS of one weights-habit log entry
-     * for [date] in a single read-modify-write cycle (same anti-interleaving
-     * rationale as [incrementHabitSlotsForDate]):
+     * Pure in-memory transform applying one weights-habit log entry's SLOT
+     * writes to [db] for [date] (no disk IO):
      *
      * - the category's WEIGHT slot (grams) keeps the day's MAXIMUM — logging
      *   "60 kg × 8" twice, or after "50 kg", still shows 60 kg for the day,
@@ -716,47 +715,41 @@ class HabitsRepository {
      *
      * The habit's own count (+1 per logged entry) is NOT touched here — the
      * caller routes it through the regular increment path so timestamps,
-     * broadcasts and conditional feeds all fire (see HabitViewModel.saveWeightsEntry).
+     * broadcasts and conditional feeds all fire (see
+     * HabitViewModel.saveWeightsEntry, which applies this to the in-memory
+     * cache FIRST so the increment path's single disk persist carries
+     * count + slots in one atomic write).
      */
-    suspend fun saveWeightsSlotsForDate(
-        uri: Uri,
-        context: Context,
+    fun applyWeightsSlotsToDb(
+        db: HabitsDatabase,
         habitName: String,
         weightGrams: Int,
         reps: Int,
         machine: Boolean,
         date: LocalDate
-    ): HabitsDatabase = withContext(Dispatchers.IO) {
-        if (weightGrams <= 0 && reps <= 0) return@withContext loadDatabase(uri, context)
-
-        val loadResult = loadDatabaseResult(uri, context)
-        if (loadResult !is HabitsLoadResult.Success) {
-            Log.w(TAG, "saveWeightsSlots: load did not succeed ($loadResult), refusing to save and throwing")
-            throw HabitsLoadFailedException(loadResult)
-        }
-        val db = loadResult.db.toMutableMap()
+    ): HabitsDatabase {
+        val mutable = db.toMutableMap()
         val dateStr = dateString(date)
 
         // Weight slot: keep the day's heaviest value (max-merge)
         if (weightGrams > 0) {
             val weightKey = if (machine) secondaryValueKey(habitName)
             else secondaryValueSlotKey(habitName, 3)
-            val entries = db[weightKey]?.toMutableMap() ?: mutableMapOf()
+            val entries = mutable[weightKey]?.toMutableMap() ?: mutableMapOf()
             entries[dateStr] = maxOf(entries[dateStr] ?: 0, weightGrams)
-            db[weightKey] = entries.toSortedMap()
+            mutable[weightKey] = entries.toSortedMap()
         }
 
         // Reps slot: accumulate the day's total
         if (reps > 0) {
             val repsKey = if (machine) secondaryValueSlotKey(habitName, 2)
             else secondaryValueSlotKey(habitName, 4)
-            val entries = db[repsKey]?.toMutableMap() ?: mutableMapOf()
+            val entries = mutable[repsKey]?.toMutableMap() ?: mutableMapOf()
             entries[dateStr] = (entries[dateStr] ?: 0) + reps
-            db[repsKey] = entries.toSortedMap()
+            mutable[repsKey] = entries.toSortedMap()
         }
 
-        saveDatabase(uri, context, db)
-        db
+        return mutable
     }
 
     /**
