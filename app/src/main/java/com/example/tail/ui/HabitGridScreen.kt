@@ -1251,14 +1251,28 @@ fun HabitGridScreen(
                                         mealDialogHabit = habit.name
                                     }
                                     com.example.tail.data.LONG_PRESS_URL -> {
-                                        // Open the configured URL — inside the chosen app
-                                        // when one is set, otherwise in the default browser.
+                                        // Open the configured URI — inside the chosen app
+                                        // when one is set, otherwise via the default handler
+                                        // (browser for https, the target app for deep links
+                                        // like obsidian://open?vault=…&file=…).
+                                        // Normalize again at launch so legacy entries saved
+                                        // before URI normalization exist still resolve.
+                                        val normalizedUrl = com.example.tail.data.normalizeLongPressUri(longPressUrl!!)
+                                        val uri = android.net.Uri.parse(normalizedUrl)
                                         val urlIntent = android.content.Intent(
                                             android.content.Intent.ACTION_VIEW,
-                                            android.net.Uri.parse(longPressUrl)
-                                        )
+                                            uri
+                                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                         val urlApp = settings.habitLongPressUrlApps[habit.name]
                                         if (!urlApp.isNullOrBlank()) urlIntent.setPackage(urlApp)
+                                        fun showNoHandlerToast() {
+                                            val scheme = uri.scheme ?: normalizedUrl.take(20)
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "No app found that opens \"$scheme\" links",
+                                                android.widget.Toast.LENGTH_LONG
+                                            ).show()
+                                        }
                                         try {
                                             context.startActivity(urlIntent)
                                         } catch (_: Exception) {
@@ -1280,12 +1294,16 @@ fun HabitGridScreen(
                                                     context.startActivity(
                                                         android.content.Intent(
                                                             android.content.Intent.ACTION_VIEW,
-                                                            android.net.Uri.parse(longPressUrl)
-                                                        )
+                                                            uri
+                                                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                                     )
                                                 } catch (_: Exception) {
-                                                    // No handler at all — ignore
+                                                    // No handler at all — tell the user
+                                                    showNoHandlerToast()
                                                 }
+                                            } else {
+                                                // No chosen app and no system handler for this scheme
+                                                showNoHandlerToast()
                                             }
                                         }
                                     }
@@ -3693,7 +3711,7 @@ private fun LongPressActionSection(
                 urlText = newText
                 onSetUrl(habitName, newText)
             },
-            placeholder = { Text("https://example.com", fontSize = 11.sp, color = Color(0xFF666666)) },
+            placeholder = { Text("https://… or obsidian://open?vault=…&file=…", fontSize = 11.sp, color = Color(0xFF666666)) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             colors = OutlinedTextFieldDefaults.colors(
@@ -3705,6 +3723,82 @@ private fun LongPressActionSection(
             textStyle = TextStyle(fontSize = 12.sp),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
         )
+
+        // Scheme feedback — deep links (obsidian://, spotify://, tel: …)
+        // resolve into their target app; scheme-less input opens as https.
+        val hasScheme = com.example.tail.data.hasUriScheme(urlText)
+        Text(
+            text = when {
+                urlText.isBlank() -> "Paste any URI — https:// or a deep link like obsidian://…"
+                hasScheme -> "Opens via ${com.example.tail.data.uriSchemeOf(urlText)}: link"
+                else -> "No scheme — will open as https://"
+            },
+            color = if (urlText.isNotBlank() && !hasScheme) Color(0xFFBB8844) else Color(0xFF888888),
+            fontSize = 10.sp
+        )
+
+        // Obsidian note builder — compose an obsidian://open deep link from
+        // vault + file path so vault/file names with spaces never need
+        // hand-encoding. Writes the built URI into the field above.
+        var showObsidianBuilder by remember { mutableStateOf(false) }
+        TextButton(
+            onClick = { showObsidianBuilder = !showObsidianBuilder },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+        ) {
+            Text(
+                if (showObsidianBuilder) "▾ Hide Obsidian builder" else "▸ Build Obsidian note URI",
+                fontSize = 11.sp,
+                color = Color(0xFF66CCFF)
+            )
+        }
+        if (showObsidianBuilder) {
+            var vaultText by remember { mutableStateOf("") }
+            var fileText by remember { mutableStateOf("") }
+            OutlinedTextField(
+                value = vaultText,
+                onValueChange = { vaultText = it },
+                placeholder = { Text("Vault name", fontSize = 11.sp, color = Color(0xFF666666)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFF66CCFF),
+                    unfocusedTextColor = Color(0xFF66CCFF),
+                    focusedBorderColor = Color(0xFF66CCFF),
+                    unfocusedBorderColor = Color(0xFF225577)
+                ),
+                textStyle = TextStyle(fontSize = 12.sp)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            OutlinedTextField(
+                value = fileText,
+                onValueChange = { fileText = it },
+                placeholder = { Text("notes/my note.md (optional)", fontSize = 11.sp, color = Color(0xFF666666)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFF66CCFF),
+                    unfocusedTextColor = Color(0xFF66CCFF),
+                    focusedBorderColor = Color(0xFF66CCFF),
+                    unfocusedBorderColor = Color(0xFF225577)
+                ),
+                textStyle = TextStyle(fontSize = 12.sp)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Button(
+                onClick = {
+                    if (vaultText.isNotBlank()) {
+                        val built = com.example.tail.data.buildObsidianOpenUri(vaultText, fileText)
+                        urlText = built
+                        onSetUrl(habitName, built)
+                    }
+                },
+                enabled = vaultText.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A2A3A)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("Set URI", fontSize = 11.sp, color = Color(0xFF66CCFF))
+            }
+        }
 
         // "Open in" selector — route the URL into a specific app (e.g. a
         // Gemini conversation link into the Gemini app) via Intent.setPackage.

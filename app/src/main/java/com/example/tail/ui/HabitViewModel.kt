@@ -11537,9 +11537,14 @@ class HabitViewModel(
     }
 
     /**
-     * Sets the URL opened when long-pressing a habit whose action is
+     * Sets the URI opened when long-pressing a habit whose action is
      * [com.example.tail.data.LONG_PRESS_URL]. Passing a blank [url]
      * removes the entry (long-press then falls back to app behaviour).
+     *
+     * The value is normalized via [com.example.tail.data.normalizeLongPressUri]:
+     * any URI scheme is preserved (obsidian://, tel:, spotify:// …), bare
+     * domains get an https:// prefix, and pasted-but-unencoded characters
+     * (spaces in vault/file names etc.) are percent-encoded.
      */
     fun setHabitLongPressUrl(habitName: String, url: String) {
         viewModelScope.launch {
@@ -11547,8 +11552,7 @@ class HabitViewModel(
             if (url.isBlank()) {
                 current.remove(habitName)
             } else {
-                // Bare domains get an https:// prefix so ACTION_VIEW resolves them
-                current[habitName] = url.trim().let { if ("://" in it) it else "https://$it" }
+                current[habitName] = com.example.tail.data.normalizeLongPressUri(url)
             }
             settingsRepo.saveHabitLongPressUrls(current)
             _settings.value = _settings.value.copy(habitLongPressUrls = current)
