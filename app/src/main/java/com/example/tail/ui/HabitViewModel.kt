@@ -113,8 +113,11 @@ import kotlinx.coroutines.Job
 import com.example.tail.wallpaper.WallpaperMetric
 import com.example.tail.wallpaper.WallpaperTarget
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -543,6 +546,21 @@ class HabitViewModel(
     /** Error message from the last AI icon generation attempt (null = no error). */
     private val _aiIconError = MutableStateFlow<String?>(null)
     val aiIconError: StateFlow<String?> = _aiIconError.asStateFlow()
+
+    /**
+     * Habit names with an AI icon generation currently in flight. The habit
+     * tile shows a spinner while its name is in this set, so the user can
+     * leave the icon picker and still see progress in the grid.
+     */
+    private val _aiIconPendingHabits = MutableStateFlow<Set<String>>(emptySet())
+    val aiIconPendingHabits: StateFlow<Set<String>> = _aiIconPendingHabits.asStateFlow()
+
+    /**
+     * One-shot user-facing messages about background AI icon generation
+     * (started / applied / failed), consumed as toasts by the grid screen.
+     */
+    private val _aiIconMessages = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val aiIconMessages: SharedFlow<String> = _aiIconMessages.asSharedFlow()
 
     // ── Chess.com Integration ─────────────────────────────────────────────────
     private val chessComRepo = ChessComRepository(context)
@@ -5715,8 +5733,14 @@ class HabitViewModel(
     /**
      * Generates a new AI icon from the given prompt, post-processes it to
      * white-on-transparent, saves it to the local database, and refreshes the list.
+     *
+     * When [habitName] is given, generation runs as a background job tied to
+     * that habit: the caller does NOT need to wait. The habit's tile shows a
+     * spinner while generation is in flight, and once the icon is ready it is
+     * automatically applied to the habit (same path as [setHabitIcon]) and a
+     * toast announces the result — even if the icon picker was closed long ago.
      */
-    fun generateAiIcon(prompt: String) {
+    fun generateAiIcon(prompt: String, habitName: String? = null) {
         val s = _settings.value
         if (!s.aiIconsEnabled || s.aiIconsApiKey.isEmpty() || s.aiIconsBaseUrl.isEmpty()) {
             _aiIconError.value = "AI icons not configured. Check Settings."
@@ -5724,6 +5748,10 @@ class HabitViewModel(
         }
         _aiIconGenerating.value = true
         _aiIconError.value = null
+        if (habitName != null) {
+            _aiIconPendingHabits.value = _aiIconPendingHabits.value + habitName
+            _aiIconMessages.tryEmit("Generating AI icon for \"$habitName\"…")
+        }
         viewModelScope.launch {
             try {
                 val bitmap = aiIconGenService.generateIcon(
@@ -5734,14 +5762,27 @@ class HabitViewModel(
                     model = s.aiIconsModel.ifEmpty { "nano-banana-pro" },
                     quality = s.aiIconsQuality
                 )
-                withContext(Dispatchers.IO) {
+                val icon = withContext(Dispatchers.IO) {
                     aiIconRepo.saveIcon(bitmap, prompt)
                 }
                 refreshAiIcons()
+                if (habitName != null) {
+                    // Auto-apply the freshly generated icon to the habit
+                    setHabitIcon(habitName, icon.id)
+                    _aiIconMessages.tryEmit("AI icon applied to \"$habitName\"")
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "AI icon generation failed", e)
                 _aiIconError.value = e.message ?: "Unknown error"
+                if (habitName != null) {
+                    _aiIconMessages.tryEmit(
+                        "AI icon for \"$habitName\" failed: ${_aiIconError.value}"
+                    )
+                }
             } finally {
+                if (habitName != null) {
+                    _aiIconPendingHabits.value = _aiIconPendingHabits.value - habitName
+                }
                 _aiIconGenerating.value = false
             }
         }

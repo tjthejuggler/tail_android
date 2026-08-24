@@ -403,6 +403,16 @@ fun HabitGridScreen(
     val pendingNotifications = notifications.size
     val context = LocalContext.current
 
+    // Background AI icon generation: habits with a generation in flight show a
+    // spinner on their tile, and one-shot messages (started/applied/failed)
+    // surface as toasts — so the user can leave the icon picker anytime.
+    val aiIconPendingHabits by viewModel.aiIconPendingHabits.collectAsState()
+    LaunchedEffect(viewModel.aiIconMessages) {
+        viewModel.aiIconMessages.collect { message ->
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
     // ── Idle shimmer ─────────────────────────────────────────────────────────
     // After a random 5–15 s gap without any pointer activity anywhere on the
     // screen, a barely-visible brightness wave rolls across the habit
@@ -1135,6 +1145,7 @@ fun HabitGridScreen(
                         customIconOverrides = settings.habitIcons,
                         disabledHabits = settings.disabledHabits,
                         aiIconRepo = if (settings.aiIconsEnabled) viewModel.getAiIconRepo() else null,
+                        aiIconPendingHabits = aiIconPendingHabits,
                         garminHabitLinks = settings.garminHabitLinks,
                         appLinks = settings.appLinks,
                         habitAppAssociations = settings.habitAppAssociations,
@@ -3259,6 +3270,8 @@ private fun HabitGrid(
     customIconOverrides: Map<String, String> = emptyMap(),
     disabledHabits: Set<String> = emptySet(),
     aiIconRepo: AiIconRepository? = null,
+    /** Habits with an AI icon generation in flight (tile shows a spinner). */
+    aiIconPendingHabits: Set<String> = emptySet(),
     garminHabitLinks: Map<String, String> = emptyMap(),
     appLinks: Map<String, String> = emptyMap(),
     habitAppAssociations: Map<String, List<String>> = emptyMap(),
@@ -3369,6 +3382,7 @@ private fun HabitGrid(
                         graphMode = graphMode,
                         isGraphSelected = isGraphSelected,
                         isDisabled = habit.name in disabledHabits,
+                        isAiIconGenerating = habit.name in aiIconPendingHabits,
                         aiIconRepo = aiIconRepo,
                         garminHabitLinks = garminHabitLinks,
                         hasAppAssociation = effectiveAction == com.example.tail.data.LONG_PRESS_APP &&
@@ -9760,7 +9774,11 @@ private fun IconPickerDialog(
                         Button(
                             onClick = {
                                 if (aiPrompt.isNotBlank()) {
-                                    viewModel.generateAiIcon(aiPrompt.trim())
+                                    // Start background generation tied to this habit and
+                                    // close the picker — the icon is applied automatically
+                                    // when it lands (toast + tile spinner in the grid).
+                                    viewModel.generateAiIcon(aiPrompt.trim(), habitName)
+                                    onDismiss()
                                 }
                             },
                             enabled = !aiIconGenerating && aiPrompt.isNotBlank(),

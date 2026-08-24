@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -106,6 +107,9 @@ fun HabitButton(
     isGraphSelected: Boolean = false,
     /** True when this habit is disabled (red ✕ overlay in top-left corner). */
     isDisabled: Boolean = false,
+    /** True while an AI icon is being generated in the background for this
+     *  habit — the tile shows a spinner in place of the icon until it lands. */
+    isAiIconGenerating: Boolean = false,
     /** Optional AI icon repository for loading file-based AI icons. */
     aiIconRepo: AiIconRepository? = null,
     /** Map of habit name → GarminType.name for Garmin-linked habits. Used to format values (e.g. metres → km). */
@@ -413,9 +417,18 @@ fun HabitButton(
             }
         }
 
-        // Center: icon — app icon takes priority over AI icon, then text/emoji
-        // icon, then drawable resource
-        if (appIconBitmap != null) {
+        // Center: icon — a generating AI icon shows a spinner; otherwise app
+        // icon takes priority over AI icon, then text/emoji icon, then
+        // drawable resource
+        if (isAiIconGenerating) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .size(16.dp)
+                    .align(Alignment.Center),
+                color = Color.White,
+                strokeWidth = 2.dp
+            )
+        } else if (appIconBitmap != null) {
             Image(
                 bitmap = appIconBitmap.asImageBitmap(),
                 contentDescription = habit.name,
