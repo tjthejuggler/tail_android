@@ -6399,16 +6399,8 @@ private fun EditModeControlBar(
                         onSetScheduleTime = onSetHabitScheduleTime
                     )
 
-                    // ── Weights habit type ─────────────────────────────────────
-                    WeightsToggleSection(
-                        habitName = selectedHabitName,
-                        isWeights = selectedHabitName in weightsHabits,
-                        onToggleWeights = onToggleWeights
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-
                     // ── Special habit types (collapsible) ──────────────────────
-                    // Meal, Chess.com, Media, Garmin, GitHub and Movie Bridge —
+                    // Meal, Weights, Chess.com, Media, Garmin, GitHub and Movie Bridge —
                     // the integration-backed habit types, grouped behind one
                     // collapsible header so the edit panel stays tidy. Extracted
                     // to its own composable to keep EditModeControlBar under the
@@ -6426,6 +6418,13 @@ private fun EditModeControlBar(
                                 habitName = selHabitName,
                                 isCamera = selHabitName in cameraHabits,
                                 onToggleCamera = onToggleCamera
+                            )
+                        },
+                        weightsContent = {
+                            WeightsToggleSection(
+                                habitName = selHabitName,
+                                isWeights = selHabitName in weightsHabits,
+                                onToggleWeights = onToggleWeights
                             )
                         },
                         chessComContent = {
@@ -7327,6 +7326,7 @@ private fun EditModeMinutesEditorRow(
 @Composable
 private fun SpecialHabitTypesSection(
     mealContent: @Composable () -> Unit,
+    weightsContent: @Composable () -> Unit,
     chessComContent: @Composable () -> Unit,
     mediaContent: @Composable () -> Unit,
     garminContent: @Composable () -> Unit,
@@ -7339,34 +7339,37 @@ private fun SpecialHabitTypesSection(
     HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
     Spacer(modifier = Modifier.height(4.dp))
 
-    // Expandable header
+    // Expandable header — vertically padded for a larger, easier-to-tap target
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() }
-            ) { expanded = !expanded },
+            ) { expanded = !expanded }
+            .padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = "SPECIAL HABIT TYPES",
             color = Color(0xFF888888),
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.sp
         )
         Text(
             text = if (expanded) "▾" else "▸",
             color = Color(0xFF888888),
-            fontSize = 12.sp
+            fontSize = 14.sp
         )
     }
 
     if (expanded) {
         Spacer(modifier = Modifier.height(6.dp))
         mealContent()
+        Spacer(modifier = Modifier.height(4.dp))
+        weightsContent()
         Spacer(modifier = Modifier.height(4.dp))
         chessComContent()
         mediaContent()
@@ -7394,28 +7397,29 @@ private fun AdvancedSection(
     HorizontalDivider(color = Color(0xFF333333), thickness = 1.dp)
     Spacer(modifier = Modifier.height(4.dp))
 
-    // Expandable header
+    // Expandable header — vertically padded for a larger, easier-to-tap target
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() }
-            ) { expanded = !expanded },
+            ) { expanded = !expanded }
+            .padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = "ADVANCED",
             color = Color(0xFF888888),
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.sp
         )
         Text(
             text = if (expanded) "▾" else "▸",
             color = Color(0xFF888888),
-            fontSize = 12.sp
+            fontSize = 14.sp
         )
     }
 
