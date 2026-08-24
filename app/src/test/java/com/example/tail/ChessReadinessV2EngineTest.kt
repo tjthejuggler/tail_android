@@ -21,7 +21,7 @@ import java.time.LocalDate
 /**
  * Unit tests for the v2 Cognitive Readiness Gating engine — the research
  * paper's math verified end to end: lnRMSSD/RHR Z-scores, PVT-B thresholds,
- * EWMA cognitive ACWR, the 3-tier gating matrix and priming latency.
+ * EWMA cognitive ACWR and the 3-tier gating matrix.
  */
 class ChessReadinessV2EngineTest {
 
@@ -439,25 +439,5 @@ class ChessReadinessV2EngineTest {
         assertEquals(65, ChessReadinessV2Engine.syntheticCcrs(V2Tier.TIER2_RESTRICTED, 0))
         assertEquals(50, ChessReadinessV2Engine.syntheticCcrs(V2Tier.TIER3_LOCKOUT, 1))
         assertEquals(30, ChessReadinessV2Engine.syntheticCcrs(V2Tier.TIER3_LOCKOUT, 2))
-    }
-
-    // ── Cognitive priming ──────────────────────────────────────────────────
-
-    @Test
-    fun priming_enforcedThreeSecondLatency() {
-        val shown = 1_000_000L
-        assertFalse(ChessReadinessV2Engine.primingMoveAccepted(shown, shown + 2_999))
-        assertTrue(ChessReadinessV2Engine.primingMoveAccepted(shown, shown + 3_000))
-        assertTrue(ChessReadinessV2Engine.primingMoveAccepted(shown, shown + 10_000))
-    }
-
-    @Test
-    fun priming_countdownCeils() {
-        val shown = 0L
-        assertEquals(3, ChessReadinessV2Engine.primingSecondsRemaining(shown, 0))
-        assertEquals(2, ChessReadinessV2Engine.primingSecondsRemaining(shown, 1_500))
-        assertEquals(1, ChessReadinessV2Engine.primingSecondsRemaining(shown, 2_999))
-        assertEquals(0, ChessReadinessV2Engine.primingSecondsRemaining(shown, 3_000))
-        assertEquals(0, ChessReadinessV2Engine.primingSecondsRemaining(shown, 9_999))
     }
 }

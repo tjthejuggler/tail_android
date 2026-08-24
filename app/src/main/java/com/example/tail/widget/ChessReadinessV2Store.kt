@@ -69,8 +69,6 @@ object ChessReadinessV2Store {
         OVERVIEW,
         /** Autonomic cleared — PVT-B due (not started or restarted). */
         PVT_PENDING,
-        /** PVT done, gating computed — priming due (Tier 1 only). */
-        PRIMING,
         /** Finished (result recorded). */
         DONE
     }
@@ -79,13 +77,13 @@ object ChessReadinessV2Store {
      * In-progress v2 test. The PVT samples are NOT persisted — resuming a
      * half-finished vigilance test would invalidate it, so a PVT always
      * restarts from zero when the overlay reopens at [V2Step.PVT_PENDING].
+     * (Sessions persisted by pre-priming-removal builds may carry a PRIMING
+     * step or primingIndex — both are ignored on load.)
      */
     data class V2Session(
         val startedAt: Long,
         val updatedAt: Long,
         val step: V2Step,
-        /** 0-based index of the current priming puzzle. */
-        val primingIndex: Int,
         /** Serialized autonomic evaluation (JSON), kept between steps. */
         val autonomicJson: String?,
         /** Serialized gating result computed after the PVT (JSON). */
@@ -101,7 +99,6 @@ object ChessReadinessV2Store {
                 updatedAt = o.getLong("updatedAt"),
                 step = runCatching { V2Step.valueOf(o.getString("step")) }
                     .getOrDefault(V2Step.OVERVIEW),
-                primingIndex = o.optInt("primingIndex", 0),
                 autonomicJson = o.optString("autonomic").takeIf { it.isNotBlank() },
                 gatingJson = o.optString("gating").takeIf { it.isNotBlank() }
             )
@@ -120,7 +117,6 @@ object ChessReadinessV2Store {
             put("startedAt", session.startedAt)
             put("updatedAt", System.currentTimeMillis())
             put("step", session.step.name)
-            put("primingIndex", session.primingIndex)
             put("autonomic", session.autonomicJson ?: "")
             put("gating", session.gatingJson ?: "")
         }
@@ -225,6 +221,29 @@ object ChessReadinessV2Store {
         })
         while (arr.length() > MAX_PVT) arr.remove(0)
         prefs(context).edit().putString(KEY_PVT_LOG, arr.toString()).apply()
+    }
+
+    /** The completed PVT-B runs, oldest first (telemetry for the stats screen). */
+    fun loadPvt(context: Context): List<PvtRecord> {
+        val raw = prefs(context).getString(KEY_PVT_LOG, null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.getJSONObject(i)
+                PvtRecord(
+                    timestamp = o.getLong("timestamp"),
+                    validResponses = o.optInt("valid", 0),
+                    lapses = o.optInt("lapses", 0),
+                    falseStarts = o.optInt("falseStarts", 0),
+                    meanRrt = o.optNullableDouble("meanRrt"),
+                    meanRtMs = o.optNullableDouble("meanRtMs"),
+                    maxRtMs = if (o.has("maxRtMs") && !o.isNull("maxRtMs"))
+                        o.optInt("maxRtMs") else null
+                )
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     // ── Extra cognitive session loads (feed the ACWR) ─────────────────────

@@ -66,6 +66,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.tail.data.ComplianceDay
 import com.example.tail.data.GameFilter
+import com.example.tail.data.Phase2AuditRecord
+import com.example.tail.data.Phase2V2GameRecord
 import com.example.tail.data.RatingHistoryPoint
 import com.example.tail.data.RatingHistorySeries
 import com.example.tail.data.RatingPoolStats
@@ -73,20 +75,27 @@ import com.example.tail.data.ReadinessBlockedRecord
 import com.example.tail.data.ReadinessGameRecord
 import com.example.tail.data.ReadinessStats
 import com.example.tail.data.ReadinessTestRecord
+import com.example.tail.data.V2PvtRecord
+import com.example.tail.data.V2ResultRecord
 import com.example.tail.data.computeBucketWinRates
 import com.example.tail.data.computeComplianceSeries
 import com.example.tail.data.computeDayOfWeekStats
 import com.example.tail.data.computeGameCategoryAggregates
 import com.example.tail.data.computeHourlyReadiness
+import com.example.tail.data.computePhase2V2Stats
 import com.example.tail.data.computePuzzleTimeSeries
 import com.example.tail.data.computeRatingHistory
 import com.example.tail.data.computeRushScoreSeries
 import com.example.tail.data.computeRatingStats
 import com.example.tail.data.computeReadinessStats
+import com.example.tail.data.computeV2PregameStats
 import com.example.tail.data.computeWinRateByCcrsBand
+import com.example.tail.widget.ChessPhase2Store
+import com.example.tail.widget.ChessPhase2V2Store
 import com.example.tail.widget.ChessReadinessEngine
 import com.example.tail.widget.ChessReadinessLogStore
 import com.example.tail.widget.ChessReadinessSystemChanges
+import com.example.tail.widget.ChessReadinessV2Store
 import com.example.tail.widget.ReadinessSystemChange
 import java.time.Instant
 import java.time.ZoneId
@@ -194,6 +203,13 @@ fun ChessReadinessStatsScreen(
     // and the user never sees stale pre-backfill numbers.
     var resumeCount by remember { mutableStateOf(0) }
     var loaded by remember { mutableStateOf(false) }
+    // V2 system telemetry: pre-game gate (verdicts + PVT-B reflex runs)
+    // and post-game audit (v2 ledger + shared audits), mapped to the pure
+    // calculator's input records.
+    var v2Results by remember { mutableStateOf<List<V2ResultRecord>>(emptyList()) }
+    var v2Pvt by remember { mutableStateOf<List<V2PvtRecord>>(emptyList()) }
+    var phase2V2Games by remember { mutableStateOf<List<Phase2V2GameRecord>>(emptyList()) }
+    var phase2Audits by remember { mutableStateOf<List<Phase2AuditRecord>>(emptyList()) }
 
     // Runs on first composition AND on every resume (via resumeCount).
     // Only raw data is loaded here; every aggregate is derived below so
@@ -208,6 +224,56 @@ fun ChessReadinessStatsScreen(
             games = ChessReadinessLogStore.loadGames(context)
             blocked = ChessReadinessLogStore.loadBlocked(context)
             systemStartMs = tests.minOfOrNull { it.timestamp }
+            // V2 pre-game gate: verdict log + PVT-B reflex runs.
+            v2Results = ChessReadinessV2Store.loadResults(context).map {
+                V2ResultRecord(
+                    timestamp = it.timestamp,
+                    tier = it.tier,
+                    stateName = it.stateName,
+                    ccrs = it.ccrs,
+                    zLnRmssd = it.zLnRmssd,
+                    zRhr = it.zRhr,
+                    lapses = it.lapses,
+                    falseStarts = it.falseStarts,
+                    meanRrt = it.meanRrt,
+                    acwr = it.acwr,
+                    pvtSkipped = it.pvtSkipped,
+                    sessionStartedAt = it.sessionStartedAt
+                )
+            }
+            v2Pvt = ChessReadinessV2Store.loadPvt(context).map {
+                V2PvtRecord(
+                    timestamp = it.timestamp,
+                    validResponses = it.validResponses,
+                    lapses = it.lapses,
+                    falseStarts = it.falseStarts,
+                    meanRrt = it.meanRrt,
+                    meanRtMs = it.meanRtMs,
+                    maxRtMs = it.maxRtMs
+                )
+            }
+            // V2 post-game audit: rated-game ledger joined (by timestamp,
+            // in the calculator) to the shared Phase 2 audit history.
+            phase2V2Games = ChessPhase2V2Store.loadRecentGames(context).map {
+                Phase2V2GameRecord(
+                    timestamp = it.timestamp,
+                    result = it.result,
+                    timeControl = it.timeControl,
+                    outputState = it.outputState,
+                    estimatedMinutes = it.estimatedMinutes
+                )
+            }
+            phase2Audits = ChessPhase2Store.loadAudits(context).map {
+                Phase2AuditRecord(
+                    timestamp = it.timestamp,
+                    timeControl = it.timeControl,
+                    outputState = it.outputState,
+                    deltaE = it.deltaE,
+                    caps2Accuracy = it.caps2Accuracy,
+                    accuracyCounted = it.accuracyCounted,
+                    strain = it.strain
+                )
+            }
             loaded = true
         }
     }
@@ -228,6 +294,14 @@ fun ChessReadinessStatsScreen(
         computeRatingStats(visibleGames, tests, systemStartMs ?: 0L)
     }
     val ratingHistory = remember(visibleGames) { computeRatingHistory(visibleGames) }
+    // V2 aggregates — variant-independent (the gate runs before any game
+    // and the audit ledger covers every rated game regardless of variant).
+    val v2PregameStats = remember(v2Results, v2Pvt) {
+        computeV2PregameStats(v2Results, v2Pvt)
+    }
+    val phase2V2Stats = remember(phase2V2Games, phase2Audits) {
+        computePhase2V2Stats(phase2V2Games, phase2Audits)
+    }
 
     // Reload when the screen resumes — e.g. when returning after the
     // chess.com full-history backfill finished while this screen was open.
@@ -868,6 +942,12 @@ fun ChessReadinessStatsScreen(
                         }
                     }
                 }
+
+                // ── V2 systems: pre-game gate + post-game audit ──────────
+                // Dedicated sections for the two v2 chess-readiness systems
+                // (they render nothing until the first v2 record exists).
+                V2PregameSection(stats = v2PregameStats, chartHeight = chartHeight)
+                Phase2V2Section(stats = phase2V2Stats, chartHeight = chartHeight)
 
                 // ── Sub-score breakdown ───────────────────────────────────
                 if (s.totalTests > 0) {

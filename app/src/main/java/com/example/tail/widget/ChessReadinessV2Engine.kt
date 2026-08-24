@@ -70,12 +70,6 @@ object ChessReadinessV2Engine {
     /** Responses faster than this (ms) are physiologically impossible. */
     const val FALSE_START_THRESHOLD_MS = 100
 
-    /** Enforced minimum think-time on each priming puzzle (ms). */
-    const val PRIMING_MIN_DELAY_MS = 3_000L
-
-    /** Priming puzzles presented per run (paper: 5–7). */
-    const val PRIMING_PUZZLE_COUNT = 5
-
     /** Baseline window length (days, excluding today). */
     const val BASELINE_WINDOW_DAYS = 30
 
@@ -114,7 +108,7 @@ object ChessReadinessV2Engine {
     /** Rated play costs one extra intensity point (stakes → strain). */
     const val RATED_INTENSITY_BONUS = 1.0
 
-    /** The v2 test session itself (PVT + priming ≈ 3 min) as cTRIMP minutes×intensity. */
+    /** The v2 test session itself (PVT ≈ 3 min) as cTRIMP minutes×intensity. */
     const val TEST_SESSION_MINUTES = 3.0
     const val TEST_SESSION_INTENSITY = 4.0
 
@@ -621,25 +615,5 @@ object ChessReadinessV2Engine {
             }
         )
         return ModuleVerdict(w.tier, reasons)
-    }
-
-    // ── Cognitive priming ──────────────────────────────────────────────────
-
-    /**
-     * Whether a priming move attempt at [attemptAtMs] is accepted: the
-     * enforced [PRIMING_MIN_DELAY_MS] must have elapsed since the puzzle
-     * was shown at [shownAtMs] (blunder-check conditioning — instant
-     * answers are deliberately rejected).
-     */
-    fun primingMoveAccepted(shownAtMs: Long, attemptAtMs: Long): Boolean =
-        attemptAtMs - shownAtMs >= PRIMING_MIN_DELAY_MS
-
-    /** Seconds remaining until the priming delay lifts (for the countdown UI). */
-    fun primingSecondsRemaining(shownAtMs: Long, nowMs: Long): Int {
-        val elapsed = nowMs - shownAtMs
-        val remain = PRIMING_MIN_DELAY_MS - elapsed
-        if (remain <= 0) return 0
-        // Ceiling — the button reads "hold 3…2…1" and enables at 0.
-        return ((remain + 999) / 1000).toInt().coerceAtLeast(1)
     }
 }

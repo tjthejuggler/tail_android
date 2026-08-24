@@ -1079,7 +1079,7 @@ class FloatingBubbleService : Service() {
      * Shows the Phase 1 readiness wizard as a floating overlay dialog.
      * Branches on the settings toggle: v1 keeps the original diagnostic,
      * v2 opens the neurobiological gate wizard (HRV/RHR Z-scores, PVT-B,
-     * ACWR, priming). Both record into the same shared history.
+     * ACWR). Both record into the same shared history.
      */
     private fun openChessReadiness() {
         try {

@@ -2332,9 +2332,8 @@ private fun ChessReadinessSettingsSection(
             Text(
                 "v1 — the original sleep / clarity / puzzles / rush diagnostic.\n" +
                     "v2 — neurobiological gate: Garmin HRV & resting-HR Z-scores, " +
-                    "a 3-minute vigilance test (PVT-B), cognitive load balancing " +
-                    "(ACWR) and — when fully cleared — mate-in-one priming before " +
-                    "you play. Both versions share the same history, Chess Guard " +
+                    "a 3-minute vigilance test (PVT-B) and cognitive load balancing " +
+                    "(ACWR). Both versions share the same history, Chess Guard " +
                     "enforcement and game-audit rules.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

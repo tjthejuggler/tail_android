@@ -29,10 +29,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  *                 (random ISI 2–10 s, ms counter, 355 ms lapse threshold,
  *                 <100 ms false starts).
  *  3. GATING    — the three modules combine through the immutable gating
- *                 matrix (worst module wins).
- *  4. PRIMING   — Tier 1 only: 5 mastered mate-in-one patterns with an
- *                 enforced 3-second blunder-check latency per puzzle.
- *  5. RESULT    — Tier 1/2/3 verdict, recorded into the SHARED v1 history
+ *                 matrix (worst module wins) and the verdict is recorded
+ *                 immediately: how well the user did IS the verdict.
+ *  4. RESULT    — Tier 1/2/3 verdict, recorded into the SHARED v1 history
  *                 (GREEN/YELLOW/RED) so Chess Guard enforcement and the
  *                 Phase-2 audit pipeline work unchanged.
  *
@@ -45,7 +44,7 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
     private val dialog = ChessOverlayDialog(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    private enum class Phase { LOADING, BLOCKED, OVERVIEW, PVT_INTRO, PVT_RUN, PRIMING, RESULT }
+    private enum class Phase { LOADING, BLOCKED, OVERVIEW, PVT_INTRO, PVT_RUN, RESULT }
 
     // ── Wizard state ────────────────────────────────────────────────────────
 
@@ -59,16 +58,8 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
     private var pvtSummary: ChessReadinessV2Engine.PvtSummary? = null
     private var gating: ChessReadinessV2Engine.V2GatingResult? = null
 
-    private var primingPuzzles: List<ChessPrimingBank.PrimingPuzzle> = emptyList()
-    private var primingIndex = 0
-    private var primingFeedback = ""
-
     // Handles to live views of the currently shown step
     private var pvtCountdown: android.widget.TextView? = null
-    private var primingHeader: android.widget.TextView? = null
-    private var primingHold: android.widget.TextView? = null
-    private var primingFeedbackView: android.widget.TextView? = null
-    private var primingBoard: ChessPrimingView? = null
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
 
@@ -91,7 +82,6 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
         scope.launch {
             val session = ChessReadinessV2Store.loadSession(context)
             sessionStartedAt = session?.startedAt ?: System.currentTimeMillis()
-            primingIndex = session?.primingIndex ?: 0
 
             // Shared v1 rate-limit gate (daily cap / cool-down / rest).
             val history = ChessReadinessStore.loadHistory(context)
@@ -105,12 +95,10 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
                 }
                 is ChessReadinessEngine.GateStatus.Allowed -> {
                     computeModules()
-                    phase = when (session?.step) {
-                        ChessReadinessV2Store.V2Step.PRIMING ->
-                            if (gating?.tier == ChessReadinessV2Engine.V2Tier.TIER1_PEAK)
-                                Phase.PRIMING else Phase.OVERVIEW
-                        else -> Phase.OVERVIEW
-                    }
+                    // A resumed session always restarts at the overview — the
+                    // PVT must be contiguous, so there is nothing later to
+                    // resume into.
+                    phase = Phase.OVERVIEW
                 }
             }
             if (dialog.isShowing()) render()
@@ -198,14 +186,13 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
 
     // ── Persistence ─────────────────────────────────────────────────────────
 
-    private fun persist(step: ChessReadinessV2Store.V2Step, primingIdx: Int = primingIndex) {
+    private fun persist(step: ChessReadinessV2Store.V2Step) {
         ChessReadinessV2Store.saveSession(
             context,
             ChessReadinessV2Store.V2Session(
                 startedAt = sessionStartedAt,
                 updatedAt = System.currentTimeMillis(),
                 step = step,
-                primingIndex = primingIdx,
                 autonomicJson = null,
                 gatingJson = null
             )
@@ -221,17 +208,12 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
 
     private fun render() {
         pvtCountdown = null
-        primingHeader = null
-        primingHold = null
-        primingFeedbackView = null
-        primingBoard = null
         when (phase) {
             Phase.LOADING -> renderLoading()
             Phase.BLOCKED -> renderBlocked()
             Phase.OVERVIEW -> renderOverview()
             Phase.PVT_INTRO -> renderPvtIntro()
             Phase.PVT_RUN -> renderPvtRun()
-            Phase.PRIMING -> renderPriming()
             Phase.RESULT -> renderResult()
         }
     }
@@ -403,11 +385,12 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
         return "%d:%02d".format(s / 60, s % 60)
     }
 
-    // ── Step 3: gating → priming (Tier 1) or result ─────────────────────────
+    // ── Step 3: gating → result ──────────────────────────────────────────────
 
     /**
-     * Runs the gating matrix. Tier 1 continues to the priming module; any
-     * other tier records the result immediately (no priming when locked).
+     * Runs the gating matrix and records the verdict immediately. The tier IS
+     * the performance grade: Tier 1 unlocks rated play, Tier 2 restricts to
+     * unrated study, Tier 3 locks everything.
      */
     private fun finalizeGating(pvt: ChessReadinessV2Engine.PvtSummary?) {
         pvtSummary = pvt
@@ -419,90 +402,7 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
             )
         )
         gating = result
-        if (result.tier == ChessReadinessV2Engine.V2Tier.TIER1_PEAK) {
-            primingPuzzles = ChessPrimingBank.selectForDay(LocalDate.now().toEpochDay())
-            primingIndex = 0
-            primingFeedback = ""
-            persist(ChessReadinessV2Store.V2Step.PRIMING, primingIdx = 0)
-            phase = Phase.PRIMING
-            render()
-        } else {
-            recordResult(result)
-        }
-    }
-
-    private fun renderPriming() {
-        val puzzles = primingPuzzles.ifEmpty {
-            ChessPrimingBank.selectForDay(LocalDate.now().toEpochDay())
-        }
-        if (primingPuzzles.isEmpty()) primingPuzzles = puzzles
-        val p = puzzles[primingIndex.coerceIn(0, puzzles.lastIndex)]
-
-        dialog.setContent(
-            "♟ Chess Readiness V2",
-            "Step 3 · Priming ${primingIndex + 1}/${puzzles.size} — ${p.title}"
-        ) {
-            body("Find the mate in one. ${p.motif}.")
-            hint("Tap the piece, then its square. Moves are LOCKED for the first 3 seconds — use the pause to check every line.")
-
-            primingHold = android.widget.TextView(context).apply {
-                text = "Hold — blunder check: 3 s"
-                setTextColor(0xFFEAB308.toInt())
-                textSize = 13f
-                gravity = android.view.Gravity.CENTER
-            }
-            customView(primingHold!!, 18)
-
-            val board = ChessPrimingView(context)
-            board.onHoldCountdown = { seconds ->
-                primingHold?.text = if (seconds > 0) "Hold — blunder check: ${seconds}s"
-                else "Move unlocked"
-                primingHold?.setTextColor(
-                    if (seconds > 0) 0xFFEAB308.toInt() else 0xFF66BB6A.toInt()
-                )
-            }
-            board.onMoveAttempt = { result ->
-                when (result) {
-                    ChessPrimingView.MoveResult.TooSoon ->
-                        setPrimingFeedback("Too fast — hold the 3-second blunder check.", 0xFFEF9A9A.toInt())
-                    is ChessPrimingView.MoveResult.Wrong ->
-                        setPrimingFeedback("Not the mate — scan king escapes and checks again.", 0xFFEAB308.toInt())
-                    ChessPrimingView.MoveResult.Correct -> {
-                        if (primingIndex + 1 < puzzles.size) {
-                            primingIndex += 1
-                            primingFeedback = ""
-                            persist(ChessReadinessV2Store.V2Step.PRIMING, primingIdx = primingIndex)
-                            render()
-                        } else {
-                            val g = gating
-                            if (g != null) recordResult(g) else abandon()
-                        }
-                    }
-                }
-            }
-            primingBoard = board
-            customView(board, 300)
-            board.showPuzzle(p)
-
-            primingFeedbackView = android.widget.TextView(context).apply {
-                text = primingFeedback
-                setTextColor(0xFFEAB308.toInt())
-                textSize = 12f
-                gravity = android.view.Gravity.CENTER
-                minHeight = 30
-            }
-            customView(primingFeedbackView!!, 30)
-
-            textButton("Abandon test") { abandon() }
-        }
-    }
-
-    private fun setPrimingFeedback(text: String, color: Int) {
-        primingFeedback = text
-        primingFeedbackView?.apply {
-            this.text = text
-            setTextColor(color)
-        }
+        recordResult(result)
     }
 
     // ── Step 4: result ──────────────────────────────────────────────────────

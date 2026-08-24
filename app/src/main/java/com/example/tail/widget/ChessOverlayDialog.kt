@@ -464,7 +464,7 @@ class ChessOverlayDialog(private val context: Context) {
 
         /**
          * Appends an arbitrary view to the card column (used by the v2
-         * readiness wizard for the PVT-B surface and the priming board).
+         * readiness wizard for the PVT-B surface).
          * Purely additive — all v1 wizard screens use the helpers above.
          */
         fun customView(view: android.view.View, heightDp: Int) {
