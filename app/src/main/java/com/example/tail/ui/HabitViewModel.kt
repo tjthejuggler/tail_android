@@ -1998,17 +1998,35 @@ class HabitViewModel(
      * Increments a habit's count. When [recordTimestamp] is true (default), also
      * records the current time in the timestamp repository. Set to false for
      * "silent" increments (e.g. long-press, edit-mode counter adjustments).
+     *
+     * @param date The date the increment applies to. Null (default) uses the
+     *             currently viewed date — right for tile taps. Callers whose
+     *             action is semantically about TODAY regardless of what the
+     *             user is viewing (e.g. habit-ask notification answers) must
+     *             pass [java.time.LocalDate.now] explicitly.
      */
-    fun incrementHabit(habitName: String, amount: Int = 1, recordTimestamp: Boolean = true) {
+    fun incrementHabit(
+        habitName: String,
+        amount: Int = 1,
+        recordTimestamp: Boolean = true,
+        date: LocalDate? = null
+    ) {
         val uriString = _settings.value.fileUri
         if (uriString.isEmpty()) {
             _errorMessage.value = "No file selected. Please pick a file in Settings."
             return
         }
 
+        // The date this increment applies to. When it is NOT the viewed date,
+        // the instant UI flip below is skipped (the visible rows belong to
+        // another day) and the Step-3 rebuild refreshes everything from the
+        // updated DB instead.
+        val targetDate = date ?: _selectedDate.value
+        val affectsVisibleDate = targetDate == _selectedDate.value
+
         // Step 1: instant targeted update — just flip todayCount for this one habit.
         // This is O(n) list copy with zero calculations, so it's effectively instant.
-        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        val dateStr = com.example.tail.data.dateString(targetDate)
         val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
         val currentStored = currentEntries[dateStr] ?: 0
         // Custom point ranges: the entered amount is the RAW input for the day.
@@ -2029,17 +2047,19 @@ class HabitViewModel(
             if (newCount == currentStored) return
             dbDelta = amount
         }
-        val divider = _settings.value.habitDividers[habitName] ?: 1
-        _habits.value = _habits.value.map { h ->
-            if (h.name == habitName) h.copy(
-                todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
-                    com.example.tail.data.invertedBinaryPoints(newCount)
-                } else applyDivider(newCount, divider),
-                rawTodayCount = newCount
-            ) else h
+        if (affectsVisibleDate) {
+            val divider = _settings.value.habitDividers[habitName] ?: 1
+            _habits.value = _habits.value.map { h ->
+                if (h.name == habitName) h.copy(
+                    todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
+                        com.example.tail.data.invertedBinaryPoints(newCount)
+                    } else applyDivider(newCount, divider),
+                    rawTodayCount = newCount
+                ) else h
+            }
+            // Keep per-screen cache in sync with the instant update
+            screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
         }
-        // Keep per-screen cache in sync with the instant update
-        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
 
         // Step 2: update in-memory cache
         // For roll forward habits, find the next manually set date BEFORE applying the change
@@ -2048,14 +2068,14 @@ class HabitViewModel(
             manualDates.mapNotNull { dateStr ->
                 com.example.tail.data.parseDate(dateStr)
             }.sorted()
-            .firstOrNull { it > _selectedDate.value }
+            .firstOrNull { it > targetDate }
         } else null
         
-        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, dbDelta, _selectedDate.value)
+        var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, dbDelta, targetDate)
         
         // Step 2b: Track this date as manually set for roll forward habits
         if (habitName in _settings.value.rollForwardHabits) {
-            val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+            val dateStr = com.example.tail.data.dateString(targetDate)
             val currentManualDates = _settings.value.rollForwardManualDates[habitName]?.toMutableSet() ?: mutableSetOf()
             currentManualDates.add(dateStr)
             val updatedManualDates = _settings.value.rollForwardManualDates.toMutableMap()
@@ -2106,10 +2126,10 @@ class HabitViewModel(
             if (targetKey != linkedName) {
                 // Raw secondary slot: no max-1 cap; skip the instant row update
                 // (the full rebuild below refreshes secondary displays from the DB).
-                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, targetKey, feedAmount, _selectedDate.value)
+                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, targetKey, feedAmount, targetDate)
                 if (recordTimestamp) {
                     viewModelScope.launch {
-                        timestampRepo.addTimestamp(linkedName, _selectedDate.value)
+                        timestampRepo.addTimestamp(linkedName, targetDate)
                     }
                 }
                 continue
@@ -2118,20 +2138,22 @@ class HabitViewModel(
             val linkedRaw = (linkedEntries[dateStr] ?: 0) + feedAmount
             val linkedClamped = if (linkedName in _settings.value.maxOneHabits) linkedRaw.coerceAtMost(1) else linkedRaw
             if (linkedClamped != (linkedEntries[dateStr] ?: 0)) {
-                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, linkedName, feedAmount, _selectedDate.value)
-                val linkedDivider = _settings.value.habitDividers[linkedName] ?: 1
-                _habits.value = _habits.value.map { h ->
-                    if (h.name == linkedName) h.copy(
-                        todayCount = if (linkedName in _settings.value.invertedBinaryHabits) {
-                            com.example.tail.data.invertedBinaryPoints(linkedClamped)
-                        } else applyDivider(linkedClamped, linkedDivider),
-                        rawTodayCount = linkedClamped
-                    ) else h
+                updatedDb = habitsRepo.applyIncrementToDb(updatedDb, linkedName, feedAmount, targetDate)
+                if (affectsVisibleDate) {
+                    val linkedDivider = _settings.value.habitDividers[linkedName] ?: 1
+                    _habits.value = _habits.value.map { h ->
+                        if (h.name == linkedName) h.copy(
+                            todayCount = if (linkedName in _settings.value.invertedBinaryHabits) {
+                                com.example.tail.data.invertedBinaryPoints(linkedClamped)
+                            } else applyDivider(linkedClamped, linkedDivider),
+                            rawTodayCount = linkedClamped
+                        ) else h
+                    }
                 }
                 // Record timestamp for the linked habit too
                 if (recordTimestamp) {
                     viewModelScope.launch {
-                        timestampRepo.addTimestamp(linkedName, _selectedDate.value)
+                        timestampRepo.addTimestamp(linkedName, targetDate)
                     }
                 }
             }
@@ -2140,7 +2162,7 @@ class HabitViewModel(
         // Step 2d: Roll forward logic - fill subsequent days for roll forward habits
         if (habitName in _settings.value.rollForwardHabits) {
             val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
-            val selectedDate = _selectedDate.value
+            val selectedDate = targetDate
             val today = java.time.LocalDate.now()
             
             // Fill all dates from selectedDate to nextManualDate (exclusive) or today (inclusive)
@@ -2159,8 +2181,11 @@ class HabitViewModel(
         }
         
         cachedPhoneDb = updatedDb
-        // Keep per-screen cache in sync after conditional updates
-        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
+        // Keep per-screen cache in sync after conditional updates — only when
+        // the visible list actually reflects the incremented date
+        if (affectsVisibleDate) {
+            screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
+        }
 
         // Step 3: full rebuild (streak/ATH recalc) + disk write in background
         viewModelScope.launch {
@@ -2189,7 +2214,7 @@ class HabitViewModel(
         val storedDelta = newCount - currentStored
         if (recordTimestamp && storedDelta > 0) {
             viewModelScope.launch {
-                timestampRepo.addTimestamps(habitName, storedDelta, _selectedDate.value)
+                timestampRepo.addTimestamps(habitName, storedDelta, targetDate)
             }
         }
 
@@ -9786,7 +9811,10 @@ class HabitViewModel(
                         onEntryLogged(null)
                     }
                 } else if (yes) {
-                    incrementHabit(ask.habitName)
+                    // The ask is about TODAY — never the date the user happens
+                    // to be viewing. Matches the system-notification answer
+                    // path (HabitAsks.applyAnswer → HabitsRepository.incrementHabit).
+                    incrementHabit(ask.habitName, date = LocalDate.now())
                     onEntryLogged(null)
                 } else {
                     onEntryLogged(null)
