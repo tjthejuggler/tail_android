@@ -27,6 +27,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -50,9 +51,12 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -102,9 +106,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.State
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -112,7 +120,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.onFocusChanged
@@ -122,8 +136,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconRepository
@@ -160,6 +176,7 @@ import com.example.tail.data.appLinkPackageName
 import com.example.tail.data.isAppLink
 import com.example.tail.data.meal.VisionQueueRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -188,6 +205,10 @@ private data class TextInputDialogState(
 // Grid is 8 columns × 10 rows = 80 cells
 private const val GRID_COLUMNS = 8
 private const val TOTAL_CELLS = 80
+
+// How long the finger must hover a screen tab (while dragging a habit in
+// edit mode) before the drag switches over to that screen.
+private const val TAB_DRAG_SWITCH_DWELL_MS = 550L
 
 // ── Idle shimmer tuning ───────────────────────────────────────────────────────
 // After a random quiet gap (5–15 s) without any interaction, a barely-visible
@@ -319,6 +340,62 @@ fun HabitGridScreen(
     val movePendingSourceIndex by viewModel.movePendingSourceIndex.collectAsState()
     val habitScreens by viewModel.habitScreens.collectAsState()
     val activeScreenIndex by viewModel.activeScreenIndex.collectAsState()
+
+    // ── Edit-mode drag-to-reorder ──────────────────────────────────────────────
+    // Long-pressing a habit cell in edit mode lifts it into a drag: the grid
+    // live-previews the destination (displaced habits shift right to make
+    // room and snap back when the finger moves away), hovering a screen tab
+    // for a beat switches screens mid-drag, and only an actual drop commits
+    // the move. A cancelled or missed drop reverts everything. All gesture
+    // bookkeeping lives in HabitDragState / Modifier.habitDragGesture below
+    // so this (already huge) composable stays lean.
+    val dragState = remember { HabitDragState() }
+    val gridDragState = rememberLazyGridState()
+    val dragScope = rememberCoroutineScope()
+    val tabRowScrollState = rememberScrollState()
+    // The gesture callbacks read these holders so they always see the
+    // CURRENT values even when the screen switches mid-drag.
+    val currentHabits = rememberUpdatedState(habits)
+    val currentActiveScreen = rememberUpdatedState(activeScreenIndex)
+    val currentScreenCount = rememberUpdatedState(habitScreens.size)
+
+    // Leaving edit mode must never strand a drag (a removed pointerInput
+    // cancels its coroutine without firing onDragCancel).
+    LaunchedEffect(editMode) {
+        if (!editMode) dragState.reset()
+    }
+
+    // Reveal-on-tap: the edit drawer and the graph panel sit below the grid
+    // and shrink its viewport when they appear/grow, which can push the
+    // tapped habit out from under the finger. Every qualifying tap bumps
+    // revealNonce; the effect then slides the grid just enough to bring
+    // that cell back into view — bottom-aligned when partially cut off,
+    // scrolled into view when fully outside the shrunken viewport.
+    var revealCellIndex by remember { mutableIntStateOf(-1) }
+    var revealNonce by remember { mutableIntStateOf(0) }
+    LaunchedEffect(revealNonce) {
+        if (revealNonce == 0 || revealCellIndex < 0) return@LaunchedEffect
+        // Let the drawer's/panel's first layout pass land before measuring.
+        withFrameNanos { }
+        withFrameNanos { }
+        val info = gridDragState.layoutInfo
+        if (revealCellIndex >= info.totalItemsCount) return@LaunchedEffect
+        if (info.visibleItemsInfo.none { it.index == revealCellIndex }) {
+            // Fully outside the viewport (the drawer/panel pushed it out) —
+            // slide it into view first.
+            gridDragState.animateScrollToItem(revealCellIndex)
+        }
+        // Fine-tune: nudge up only if the cell is still cut off at the bottom.
+        val cell = gridDragState.layoutInfo.visibleItemsInfo
+            .firstOrNull { it.index == revealCellIndex } ?: return@LaunchedEffect
+        val overflow = cell.offset.y + cell.size.height -
+            gridDragState.layoutInfo.viewportEndOffset
+        if (overflow > 0) gridDragState.animateScrollBy(overflow.toFloat())
+    }
+
+    // Display list for the grid: the real habits, or the live drag preview.
+    val displayHabits = computeDragDisplayHabits(habits, dragState, activeScreenIndex)
+
     val garminMonthlyData by viewModel.garminMonthlyData.collectAsState()
     val githubSyncStatus by viewModel.githubSyncStatus.collectAsState()
     val highlightedHabit by viewModel.highlightedHabit.collectAsState()
@@ -883,7 +960,10 @@ fun HabitGridScreen(
                     } else null,
                     onMoveScreenRight = if (editMode) { idx ->
                         viewModel.reorderScreen(idx, idx + 1)
-                    } else null
+                    } else null,
+                    onTabLayout = { idx, rect -> dragState.tabBounds[idx] = rect },
+                    scrollState = tabRowScrollState,
+                    onRowLayout = { dragState.tabRowBoundsInWindow = it }
                 )
             }
 
@@ -1015,9 +1095,33 @@ fun HabitGridScreen(
                             )
                         }
                     } else Modifier)
+                    // ── Edit-mode drag-to-reorder ──────────────────────────────
+                    // Long-press a habit cell to lift it; drag over other cells
+                    // to preview the shift; hover a screen tab to switch screens
+                    // mid-drag; release to commit — or drift away / cancel and
+                    // everything snaps back. The gesture itself lives in
+                    // Modifier.habitDragGesture (keeps this composable lean).
+                    .then(if (editMode) {
+                        Modifier.habitDragGesture(
+                            state = dragState,
+                            gridState = gridDragState,
+                            habits = currentHabits,
+                            activeScreen = currentActiveScreen,
+                            screenCount = currentScreenCount,
+                            scope = dragScope,
+                            onSwitchScreen = viewModel::switchScreen,
+                            onBeginDrag = viewModel::beginHabitDrag,
+                            onCommitMove = viewModel::commitHabitMove,
+                            onCommitCrossScreen = viewModel::commitCrossScreenDrag,
+                            tabScroll = tabRowScrollState
+                        )
+                    } else Modifier)
                 ) {
                     HabitGrid(
-                        habits = habits,
+                        habits = displayHabits,
+                        gridState = gridDragState,
+                        dragTargetIndex = if (dragState.isActive) dragState.targetIndex else -1,
+                        onGridLayout = { dragState.gridOriginInWindow = it },
                         shimmerSweep = { shimmerSweep.value },
                         shimmerDirection = { shimmerDirection.value },
                         editMode = editMode,
@@ -1042,6 +1146,8 @@ fun HabitGridScreen(
                                 isAppLink(habit.name) -> {
                                     if (editMode) {
                                         viewModel.selectEditHabit(index)
+                                        revealCellIndex = index
+                                        revealNonce++
                                     } else {
                                         // Launch the linked app
                                         appLinkPackageName(habit.name)?.let { pkg ->
@@ -1052,8 +1158,19 @@ fun HabitGridScreen(
                                         }
                                     }
                                 }
-                                graphMode -> viewModel.toggleGraphHabitSelection(habit.name)
-                                editMode -> viewModel.selectEditHabit(index)
+                                graphMode -> {
+                                    viewModel.toggleGraphHabitSelection(habit.name)
+                                    // The graph panel grows when the first habit is
+                                    // selected — reveal the tapped cell if it gets
+                                    // pushed out of the shrunken grid.
+                                    revealCellIndex = index
+                                    revealNonce++
+                                }
+                                editMode -> {
+                                    viewModel.selectEditHabit(index)
+                                    revealCellIndex = index
+                                    revealNonce++
+                                }
                                 habit.name in settings.mealHabits -> {
                                     // Meal tap = merge-or-increment: ALWAYS yields a
                                     // card (placeholder until details are added) and
@@ -1338,7 +1455,19 @@ fun HabitGridScreen(
                         onPlaceholderClick = { index ->
                             // In edit mode, selecting a placeholder works like selecting a habit
                             viewModel.selectEditHabit(index)
+                            revealCellIndex = index
+                            revealNonce++
                         }
+                    )
+
+                    // ── Dragged-habit overlay ─────────────────────────────────
+                    // The lifted habit floats under the finger (Box children
+                    // aren't clipped, so it also draws over the tab bar) while
+                    // its vacated landing cell pulses cyan in the grid below.
+                    DraggedHabitOverlay(
+                        state = dragState,
+                        customIconOverrides = settings.habitIcons,
+                        aiIconRepo = if (settings.aiIconsEnabled) viewModel.getAiIconRepo() else null
                     )
                 }
 
@@ -1374,7 +1503,6 @@ fun HabitGridScreen(
                         selectedHabitRawTodayCount = selectedHabitAtIndex?.rawTodayCount ?: 0,
                         selectedHabitTodayCount = selectedHabitAtIndex?.todayCount ?: 0,
                         isPlaceholderSelected = isPlaceholderSelected,
-                        movePending = movePendingSourceIndex >= 0,
                         habitScreens = habitScreens,
                         activeScreenIndex = activeScreenIndex,
                         selectedHabitScreenIndex = if (selectedHabitName != null)
@@ -1400,10 +1528,8 @@ fun HabitGridScreen(
                         allHabitNames = viewModel.getAllHabitNames(),
                         rollForwardHabits = settings.rollForwardHabits,
                         rollForwardManualDates = settings.rollForwardManualDates,
-                        onStartMove = { viewModel.startMoveMode() },
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
                         onAddAppLink = { addAppLinkAtIndex = selectedEditIndex },
-                        onMoveToScreen = { viewModel.moveHabitToScreen(it) },
                         onAddScreen = { showAddScreenDialog = true },
                         onDeleteScreen = { viewModel.deleteScreen(activeScreenIndex) },
                         onToggleMaxOne = { name ->
@@ -2629,13 +2755,22 @@ private fun ScreenTabRow(
     hiddenScreenIds: Set<String>,
     onTabClick: (Int) -> Unit,
     onMoveScreenLeft: ((Int) -> Unit)? = null,
-    onMoveScreenRight: ((Int) -> Unit)? = null
+    onMoveScreenRight: ((Int) -> Unit)? = null,
+    /** Reports each tab's window-space bounds (for drag-hover screen switching). */
+    onTabLayout: ((index: Int, bounds: Rect) -> Unit)? = null,
+    /** Shared scroll state — hoisted so a held-habit drag can auto-scroll the row. */
+    scrollState: androidx.compose.foundation.ScrollState = rememberScrollState(),
+    /** Reports the whole tab row's window-space bounds (edge auto-scroll zones). */
+    onRowLayout: ((Rect) -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF111111))
-            .horizontalScroll(rememberScrollState())
+            .horizontalScroll(scrollState)
+            .onGloballyPositioned { coords ->
+                onRowLayout?.invoke(Rect(coords.positionInWindow(), coords.size.toSize()))
+            }
             .padding(horizontal = 4.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -2651,7 +2786,15 @@ private fun ScreenTabRow(
                         containerColor = Color.Transparent,
                         contentColor = Color.Transparent
                     ),
-                    modifier = Modifier.height(32.dp).width(24.dp),
+                    modifier = Modifier
+                        .height(32.dp)
+                        .width(24.dp)
+                        .onGloballyPositioned { coords ->
+                            onTabLayout?.invoke(
+                                index,
+                                Rect(coords.positionInWindow(), coords.size.toSize())
+                            )
+                        },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                 ) {
                     // Blank — no text, just a clickable area
@@ -2676,7 +2819,14 @@ private fun ScreenTabRow(
                         else if (editMode && isHidden) Color(0xFF555555)
                         else Color(0xFF888888)
                 ),
-                modifier = Modifier.height(32.dp)
+                modifier = Modifier
+                    .height(32.dp)
+                    .onGloballyPositioned { coords ->
+                        onTabLayout?.invoke(
+                            index,
+                            Rect(coords.positionInWindow(), coords.size.toSize())
+                        )
+                    }
             ) {
                 Text(
                     text = if (editMode && isHidden && !isActive) "👁‍🗨 ${screen.name}" else label,
@@ -2720,6 +2870,358 @@ private fun ScreenTabMoveArrow(
  * The 8-column lazy grid. In edit mode, empty cells (placeholders) are shown as
  * clickable dashed cells. In normal mode they are invisible.
  */
+
+// ── Edit-mode drag-to-reorder support ────────────────────────────────────────
+
+/**
+ * All mutable bookkeeping for an edit-mode drag-to-reorder gesture. Held in a
+ * dedicated class (and consumed by Modifier.habitDragGesture /
+ * computeDragDisplayHabits / DraggedHabitOverlay below) so the already-huge
+ * HabitGridScreen composable stays under the JVM 64 KB method limit.
+ */
+private class HabitDragState {
+    /** The lifted habit; null while no drag is active. */
+    var habit by mutableStateOf<Habit?>(null)
+    /** Grid index the habit was lifted from (on [originScreen]). */
+    var fromIndex by mutableIntStateOf(-1)
+    /** Screen the drag started on — a drop elsewhere is a cross-screen move. */
+    var originScreen by mutableIntStateOf(-1)
+    /** Current landing cell (-1 = none: over the tab bar or just lifted). */
+    var targetIndex by mutableIntStateOf(-1)
+    /** Finger position in the grid Box's local coordinates (overlay follows). */
+    var position by mutableStateOf(Offset.Zero)
+    /** Size of one grid cell, for sizing the floating overlay. */
+    var cellSize by mutableStateOf(IntSize.Zero)
+    /** Screen-tab index currently hovered (-1 = none). */
+    var hoverTab by mutableIntStateOf(-1)
+    /** Pending dwell job that switches screens after TAB_DRAG_SWITCH_DWELL_MS. */
+    var hoverJob: Job? = null
+    /** Tab index → window-space bounds, reported by ScreenTabRow. */
+    val tabBounds = mutableStateMapOf<Int, Rect>()
+    /** The grid Box's origin in window coordinates (pointerInput is Box-local). */
+    var gridBoxOriginInWindow by mutableStateOf(Offset.Zero)
+    /** The lazy grid's origin in window coordinates (cell hit-testing). */
+    var gridOriginInWindow by mutableStateOf(Offset.Zero)
+    /** The screen-tab row's window bounds (edge auto-scroll while dragging). */
+    var tabRowBoundsInWindow by mutableStateOf(Rect.Zero)
+    /** Active tab-row edge auto-scroll direction (-1 left, +1 right, 0 none). */
+    var tabScrollDir by mutableIntStateOf(0)
+    /** Pending tab-row edge auto-scroll job. */
+    var tabScrollJob: Job? = null
+
+    val isActive: Boolean get() = habit != null
+
+    fun reset() {
+        hoverJob?.cancel()
+        hoverJob = null
+        tabScrollJob?.cancel()
+        tabScrollJob = null
+        tabScrollDir = 0
+        habit = null
+        fromIndex = -1
+        originScreen = -1
+        targetIndex = -1
+        hoverTab = -1
+    }
+}
+
+/**
+ * The list the grid renders: during an active drag it applies the live shift
+ * preview (displaced habits slide right; the vacated source cell and the
+ * landing cell stay empty for the floating overlay), otherwise the real
+ * habits. Pure function of its inputs so it only recomputes when needed.
+ */
+private fun computeDragDisplayHabits(
+    habits: List<Habit>,
+    drag: HabitDragState,
+    activeScreenIndex: Int
+): List<Habit> {
+    val lifted = drag.habit ?: return habits
+    val toIdx = drag.targetIndex
+    if (toIdx < 0) return habits
+    val names = habits.map { it.name }
+    val previewNames = if (drag.originScreen == activeScreenIndex) {
+        vacateMovePreview(names, drag.fromIndex, toIdx)
+    } else {
+        vacateInsertPreview(names, toIdx)
+    }
+    val byName = habits.associateBy { it.name }
+    return previewNames.map { name ->
+        if (name.isEmpty()) Habit("") else byName[name] ?: Habit(name)
+    }
+}
+
+/**
+ * Edit-mode drag-to-reorder gesture. Long-press lifts a habit; dragging over
+ * cells updates the live preview; hovering a screen tab for
+ * TAB_DRAG_SWITCH_DWELL_MS switches screens mid-drag; releasing commits
+ * (same screen → onCommitMove, other screen → onCommitCrossScreen). A
+ * cancelled or missed drop reverts everything.
+ */
+private fun Modifier.habitDragGesture(
+    state: HabitDragState,
+    gridState: LazyGridState,
+    habits: State<List<Habit>>,
+    activeScreen: State<Int>,
+    screenCount: State<Int>,
+    scope: kotlinx.coroutines.CoroutineScope,
+    onSwitchScreen: (Int) -> Unit,
+    onBeginDrag: (Int) -> Unit,
+    onCommitMove: (Int, Int) -> Unit,
+    onCommitCrossScreen: (String, Int, Int) -> Unit,
+    /** The screen-tab row's scroll state (edge auto-scroll mid-drag). */
+    tabScroll: androidx.compose.foundation.ScrollState
+): Modifier = onGloballyPositioned { coords ->
+    state.gridBoxOriginInWindow = coords.positionInWindow()
+}.pointerInput(Unit) {
+    detectDragGesturesAfterLongPress(
+        onDragStart = { start ->
+            val posInWindow = start + state.gridBoxOriginInWindow
+            val index = gridCellIndexAt(gridState, posInWindow - state.gridOriginInWindow)
+            val habit = habits.value.getOrNull(index)
+            if (habit != null && habit.name.isNotEmpty()) {
+                state.habit = habit
+                state.fromIndex = index
+                state.originScreen = activeScreen.value
+                state.targetIndex = index
+                state.hoverTab = -1
+                state.position = start
+                state.cellSize = gridState.layoutInfo
+                    .visibleItemsInfo.firstOrNull()?.size ?: IntSize.Zero
+                onBeginDrag(index)
+            }
+        },
+        onDrag = { change, _ ->
+            change.consume()
+            if (state.habit == null) return@detectDragGesturesAfterLongPress
+            state.position = change.position
+            val posInWindow = change.position + state.gridBoxOriginInWindow
+            // Hovering a screen tab? Dwell there to switch screens.
+            val hoveredTab = state.tabBounds.entries.firstOrNull {
+                it.key < screenCount.value &&
+                    it.value.contains(posInWindow)
+            }?.key ?: -1
+            if (hoveredTab != state.hoverTab) {
+                state.hoverTab = hoveredTab
+                state.hoverJob?.cancel()
+                if (hoveredTab >= 0 && hoveredTab != activeScreen.value) {
+                    state.hoverJob = scope.launch {
+                        delay(TAB_DRAG_SWITCH_DWELL_MS)
+                        if (state.hoverTab == hoveredTab && state.habit != null &&
+                            hoveredTab != activeScreen.value
+                        ) {
+                            // Clear the preview; the new screen's habit list
+                            // arrives (from cache) and the preview resumes
+                            // once the finger moves.
+                            state.targetIndex = -1
+                            onSwitchScreen(hoveredTab)
+                        }
+                    }
+                }
+            }
+            val row = state.tabRowBoundsInWindow
+            val inTabBand = row != Rect.Zero &&
+                posInWindow.y >= row.top && posInWindow.y <= row.bottom
+            if (inTabBand) {
+                // Auto-scroll the tab row when the finger parks at its far
+                // left/right edge, so off-screen tabs can be reached mid-drag.
+                val edge = 56f
+                val dir = when {
+                    posInWindow.x <= row.left + edge -> -1
+                    posInWindow.x >= row.right - edge -> 1
+                    else -> 0
+                }
+                if (dir != state.tabScrollDir) {
+                    state.tabScrollDir = dir
+                    state.tabScrollJob?.cancel()
+                    if (dir != 0) {
+                        state.tabScrollJob = scope.launch {
+                            while (true) {
+                                val next = (tabScroll.value + dir * 14).coerceIn(0, tabScroll.maxValue)
+                                if (next == tabScroll.value) break
+                                tabScroll.scrollTo(next)
+                                delay(16)
+                            }
+                        }
+                    }
+                }
+                // Over the tab bar — shifted habits revert home.
+                state.targetIndex = -1
+                return@detectDragGesturesAfterLongPress
+            }
+            if (state.tabScrollDir != 0) {
+                state.tabScrollDir = 0
+                state.tabScrollJob?.cancel()
+            }
+            // Only hit-test cells while the finger is over the grid area —
+            // the nearest-cell fallback would otherwise grab top-row cells
+            // while hovering the header above the grid.
+            if (posInWindow.y < state.gridBoxOriginInWindow.y) {
+                state.targetIndex = -1
+                return@detectDragGesturesAfterLongPress
+            }
+            val index = gridCellIndexAt(gridState, posInWindow - state.gridOriginInWindow)
+            if (index >= 0) state.targetIndex = index
+        },
+        onDragEnd = {
+            val habit = state.habit
+            val fromIdx = state.fromIndex
+            val toIdx = state.targetIndex
+            val originScreen = state.originScreen
+            state.reset()
+            if (habit != null && toIdx >= 0) {
+                if (activeScreen.value == originScreen) {
+                    onCommitMove(fromIdx, toIdx)
+                } else {
+                    onCommitCrossScreen(habit.name, activeScreen.value, toIdx)
+                }
+            } else if (habit != null && originScreen >= 0 &&
+                originScreen != activeScreen.value
+            ) {
+                // Dropped on the tab bar after crossing screens —
+                // revert: jump back to the drag's origin screen.
+                onSwitchScreen(originScreen)
+            }
+        },
+        onDragCancel = {
+            val originScreen = state.originScreen
+            state.reset()
+            if (originScreen >= 0 && originScreen != activeScreen.value) {
+                onSwitchScreen(originScreen)
+            }
+        }
+    )
+}
+
+/**
+ * The lifted habit floating under the finger during an edit-mode drag. Box
+ * children aren't clipped, so it also draws over the screen tab bar while its
+ * vacated landing cell pulses cyan in the grid below.
+ */
+@Composable
+private fun DraggedHabitOverlay(
+    state: HabitDragState,
+    customIconOverrides: Map<String, String>,
+    aiIconRepo: AiIconRepository?
+) {
+    val habit = state.habit ?: return
+    val density = LocalDensity.current
+    Box(
+        modifier = Modifier
+            .offset(
+                x = with(density) { (state.position.x - state.cellSize.width / 2f).toDp() },
+                y = with(density) { (state.position.y - state.cellSize.height / 2f).toDp() }
+            )
+            .size(
+                width = with(density) { state.cellSize.width.toDp() },
+                height = with(density) { state.cellSize.height.toDp() }
+            )
+            .graphicsLayer {
+                scaleX = 1.15f
+                scaleY = 1.15f
+                alpha = 0.92f
+            }
+    ) {
+        HabitButton(
+            habit = habit,
+            onClick = {},
+            onLongClick = {},
+            editMode = true,
+            isSelected = true,
+            customIconOverrides = customIconOverrides,
+            aiIconRepo = aiIconRepo,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+/**
+ * Maps a point (relative to the lazy grid's origin) to a grid cell index
+ * using the grid's layout info. Falls back to the nearest visible cell so
+ * the drag preview keeps updating while the finger travels between cells.
+ */
+private fun gridCellIndexAt(gridState: LazyGridState, positionInGrid: Offset): Int {
+    val visible = gridState.layoutInfo.visibleItemsInfo
+    if (visible.isEmpty()) return -1
+    // Exact containment first.
+    visible.forEach { item ->
+        val dx = positionInGrid.x - item.offset.x
+        val dy = positionInGrid.y - item.offset.y
+        if (dx >= 0f && dy >= 0f && dx < item.size.width && dy < item.size.height) {
+            return item.index
+        }
+    }
+    // Between cells / past the last row: nearest cell by center distance.
+    var bestIndex = -1
+    var bestDistance = Float.MAX_VALUE
+    visible.forEach { item ->
+        val cx = item.offset.x + item.size.width / 2f
+        val cy = item.offset.y + item.size.height / 2f
+        val ddx = positionInGrid.x - cx
+        val ddy = positionInGrid.y - cy
+        val d = ddx * ddx + ddy * ddy
+        if (d < bestDistance) {
+            bestDistance = d
+            bestIndex = item.index
+        }
+    }
+    return bestIndex
+}
+
+/**
+ * Live drag preview for a same-screen move: mirrors applyMove's shift-right
+ * semantics but leaves BOTH the vacated source cell and the target cell
+ * empty — the dragged habit itself floats under the finger as an overlay.
+ */
+private fun vacateMovePreview(names: List<String>, fromIdx: Int, toIdx: Int): List<String> {
+    if (fromIdx == toIdx || fromIdx !in names.indices) return names
+    val cur = names.toMutableList()
+    while (cur.size <= toIdx) cur.add("")
+    cur[fromIdx] = ""
+    if (cur[toIdx].isNotEmpty()) {
+        var emptySlot = -1
+        for (i in toIdx until cur.size) {
+            if (cur[i].isEmpty()) {
+                emptySlot = i
+                break
+            }
+        }
+        if (emptySlot < 0) {
+            cur.add("")
+            emptySlot = cur.size - 1
+        }
+        for (i in emptySlot downTo toIdx + 1) cur[i] = cur[i - 1]
+        cur[toIdx] = ""
+    }
+    return cur
+}
+
+/**
+ * Live drag preview for a cross-screen drop: the dragged habit (not in
+ * [names] yet) will land at [toIdx]; displaced habits shift right and the
+ * landing cell is left empty for the floating overlay.
+ */
+private fun vacateInsertPreview(names: List<String>, toIdx: Int): List<String> {
+    val cur = names.toMutableList()
+    while (cur.size <= toIdx) cur.add("")
+    if (cur[toIdx].isNotEmpty()) {
+        var emptySlot = -1
+        for (i in toIdx until cur.size) {
+            if (cur[i].isEmpty()) {
+                emptySlot = i
+                break
+            }
+        }
+        if (emptySlot < 0) {
+            cur.add("")
+            emptySlot = cur.size - 1
+        }
+        for (i in emptySlot downTo toIdx + 1) cur[i] = cur[i - 1]
+        cur[toIdx] = ""
+    }
+    return cur
+}
+
 @Composable
 private fun HabitGrid(
     habits: List<Habit>,
@@ -2730,6 +3232,12 @@ private fun HabitGrid(
     graphSelectedHabits: Set<String> = emptySet(),
     selectedEditIndex: Int,
     movePendingSourceIndex: Int = -1,
+    /** Grid index of the live drag-and-drop landing cell (-1 = none). */
+    dragTargetIndex: Int = -1,
+    /** Shared grid state — the drag gesture hit-tests cells via its layout info. */
+    gridState: LazyGridState = rememberLazyGridState(),
+    /** Reports the lazy grid's origin in window coordinates (drag hit-testing). */
+    onGridLayout: ((Offset) -> Unit)? = null,
     customIconOverrides: Map<String, String> = emptyMap(),
     disabledHabits: Set<String> = emptySet(),
     aiIconRepo: AiIconRepository? = null,
@@ -2766,9 +3274,13 @@ private fun HabitGrid(
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(GRID_COLUMNS),
+        state = gridState,
         modifier = Modifier
             .fillMaxSize()
             .padding(4.dp)
+            .onGloballyPositioned { coords ->
+                onGridLayout?.invoke(coords.positionInWindow())
+            }
     ) {
         itemsIndexed(cells) { index, habit ->
             // This cell's shimmer alpha. The sweep progress and direction
@@ -2791,7 +3303,11 @@ private fun HabitGrid(
                         appLinkKey = habit.name,
                         label = appLinks[habit.name] ?: "",
                         onClick = { onHabitClick(habit, index) },
-                        onLongClick = { onHabitLongClick(habit) },
+                        // No cell-level long-press in edit mode — the grid's
+                        // long-press-drag gesture must always win.
+                        onLongClick = if (editMode) null else {
+                            { onHabitLongClick(habit) }
+                        },
                         modifier = Modifier.padding(2.dp),
                         editMode = editMode,
                         isSelected = isEditSelected,
@@ -2820,7 +3336,11 @@ private fun HabitGrid(
                     HabitButton(
                         habit = habit,
                         onClick = { onHabitClick(habit, index) },
-                        onLongClick = { onHabitLongClick(habit) },
+                        // No cell-level long-press in edit mode — the grid's
+                        // long-press-drag gesture must always win.
+                        onLongClick = if (editMode) null else {
+                            { onHabitLongClick(habit) }
+                        },
                         modifier = Modifier.padding(2.dp),
                         editMode = editMode,
                         isHighlighted = habit.name == highlightedHabit,
@@ -2844,7 +3364,7 @@ private fun HabitGrid(
                 // In edit mode, placeholders are selectable cells
                 PlaceholderCell(
                     isSelected = index == selectedEditIndex,
-                    isMovePendingTarget = isMovePending,
+                    isMovePendingTarget = isMovePending || index == dragTargetIndex,
                     onClick = { onPlaceholderClick(index) },
                     modifier = Modifier.padding(2.dp)
                 )
@@ -2913,13 +3433,8 @@ private fun PlaceholderCell(
 @Composable
 private fun AppLinkEditSection(
     selectedHabitName: String,
-    onDeleteHabit: (String) -> Unit,
-    onStartMove: () -> Unit,
-    otherScreenIndices: List<Int>,
-    habitScreens: List<HabitScreen>,
-    onMoveToScreen: (Int) -> Unit
+    onDeleteHabit: (String) -> Unit
 ) {
-    var moveToScreenExpanded = remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -2948,47 +3463,8 @@ private fun AppLinkEditSection(
             Text("Remove", fontSize = 11.sp, color = Color(0xFFFF6644))
         }
     }
-    Spacer(modifier = Modifier.height(6.dp))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // MOVE button — tap to enter move-pending mode
-        Button(
-            onClick = onStartMove,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004A4A)),
-            modifier = Modifier.height(32.dp)
-        ) {
-            Text("↕ Move", fontSize = 11.sp, color = Color(0xFF44FFFF))
-        }
-        // Screen dropdown — move app link to another screen
-        if (otherScreenIndices.isNotEmpty()) {
-            Box {
-                Button(
-                    onClick = { moveToScreenExpanded.value = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("→ Screen ▾", fontSize = 11.sp, color = Color(0xFF88CCFF))
-                }
-                DropdownMenu(
-                    expanded = moveToScreenExpanded.value,
-                    onDismissRequest = { moveToScreenExpanded.value = false }
-                ) {
-                    otherScreenIndices.forEach { screenIdx ->
-                        DropdownMenuItem(
-                            text = { Text(habitScreens[screenIdx].name, fontSize = 13.sp) },
-                            onClick = {
-                                moveToScreenExpanded.value = false
-                                onMoveToScreen(screenIdx)
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    }
+    // (Reordering moved to long-press-drag — drag the app link up to the
+    // screen tab bar to move it between screens.)
 }
 
 /**
@@ -4385,7 +4861,6 @@ private fun EditModeControlBar(
     selectedHabitRawTodayCount: Int,
     selectedHabitTodayCount: Int = selectedHabitRawTodayCount,
     isPlaceholderSelected: Boolean,
-    movePending: Boolean,
     habitScreens: List<HabitScreen>,
     activeScreenIndex: Int,
     selectedHabitScreenIndex: Int,
@@ -4421,10 +4896,8 @@ private fun EditModeControlBar(
     rollForwardManualDates: Map<String, Set<String>> = emptyMap(),
     garminMonthlyData: Map<com.example.tail.data.GarminType, Map<String, Int>> = emptyMap(),
     selectedDate: java.time.LocalDate = java.time.LocalDate.now(),
-    onStartMove: () -> Unit,
     onAddHabit: () -> Unit,
     onAddAppLink: () -> Unit = {},
-    onMoveToScreen: (Int) -> Unit,
     onAddScreen: () -> Unit,
     onDeleteScreen: () -> Unit,
     onToggleMaxOne: (String) -> Unit,
@@ -4611,45 +5084,15 @@ private fun EditModeControlBar(
 ) {
     val hasSelection = selectedIndex >= 0
 
-    // Other screens for habit move-to-screen
-    val otherScreenIndices: List<Int> = if (hasSelection && !isPlaceholderSelected && habitScreens.size > 1) {
-        val currentScreen = if (selectedHabitScreenIndex >= 0) selectedHabitScreenIndex else activeScreenIndex
-        habitScreens.indices.filter { it != currentScreen }
-    } else emptyList()
-
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 400.dp)
             .verticalScroll(rememberScrollState())
-            .background(if (movePending) Color(0xFF001A1A) else Color(0xFF1A1000))
+            .background(Color(0xFF1A1000))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        // ── Move-pending banner (shown on top of any state when move is active) ──
-        if (movePending) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "↕ Tap any cell to move \"$selectedHabitName\" there",
-                    color = Color(0xFF44FFFF),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Button(
-                    onClick = onStartMove,  // second tap cancels
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A3A00)),
-                    modifier = Modifier.height(28.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
-                ) {
-                    Text("Cancel", fontSize = 11.sp, color = Color(0xFFFFFF44))
-                }
-            }
-            return@Column
-        }
 
         when {
             // ── Nothing selected ──────────────────────────────────────────
@@ -4768,11 +5211,7 @@ private fun EditModeControlBar(
             selectedHabitName != null && isAppLink(selectedHabitName) -> {
                 AppLinkEditSection(
                     selectedHabitName = selectedHabitName,
-                    onDeleteHabit = onDeleteHabit,
-                    onStartMove = onStartMove,
-                    otherScreenIndices = otherScreenIndices,
-                    habitScreens = habitScreens,
-                    onMoveToScreen = onMoveToScreen
+                    onDeleteHabit = onDeleteHabit
                 )
             }
 
@@ -4855,10 +5294,6 @@ private fun EditModeControlBar(
 
                 EditModeHabitActionRows(
                     selectedHabitName = selectedHabitName,
-                    otherScreenIndices = otherScreenIndices,
-                    habitScreens = habitScreens,
-                    onStartMove = onStartMove,
-                    onMoveToScreen = onMoveToScreen,
                     onDeleteHabit = onDeleteHabit,
                     onChangeIcon = onChangeIcon,
                     onRenameHabit = onRenameHabit
@@ -6151,58 +6586,14 @@ private fun EditModeHabitHeaderRow(
 @Composable
 private fun EditModeHabitActionRows(
     selectedHabitName: String?,
-    otherScreenIndices: List<Int>,
-    habitScreens: List<HabitScreen>,
-    onStartMove: () -> Unit,
-    onMoveToScreen: (Int) -> Unit,
     onDeleteHabit: (String) -> Unit,
     onChangeIcon: (String) -> Unit,
     onRenameHabit: (String, String) -> Unit
 ) {
-    var moveToScreenExpanded by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // MOVE button — tap to enter move-pending mode
-        Button(
-            onClick = onStartMove,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004A4A)),
-            modifier = Modifier.height(32.dp)
-        ) {
-            Text("↕ Move", fontSize = 11.sp, color = Color(0xFF44FFFF))
-        }
-
-        // Screen dropdown — move habit to another screen
-        if (otherScreenIndices.isNotEmpty()) {
-            Box {
-                Button(
-                    onClick = { moveToScreenExpanded = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A5A)),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("→ Screen ▾", fontSize = 11.sp, color = Color(0xFF88CCFF))
-                }
-                DropdownMenu(
-                    expanded = moveToScreenExpanded,
-                    onDismissRequest = { moveToScreenExpanded = false }
-                ) {
-                    otherScreenIndices.forEach { screenIdx ->
-                        DropdownMenuItem(
-                            text = { Text(habitScreens[screenIdx].name, fontSize = 13.sp) },
-                            onClick = {
-                                moveToScreenExpanded = false
-                                onMoveToScreen(screenIdx)
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    }
+    // (Reordering moved to long-press-drag on the grid and the screen-tab
+    // bar — the old ↕ Move / → Screen controls are gone.)
 
     Spacer(modifier = Modifier.height(6.dp))
 

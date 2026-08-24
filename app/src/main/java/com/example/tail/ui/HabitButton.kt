@@ -92,7 +92,8 @@ enum class HabitSpecialBadge { MOVIE, MEAL, GARMIN, CHESS }
 fun HabitButton(
     habit: Habit,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    /** Nullable: null in edit mode so the grid's long-press-drag always wins. */
+    onLongClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
     isSelected: Boolean = false,
     editMode: Boolean = false,
@@ -507,7 +508,8 @@ fun AppLinkButton(
     appLinkKey: String,
     label: String,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    /** Nullable: null in edit mode so the grid's long-press-drag always wins. */
+    onLongClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
     editMode: Boolean = false,
     isSelected: Boolean = false,

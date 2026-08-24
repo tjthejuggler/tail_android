@@ -3583,6 +3583,82 @@ class HabitViewModel(
     }
 
     /**
+     * Begins an edit-mode long-press drag of the cell at [index]. Cancels any
+     * tap-to-move pending state (the drag supersedes it) but deliberately does
+     * NOT select the cell — the edit drawer must only open on a single tap,
+     * never on a long-press drag. The drag itself is tracked in the UI layer;
+     * only the final drop is committed back to the ViewModel.
+     */
+    fun beginHabitDrag(index: Int) {
+        if (index < 0) return
+        _movePendingSourceIndex.value = -1
+    }
+
+    /**
+     * Commits a same-screen drag-and-drop move from [fromIdx] to [toIdx].
+     * Public wrapper around [applyMove] for the gesture-driven reorder flow.
+     */
+    fun commitHabitMove(fromIdx: Int, toIdx: Int) {
+        if (fromIdx == toIdx) return
+        viewModelScope.launch { applyMove(fromIdx, toIdx) }
+    }
+
+    /**
+     * Commits a cross-screen drag-and-drop move: [habitName] is removed from
+     * whichever screen currently holds it (leaving a placeholder behind, like
+     * [moveHabitToScreen]) and inserted into [targetScreenIndex] at
+     * [targetCellIndex] with the same shift-right semantics as [applyMove].
+     */
+    fun commitCrossScreenDrag(habitName: String, targetScreenIndex: Int, targetCellIndex: Int) {
+        if (habitName.isEmpty()) return
+        val screens = _habitScreens.value.toMutableList()
+        if (screens.isEmpty() || targetScreenIndex !in screens.indices) return
+
+        // Remove from the source screen — a placeholder stays behind so the
+        // source grid layout doesn't shift.
+        for (i in screens.indices) {
+            val idx = screens[i].habitNames.indexOf(habitName)
+            if (idx >= 0) {
+                val names = screens[i].habitNames.toMutableList()
+                names[idx] = ""
+                screens[i] = screens[i].copy(habitNames = names)
+                break
+            }
+        }
+
+        // Insert into the target screen at the requested cell, shifting
+        // displaced habits right until an empty slot is found.
+        val target = screens[targetScreenIndex]
+        val names = target.habitNames.toMutableList()
+        while (names.size <= targetCellIndex) names.add("")
+        if (names[targetCellIndex].isEmpty()) {
+            names[targetCellIndex] = habitName
+        } else {
+            var emptySlot = -1
+            for (i in targetCellIndex until names.size) {
+                if (names[i].isEmpty()) {
+                    emptySlot = i
+                    break
+                }
+            }
+            if (emptySlot < 0) {
+                names.add("")
+                emptySlot = names.size - 1
+            }
+            for (i in emptySlot downTo targetCellIndex + 1) names[i] = names[i - 1]
+            names[targetCellIndex] = habitName
+        }
+        screens[targetScreenIndex] = target.copy(habitNames = names)
+
+        _habitScreens.value = screens
+        _activeScreenIndex.value = targetScreenIndex
+        viewModelScope.launch {
+            rebuildHabitList()
+            persistScreens(screens, targetScreenIndex)
+        }
+    }
+
+    /**
      * Moves the habit at [fromIdx] to [toIdx].
      *
      * - If [toIdx] is a placeholder (empty string or beyond list end): simple swap/place.
