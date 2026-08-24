@@ -143,6 +143,8 @@ private val KEY_CHESS_READINESS_ENABLED = booleanPreferencesKey("chess_readiness
 private val KEY_CHESS_READINESS_APP = stringPreferencesKey("chess_readiness_app")
 // Which readiness engine the chess flow uses: "v1" (original) or "v2".
 private val KEY_CHESS_READINESS_VERSION = stringPreferencesKey("chess_readiness_version")
+// Which post-game (Phase 2) audit engine shared games run through.
+private val KEY_CHESS_PHASE2_VERSION = stringPreferencesKey("chess_phase2_version")
 // Stored as "habitName\x000|||habitName\x001" pairs (0 = points, 1 = value/raw, 2 = value2)
 private val KEY_GRAPH_VALUE_MODE_HABITS = stringPreferencesKey("graph_value_mode_habits")
 // Multi-select graph metrics: "habitName\x00metric1,metric2|||habitName\x00metric1"
@@ -1020,6 +1022,8 @@ class SettingsRepository(private val context: Context) {
             chessReadinessApp = prefs[KEY_CHESS_READINESS_APP] ?: "",
             chessReadinessVersion = prefs[KEY_CHESS_READINESS_VERSION]
                 ?.takeIf { it == "v2" } ?: "v1",
+            chessPhase2Version = prefs[KEY_CHESS_PHASE2_VERSION]
+                ?.takeIf { it == "v2" } ?: "v1",
             gdriveAutoEnabled = prefs[KEY_GDRIVE_AUTO_ENABLED] ?: false,
             gdriveAccountName = prefs[KEY_GDRIVE_ACCOUNT_NAME] ?: "",
             gdriveLastBackupDate = prefs[KEY_GDRIVE_LAST_DATE] ?: "",
@@ -1737,6 +1741,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveChessReadinessVersion(version: String) {
         context.dataStore.edit { prefs ->
             prefs[KEY_CHESS_READINESS_VERSION] = if (version == "v2") "v2" else "v1"
+        }
+    }
+
+    /** Saves which post-game audit engine shared games run through ("v1" or "v2"). */
+    suspend fun saveChessPhase2Version(version: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CHESS_PHASE2_VERSION] = if (version == "v2") "v2" else "v1"
         }
     }
 

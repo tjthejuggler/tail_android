@@ -44,6 +44,7 @@ import com.example.tail.widget.ChessGameAuditMapper
 import com.example.tail.widget.ChessPendingGameStore
 import com.example.tail.widget.ChessPhase2Engine
 import com.example.tail.widget.ChessPhase2Store
+import com.example.tail.widget.ChessPhase2V2Engine
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -90,6 +91,7 @@ class ChessGameShareActivity : ComponentActivity() {
             val retry: Boolean = false
         ) : Ui()
         data class Audited(val result: ChessPhase2Engine.AuditResult) : Ui()
+        data class AuditedV2(val result: ChessPhase2V2Engine.AuditResultV2) : Ui()
     }
 
     private var gameId: Long = -1
@@ -228,6 +230,9 @@ class ChessGameShareActivity : ComponentActivity() {
             is ChessDeferredGameReconciler.GameOutcome.Audited ->
                 emit(Ui.Audited(outcome.result))
 
+            is ChessDeferredGameReconciler.GameOutcome.AuditedV2 ->
+                emit(Ui.AuditedV2(outcome.result))
+
             is ChessDeferredGameReconciler.GameOutcome.AlreadyAudited -> emit(
                 Ui.Message(
                     title = "Already audited",
@@ -335,6 +340,7 @@ class ChessGameShareActivity : ComponentActivity() {
                     }
 
                     is Ui.Audited -> ResultContent(state.result, onDone, onLeaveChess)
+                    is Ui.AuditedV2 -> ResultContentV2(state.result, onDone, onLeaveChess)
                 }
             }
         }
@@ -394,6 +400,117 @@ class ChessGameShareActivity : ComponentActivity() {
                 fontSize = 11.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(r.message, color = Color(0xFFDDDDDD), fontSize = 13.sp)
+            Spacer(modifier = Modifier.height(10.dp))
+
+            r.outputState.permitted.forEach {
+                Bullet("✓ $it", Color(0xFF66BB6A))
+            }
+            r.outputState.prohibited.forEach {
+                Bullet("✗ $it", Color(0xFFEF4444))
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                when (r.outputState) {
+                    ChessPhase2Engine.OutputState.TERMINATE_SESSION ->
+                        Button(
+                            onClick = onLeaveChess,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF5A1A2A)
+                            )
+                        ) { Text("Leave chess — recover", color = Color(0xFFFFAAAA)) }
+
+                    ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS ->
+                        Button(
+                            onClick = onDone,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF4A3A10)
+                            )
+                        ) { Text("Back to chess (unrated / bots only)", color = Color(0xFFEAB308)) }
+
+                    ChessPhase2Engine.OutputState.CONTINUE_RATED ->
+                        Button(
+                            onClick = onDone,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF1A3A1A)
+                            )
+                        ) { Text("Next rated game", color = Color(0xFF66BB6A)) }
+                }
+            }
+        }
+    }
+
+    /**
+     * v2 audit result — shows the verdict, every rule that fired (with the
+     * personal Z-scores / streak / session / ACWR telemetry behind them)
+     * and the report's intervention guidance. Buttons match the v1 result
+     * screen so the enforcement behavior is identical.
+     */
+    @Composable
+    private fun ResultContentV2(
+        r: ChessPhase2V2Engine.AuditResultV2,
+        onDone: () -> Unit,
+        onLeaveChess: () -> Unit
+    ) {
+        val color = Color(android.graphics.Color.parseColor(r.outputState.colorHex))
+        Column(
+            modifier = Modifier.verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = "♟ Post-Game Audit v2",
+                color = Color(0xFFFFD700),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = r.outputState.name.replace("_", " "),
+                color = color,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+            Text(
+                text = r.outputState.title,
+                color = Color(0xFF999999),
+                fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = r.reason.replace('_', ' '),
+                color = color,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+            Text(
+                text = listOfNotNull(
+                    "session ${r.sessionMinutes} min",
+                    "${r.consecutiveLosses} consecutive loss(es)",
+                    r.zMoveTime?.let { "speed Z %+.2f".format(it) },
+                    r.zDeficit?.let { "accuracy Z %+.2f".format(it) },
+                    r.acwr?.let {
+                        "ACWR " + if (it.isInfinite()) "∞" else "%.2f".format(it)
+                    }
+                ).joinToString("  ·  "),
+                color = Color(0xFF888888),
+                fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+            if (r.circadianAdjusted) {
+                Text(
+                    text = "circadian adjustment applied (evening play)",
+                    color = Color(0xFF777777),
+                    fontSize = 10.sp,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            }
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(r.message, color = Color(0xFFDDDDDD), fontSize = 13.sp)

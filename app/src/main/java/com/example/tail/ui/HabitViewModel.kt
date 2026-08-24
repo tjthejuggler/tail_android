@@ -4995,6 +4995,29 @@ class HabitViewModel(
     }
 
     /**
+     * Switches the POST-GAME (Phase 2) audit engine between "v1" (the
+     * adaptive ΔE/strain evidence model) and "v2" (the research-report
+     * system: fatigue ceiling, loss-streak stop rules, tilt vector, ACWR,
+     * hysteresis). Persisted to DataStore and mirrored into the synchronous
+     * v2 prefs store so the share-sheet reconciler can branch without
+     * reading DataStore. Fully independent of the pre-game readiness
+     * version — the two toggles combine freely.
+     */
+    fun setChessPhase2Version(version: String) {
+        viewModelScope.launch {
+            val normalized =
+                if (version == com.example.tail.widget.ChessPhase2V2Store.VERSION_V2) {
+                    com.example.tail.widget.ChessPhase2V2Store.VERSION_V2
+                } else {
+                    com.example.tail.widget.ChessPhase2V2Store.VERSION_V1
+                }
+            settingsRepo.saveChessPhase2Version(normalized)
+            _settings.value = _settings.value.copy(chessPhase2Version = normalized)
+            com.example.tail.widget.ChessPhase2V2Store.savePhase2Version(context, normalized)
+        }
+    }
+
+    /**
      * Enables or disables Chess Guard — the hard enforcement layer that
      * keeps the chess app closed while the readiness policy says blocked.
      * The switch-ON timestamp is recorded so games that ended before

@@ -1414,6 +1414,17 @@ data class AppSettings(
     val chessReadinessVersion: String = "v1",
 
     /**
+     * Which POST-GAME (Phase 2) audit engine shared rated games run
+     * through: "v1" (the adaptive ΔE/strain evidence model — default) or
+     * "v2" (the research-report system: 120-min fatigue ceiling,
+     * loss-streak stop rules, tilt vector from personal speed/accuracy
+     * Z-scores with circadian adjustment, ACWR overload and hysteresis).
+     * Independent of [chessReadinessVersion] — any pre-game version can be
+     * combined with any post-game version.
+     */
+    val chessPhase2Version: String = "v1",
+
+    /**
      * Widget-timer habits where MINUTES is the primary value.
      *
      * For habits in this set, the timer minutes (stored in the secondary-value

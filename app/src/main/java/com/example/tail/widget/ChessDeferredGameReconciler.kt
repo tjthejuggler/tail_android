@@ -52,6 +52,9 @@ object ChessDeferredGameReconciler {
         /** Audit ran (live or deferred) — verdict below. */
         data class Audited(val result: ChessPhase2Engine.AuditResult) : GameOutcome()
 
+        /** v2 post-game engine audit ran — verdict below. */
+        data class AuditedV2(val result: ChessPhase2V2Engine.AuditResultV2) : GameOutcome()
+
         /** The game was already audited on a previous share (re-share). */
         data class AlreadyAudited(val previous: ChessPhase2Store.Phase2Audit) : GameOutcome()
 
@@ -129,6 +132,13 @@ object ChessDeferredGameReconciler {
 
         val gameEndMs = game.endTime * 1000L
 
+        // Phase 2 engine branch: "v2" runs the research-report audit
+        // (tilt vector / fatigue / loss-chasing / ACWR / hysteresis); the
+        // default "v1" path below is untouched.
+        if (ChessPhase2V2Store.isV2(context)) {
+            return processGameV2(context, username, game, gameEndMs)
+        }
+
         // Authorization is evaluated FIRST — the Chess Guard penalty for
         // unauthorized play is applied by the logGames call above (single
         // choke point shared with the archive poller), so this classifier
@@ -200,6 +210,131 @@ object ChessDeferredGameReconciler {
             )
         )
         return GameOutcome.Audited(result)
+    }
+
+    /**
+     * The v2 post-game audit path (research-report engine): maps the game
+     * with the shared eligibility rules, checks authorization exactly like
+     * v1, assembles the personal baselines + session ledger + ACWR inputs,
+     * evaluates [ChessPhase2V2Engine.evaluate], then persists to BOTH the
+     * shared audit history (so Chess Guard enforcement, rated-play
+     * authorization and session derivation work unchanged) and the v2
+     * telemetry stores (baselines + ledger).
+     */
+    private fun processGameV2(
+        context: Context,
+        username: String,
+        game: ChessComGameDetail,
+        gameEndMs: Long
+    ): GameOutcome {
+        val localHour = java.time.Instant.ofEpochMilli(gameEndMs)
+            .atZone(java.time.ZoneId.systemDefault()).hour
+
+        val mapping = ChessPhase2V2Engine.inputFrom(
+            game = game,
+            username = username,
+            sessionMinutesBefore = ChessPhase2Store.sessionMinutesUsed(context, gameEndMs),
+            localHour = localHour
+        )
+        val ready = when (mapping) {
+            is ChessPhase2V2Engine.MappingV2.NotAuditable ->
+                return GameOutcome.NotAuditable(mapping.reason)
+            is ChessPhase2V2Engine.MappingV2.Ready -> mapping
+        }
+
+        // Same authorization rule as v1 — a game outside a green window is
+        // unapproved play, never an audit.
+        val tests = ChessReadinessStore.loadHistory(context)
+        val authorized = authorizedAtGameEnd(
+            tests = tests,
+            audits = ChessPhase2Store.loadAudits(context).map {
+                AuditStamp(it.timestamp, it.outputState)
+            },
+            gameEndMs = gameEndMs
+        )
+        if (!authorized) {
+            val stateAtPlay = tests
+                .filter { it.timestamp <= gameEndMs }
+                .maxByOrNull { it.timestamp }?.state
+            return GameOutcome.Unauthorized(playedAt = gameEndMs, stateAtPlay = stateAtPlay)
+        }
+
+        val tc = ready.input.timeControl
+        val accBaseline = ChessPhase2V2Engine.baselineOf(
+            ChessPhase2V2Store.accuracyHistory(context, tc),
+            ChessPhase2V2Engine.SD_FLOOR_ACCURACY
+        )
+        val moveBaseline = ChessPhase2V2Engine.baselineOf(
+            ChessPhase2V2Store.moveTimeHistory(context, tc),
+            ChessPhase2V2Engine.SD_FLOOR_MOVE_SEC
+        )
+        val sessionGames = ChessPhase2V2Store.currentSessionGames(context, gameEndMs)
+            .mapNotNull { g ->
+                ChessPhase2V2Engine.SessionGameV2(
+                    timestamp = g.timestamp,
+                    result = ChessPhase2Engine.GameResult.entries.firstOrNull {
+                        it.name == g.result
+                    } ?: return@mapNotNull null,
+                    outputState = g.outputState
+                )
+            }
+        val acwr = try {
+            ChessPhase2V2Store.acwrInput(
+                ChessReadinessLogStore.loadGames(context), gameEndMs
+            )
+        } catch (_: Exception) { null }
+
+        val result = ChessPhase2V2Engine.evaluate(
+            input = ready.input,
+            sessionGames = sessionGames,
+            accBaseline = accBaseline,
+            moveBaseline = moveBaseline,
+            acwr = acwr,
+            now = gameEndMs
+        )
+
+        // Personal baselines grow from every game with KNOWN telemetry.
+        ChessPhase2V2Store.appendTelemetry(
+            context, tc,
+            accuracy = ready.input.accuracy.takeIf { ready.accuracyKnown },
+            shortGame = ready.input.shortGame,
+            avgMoveSec = ready.input.avgMoveSec.takeIf { ready.moveTimeKnown }
+        )
+        ChessPhase2V2Store.appendRecentGame(
+            context,
+            ChessPhase2V2Store.RatedGameRecord(
+                timestamp = gameEndMs,
+                result = ready.input.result.name,
+                timeControl = tc.name,
+                outputState = result.outputState.name,
+                estimatedMinutes = ready.estimatedMinutes
+            )
+        )
+        // Shared audit history → Chess Guard, rated-play authorization and
+        // session derivation all consume this. Strain is mapped onto the v1
+        // scale (0 / 50 / 100) so switching back to v1 mid-history keeps a
+        // meaningful session tally.
+        ChessPhase2Store.appendAudit(
+            context,
+            ChessPhase2Store.Phase2Audit(
+                timestamp = gameEndMs,
+                timeControl = tc.name,
+                outputState = result.outputState.name,
+                deltaE = ready.deltaE,
+                caps2Accuracy = ready.input.accuracy ?: 0.0,
+                accuracyCounted = ready.accuracyKnown && !ready.input.shortGame,
+                gameId = game.gameId.toString(),
+                estimatedMinutes = ready.estimatedMinutes,
+                strain = when (result.outputState) {
+                    ChessPhase2Engine.OutputState.TERMINATE_SESSION ->
+                        ChessPhase2Engine.STRAIN_TERMINATE_BASE
+                    ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS ->
+                        ChessPhase2Engine.SEVERE_STRAIN
+                    else -> 0.0
+                }
+            )
+        )
+        return GameOutcome.AuditedV2(result)
     }
 
     /**

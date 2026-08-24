@@ -2355,6 +2355,41 @@ private fun ChessReadinessSettingsSection(
                 }
             }
 
+            // Post-game (Phase 2) audit engine selector — independent of the
+            // pre-game readiness version above (any combination works).
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Post-Game Audit Version", fontSize = 14.sp)
+            Text(
+                "Which engine audits every shared rated game — the check that " +
+                    "decides whether you keep playing, land in the yellow zone or " +
+                    "the red zone.\n" +
+                    "v1 — adaptive ΔE/strain evidence model (a single loss never " +
+                    "ends the session; accumulated underperformance does).\n" +
+                    "v2 — research-report system: 120-min fatigue ceiling, " +
+                    "loss-streak stop rules (2 → yellow, 3 → red), tilt vector " +
+                    "from your personal speed + accuracy Z-scores with a " +
+                    "late-evening circadian adjustment, 7:28-day workload ratio " +
+                    "and yellow-state hysteresis. Works with either readiness " +
+                    "test version; Chess Guard enforcement is shared.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            listOf(
+                "v1" to "v1 — Adaptive ΔE / strain audit",
+                "v2" to "v2 — Tilt / fatigue / loss-chasing system"
+            ).forEach { (value, label) ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = settings.chessPhase2Version == value,
+                        onClick = { viewModel.setChessPhase2Version(value) }
+                    )
+                    Text(label, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),

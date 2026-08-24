@@ -56,6 +56,13 @@ class ChessStatusOverlay(service: android.content.Context) {
                 return@setContent
             }
 
+            // v2 post-game engine: show the research-system session gauges
+            // instead of the v1 strain/ΔE view.
+            if (ChessPhase2V2Store.isV2(context)) {
+                renderV2(now, lastTest)
+                return@setContent
+            }
+
             stateLabel("RATED PLAY AUTHORIZED", "#22C55E")
             spacer(10)
 
@@ -120,6 +127,105 @@ class ChessStatusOverlay(service: android.content.Context) {
             bullet(
                 "One bad game alone only pauses rated play (yellow) — never ends the session",
                 0xFF22C55E.toInt()
+            )
+
+            spacer(12)
+            body("After every rated game:", bold = true)
+            body("Share → ♟ Chess Audit (Tail)", color = 0xFF66CCFF.toInt())
+            hint("The share button sits on the game-over screen — Tail audits the game automatically.")
+
+            primaryButton("Close") { dismiss() }
+        }
+    }
+
+    /** v2 gauges: fatigue budget, loss streak, baselines, ACWR, rules. */
+    private fun renderV2(now: Long, lastTest: ChessReadinessEngine.ReadinessTest?) {
+        val session = ChessPhase2V2Store.currentSessionGames(context, now)
+        val minutesUsed = session.sumOf { it.estimatedMinutes }
+        val lastGame = session.lastOrNull()
+        val consecutiveLosses = session
+            .asReversed()
+            .takeWhile {
+                it.result == ChessPhase2Engine.GameResult.LOSS.name
+            }.size
+        val acwr = try {
+            ChessPhase2V2Store.acwrInput(
+                ChessReadinessLogStore.loadGames(context), now
+            )
+        } catch (_: Exception) { null }
+
+        dialog.setContent("♟ Chess Status", null) {
+            stateLabel("RATED PLAY AUTHORIZED · AUDIT v2", "#22C55E")
+            spacer(10)
+
+            val msLeft = (lastTest?.timestamp ?: now) +
+                ChessReadinessEngine.SESSION_VALIDITY_MS - now
+            keyValue("Time left", "${(msLeft / 60000L).coerceAtLeast(0)} min")
+            keyValue("Games audited this session", "${session.size}")
+            keyValue(
+                "Fatigue budget",
+                "${minutesUsed.roundToInt()} / " +
+                    "${ChessPhase2V2Engine.SESSION_RED_MINUTES} min " +
+                    "(yellow at ${ChessPhase2V2Engine.SESSION_YELLOW_MINUTES})"
+            )
+            keyValue(
+                "Loss streak",
+                "$consecutiveLosses consecutive " +
+                    "(yellow at ${ChessPhase2V2Engine.STREAK_YELLOW}, " +
+                    "red at ${ChessPhase2V2Engine.STREAK_RED})"
+            )
+            if (acwr != null && acwr.ready) {
+                keyValue(
+                    "Workload ratio (7d : 28d)",
+                    if (acwr.ratio.isInfinite()) "∞"
+                    else "%.2f".format(acwr.ratio) +
+                        "  (yellow ≥ ${ChessPhase2V2Engine.ACWR_YELLOW}, " +
+                        "red ≥ ${ChessPhase2V2Engine.ACWR_RED})"
+                )
+            }
+
+            if (lastGame != null) {
+                spacer(8)
+                body("Last audited game", bold = true)
+                keyValue(
+                    "Result",
+                    lastGame.result.replace('_', ' ').lowercase()
+                )
+                keyValue(
+                    "Verdict",
+                    lastGame.outputState.replace('_', ' ').lowercase()
+                )
+            }
+
+            spacer(10)
+            body("How you get kicked out", bold = true)
+            bullet(
+                "More than ${ChessPhase2V2Engine.SESSION_RED_MINUTES} min of " +
+                    "continuous play (fatigue ceiling)",
+                0xFFEF4444.toInt()
+            )
+            bullet(
+                "${ChessPhase2V2Engine.STREAK_RED} consecutive losses (loss-chasing)",
+                0xFFEF4444.toInt()
+            )
+            bullet(
+                "Tilt vector: far faster AND far less accurate than your norm " +
+                    "in a lost game",
+                0xFFEF4444.toInt()
+            )
+            bullet(
+                "Workload ratio ≥ ${ChessPhase2V2Engine.ACWR_RED} (chronic overload)",
+                0xFFEF4444.toInt()
+            )
+            bullet(
+                "A single loss never stops you — performance rises after one " +
+                    "loss (bounce-back effect)",
+                0xFF22C55E.toInt()
+            )
+            bullet(
+                "Yellow persists until a win/draw at your normal accuracy after " +
+                    "15+ min (hysteresis)",
+                0xFFEAB308.toInt()
             )
 
             spacer(12)
