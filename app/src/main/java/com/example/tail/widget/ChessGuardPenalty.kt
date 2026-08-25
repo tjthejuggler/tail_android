@@ -14,13 +14,15 @@ import android.util.Log
  * [evaluateAndApply] for each NEWLY logged game, so no path can smuggle a
  * violation past the detector.
  *
- * The rules (user, 2026-08-23):
- *  - RATED game that ended outside a valid GREEN authorization window
- *    (a YELLOW session does NOT authorize rated play) → penalty.
+ * The rules (user, 2026-08-23; start-time amendment 2026-08-25):
+ *  - RATED game that BEGAN outside a valid GREEN authorization window
+ *    (a YELLOW session does NOT authorize rated play) → penalty. A game
+ *    that began inside the window stays clean even if it ended after the
+ *    window expired.
  *  - UNRATED / casual game is allowed only while the app was actually
- *    OPEN for casual play — i.e. the policy at the game's end moment was
+ *    OPEN for casual play — i.e. the policy at the game's START moment was
  *    Allow(GREEN_SESSION) or Allow(YELLOW_SESSION). Casual games that
- *    ended during a lockout (RED rest, cool-down, daily cap, an active
+ *    began during a lockout (RED rest, cool-down, daily cap, an active
  *    penalty) or during the bare re-test trust window (app open ONLY to
  *    take the test, not to play) → penalty.
  *  - A penalty locks the whole app — test entry included — for
@@ -43,6 +45,7 @@ object ChessGuardPenalty {
     fun evaluateAndApply(
         context: Context,
         gameId: String,
+        gameStartMs: Long,
         gameEndMs: Long,
         rated: Boolean
     ): Boolean {
@@ -53,39 +56,40 @@ object ChessGuardPenalty {
 
             val tests = ChessReadinessStore.loadHistory(context)
 
-            // Rule 1 — rated play requires a valid GREEN window (YELLOW
-            // permits casual play only).
+            // Rule 1 — rated play requires a valid GREEN window at the
+            // moment the game BEGAN (YELLOW permits casual play only).
             if (rated) {
-                val authorized = ChessDeferredGameReconciler.authorizedAtGameEnd(
+                val authorized = ChessDeferredGameReconciler.authorizedAtPlay(
                     tests = tests,
                     audits = ChessPhase2Store.loadAudits(context).map {
                         ChessDeferredGameReconciler.AuditStamp(it.timestamp, it.outputState)
                     },
-                    gameEndMs = gameEndMs
+                    gameStartMs = gameStartMs
                 )
                 if (!authorized) return append(context, gameId, rated = true)
                 return false
             }
 
             // Rule 2 — casual (unrated) play is allowed only when the app
-            // was open for casual play at the moment the game ended. The
-            // policy is re-evaluated AT the game's end time (session
+            // was open for casual play at the moment the game BEGAN. The
+            // policy is re-evaluated AT the game's start time (session
             // unknown for the past → null, which only ever *removes* the
             // in-progress-test allowance, never adds one). Penalties that
-            // were applied AFTER the game must not count as "active then".
+            // were applied AFTER the game started must not count as
+            // "active then".
             val priorPenalties = ChessReadinessStore.loadPenalties(context)
-                .filter { it.timestamp <= gameEndMs }
-            val decisionAtEnd = ChessEnforcementPolicy.evaluate(
+                .filter { it.timestamp <= gameStartMs }
+            val decisionAtStart = ChessEnforcementPolicy.evaluate(
                 enforcementEnabledAt = enabledAt,
                 history = tests,
                 session = null,
                 penalties = priorPenalties,
-                now = gameEndMs
+                now = gameStartMs
             )
-            val casualAllowed = decisionAtEnd is ChessEnforcementPolicy.Decision.Allow &&
+            val casualAllowed = decisionAtStart is ChessEnforcementPolicy.Decision.Allow &&
                 (
-                    decisionAtEnd.reason == ChessEnforcementPolicy.Reason.GREEN_SESSION ||
-                        decisionAtEnd.reason == ChessEnforcementPolicy.Reason.YELLOW_SESSION
+                    decisionAtStart.reason == ChessEnforcementPolicy.Reason.GREEN_SESSION ||
+                        decisionAtStart.reason == ChessEnforcementPolicy.Reason.YELLOW_SESSION
                     )
             if (!casualAllowed) return append(context, gameId, rated = false)
             return false

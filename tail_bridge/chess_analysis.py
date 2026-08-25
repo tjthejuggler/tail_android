@@ -3,15 +3,25 @@
 Tail Bridge chess analysis — self-owned Stockfish analysis for the Tail app.
 
 The Tail bundle (phone app + tail_bridge) is fully standalone: it needs only
-python-chess and a Stockfish binary — NOT the chess-coach program. The
-metric definitions and the full JSON output format are ported 1:1 from
-chess-coach's analyzer (same classification thresholds, same unforced-blunder
-rule, same file format), so:
+python-chess and a Stockfish binary — NOT the chess-coach program. The JSON
+output format is ported 1:1 from chess-coach's analyzer so every fresh
+analysis is pushed (best-effort, fire-and-forget) to chess-coach's /ingest
+endpoint, but the move CLASSIFICATION deliberately diverges from chess-coach's
+original fixed-centipawn thresholds (50/200/500 cp):
 
-  * numbers are comparable with chess-coach's existing analyses, and
-  * every fresh analysis is pushed (best-effort, fire-and-forget) to
-    chess-coach's /ingest endpoint, so when the user DOES run chess-coach
-    those games are already analysed and never redone.
+  fixed cp thresholds count a mate-in-2 → mate-in-7 conversion as a 500 cp
+  "blunder", because eval_to_cp() folds mates onto the linear ±10000 scale.
+  Real reviewers (chess.com, lichess) classify on a saturating
+  WIN-PROBABILITY curve, where every won position sits near 100% and
+  conversions between winning states barely register. This module does the
+  same (see cp_to_win_percent), which:
+
+  * eliminates phantom blunders in won/winning positions (the artifact that
+    once yellow-flagged a clean 1-0 conversion game),
+  * keeps counts roughly aligned with chess.com's Game Review, and
+  * lets the bands scale by time control — faster games forgive larger
+    swings (TC_BAND_SCALE), mirroring the phone app's per-tier maxBlunders
+    calibration (bullet 3 / blitz 2 / rapid 1).
 
 Dedup: a SQLite registry keyed by canonical game_id (PGN Link header, with a
 date/players/utctime fallback). A game is never analysed twice.
@@ -31,6 +41,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -58,6 +69,70 @@ LIVE_DEPTH_DEFAULT = 12
 LIVE_DEPTH_MAX = 18
 INGEST_TIMEOUT_SEC = 3
 NOTIFY_TIMEOUT_SEC = 5
+
+# ── Win-probability classification (chess.com / lichess semantics) ──────────
+
+# Logistic slope of the cp → win% curve — the constant lichess and chess.com
+# use for "winning chances".
+WIN_PERCENT_LAMBDA = 0.00368208
+
+# Base classification bands: how many win-PERCENTAGE-POINTs a move must cost
+# the mover (rapid calibration — the strictest tier, slow games leave no
+# excuse). A 30-point drop ≈ throwing away a completely winning position.
+INACCURACY_DROP_PP = 10.0
+MISTAKE_DROP_PP = 20.0
+BLUNDER_DROP_PP = 30.0
+
+# Faster time controls forgive proportionally larger swings — a 1-minute
+# game legitimately contains wilder eval swings than a 10-minute game. The
+# multiplier scales all three bands (a bullet blunder needs 45 pp, not 30).
+TC_BAND_SCALE = {"bullet": 1.5, "blitz": 1.25, "rapid": 1.0}
+
+# Per-tier remaining clock (seconds) below which a blunder is time-scramble,
+# not an unforced mental lapse. Same 10/20/45 calibration as the Tail app's
+# ChessPhase2Engine.TimeControl.scrambleSec.
+TC_SCRAMBLE_SEC = {"bullet": 10.0, "blitz": 20.0, "rapid": 45.0}
+
+# A blunder is UNFORCED only when the position was still competitive for the
+# mover: mover win% above this before the move (≈ −100 cp, chess-coach's
+# original bar, expressed on the win% curve).
+UNFORCED_MIN_WIN_PERCENT = 40.0
+
+# Cap on the per-move cp loss that feeds ACPL, so mate-score folding cannot
+# explode the average (per-move evals in the JSON stay raw).
+ACPL_CP_LOSS_CAP = 1000.0
+
+
+def cp_to_win_percent(cp: float) -> float:
+    """Centipawns (white POV, mates folded onto ±10000) → white win prob 0-100.
+
+    Saturating by design: mate-in-2, mate-in-11 and +9 all sit near 100, so
+    conversions between winning states cost almost nothing — the mate-folding
+    artifact that plagued fixed-cp thresholds disappears.
+    """
+    return 100.0 / (1.0 + math.exp(-WIN_PERCENT_LAMBDA * cp))
+
+
+def time_control_tier(time_control_header: str) -> str:
+    """PGN TimeControl header ("600", "180+2", "60", …) → "bullet"/"blitz"/"rapid".
+
+    Mirrors the phone app's ChessGameAuditMapper.timeControlFor: base seconds
+    < 180 → bullet, < 600 → blitz, else rapid. Unknown/daily → rapid (the
+    strictest calibration — safest default).
+    """
+    tc = (time_control_header or "").strip()
+    if not tc or "/" in tc:
+        return "rapid"
+    base = tc.split("+")[0]
+    try:
+        base_seconds = float(base)
+    except ValueError:
+        return "rapid"
+    if base_seconds < 180:
+        return "bullet"
+    if base_seconds < 600:
+        return "blitz"
+    return "rapid"
 
 
 # ── Analyzer (ported 1:1 from chess-coach scripts/analyzer.py) ────────────────
@@ -105,17 +180,21 @@ class GameAnalyzer:
         return cp, best
 
     @staticmethod
-    def classify_move(eval_diff, current_eval, move_san, best_move_san):
-        # Same thresholds as chess-coach so classification statistics stay
-        # comparable across analysis sources.
+    def classify_move(drop_pp, tier, move_san, best_move_san):
+        """Classify one move from its win-percentage-point cost to the mover.
+
+        @param drop_pp  win% before − win% after, from the MOVER's point of
+                        view (≥ 0), already on the saturating curve.
+        @param tier     "bullet" / "blitz" / "rapid" — scales the bands.
+        """
         if move_san and best_move_san and move_san == best_move_san and move_san.endswith('#'):
             return "Best/Good"
-        abs_diff = abs(eval_diff)
-        if abs_diff < 50:
+        scale = TC_BAND_SCALE.get(tier, 1.0)
+        if drop_pp < INACCURACY_DROP_PP * scale:
             return "Best/Good"
-        elif 50 <= abs_diff < 200:
+        if drop_pp < MISTAKE_DROP_PP * scale:
             return "Inaccuracy"
-        elif 200 <= abs_diff < 500:
+        if drop_pp < BLUNDER_DROP_PP * scale:
             return "Mistake"
         return "Blunder"
 
@@ -204,6 +283,7 @@ class GameAnalyzer:
         white_moves = 0
         black_moves = 0
         board = self.board
+        tier = time_control_tier(self.game.headers.get("TimeControl", ""))
 
         try:
             node = self.game
@@ -229,6 +309,16 @@ class GameAnalyzer:
                     diff = before_cp - curr_cp
                     cp_loss = -diff if diff < 0 else 0
 
+                # Mover-POV win probabilities on the saturating curve — the
+                # classification input that mate-score folding cannot distort.
+                if is_white:
+                    win_before = cp_to_win_percent(before_cp)
+                    win_after = cp_to_win_percent(curr_cp)
+                else:
+                    win_before = 100.0 - cp_to_win_percent(before_cp)
+                    win_after = 100.0 - cp_to_win_percent(curr_cp)
+                drop_pp = max(0.0, win_before - win_after)
+
                 best_move_san = None
                 if best_uci is not None:
                     try:
@@ -241,13 +331,13 @@ class GameAnalyzer:
                 game_phase = self.determine_game_phase(board)
 
                 if is_white:
-                    white_cpl_sum += cp_loss
+                    white_cpl_sum += min(cp_loss, ACPL_CP_LOSS_CAP)
                     white_moves += 1
                 else:
-                    black_cpl_sum += cp_loss
+                    black_cpl_sum += min(cp_loss, ACPL_CP_LOSS_CAP)
                     black_moves += 1
 
-                classification = self.classify_move(-cp_loss, curr_cp, san_move, best_move_san)
+                classification = self.classify_move(drop_pp, tier, san_move, best_move_san)
 
                 side = "white" if is_white else "black"
                 if classification == "Blunder":
@@ -264,12 +354,13 @@ class GameAnalyzer:
                 clock_sec = next_node.clock()
 
                 # Unforced blunder: blunder while the position was still
-                # competitive for the mover and not in extreme time trouble.
-                mover_eval_before = before_cp if is_white else -before_cp
+                # competitive for the mover and not in the tier's time
+                # scramble (10/20/45 s — the phone app's scrambleSec).
+                scramble_sec = TC_SCRAMBLE_SEC.get(tier, 45.0)
                 unforced = (
                     classification == "Blunder"
-                    and mover_eval_before > -100
-                    and (clock_sec is None or clock_sec >= 10.0)
+                    and win_before > UNFORCED_MIN_WIN_PERCENT
+                    and (clock_sec is None or clock_sec >= scramble_sec)
                 )
                 if unforced:
                     results["stats"][f"{side}_unforced_blunders"] += 1
@@ -282,6 +373,7 @@ class GameAnalyzer:
                     "eval_before": before_cp,
                     "eval_after": curr_cp,
                     "cp_loss": cp_loss,
+                    "win_drop_pp": round(drop_pp, 1),
                     "classification": classification,
                     "best_move": best_move_san,
                     "game_phase": game_phase,

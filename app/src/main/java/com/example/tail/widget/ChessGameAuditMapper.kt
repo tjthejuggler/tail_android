@@ -221,6 +221,7 @@ object ChessGameAuditMapper {
             timeClass = game.timeClass,
             timeControl = game.timeControl,
             endTime = game.endTime,
+            startTime = com.example.tail.data.pgnStartEpochSec(game.pgn),
             whiteUsername = game.whiteUsername,
             blackUsername = game.blackUsername,
             whiteResult = game.whiteResult,

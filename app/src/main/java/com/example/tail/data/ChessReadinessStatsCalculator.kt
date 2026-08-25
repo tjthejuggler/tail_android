@@ -209,7 +209,13 @@ fun gameToRecord(
 
     val type = classifyByTimeControl(game.timeControl) ?: return null
     val endTimeMs = game.endTime * 1000L
-    val (context, authorized) = readinessContextAt(tests, endTimeMs)
+    // Authorization is a property of the moment play BEGAN (user rule,
+    // 2026-08-25): a game started inside a valid window stays authorized
+    // even when it ends after the window expired. Exact start from the PGN
+    // when available, else end minus the time-control base clock.
+    val startMs = game.startTime?.times(1000L)
+        ?: (endTimeMs - (estimateGameMinutes(game.timeControl) * 60_000).toLong())
+    val (context, authorized) = readinessContextAt(tests, startMs)
     val won = if (isWhite) {
         game.whiteResult == CHESS_COM_RESULT_WIN
     } else {

@@ -36,6 +36,10 @@ class ChessPhase2V3EngineTest {
         shortGame: Boolean = false,
         unforcedBlunders: Int? = null,
         blunderCount: Int? = null,
+        mistakeCount: Int? = null,
+        inaccuracyCount: Int? = null,
+        analysisAcpl: Double? = null,
+        analysisMoves: Int? = null,
         accuracyHistory: List<Double> = emptyList(),
         ccrs: Int? = null,
         tc: ChessPhase2Engine.TimeControl = ChessPhase2Engine.TimeControl.BLITZ
@@ -51,6 +55,10 @@ class ChessPhase2V3EngineTest {
         deltaE = deltaE,
         unforcedBlunders = unforcedBlunders,
         blunderCount = blunderCount,
+        mistakeCount = mistakeCount,
+        inaccuracyCount = inaccuracyCount,
+        analysisAcpl = analysisAcpl,
+        analysisMoves = analysisMoves,
         accuracyHistory = accuracyHistory,
         readinessCcrs = ccrs
     )
@@ -270,6 +278,33 @@ class ChessPhase2V3EngineTest {
         assertFalse(r.blunderViolation)
         assertFalse(r.engineBacked)
         assertEquals(ChessPhase2Engine.OutputState.CONTINUE_RATED, r.outputState)
+    }
+
+    @Test
+    fun `message leads with the stockfish analysis facts`() {
+        val r = evaluate(
+            input(
+                unforcedBlunders = 0, blunderCount = 0,
+                mistakeCount = 2, inaccuracyCount = 2,
+                analysisAcpl = 116.6, analysisMoves = 33
+            )
+        )
+        assertTrue(r.message.startsWith("♟ Stockfish:"))
+        assertTrue(r.message.contains("unforced blunders 0 (max 2 for blitz)"))
+        assertTrue(r.message.contains("blunders 0"))
+        assertTrue(r.message.contains("mistakes 2"))
+        assertTrue(r.message.contains("inaccuracies 2"))
+        assertTrue(r.message.contains("ACPL 117"))
+        assertTrue(r.message.contains("moves 33"))
+        // The old generic "verified" sentence is gone.
+        assertFalse(r.message.contains("Verified"))
+    }
+
+    @Test
+    fun `fallback message notes missing engine data`() {
+        val r = evaluate(input(unforcedBlunders = null, blunderCount = null))
+        assertTrue(r.message.startsWith("⚠ No engine data"))
+        assertFalse(r.message.contains("Stockfish:"))
     }
 
     @Test

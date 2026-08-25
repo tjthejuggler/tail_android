@@ -73,7 +73,7 @@ import kotlinx.coroutines.launch
  *     queue ([ChessPendingGameStore]) — the deferred pipeline audits it
  *     automatically once chess.com releases it.
  *  5. Otherwise [ChessDeferredGameReconciler.processGame] classifies it by
- *     the readiness state AT THE MOMENT IT ENDED: authorized → full Phase 2
+ *     the readiness state AT THE MOMENT IT STARTED: authorized → full Phase 2
  *     audit (stamped at the game's end time); unauthorized → recorded as
  *     unapproved play in the Chess Readiness compliance stats.
  *
@@ -645,14 +645,16 @@ class ChessGameShareActivity : ComponentActivity() {
                 fontSize = 11.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
-            Text(
-                text = if (r.engineBacked) "♟ DESKTOP STOCKFISH VERDICT — engine data used"
-                       else "⚠ FALLBACK VERDICT — no engine data (bridge unreachable)",
-                color = if (r.engineBacked) Color(0xFF66BB6A) else Color(0xFFEAB308),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
+            // Engine-backed audits open their message with the Stockfish
+            // numbers themselves — only the fallback case needs a note.
+            if (!r.engineBacked) {
+                Text(
+                    text = "⚠ No engine data — blunder rule inactive",
+                    color = Color(0xFFEAB308),
+                    fontSize = 11.sp,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            }
             if (r.circadianAdjusted) {
                 Text(
                     text = "circadian adjustment applied (evening play)",

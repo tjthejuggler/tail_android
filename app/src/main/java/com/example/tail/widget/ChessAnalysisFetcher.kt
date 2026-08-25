@@ -39,7 +39,10 @@ object ChessAnalysisFetcher {
     data class SideStats(
         val acpl: Double?,
         val blunders: Int?,
-        val unforcedBlunders: Int?
+        val unforcedBlunders: Int?,
+        val mistakes: Int?,
+        val inaccuracies: Int?,
+        val moves: Int?
     )
 
     /** The fields the v3 engine consumes. */
@@ -94,7 +97,13 @@ object ChessAnalysisFetcher {
                     blunders = if (side.isNull("blunders")) null
                         else side.optInt("blunders"),
                     unforcedBlunders = if (side.isNull("unforced_blunders")) null
-                        else side.optInt("unforced_blunders")
+                        else side.optInt("unforced_blunders"),
+                    mistakes = if (side.isNull("mistakes")) null
+                        else side.optInt("mistakes"),
+                    inaccuracies = if (side.isNull("inaccuracies")) null
+                        else side.optInt("inaccuracies"),
+                    moves = if (side.isNull("moves")) null
+                        else side.optInt("moves")
                 )
             )
         } catch (e: Exception) {

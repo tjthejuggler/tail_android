@@ -4,7 +4,9 @@ import com.example.tail.widget.ChessDeferredGameReconciler
 import com.example.tail.widget.ChessDeferredGameReconciler.AuditStamp
 import com.example.tail.widget.ChessPhase2Engine
 import com.example.tail.widget.ChessReadinessEngine
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,18 +34,18 @@ class ChessDeferredGameReconcilerTest {
     @Test
     fun `green test inside its window authorizes the game`() {
         val tests = listOf(test(t0, ChessReadinessEngine.ReadinessState.GREEN_LIGHT))
-        val gameEnd = t0 + validity - 1000
+        val gameStart = t0 + validity - 1000
         assertTrue(
-            ChessDeferredGameReconciler.authorizedAtGameEnd(tests, emptyList(), gameEnd)
+            ChessDeferredGameReconciler.authorizedAtPlay(tests, emptyList(), gameStart)
         )
     }
 
     @Test
     fun `game after the window expired is unauthorized`() {
         val tests = listOf(test(t0, ChessReadinessEngine.ReadinessState.GREEN_LIGHT))
-        val gameEnd = t0 + validity + 1000
+        val gameStart = t0 + validity + 1000
         assertFalse(
-            ChessDeferredGameReconciler.authorizedAtGameEnd(tests, emptyList(), gameEnd)
+            ChessDeferredGameReconciler.authorizedAtPlay(tests, emptyList(), gameStart)
         )
     }
 
@@ -54,14 +56,14 @@ class ChessDeferredGameReconcilerTest {
             test(t0 + 60_000, ChessReadinessEngine.ReadinessState.YELLOW_LIGHT)
         )
         assertFalse(
-            ChessDeferredGameReconciler.authorizedAtGameEnd(tests, emptyList(), t0 + 120_000)
+            ChessDeferredGameReconciler.authorizedAtPlay(tests, emptyList(), t0 + 120_000)
         )
     }
 
     @Test
     fun `no test at all is unauthorized`() {
         assertFalse(
-            ChessDeferredGameReconciler.authorizedAtGameEnd(emptyList(), emptyList(), t0)
+            ChessDeferredGameReconciler.authorizedAtPlay(emptyList(), emptyList(), t0)
         )
     }
 
@@ -69,7 +71,7 @@ class ChessDeferredGameReconcilerTest {
     fun `test submitted after the game does not authorize it`() {
         val tests = listOf(test(t0 + 10 * 60_000, ChessReadinessEngine.ReadinessState.GREEN_LIGHT))
         assertFalse(
-            ChessDeferredGameReconciler.authorizedAtGameEnd(tests, emptyList(), t0)
+            ChessDeferredGameReconciler.authorizedAtPlay(tests, emptyList(), t0)
         )
     }
 
@@ -80,7 +82,7 @@ class ChessDeferredGameReconcilerTest {
             audit(t0 + 60_000, ChessPhase2Engine.OutputState.TERMINATE_SESSION)
         )
         assertFalse(
-            ChessDeferredGameReconciler.authorizedAtGameEnd(tests, audits, t0 + 120_000)
+            ChessDeferredGameReconciler.authorizedAtPlay(tests, audits, t0 + 120_000)
         )
     }
 
@@ -92,7 +94,7 @@ class ChessDeferredGameReconcilerTest {
             audit(t0 + 120_000, ChessPhase2Engine.OutputState.CONTINUE_RATED)
         )
         assertTrue(
-            ChessDeferredGameReconciler.authorizedAtGameEnd(tests, audits, t0 + 180_000)
+            ChessDeferredGameReconciler.authorizedAtPlay(tests, audits, t0 + 180_000)
         )
     }
 
@@ -105,7 +107,54 @@ class ChessDeferredGameReconcilerTest {
             audit(t0 + validity + 60_000, ChessPhase2Engine.OutputState.TERMINATE_SESSION)
         )
         assertTrue(
-            ChessDeferredGameReconciler.authorizedAtGameEnd(tests, audits, t0 + 60_000)
+            ChessDeferredGameReconciler.authorizedAtPlay(tests, audits, t0 + 60_000)
         )
+    }
+
+    // ── Start-time authorization (user rule, 2026-08-25) ────────────────────
+
+    @Test
+    fun `game started inside the window but ending after it stays authorized`() {
+        // The exact bug from 2026-08-25: GREEN test opens a 60-minute window,
+        // a 10-minute rapid game starts 5 minutes before expiry and ends
+        // 5 minutes after it. Start-based check → authorized.
+        val tests = listOf(test(t0, ChessReadinessEngine.ReadinessState.GREEN_LIGHT))
+        val gameStart = t0 + validity - 5 * 60_000
+        assertTrue(
+            ChessDeferredGameReconciler.authorizedAtPlay(tests, emptyList(), gameStart)
+        )
+    }
+
+    @Test
+    fun `pgn utc start headers parse to epoch seconds`() {
+        val pgn = "[Event \"Test\"]\n" +
+            "[UTCDate \"2026.08.25\"]\n" +
+            "[StartTime \"16:22:01\"]\n" +
+            "\n1. e4 e5 1-0"
+        assertEquals(1_787_674_921L, com.example.tail.data.pgnStartEpochSec(pgn))
+    }
+
+    @Test
+    fun `pgn without start headers parses to null`() {
+        assertNull(com.example.tail.data.pgnStartEpochSec("[Event \"Test\"]\n\n1. e4"))
+        assertNull(com.example.tail.data.pgnStartEpochSec(""))
+    }
+
+    @Test
+    fun `gameStartMsOf prefers the pgn start and falls back to the clock estimate`() {
+        val endMs = 1_787_676_126_000L // 2026-08-25T16:42:06Z
+        val withPgn = com.example.tail.data.ChessComGameDetail(
+            gameId = 1L, url = "", rated = true, rules = "chess",
+            timeClass = "rapid", timeControl = "600", endTime = endMs / 1000,
+            whiteUsername = "a", whiteRating = 0, whiteResult = "win",
+            blackUsername = "b", blackRating = 0, blackResult = "checkmated",
+            whiteAccuracy = null, blackAccuracy = null,
+            pgn = "[UTCDate \"2026.08.25\"]\n[StartTime \"16:22:01\"]\n"
+        )
+        assertEquals(1_787_674_921_000L, ChessDeferredGameReconciler.gameStartMsOf(withPgn, endMs))
+
+        val noPgn = withPgn.copy(pgn = "")
+        // 600-second base clock → start estimated 10 minutes before the end.
+        assertEquals(endMs - 600_000L, ChessDeferredGameReconciler.gameStartMsOf(noPgn, endMs))
     }
 }

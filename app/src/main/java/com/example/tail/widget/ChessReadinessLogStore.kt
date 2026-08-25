@@ -65,6 +65,14 @@ object ChessReadinessLogStore {
 
     private val lock = Any()
 
+    /** A newly logged game pending the Chess Guard penalty check. */
+    private data class LoggedGame(
+        val key: String,
+        val startMs: Long,
+        val endMs: Long,
+        val rated: Boolean
+    )
+
     private fun file(context: Context): File =
         File(context.filesDir, FILE_NAME)
 
@@ -129,7 +137,7 @@ object ChessReadinessLogStore {
     fun logGames(context: Context, games: List<ChessComGame>, username: String): Int {
         if (games.isEmpty() || username.isBlank()) return 0
         var added = 0
-        val newEntries = ArrayList<Triple<String, Long, Boolean>>() // key, endMs, rated
+        val newEntries = ArrayList<LoggedGame>()
         synchronized(lock) {
             val root = readRoot(context)
             val migrated = migrateSurveyScaleLocked(root)
@@ -163,16 +171,22 @@ object ChessReadinessLogStore {
                 gamesArr.put(encodeGame(record, key))
                 keyIndex[key] = gamesArr.length() - 1
                 added++
-                newEntries.add(Triple(key, record.endTimeMs, record.rated))
+                // Exact start from the PGN when available, else end minus
+                // the time-control base clock — the penalty detector checks
+                // authorization at the moment play BEGAN.
+                val startMs = game.startTime?.times(1000L)
+                    ?: (record.endTimeMs -
+                        (com.example.tail.data.estimateGameMinutes(game.timeControl) * 60_000).toLong())
+                newEntries.add(LoggedGame(key, startMs, record.endTimeMs, record.rated))
             }
             root.put(KEY_GAMES, gamesArr)
             if (added > 0 || seeded || upgraded || migrated) writeRoot(context, root)
         }
         // Outside the file lock — the detector writes to its own prefs
         // store and must never break or block the logging path.
-        for ((key, endMs, rated) in newEntries) {
+        for (g in newEntries) {
             try {
-                ChessGuardPenalty.evaluateAndApply(context, key, endMs, rated)
+                ChessGuardPenalty.evaluateAndApply(context, g.key, g.startMs, g.endMs, g.rated)
             } catch (_: Exception) {
                 // Penalty detection is best-effort on top of logging.
             }

@@ -92,6 +92,14 @@ object ChessPhase2V3Engine {
         val unforcedBlunders: Int?,
         /** Total blunders from the analysis (telemetry; null = unknown). */
         val blunderCount: Int?,
+        /** Mistakes from the analysis (telemetry; null = unknown). */
+        val mistakeCount: Int?,
+        /** Inaccuracies from the analysis (telemetry; null = unknown). */
+        val inaccuracyCount: Int?,
+        /** Average centipawn loss from the analysis (null = unknown). */
+        val analysisAcpl: Double?,
+        /** Moves the user played per the analysis (null = unknown). */
+        val analysisMoves: Int?,
         /** Rolling accuracy history for this time control (most recent last). */
         val accuracyHistory: List<Double>,
         /** CCRS of the readiness test authorizing this session (null unknown). */
@@ -421,25 +429,32 @@ object ChessPhase2V3Engine {
         forgiven: Boolean,
         blunderViolation: Boolean
     ): String {
-        // The user must always be able to tell whether the desktop bridge's
-        // Stockfish actually backed this verdict or a fallback ran instead.
-        val engineNote = if (input.unforcedBlunders != null)
-            "\n\n♟ Verified: the desktop bridge analyzed this game with " +
-                "Stockfish (${input.unforcedBlunders} unforced blunders " +
-                "fed into the verdict)."
-        else
-            "\n\n⚠ Fallback: no engine data (PC bridge/Stockfish " +
-                "unreachable) — blunder rule inactive; verdict from " +
-                "play-history rules only."
-        return when (state) {
+        // Lead with the concrete Stockfish numbers that fed the verdict —
+        // their presence also proves the audit was engine-backed.
+        val analysisLine = if (input.unforcedBlunders != null) {
+            val parts = listOfNotNull(
+                "unforced blunders ${input.unforcedBlunders} " +
+                    "(max ${input.timeControl.maxBlunders} for " +
+                    "${input.timeControl.name.lowercase()})",
+                input.blunderCount?.let { "blunders $it" },
+                input.mistakeCount?.let { "mistakes $it" },
+                input.inaccuracyCount?.let { "inaccuracies $it" },
+                input.analysisAcpl?.let { "ACPL ${it.roundToInt()}" },
+                input.analysisMoves?.let { "moves $it" }
+            )
+            "♟ Stockfish: ${parts.joinToString(" · ")}.\n\n"
+        } else {
+            "⚠ No engine data (bridge unreachable) — blunder rule " +
+                "inactive; verdict from play-history rules only.\n\n"
+        }
+        return analysisLine + when (state) {
         ChessPhase2Engine.OutputState.TERMINATE_SESSION -> {
             val why = redRules.joinToString(" · ") {
                 ruleLabel(it, weightedStreak, zMove, zDeficit, acwr, input,
                     strain, sessionStrain, strainTerminateAt, blunderViolation)
             }
-            "STOP — $why.\n\nRecovery from cognitive fatigue and sympathetic " +
-                "arousal needs at least 60 minutes away from the board — " +
-                "ideally no more rated play today. Move, hydrate, rest."
+            "STOP — $why.\n\nRecovery needs at least 60 minutes away from " +
+                "the board — no more rated play today. Move, hydrate, rest."
         }
         ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS -> {
             if (hysteresis) {
@@ -465,9 +480,8 @@ object ChessPhase2V3Engine {
         }
         ChessPhase2Engine.OutputState.CONTINUE_RATED ->
             "No fatigue, tilt, loss-chasing, underperformance or overload " +
-                "signals. A single loss would have been fine too " +
-                "(bounce-back effect). Cleared for your next rated game."
-        } + engineNote
+                "signals. Cleared for your next rated game."
+        }
     }
 
     private fun ruleLabel(

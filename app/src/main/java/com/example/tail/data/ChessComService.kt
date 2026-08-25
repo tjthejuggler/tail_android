@@ -24,6 +24,11 @@ data class ChessComGame(
     val timeControl: String,
     /** Unix timestamp when the game ended */
     val endTime: Long,
+    /**
+     * Unix timestamp when the game started (parsed from the archive PGN's
+     * UTCDate/StartTime headers), or null when the PGN was absent.
+     */
+    val startTime: Long? = null,
     /** The username of the white player */
     val whiteUsername: String,
     /** The username of the black player */
@@ -44,6 +49,30 @@ data class ChessComGame(
 
 /** chess.com result string for a won game (any other value is a loss or draw). */
 const val CHESS_COM_RESULT_WIN = "win"
+
+private val PGN_UTC_DATE = Regex("""\[UTCDate "(\d{4})\.(\d{2})\.(\d{2})"]""")
+private val PGN_START_TIME = Regex("""\[StartTime "(\d{2}):(\d{2}):(\d{2})"]""")
+
+/**
+ * Parses the game's start time (Unix seconds, UTC) from a chess.com PGN's
+ * UTCDate + StartTime header pair — chess.com publishes both in UTC.
+ * Returns null when either header is missing or malformed.
+ */
+fun pgnStartEpochSec(pgn: String): Long? {
+    if (pgn.isBlank()) return null
+    val date = PGN_UTC_DATE.find(pgn) ?: return null
+    val time = PGN_START_TIME.find(pgn) ?: return null
+    return try {
+        java.time.LocalDateTime.of(
+            date.groupValues[1].toInt(), date.groupValues[2].toInt(),
+            date.groupValues[3].toInt(),
+            time.groupValues[1].toInt(), time.groupValues[2].toInt(),
+            time.groupValues[3].toInt()
+        ).toInstant(java.time.ZoneOffset.UTC).toEpochMilli() / 1000L
+    } catch (_: Exception) {
+        null
+    }
+}
 
 /**
  * A single chess.com game with the FULL detail needed by the Phase 2
@@ -299,6 +328,7 @@ class ChessComService {
                             timeClass = timeClass,
                             timeControl = timeControl,
                             endTime = endTime,
+                            startTime = pgnStartEpochSec(g.optString("pgn", "")),
                             whiteUsername = whiteUsername,
                             blackUsername = blackUsername,
                             whiteResult = whiteResult,

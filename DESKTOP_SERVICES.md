@@ -673,9 +673,16 @@ chess-coach project.
 ### What runs where
 
 - `tail_bridge/chess_analysis.py` — single-pass Stockfish analyzer
-  (python-chess), a 1:1 port of chess-coach's metric definitions
-  (classification thresholds 50/200/500 cp; unforced blunder = blunder while
-  eval_before > −100cp and clock ≥ 10 s) and its full JSON output format.
+  (python-chess). JSON output format ported from chess-coach; move
+  classification **fixed 2026-08-25** to chess.com/lishess-style
+  win-probability drops (saturating logistic curve, bands 10/20/30
+  win-percentage-points, scaled ×1.5/×1.25/×1.0 for bullet/blitz/rapid)
+  — the original fixed 50/200/500 cp thresholds counted mate-in-2 →
+  mate-in-7 conversions as "blunders" (mate scores fold onto ±10000 cp).
+  Unforced blunder = blunder while mover win% > 40 (≈ eval_before > −100cp)
+  and clock ≥ the tier's scramble bar (10/20/45 s, matching the app's
+  `TimeControl.scrambleSec`). ACPL caps per-move loss at 1000 cp.
+  Tests: `tail_bridge/test_chess_analysis.py`.
 - SQLite registry `tail_bridge/data/chess_analysis.db` keyed by canonical
   game id (PGN `Link` header) — a game is never analysed twice; cached games
   return in ~0.01 s.

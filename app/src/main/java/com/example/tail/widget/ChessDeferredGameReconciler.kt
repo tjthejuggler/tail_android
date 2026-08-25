@@ -8,7 +8,7 @@ import com.example.tail.data.ChessComService
 /**
  * ════════════════════════════════════════════════════════════════════════
  *  Deferred game pipeline — classify & audit shared games whenever they
- *  become available, by the readiness state AT THE MOMENT THE GAME ENDED
+ *  become available, by the readiness state AT THE MOMENT THE GAME STARTED
  * ════════════════════════════════════════════════════════════════════════
  *
  * chess.com publishes a finished game to the two players' monthly archives
@@ -18,10 +18,11 @@ import com.example.tail.data.ChessComService
  * and whenever the share sheet opens.
  *
  * Classification is time-based, mirroring the live gate
- * [ChessPhase2Store.ratedPlayAuthorized] but evaluated at the game's END
- * time rather than "now":
+ * [ChessPhase2Store.ratedPlayAuthorized] but evaluated at the game's START
+ * time rather than "now" (user rule, 2026-08-25: a game that begins inside
+ * a valid window stays authorized even if it ends after the window expired):
  *
- *  - APPROVED      the latest readiness test at/before the game ended was
+ *  - APPROVED      the latest readiness test at/before the game started was
  *                  GREEN and still inside its 60-minute validity window,
  *                  and no Yellow/Red Phase 2 audit intervened → the full
  *                  Phase 2 audit runs, stamped at the game's end time so
@@ -85,29 +86,41 @@ object ChessDeferredGameReconciler {
     )
 
     /**
-     * Was RATED play authorized at the moment the game ended? PURE —
+     * Was RATED play authorized at the moment the game STARTED? PURE —
      * mirrors [ChessPhase2Store.ratedPlayAuthorized] with "now" replaced by
-     * [gameEndMs]:
-     *  - the latest test at/before [gameEndMs] was GREEN_LIGHT, and
-     *  - [gameEndMs] is inside that test's validity window, and
-     *  - every Phase 2 audit filed between the test and [gameEndMs] left
+     * [gameStartMs]:
+     *  - the latest test at/before [gameStartMs] was GREEN_LIGHT, and
+     *  - [gameStartMs] is inside that test's validity window, and
+     *  - every Phase 2 audit filed between the test and [gameStartMs] left
      *    rated play alive (CONTINUE_RATED).
      */
-    fun authorizedAtGameEnd(
-        tests: List<ChessReadinessEngine.ReadinessTest>,
-        audits: List<AuditStamp>,
-        gameEndMs: Long
-    ): Boolean {
-        val last = tests
-            .filter { it.timestamp <= gameEndMs }
-            .maxByOrNull { it.timestamp } ?: return false
-        if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return false
-        if (gameEndMs - last.timestamp >= ChessReadinessEngine.SESSION_VALIDITY_MS) return false
-        return audits.all {
-            it.timestamp < last.timestamp || it.timestamp > gameEndMs ||
-                it.outputState == ChessPhase2Engine.OutputState.CONTINUE_RATED.name
-        }
-    }
+   fun authorizedAtPlay(
+       tests: List<ChessReadinessEngine.ReadinessTest>,
+       audits: List<AuditStamp>,
+       gameStartMs: Long
+   ): Boolean {
+       val last = tests
+           .filter { it.timestamp <= gameStartMs }
+           .maxByOrNull { it.timestamp } ?: return false
+       if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return false
+       if (gameStartMs - last.timestamp >= ChessReadinessEngine.SESSION_VALIDITY_MS) return false
+       return audits.all {
+           it.timestamp < last.timestamp || it.timestamp > gameStartMs ||
+               it.outputState == ChessPhase2Engine.OutputState.CONTINUE_RATED.name
+       }
+   }
+
+   /**
+    * Best-effort game START in epoch millis: the PGN's UTC StartTime when
+    * chess.com published it, else end minus the time-control base clock.
+    */
+   fun gameStartMsOf(
+       game: ChessComGameDetail,
+       gameEndMs: Long
+   ): Long =
+       com.example.tail.data.pgnStartEpochSec(game.pgn)?.times(1000L)
+           ?: (gameEndMs -
+               (com.example.tail.data.estimateGameMinutes(game.timeControl) * 60_000).toLong())
 
     /**
      * Classifies a FETCHED game and, when it was authorized at play time,
@@ -157,12 +170,13 @@ object ChessDeferredGameReconciler {
         // choke point shared with the archive poller), so this classifier
         // only decides the audit outcome below.
         val tests = ChessReadinessStore.loadHistory(context)
-        val authorized = authorizedAtGameEnd(
+        val gameStartMs = gameStartMsOf(game, gameEndMs)
+        val authorized = authorizedAtPlay(
             tests = tests,
             audits = ChessPhase2Store.loadAudits(context).map {
                 AuditStamp(it.timestamp, it.outputState)
             },
-            gameEndMs = gameEndMs
+            gameStartMs = gameStartMs
         )
 
         val mapping = ChessGameAuditMapper.buildInput(
@@ -181,7 +195,7 @@ object ChessDeferredGameReconciler {
 
         if (!authorized) {
             val stateAtPlay = tests
-                .filter { it.timestamp <= gameEndMs }
+                .filter { it.timestamp <= gameStartMs }
                 .maxByOrNull { it.timestamp }?.state
             return GameOutcome.Unauthorized(playedAt = gameEndMs, stateAtPlay = stateAtPlay)
         }
@@ -258,16 +272,17 @@ object ChessDeferredGameReconciler {
         // Same authorization rule as v1 — a game outside a green window is
         // unapproved play, never an audit.
         val tests = ChessReadinessStore.loadHistory(context)
-        val authorized = authorizedAtGameEnd(
+        val gameStartMs = gameStartMsOf(game, gameEndMs)
+        val authorized = authorizedAtPlay(
             tests = tests,
             audits = ChessPhase2Store.loadAudits(context).map {
                 AuditStamp(it.timestamp, it.outputState)
             },
-            gameEndMs = gameEndMs
+            gameStartMs = gameStartMs
         )
         if (!authorized) {
             val stateAtPlay = tests
-                .filter { it.timestamp <= gameEndMs }
+                .filter { it.timestamp <= gameStartMs }
                 .maxByOrNull { it.timestamp }?.state
             return GameOutcome.Unauthorized(playedAt = gameEndMs, stateAtPlay = stateAtPlay)
         }
@@ -383,16 +398,17 @@ object ChessDeferredGameReconciler {
         // Same authorization rule as v1/v2 — a game outside a green window
         // is unapproved play, never an audit.
         val tests = ChessReadinessStore.loadHistory(context)
-        val authorized = authorizedAtGameEnd(
+        val gameStartMs = gameStartMsOf(game, gameEndMs)
+        val authorized = authorizedAtPlay(
             tests = tests,
             audits = ChessPhase2Store.loadAudits(context).map {
                 AuditStamp(it.timestamp, it.outputState)
             },
-            gameEndMs = gameEndMs
+            gameStartMs = gameStartMs
         )
         if (!authorized) {
             val stateAtPlay = tests
-                .filter { it.timestamp <= gameEndMs }
+                .filter { it.timestamp <= gameStartMs }
                 .maxByOrNull { it.timestamp }?.state
             return GameOutcome.Unauthorized(playedAt = gameEndMs, stateAtPlay = stateAtPlay)
         }
@@ -463,6 +479,10 @@ object ChessDeferredGameReconciler {
                 deltaE = ready.deltaE,
                 unforcedBlunders = analysis?.userStats?.unforcedBlunders,
                 blunderCount = analysis?.userStats?.blunders,
+                mistakeCount = analysis?.userStats?.mistakes,
+                inaccuracyCount = analysis?.userStats?.inaccuracies,
+                analysisAcpl = analysis?.userStats?.acpl,
+                analysisMoves = analysis?.userStats?.moves,
                 accuracyHistory = ChessPhase2V2Store.accuracyHistory(context, tc),
                 readinessCcrs = ccrs
             ),
