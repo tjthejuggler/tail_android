@@ -93,8 +93,10 @@ class ChessReadinessV2EngineTest {
     }
 
     @Test
-    fun autonomic_paradoxicalHrvSpike_isTier3() {
-        // HRV spiking ABOVE baseline is also penalized (overreaching).
+    fun autonomic_largeHrvSpike_isTier2Only_neverLockout() {
+        // A large HRV spike ABOVE baseline cautions (Tier 2) but never locks
+        // out — rising HRV is usually recovery, and the "paradoxical surge"
+        // evidence is too weak to justify a lockout.
         val history = (0..30).map {
             val d = today.minusDays(it.toLong())
             val rmssd = if (it <= 6) 200 else 100
@@ -102,7 +104,17 @@ class ChessReadinessV2EngineTest {
         }
         val e = ChessReadinessV2Engine.evaluateAutonomic(history, today)
         assertTrue("z=${e.zLnRmssd}", e.zLnRmssd!! >= 1.5)
-        assertEquals(V2Tier.TIER3_LOCKOUT, e.tier)
+        assertEquals(V2Tier.TIER2_RESTRICTED, e.tier)
+    }
+
+    @Test
+    fun autonomic_moderateHrvElevation_isInformational() {
+        // +0.5…+1.5 elevation (e.g. HRV returning to a pre-injury level the
+        // rolling μ30 no longer represents) does NOT gate at all.
+        val t = ChessReadinessV2Engine::autonomicTier
+        assertEquals(V2Tier.TIER1_PEAK, t(0.6, null))
+        assertEquals(V2Tier.TIER1_PEAK, t(1.0, null))
+        assertEquals(V2Tier.TIER1_PEAK, t(1.49, null))
     }
 
     @Test
@@ -142,22 +154,27 @@ class ChessReadinessV2EngineTest {
     @Test
     fun autonomicTier_exactBandBoundaries() {
         val t = ChessReadinessV2Engine::autonomicTier
-        // lnRMSSD two-sided bands.
+        // lnRMSSD asymmetric bands: suppression gates, elevation is
+        // informational up to +1.5 and caps at Tier 2.
         assertEquals(V2Tier.TIER1_PEAK, t(0.0, null))
         assertEquals(V2Tier.TIER1_PEAK, t(-0.5, null))
         assertEquals(V2Tier.TIER1_PEAK, t(0.5, null))
+        assertEquals(V2Tier.TIER1_PEAK, t(0.51, null))
+        assertEquals(V2Tier.TIER1_PEAK, t(1.49, null))
         assertEquals(V2Tier.TIER2_RESTRICTED, t(-0.51, null))
-        assertEquals(V2Tier.TIER2_RESTRICTED, t(0.51, null))
+        assertEquals(V2Tier.TIER2_RESTRICTED, t(1.5, null))
+        assertEquals(V2Tier.TIER2_RESTRICTED, t(2.0, null))
         assertEquals(V2Tier.TIER3_LOCKOUT, t(-1.5, null))
-        assertEquals(V2Tier.TIER3_LOCKOUT, t(1.5, null))
         // RHR one-sided bands.
         assertEquals(V2Tier.TIER1_PEAK, t(null, 0.5))
         assertEquals(V2Tier.TIER2_RESTRICTED, t(null, 0.51))
         assertEquals(V2Tier.TIER3_LOCKOUT, t(null, 1.5))
         assertEquals(V2Tier.TIER1_PEAK, t(null, -3.0))
-        // Worst-of across the two metrics.
+        // Worst-of across the two metrics (elevation 0.6 no longer gates,
+        // so the Tier-2 worst-of case uses suppression).
         assertEquals(V2Tier.TIER3_LOCKOUT, t(0.0, 2.0))
-        assertEquals(V2Tier.TIER2_RESTRICTED, t(0.6, -1.0))
+        assertEquals(V2Tier.TIER2_RESTRICTED, t(-0.6, -1.0))
+        assertEquals(V2Tier.TIER1_PEAK, t(0.6, -1.0))
     }
 
     // ── PVT-B module ───────────────────────────────────────────────────────

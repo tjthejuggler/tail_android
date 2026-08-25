@@ -17,9 +17,12 @@ import kotlin.math.sqrt
  *      lnRMSSD (natural log of the nightly RMSSD in ms) and resting heart
  *      rate, each judged as an intra-individual Z-score: a 7-day EWMA
  *      "acute" value vs the rolling 30-day baseline (μ30, σ30). lnRMSSD is
- *      penalized in BOTH directions — suppression (sympathetic dominance)
- *      and paradoxical spikes (parasympathetic overreaching / maladaptive
- *      exhaustion). RHR is penalized only when ELEVATED.
+ *      gated ASYMMETRICALLY: suppression gates (−0.5 → Tier 2, ≤ −1.5 →
+ *      Tier 3), while ELEVATION is informational up to +1.5 and caps at
+ *      Tier 2 — a rising HRV is usually recovery (e.g. returning to a
+ *      pre-injury level the rolling μ30 no longer represents), and only
+ *      large spikes (the weakly-evidenced pre-illness "paradoxical surge")
+ *      warrant caution, never a lockout. RHR gates only when ELEVATED.
  *
  *  Module 2 — CNS VIGILANCE (3-minute PVT-B)
  *      Lapse = any response ≥ 355 ms (the empirically re-calibrated 10-min
@@ -35,11 +38,13 @@ import kotlin.math.sqrt
  *
  *  GATING MATRIX (immutable, logical OR down the tiers — the WORST module
  *  wins):
- *      Tier 1 PEAK:   |Z_lnRMSSD| ≤ 0.5  AND  Z_RHR ≤ +0.5
+ *      Tier 1 PEAK:   Z_lnRMSSD ≥ −0.5 (elevation < +1.5 informational)
+ *                     AND Z_RHR ≤ +0.5
  *                     AND lapses ≤ 1 AND false starts ≤ 1
  *                     AND ACWR ≤ 1.3 (low ACWR is informational only)
- *      Tier 3 LOCKOUT: Z_lnRMSSD ≤ −1.5 OR ≥ +1.5 OR Z_RHR ≥ +1.5
+ *      Tier 3 LOCKOUT: Z_lnRMSSD ≤ −1.5 OR Z_RHR ≥ +1.5
  *                      OR lapses ≥ 5 OR false starts ≥ 4 OR ACWR > 1.5
+ *                      (a lnRMSSD SPIKE ≥ +1.5 is Tier 2 only — never lockout)
  *      Tier 2 RESTRICTED: everything else.
  *
  *  Tier 1 → GREEN (rated play), Tier 2 → YELLOW (unrated/study only),
@@ -245,8 +250,12 @@ object ChessReadinessV2Engine {
     }
 
     /**
-     * Autonomic tier per the matrix. lnRMSSD is two-sided (|Z| bands),
-     * RHR one-sided (only +Z bands); NO_DATA metrics never gate.
+     * Autonomic tier per the matrix. lnRMSSD is ASYMMETRIC: suppression
+     * gates (−0.5 → Tier 2, ≤ −1.5 → Tier 3) but elevation is
+     * informational up to +1.5 and caps at Tier 2 — HRV rising back to a
+     * pre-injury baseline must not gate play, while a large spike (the
+     * weakly-evidenced pre-illness "paradoxical surge") still cautions.
+     * RHR is one-sided (only +Z gates); NO_DATA metrics never gate.
      */
     fun autonomicTier(zLnRmssd: Double?, zRhr: Double?): V2Tier {
         var tier = V2Tier.TIER1_PEAK
@@ -254,9 +263,10 @@ object ChessReadinessV2Engine {
             val z = zLnRmssd
             tier = tier.worstOf(
                 when {
-                    z <= -1.5 || z >= 1.5 -> V2Tier.TIER3_LOCKOUT
-                    z < -0.5 || z > 0.5 -> V2Tier.TIER2_RESTRICTED
-                    else -> V2Tier.TIER1_PEAK
+                    z <= -1.5 -> V2Tier.TIER3_LOCKOUT      // severe suppression
+                    z < -0.5 -> V2Tier.TIER2_RESTRICTED     // moderate suppression
+                    z >= 1.5 -> V2Tier.TIER2_RESTRICTED     // large spike: caution, never lockout
+                    else -> V2Tier.TIER1_PEAK               // −0.5…+1.5 (elevation informational)
                 }
             )
         }
@@ -562,9 +572,9 @@ object ChessReadinessV2Engine {
                 reasons.add(
                     when {
                         z <= -1.5 -> "lnRMSSD ${fmt(z)} — severe sympathetic suppression"
-                        z >= 1.5 -> "lnRMSSD ${fmt(z)} — paradoxical spike (overreaching)"
                         z < -0.5 -> "lnRMSSD ${fmt(z)} — moderate HRV suppression"
-                        z > 0.5 -> "lnRMSSD ${fmt(z)} — HRV above SWC band"
+                        z >= 1.5 -> "lnRMSSD ${fmt(z)} — large spike (caution: Tier 2)"
+                        z > 0.5 -> "lnRMSSD ${fmt(z)} — above SWC band (informational)"
                         else -> "lnRMSSD ${fmt(z)} — inside SWC band"
                     }
                 )

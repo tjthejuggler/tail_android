@@ -137,6 +137,20 @@ object ChessReadinessSystemChanges {
                 "pre-game gate telemetry (verdict tiers, PVT-B response time / lapses / false " +
                 "starts over time, passive-module averages) and the Phase 2 v2 post-game audit " +
                 "(verdict distribution, accuracy, Elo delta, strain, session minutes)."
+        ),
+        ReadinessSystemChange(
+            at("2026-08-25T08:40:00Z"),
+            "V2 autonomic gate made asymmetric — HRV elevation no longer restricts",
+            "The lnRMSSD Z-score used to gate two-sidedly (|Z| bands), which restricted rated " +
+                "play when HRV ran ABOVE the personal baseline. That punished recovery: during " +
+                "injury comeback the rolling 30-day baseline is dragged down by injury-era " +
+                "readings, so HRV merely returning to its pre-injury level registered as a " +
+                "deviation (a +0.53σ trigger on 25 Aug 2026 came from exactly this). The gate " +
+                "is now asymmetric, matching the evidence: suppression still gates (−0.5σ → " +
+                "Tier 2, ≤ −1.5σ → Tier 3), while elevation is informational up to +1.5σ and " +
+                "a large spike (≥ +1.5σ, the weakly-evidenced pre-illness \"paradoxical " +
+                "surge\" pattern) caps at Tier 2 — never a lockout. Same philosophy as the " +
+                "one-sided RHR and ACWR rules: only gate on the side the science supports."
         )
     )
 }
