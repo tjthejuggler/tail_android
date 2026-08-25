@@ -143,7 +143,7 @@ private fun V2Section(
     startExpanded: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    var expanded by remember(title) { mutableStateOf(startExpanded) }
+    var expanded by rememberSectionExpansion("chess", title, startExpanded)
     Column(
         modifier = Modifier
             .fillMaxWidth()

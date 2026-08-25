@@ -15,6 +15,7 @@ import com.example.tail.data.ImportResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.AlertDialog
@@ -309,12 +311,12 @@ fun SettingsScreen(
             }
 
 
-            // ── Integrations ───────────────────────────────────────────────────
+            // ── Chess ──────────────────────────────────────────────────────────
             item {
                 SettingsCategory(
-                    title = "Integrations",
-                    summary = "Chess.com · chess readiness · GitHub · Garmin · Tail Bridge",
-                    icon = Icons.Filled.Extension,
+                    title = "Chess",
+                    summary = "Chess.com sync · chess readiness system",
+                    icon = Icons.Filled.Psychology,
                     accent = BorderOrange
                 ) {
                     ChessComSettingsSection(
@@ -327,7 +329,17 @@ fun SettingsScreen(
                         viewModel = viewModel,
                         settings = settings
                     )
-                    SettingsSubSectionDivider()
+                }
+            }
+
+            // ── Integrations ───────────────────────────────────────────────────
+            item {
+                SettingsCategory(
+                    title = "Integrations",
+                    summary = "GitHub · Garmin · Tail Bridge",
+                    icon = Icons.Filled.Extension,
+                    accent = BorderGreen
+                ) {
                     GithubSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     GarminSettingsSection(viewModel = viewModel, settings = settings, context = context)
@@ -342,7 +354,7 @@ fun SettingsScreen(
                     title = "Voice & Input",
                     summary = "Voice trigger · voice note dictation",
                     icon = Icons.Filled.Mic,
-                    accent = BorderGreen
+                    accent = BorderBlue
                 ) {
                     VoiceTriggerSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
@@ -356,7 +368,7 @@ fun SettingsScreen(
                     title = "Overlays & Tools",
                     summary = "Stats overlay · floating bubble · debug mode",
                     icon = Icons.Filled.Layers,
-                    accent = BorderBlue
+                    accent = BorderPink
                 ) {
                     StatsOverlaySettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
@@ -378,7 +390,7 @@ fun SettingsScreen(
                     title = "Wallpaper",
                     summary = "Points-driven wallpaper from an image folder",
                     icon = Icons.Filled.Wallpaper,
-                    accent = BorderPink
+                    accent = BorderYellow
                 ) {
                     WallpaperSettingsSection(
                         context = context,
@@ -395,7 +407,7 @@ fun SettingsScreen(
                     title = "Habit Features",
                     summary = "AI icons · meal engine · AI assistant · vision memory · advice banner",
                     icon = Icons.Filled.AutoAwesome,
-                    accent = BorderYellow
+                    accent = BorderWhite
                 ) {
                     AiIconSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
@@ -415,7 +427,7 @@ fun SettingsScreen(
                     title = "Backup & Recovery",
                     summary = "Backups · Google Drive · automatic snapshots",
                     icon = Icons.Filled.Backup,
-                    accent = BorderGlass
+                    accent = BorderWhiteRed
                 ) {
                     BackupSettingsSection(
                         backupManager = backupManager,
@@ -447,7 +459,7 @@ fun SettingsScreen(
  * Collapsed by default — tapping the header expands it with an animated
  * reveal and a rotating chevron. Purely presentational grouping: the
  * [content] lambda is only composed while expanded, so collapsed categories
- * cost nothing to render.
+ * cost nothing to render. Expansion state persists across app launches.
  */
 @Composable
 private fun SettingsCategory(
@@ -457,7 +469,7 @@ private fun SettingsCategory(
     accent: Color,
     content: @Composable () -> Unit
 ) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSectionExpansion("settings", title, false)
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
         animationSpec = spring(
@@ -468,22 +480,49 @@ private fun SettingsCategory(
     )
 
     // Section tint — each category carries one accent from the app color
-    // system (Red → Orange → Green → Blue → Pink → Yellow → Glass), applied
-    // to the card surface, border and header icon.
+    // system (Red → Orange → Green → Blue → Pink → Yellow → Glass → White →
+    // White+Red), applied to the card surface, border and header icon.
+    // White is the tier beyond Glass; White+Red ("post-white") renders a
+    // mostly-white card with subtle red accents and thin red hairline borders.
     val dark = isSystemInDarkTheme()
-    val cardColor = lerp(
-        MaterialTheme.colorScheme.surfaceVariant,
-        accent,
-        if (dark) 0.20f else 0.14f
-    )
-    val borderColor = accent.copy(alpha = if (dark) 0.60f else 0.50f)
-    // Glass is near-white — fall back to a theme gray so the icon stays visible.
-    val iconTint = if (accent == BorderGlass) MaterialTheme.colorScheme.outline else accent
+    val whiteTier = accent == BorderWhite
+    val postWhite = accent == BorderWhiteRed
+    val cardColor = when {
+        postWhite -> lerp(
+            MaterialTheme.colorScheme.surfaceVariant,
+            Color.White,
+            if (dark) 0.10f else 0.24f
+        )
+        else -> lerp(
+            MaterialTheme.colorScheme.surfaceVariant,
+            accent,
+            if (dark) 0.20f else 0.14f
+        )
+    }
+    val border = when {
+        // Post-white: thin, quietly red hairline.
+        postWhite -> BorderStroke(0.75.dp, BorderRed.copy(alpha = if (dark) 0.45f else 0.35f))
+        whiteTier -> BorderStroke(1.dp, Color.White.copy(alpha = if (dark) 0.55f else 0.70f))
+        else -> BorderStroke(1.dp, accent.copy(alpha = if (dark) 0.60f else 0.50f))
+    }
+    val iconTint = when {
+        postWhite -> BorderRed.copy(alpha = 0.90f)
+        whiteTier && dark -> BorderWhite
+        whiteTier -> MaterialTheme.colorScheme.outline
+        // Glass is near-white — fall back to a theme gray so the icon stays visible.
+        accent == BorderGlass -> MaterialTheme.colorScheme.outline
+        else -> accent
+    }
+    val iconBg = when {
+        postWhite -> BorderRed.copy(alpha = if (dark) 0.16f else 0.10f)
+        whiteTier -> Color.White.copy(alpha = if (dark) 0.22f else 0.65f)
+        else -> accent.copy(alpha = if (dark) 0.30f else 0.18f)
+    }
 
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = cardColor,
-        border = BorderStroke(1.dp, borderColor),
+        border = border,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -506,7 +545,15 @@ private fun SettingsCategory(
                     modifier = Modifier
                         .size(38.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(accent.copy(alpha = if (dark) 0.30f else 0.18f)),
+                        .background(iconBg)
+                        .then(
+                            // Post-white: echo the card's thin red hairline on the icon chip.
+                            if (postWhite) Modifier.border(
+                                width = 0.75.dp,
+                                color = BorderRed.copy(alpha = if (dark) 0.35f else 0.30f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) else Modifier
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(

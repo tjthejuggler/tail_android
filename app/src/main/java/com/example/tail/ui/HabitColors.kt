@@ -20,7 +20,11 @@ val BorderGreen  = Color(0xFF33AA55)  // vivid green
 val BorderBlue   = Color(0xFF3366DD)  // vivid blue
 val BorderPink   = Color(0xFFDD44AA)  // vivid magenta-pink
 val BorderYellow = Color(0xFFDDCC00)  // vivid yellow
-val BorderGlass  = Color(0xFFD0D0E0)  // same as Glass — final tier
+val BorderGlass  = Color(0xFFD0D0E0)  // same as Glass
+val BorderWhite  = Color(0xFFFFFFFF)  // pure white — the tier beyond Glass
+// Post-white tier marker: renders as a mostly-white card with subtle red
+// accents and thin red hairline borders (see SettingsCategory).
+val BorderWhiteRed = Color(0xFFFFF5F3) // near-white with the faintest red whisper
 
 /** Background + optional color-tier border(s) for a habit button.
  *
