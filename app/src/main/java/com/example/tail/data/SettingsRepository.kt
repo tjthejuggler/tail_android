@@ -31,6 +31,9 @@ private val KEY_ACTIVE_SCREEN_INDEX = intPreferencesKey("active_screen_index")
 private val KEY_TEXT_INPUT_HABITS = stringSetPreferencesKey("text_input_habits")
 private val KEY_TEXT_INPUT_OPTIONS_HABITS = stringSetPreferencesKey("text_input_options_habits")
 private val KEY_SHARABLE_TEXT_HABITS = stringSetPreferencesKey("sharable_text_habits")
+// Inuit (trivia trainer) integration: master switch + text habits shared with it
+private val KEY_INUIT_INTEGRATION_ENABLED = booleanPreferencesKey("inuit_integration_enabled")
+private val KEY_INUIT_TEXT_HABITS = stringSetPreferencesKey("inuit_text_habits")
 // Stored as "habitName\x00uri|||habitName\x00uri" pairs
 private val KEY_TEXT_INPUT_FILE_URIS = stringPreferencesKey("text_input_file_uris")
 // Stored as "habitName\x00iconName|||habitName\x00iconName" pairs
@@ -928,6 +931,8 @@ class SettingsRepository(private val context: Context) {
             textInputHabits = prefs[KEY_TEXT_INPUT_HABITS] ?: emptySet(),
             textInputOptionsHabits = prefs[KEY_TEXT_INPUT_OPTIONS_HABITS] ?: emptySet(),
             sharableTextHabits = prefs[KEY_SHARABLE_TEXT_HABITS] ?: emptySet(),
+            inuitIntegrationEnabled = prefs[KEY_INUIT_INTEGRATION_ENABLED] ?: false,
+            inuitTextHabits = prefs[KEY_INUIT_TEXT_HABITS] ?: emptySet(),
             textInputFileUris = decodeFileUriMap(textInputFileUrisRaw),
             habitIcons = decodeFileUriMap(habitIconsRaw),
             datedEntryHabits = prefs[KEY_DATED_ENTRY_HABITS] ?: emptySet(),
@@ -1151,6 +1156,20 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveSharableTextHabits(habits: Set<String>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_SHARABLE_TEXT_HABITS] = habits
+        }
+    }
+
+    /** Saves the master switch for the Inuit text-habit sharing integration. */
+    suspend fun saveInuitIntegrationEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_INUIT_INTEGRATION_ENABLED] = enabled
+        }
+    }
+
+    /** Saves the set of text-input habits whose recent entries Inuit may read. */
+    suspend fun saveInuitTextHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_INUIT_TEXT_HABITS] = habits
         }
     }
 

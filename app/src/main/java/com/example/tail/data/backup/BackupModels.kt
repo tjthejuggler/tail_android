@@ -139,6 +139,8 @@ data class SettingsSection(
 
     // ── Fields added in the 2026-08 completeness audit ───────────────────
     val sharableTextHabits: List<String> = emptyList(),
+    val inuitIntegrationEnabled: Boolean = false,
+    val inuitTextHabits: List<String> = emptyList(),
     val secondaryValueHabits: List<String> = emptyList(),
     val secondaryValueFallbackHabits: List<String> = emptyList(),
     val valueDisplayLabels: Map<String, Map<String, String>> = emptyMap(),

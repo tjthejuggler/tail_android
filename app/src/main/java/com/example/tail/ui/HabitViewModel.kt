@@ -5642,6 +5642,7 @@ class HabitViewModel(
                     textInputHabits = settings.textInputHabits.replaceElement(oldName, newName),
                     textInputOptionsHabits = settings.textInputOptionsHabits.replaceElement(oldName, newName),
                     sharableTextHabits = settings.sharableTextHabits.replaceElement(oldName, newName),
+                    inuitTextHabits = settings.inuitTextHabits.replaceElement(oldName, newName),
                     textInputFileUris = settings.textInputFileUris.replaceKey(oldName, newName),
                     // renamedHabitIcons re-keys an existing override AND materialises the
                     // hardcoded HABIT_ICON default (keyed by the original name) as an
@@ -5717,6 +5718,7 @@ class HabitViewModel(
                 settingsRepo.saveTextInputHabits(newSettings.textInputHabits)
                 settingsRepo.saveTextInputOptionsHabits(newSettings.textInputOptionsHabits)
                 settingsRepo.saveSharableTextHabits(newSettings.sharableTextHabits)
+                settingsRepo.saveInuitTextHabits(newSettings.inuitTextHabits)
                 settingsRepo.saveTextInputFileUris(newSettings.textInputFileUris)
                 settingsRepo.saveHabitIcons(newSettings.habitIcons)
                 settingsRepo.saveDatedEntryHabits(newSettings.datedEntryHabits)
@@ -6205,6 +6207,11 @@ class HabitViewModel(
                 sharable.remove(habitName)
                 settingsRepo.saveSharableTextHabits(sharable)
                 _settings.value = _settings.value.copy(sharableTextHabits = sharable)
+                // Also remove from the Inuit sharing set — it requires text input too
+                val inuit = _settings.value.inuitTextHabits.toMutableSet()
+                inuit.remove(habitName)
+                settingsRepo.saveInuitTextHabits(inuit)
+                _settings.value = _settings.value.copy(inuitTextHabits = inuit)
             } else {
                 current.add(habitName)
             }
@@ -6238,6 +6245,31 @@ class HabitViewModel(
             if (habitName in current) current.remove(habitName) else current.add(habitName)
             settingsRepo.saveSharableTextHabits(current)
             _settings.value = _settings.value.copy(sharableTextHabits = current)
+        }
+    }
+
+    /**
+     * Master switch for the Inuit integration. When off, the ContentProvider
+     * text-habit endpoints expose nothing even if habits remain selected.
+     */
+    fun setInuitIntegrationEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepo.saveInuitIntegrationEnabled(enabled)
+            _settings.value = _settings.value.copy(inuitIntegrationEnabled = enabled)
+        }
+    }
+
+    /**
+     * Toggles whether [habitName]'s recent text entries are shared with the
+     * Inuit trivia trainer (bounded: last 14 days, ≤3 entries, 300 chars —
+     * see InuitTextSharing). Only meaningful for text-input habits.
+     */
+    fun toggleInuitTextHabit(habitName: String) {
+        viewModelScope.launch {
+            val current = _settings.value.inuitTextHabits.toMutableSet()
+            if (habitName in current) current.remove(habitName) else current.add(habitName)
+            settingsRepo.saveInuitTextHabits(current)
+            _settings.value = _settings.value.copy(inuitTextHabits = current)
         }
     }
 

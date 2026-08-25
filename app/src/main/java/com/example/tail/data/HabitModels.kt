@@ -890,6 +890,23 @@ data class AppSettings(
     val sharableTextHabits: Set<String> = emptySet(),
 
     /**
+     * Master switch for the Inuit (trivia/intuition trainer) integration.
+     * When off, the HabitsContentProvider text-habit endpoints return nothing,
+     * regardless of which habits are selected in [inuitTextHabits].
+     */
+    val inuitIntegrationEnabled: Boolean = false,
+
+    /**
+     * Text-input habits whose RECENT entries Inuit may read as light
+     * inspiration for question generation (only when the habit is also in
+     * [textInputHabits] and [inuitIntegrationEnabled] is on). Sharing is
+     * bounded: last 14 days, max 3 entries per habit, 300 chars per entry
+     * (see ipc/InuitTextSharing.kt). Inuit still picks per-net which of
+     * these habits it actually uses.
+     */
+    val inuitTextHabits: Set<String> = emptySet(),
+
+    /**
      * Maps habit name → SAF URI string for the per-habit text-log JSON file.
      * Format of that file: { "2023-07-07 10:00:17": "some text", ... }
      */

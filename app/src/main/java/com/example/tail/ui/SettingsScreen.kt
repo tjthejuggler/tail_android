@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -336,7 +337,7 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Integrations",
-                    summary = "GitHub · Garmin · Tail Bridge",
+                    summary = "GitHub · Garmin · Tail Bridge · Inuit",
                     icon = Icons.Filled.Extension,
                     accent = BorderGreen
                 ) {
@@ -345,6 +346,8 @@ fun SettingsScreen(
                     GarminSettingsSection(viewModel = viewModel, settings = settings, context = context)
                     SettingsSubSectionDivider()
                     BridgeSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    InuitSettingsSection(viewModel = viewModel, settings = settings)
                 }
             }
 
@@ -1132,6 +1135,93 @@ private fun GithubSettingsSection(
                     fontSize = 11.sp,
                     color = Color(0xFF66BB6A)
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Inuit Integration settings section — share selected text-input habits'
+ * RECENT entries with the Inuit trivia/intuition trainer (same keystore).
+ * Inuit uses them only as light inspiration for question generation, and
+ * picks per-net which shared habits it actually reads (configured in Inuit).
+ */
+@Composable
+private fun InuitSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    var enabled by remember(settings.inuitIntegrationEnabled) {
+        mutableStateOf(settings.inuitIntegrationEnabled)
+    }
+
+    Column {
+        Text("🧭 Inuit Integration", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Let the Inuit trivia trainer read the most recent entries of " +
+                   "selected text-input habits, as light inspiration for its " +
+                   "questions. Bounded sharing: last 14 days, at most 3 entries " +
+                   "per habit, 300 characters each — never the full history. " +
+                   "Which habits each Inuit net uses is configured inside Inuit.",
+            fontSize = 11.sp,
+            color = Color(0xFF888888)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Share text habits with Inuit", fontSize = 14.sp)
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    viewModel.setInuitIntegrationEnabled(it)
+                }
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            // Only text-input habits with a configured log file can be shared.
+            val eligible = settings.textInputHabits
+                .filter { it in settings.textInputFileUris }
+                .sorted()
+            if (eligible.isEmpty()) {
+                Text(
+                    text = "No text-input habits with a log file yet. Enable " +
+                           "\"Text input\" for a habit and pick its log file first.",
+                    fontSize = 11.sp,
+                    color = Color(0xFF888888)
+                )
+            } else {
+                Text("Shared habits", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                eligible.forEach { habit ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.toggleInuitTextHabit(habit) },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = habit in settings.inuitTextHabits,
+                            onCheckedChange = { viewModel.toggleInuitTextHabit(habit) }
+                        )
+                        Text(habit, fontSize = 13.sp)
+                    }
+                }
+                val sharedCount = eligible.count { it in settings.inuitTextHabits }
+                if (sharedCount > 0) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "$sharedCount habit(s) shared. Inuit sees only their " +
+                               "most recent entries.",
+                        fontSize = 11.sp,
+                        color = Color(0xFF66BB6A)
+                    )
+                }
             }
         }
     }

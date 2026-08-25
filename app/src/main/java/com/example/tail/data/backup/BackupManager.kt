@@ -795,6 +795,8 @@ class BackupManager(
 
         // ── Fields added in the 2026-08 completeness audit ───────────────
         settingsRepo.saveSharableTextHabits(s.sharableTextHabits.toSet())
+        settingsRepo.saveInuitIntegrationEnabled(s.inuitIntegrationEnabled)
+        settingsRepo.saveInuitTextHabits(s.inuitTextHabits.toSet())
         settingsRepo.saveSecondaryValueHabits(s.secondaryValueHabits.toSet())
         settingsRepo.saveSecondaryValueFallbackHabits(s.secondaryValueFallbackHabits.toSet())
         settingsRepo.saveValueDisplayLabels(s.valueDisplayLabels)
@@ -1174,6 +1176,8 @@ class BackupManager(
 
         // ── Fields added in the 2026-08 completeness audit ───────────────
         sharableTextHabits = s.sharableTextHabits.toList(),
+        inuitIntegrationEnabled = s.inuitIntegrationEnabled,
+        inuitTextHabits = s.inuitTextHabits.toList(),
         secondaryValueHabits = s.secondaryValueHabits.toList(),
         secondaryValueFallbackHabits = s.secondaryValueFallbackHabits.toList(),
         valueDisplayLabels = s.valueDisplayLabels,
