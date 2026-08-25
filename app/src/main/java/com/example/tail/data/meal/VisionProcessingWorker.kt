@@ -92,14 +92,29 @@ class VisionProcessingWorker(
         val settings = try {
             settingsRepo.settingsFlow.first()
         } catch (e: Exception) {
+            QcDiag.error("WORKER", "pass ABORTED: settings load FAILED — Result.retry()", e)
             Log.e(TAG, "Failed to load settings", e)
             return Result.retry()
         }
+        QcDiag.log(
+            "WORKER",
+            "pass start (runAttempt=$runAttemptCount): ${QcDiag.routingSnapshot(settings)}"
+        )
+        QcDiag.log("WORKER", QcDiag.mismatchHints(settings))
 
         // Check if meal engine is configured
         if (!settings.mealEnabled || settings.mealApiKey.isBlank() ||
             settings.mealBaseUrl.isBlank() || settings.mealModel.isBlank()
         ) {
+            QcDiag.warn(
+                "WORKER",
+                "SKIP whole pass: meal engine not configured — ${queueRepo.pendingCount()} " +
+                    "item(s) stay PENDING (no review, no toast). " +
+                    "mealEnabled=${settings.mealEnabled} " +
+                    "baseUrlSet=${settings.mealBaseUrl.isNotBlank()} " +
+                    "apiKeySet=${settings.mealApiKey.isNotBlank()} " +
+                    "modelSet=${settings.mealModel.isNotBlank()}"
+            )
             Log.w(TAG, "Meal engine not configured — skipping ${queueRepo.pendingCount()} items")
             return Result.success()
         }
@@ -114,15 +129,26 @@ class VisionProcessingWorker(
         // Single camera-eligible habit ⇒ every untargeted capture is
         // unambiguously for it (see deterministic meal routing in the loop).
         val singleCameraHabit = VisionHabitExecutor.cameraEligibleHabits(settings).singleOrNull()
+        QcDiag.log(
+            "WORKER",
+            "singleCameraHabit=${singleCameraHabit ?: "NULL (no deterministic default at worker level)"}"
+        )
 
         // Recover items orphaned in PROCESSING by a process death mid-run
         // (only one pass runs at a time, so any PROCESSING item here is
         // stale) and clean up old completed/failed entries.
-        queueRepo.requeueStaleProcessing()
+        val requeuedCount = queueRepo.requeueStaleProcessing()
+        if (requeuedCount > 0) {
+            QcDiag.warn(
+                "WORKER",
+                "requeued $requeuedCount stale PROCESSING item(s) (orphaned by process death)"
+            )
+        }
         queueRepo.cleanupOldItems()
 
         // Process all pending items
         val pending = queueRepo.pendingItems()
+        QcDiag.log("WORKER", "processing ${pending.size} pending item(s)")
         Log.i(TAG, "Processing ${pending.size} pending vision items")
 
         var processed = 0
@@ -137,7 +163,19 @@ class VisionProcessingWorker(
 
             try {
                 val imageFile = File(appContext.filesDir, item.imagePath)
+                QcDiag.log(
+                    "ITEM",
+                    "item=${QcDiag.short(item.id)} claimed: habitId=${item.habitId ?: "NULL"} " +
+                        "attach=${QcDiag.short(item.attachToMealLogId)} retry=${item.retryCount} " +
+                        "ageMs=${System.currentTimeMillis() - item.timestamp} " +
+                        "image=${item.imagePath} exists=${imageFile.exists()} " +
+                        "bytes=${if (imageFile.exists()) imageFile.length() else -1}"
+                )
                 if (!imageFile.exists()) {
+                    QcDiag.error(
+                        "ITEM",
+                        "item=${QcDiag.short(item.id)} IMAGE MISSING at ${item.imagePath} → review"
+                    )
                     Log.e(TAG, "Image file not found: ${item.imagePath}")
                     failOrReview(queueRepo, item.id, "Image file not found")
                     failed++
@@ -159,8 +197,27 @@ class VisionProcessingWorker(
                 } else {
                     singleCameraHabit?.takeIf { settings.mealHabits.contains(it) }
                 }
+                QcDiag.log(
+                    "ROUTE",
+                    "item=${QcDiag.short(item.id)} forcedMealHabit=${forcedMealHabit ?: "NULL"} " +
+                        "(itemHabitId=${item.habitId ?: "null"} " +
+                        "itemHabitInMealHabits=${item.habitId?.let {
+                            settings.mealHabits.contains(it)
+                        } ?: "n/a"} " +
+                        "singleCameraHabit=${singleCameraHabit ?: "null"} " +
+                        "singleInMealHabits=${singleCameraHabit?.let {
+                            settings.mealHabits.contains(it)
+                        } ?: "n/a"} " +
+                        "mealHabits=${settings.mealHabits.toList()})"
+                )
 
+                val llmStart = System.currentTimeMillis()
                 val result = if (forcedMealHabit != null) {
+                    QcDiag.log(
+                        "LLM",
+                        "item=${QcDiag.short(item.id)} DETERMINISTIC meal pipeline for " +
+                            "'$forcedMealHabit' (no habit guessing)"
+                    )
                     Log.i(TAG, "Item ${item.id}: deterministic meal pipeline for '$forcedMealHabit'")
                     visionService.processImage(imageFile, config)
                 } else {
@@ -169,11 +226,37 @@ class VisionProcessingWorker(
                     // in the background queue too.
                     val memoryPrompt = memoryRepo.buildMemoryPrompt().ifBlank { null }
                     val habitPrompt = VisionHabitExecutor.buildHabitPrompt(settings).ifBlank { null }
+                    QcDiag.warn(
+                        "LLM",
+                        "item=${QcDiag.short(item.id)} CLASSIFICATION pipeline (habit guessing) — " +
+                            "memoryPrompt=${memoryPrompt != null} " +
+                            "habitPrompt=${habitPrompt != null}(${habitPrompt?.length ?: 0} chars)"
+                    )
                     visionService.processImage(imageFile, config, memoryPrompt, habitPrompt)
                 }
+                QcDiag.log(
+                    "LLM",
+                    "item=${QcDiag.short(item.id)} vision result in " +
+                        "${System.currentTimeMillis() - llmStart}ms: " +
+                        "classification=${result?.classification} " +
+                        "food=${result?.foodData?.let {
+                            "${it.title}/${it.estimatedCalories}cal"
+                        } ?: "none"} " +
+                        "habitAction=${result?.habitAction?.let { ha ->
+                            "${ha.habitName}" + (ha.subtypeName?.let { s -> "/$s" } ?: "") +
+                                "x${ha.amount}"
+                        } ?: "none"} " +
+                        "confidence=${result?.confidenceScore} " +
+                        "notes=${result?.processingNotes?.take(150) ?: ""}"
+                )
                 if (result == null) {
                     val willRetry = failOrReview(queueRepo, item.id, "Vision service returned null")
                     failed++
+                    QcDiag.warn(
+                        "LLM",
+                        "item=${QcDiag.short(item.id)} vision returned NULL " +
+                            "(network failure?) willRetry=$willRetry"
+                    )
                     Log.w(TAG, "Item ${item.id} failed (willRetry=$willRetry)")
                     continue
                 }
@@ -197,6 +280,12 @@ class VisionProcessingWorker(
                         settings, action.habitName, action.subtypeName
                     )
                     if (resolved == null) {
+                        QcDiag.warn(
+                            "REVIEW",
+                            "item=${QcDiag.short(item.id)} LLM proposed " +
+                                "'${action.habitName}' (${action.subtypeName}) — NOT resolvable " +
+                                "against camera-eligible habits → needs review"
+                        )
                         Log.w(TAG, "Item ${item.id}: proposed habit '${action.habitName}' not found — no action")
                         queueRepo.markNeedsReview(
                             item.id,
@@ -207,10 +296,19 @@ class VisionProcessingWorker(
                         notifyCameraResult(appContext, "📷 No camera habit matched$seen\nSaved to Quick Capture History")
                     } else {
                         val (realHabit, realSubtype) = resolved
+                        QcDiag.log(
+                            "INCREMENT",
+                            "item=${QcDiag.short(item.id)} auto-detect executing " +
+                                "'$realHabit'${realSubtype?.let { "/$it" } ?: ""} x${action.amount}"
+                        )
                         val err = VisionHabitExecutor.execute(
                             appContext, settings, realHabit, realSubtype, action.amount
                         )
                         if (err == null) {
+                            QcDiag.log(
+                                "INCREMENT",
+                                "item=${QcDiag.short(item.id)} auto-detect OK → '$realHabit'"
+                            )
                             Log.i(TAG, "Item ${item.id}: auto-detected → $realHabit" +
                                 (realSubtype?.let { "/$it" } ?: "") + " ×${action.amount}")
                             queueRepo.markCompleted(item.id, "habit:$realHabit")
@@ -221,6 +319,10 @@ class VisionProcessingWorker(
                                     " +${action.amount}$seen"
                             )
                         } else {
+                            QcDiag.error(
+                                "INCREMENT",
+                                "item=${QcDiag.short(item.id)} auto-detect execute FAILED: $err"
+                            )
                             val willRetry = failOrReview(queueRepo, item.id, err)
                             failed++
                         }
@@ -246,11 +348,21 @@ class VisionProcessingWorker(
                         mealLogRepo.updateLog(existing.mergedWith(foodData = result.foodData))
                         queueRepo.markCompleted(item.id, existing.id)
                         processed++
+                        QcDiag.log(
+                            "MEAL",
+                            "item=${QcDiag.short(item.id)} ATTACHED analysis to existing meal " +
+                                "${QcDiag.short(existing.id)} '${existing.title}' (no new increment)"
+                        )
                         Log.i(TAG, "Attached analysis to meal ${existing.id}: ${existing.title}")
                         continue
                     }
                     // Target log vanished (deleted meanwhile) — fall through to
                     // the normal create path so the capture isn't lost.
+                    QcDiag.warn(
+                        "MEAL",
+                        "item=${QcDiag.short(item.id)} attach target " +
+                            "${QcDiag.short(item.attachToMealLogId)} NOT found — creating new log"
+                    )
                     Log.w(TAG, "Attach target ${item.attachToMealLogId} not found — creating new log")
                 }
 
@@ -262,10 +374,20 @@ class VisionProcessingWorker(
                     // the queue). Merge into it instead of creating a second
                     // log + increment + stamp for the same meal — the source
                     // of duplicate Eat chips at the same minute.
-                    val activeGroup = mealLogRepo.findActiveGroup(targetHabit, item.timestamp)
+                    val candidateGroup = mealLogRepo.findActiveGroup(targetHabit, item.timestamp)
+                    val activeGroup = candidateGroup
                         ?.takeIf {
                             kotlin.math.abs(item.timestamp - it.anchorTime()) <= MEAL_GROUP_WINDOW_MS
                         }
+                    if (candidateGroup != null && activeGroup == null) {
+                        QcDiag.log(
+                            "MEAL",
+                            "item=${QcDiag.short(item.id)} group ${QcDiag.short(candidateGroup.id)} " +
+                                "found but OUTSIDE worker window (delta=" +
+                                "${kotlin.math.abs(item.timestamp - candidateGroup.anchorTime())}ms " +
+                                "> $MEAL_GROUP_WINDOW_MS ms) → new meal"
+                        )
+                    }
                     if (activeGroup != null) {
                         mealLogRepo.updateLog(
                             activeGroup.mergedWith(
@@ -275,6 +397,12 @@ class VisionProcessingWorker(
                         )
                         queueRepo.markCompleted(item.id, activeGroup.id)
                         processed++
+                        QcDiag.log(
+                            "MEAL",
+                            "item=${QcDiag.short(item.id)} MERGED into active meal " +
+                                "${QcDiag.short(activeGroup.id)} '${activeGroup.title}' " +
+                                "(no new increment)"
+                        )
                         Log.i(TAG, "Merged queued photo into active meal ${activeGroup.id}: ${activeGroup.title}")
                         continue
                     }
@@ -289,12 +417,24 @@ class VisionProcessingWorker(
 
                     if (mealLog != null) {
                         mealLogRepo.addLog(mealLog)
+                        QcDiag.log(
+                            "MEAL",
+                            "item=${QcDiag.short(item.id)} CREATED meal log " +
+                                "${QcDiag.short(mealLog.id)} '${mealLog.title}' " +
+                                "(${mealLog.calories} cal) for '$targetHabit'"
+                        )
 
                         // Increment the habit count for the meal's day
                         if (settings.fileUri.isNotEmpty()) {
                             try {
                                 val mealDate = Instant.ofEpochMilli(mealLog.timestamp)
                                     .atZone(ZoneId.systemDefault()).toLocalDate()
+                                QcDiag.log(
+                                    "INCREMENT",
+                                    "item=${QcDiag.short(item.id)} incrementing '$targetHabit' " +
+                                        "mealDate=$mealDate " +
+                                        "(${if (mealDate == LocalDate.now()) "today" else "backfill"})"
+                                )
                                 if (mealDate == LocalDate.now()) {
                                     habitsRepo.incrementHabit(
                                         Uri.parse(settings.fileUri),
@@ -322,7 +462,18 @@ class VisionProcessingWorker(
                                     ).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
                                 )
                                 Log.i(TAG, "Incremented habit '$targetHabit' for meal: ${mealLog.title}")
+                                QcDiag.log(
+                                    "INCREMENT",
+                                    "item=${QcDiag.short(item.id)} incremented '$targetHabit' +1 " +
+                                        "and recorded timestamp for meal '${mealLog.title}'"
+                                )
                             } catch (e: Exception) {
+                                QcDiag.error(
+                                    "INCREMENT",
+                                    "item=${QcDiag.short(item.id)} increment FAILED for " +
+                                        "'$targetHabit' (meal log still saved): ${e.message}",
+                                    e
+                                )
                                 Log.e(TAG, "Failed to increment habit '$targetHabit'", e)
                                 // The meal log is still saved; just the count increment failed
                             }
@@ -344,6 +495,12 @@ class VisionProcessingWorker(
                             "Uncertain: ${result.processingNotes}"
                         else -> "No food data extracted"
                     }
+                    QcDiag.warn(
+                        "REVIEW",
+                        "item=${QcDiag.short(item.id)} NOT actionable → NEEDS_REVIEW: " +
+                            "classification=${result.classification} " +
+                            "forcedMealHabit=${forcedMealHabit != null} notes=$notes"
+                    )
                     queueRepo.markNeedsReview(item.id, notes)
                     Log.i(TAG, "Item ${item.id} classified as ${result.classification}: $notes — needs review")
                     failed++
@@ -358,12 +515,23 @@ class VisionProcessingWorker(
                     )
                 }
             } catch (e: Exception) {
+                QcDiag.error(
+                    "ITEM",
+                    "item=${QcDiag.short(item.id)} EXCEPTION: " +
+                        "${e.javaClass.simpleName}: ${e.message}",
+                    e
+                )
                 Log.e(TAG, "Error processing item ${item.id}", e)
                 failOrReview(queueRepo, item.id, e.message ?: "Unknown error")
                 failed++
             }
         }
 
+        QcDiag.log(
+            "WORKER",
+            "pass complete: processed=$processed failed=$failed " +
+                "(pendingRemaining=${queueRepo.pendingCount()} needsReview=${queueRepo.reviewItemCount()})"
+        )
         Log.i(TAG, "Vision processing complete: $processed processed, $failed failed")
         return Result.success()
     }

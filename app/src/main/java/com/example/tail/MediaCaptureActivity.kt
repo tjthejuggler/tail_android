@@ -83,6 +83,7 @@ import com.example.tail.data.SpotifyDetector
 import com.example.tail.data.meal.Macronutrients
 import com.example.tail.data.meal.MealLog
 import com.example.tail.data.meal.MealLogRepository
+import com.example.tail.data.meal.QcDiag
 import com.example.tail.data.meal.VisionClassification
 import com.example.tail.data.meal.VisionConfig
 import com.example.tail.data.meal.VisionHabitExecutor
@@ -311,6 +312,12 @@ class MediaCaptureActivity : ComponentActivity() {
 
         targetHabit = intent.getStringExtra(EXTRA_HABIT_NAME)
         val directCamera = intent.getBooleanExtra(EXTRA_DIRECT_CAMERA, false)
+        QcDiag.log(
+            "CAPTURE",
+            "MediaCaptureActivity onCreate (QUICK CAPTURE entry): action=${intent.action} " +
+                "targetHabit=${targetHabit ?: "NULL (no extra — auto-target will be used)"} " +
+                "directCamera=$directCamera"
+        )
         hasCameraPermission = ContextCompat.checkSelfPermission(
             this, Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
@@ -542,8 +549,15 @@ class MediaCaptureActivity : ComponentActivity() {
     private fun capturePhoto(targetHabit: String?) {
         if (captureInProgress) return
         captureInProgress = true
+        val capTs = System.currentTimeMillis()
+        QcDiag.log(
+            "CAPTURE",
+            "MediaCaptureActivity shutter tapped (QUICK CAPTURE): capTs=$capTs " +
+                "targetHabit=${targetHabit ?: "NULL"} imageCaptureReady=${imageCapture != null}"
+        )
 
         val capture = imageCapture ?: run {
+            QcDiag.error("CAPTURE", "capTs=$capTs MediaCaptureActivity: camera not ready — aborting")
             Toast.makeText(this, "Camera not ready", Toast.LENGTH_SHORT).show()
             captureInProgress = false
             return
@@ -568,29 +582,101 @@ class MediaCaptureActivity : ComponentActivity() {
                         val bytes = tempFile.readBytes()
                         tempFile.delete()
                         val relativePath = mealLogRepo.saveImageBytes(bytes)
+                        QcDiag.log(
+                            "SAVE",
+                            "capTs=$capTs photo saved: ${bytes.size} bytes → $relativePath"
+                        )
 
                         // Resolve the deterministic target here on the
                         // camera executor thread (blocking is fine):
                         // explicit extra wins; otherwise exactly-one
                         // camera-eligible habit removes all ambiguity.
-                        val resolvedHabit = targetHabit ?: runCatching {
-                            runBlocking {
-                                val settings = SettingsRepository(this@MediaCaptureActivity)
-                                    .settingsFlow.first()
-                                VisionHabitExecutor.cameraEligibleHabits(settings)
-                                    .singleOrNull()
+                        //
+                        // QC_DIAG/RESOLVE logs EVERY outcome — including the
+                        // failures that were previously swallowed silently by
+                        // runCatching{}.getOrNull().
+                        var resolvedHabit: String? = targetHabit
+                        if (resolvedHabit != null) {
+                            QcDiag.log(
+                                "RESOLVE",
+                                "capTs=$capTs explicit target from EXTRA_HABIT_NAME=" +
+                                    "'$resolvedHabit' (deterministic, no guessing)"
+                            )
+                        } else {
+                            try {
+                                runBlocking {
+                                    val settings = SettingsRepository(this@MediaCaptureActivity)
+                                        .settingsFlow.first()
+                                    val eligible =
+                                        VisionHabitExecutor.cameraEligibleHabits(settings)
+                                    QcDiag.log(
+                                        "RESOLVE",
+                                        "capTs=$capTs auto-target resolution: " +
+                                            "${QcDiag.routingSnapshot(settings)}"
+                                    )
+                                    QcDiag.log(
+                                        "RESOLVE",
+                                        "capTs=$capTs ${QcDiag.mismatchHints(settings)}"
+                                    )
+                                    resolvedHabit = eligible.singleOrNull()
+                                    if (resolvedHabit != null) {
+                                        QcDiag.log(
+                                            "RESOLVE",
+                                            "capTs=$capTs auto-target RESOLVED → " +
+                                                "'$resolvedHabit' (deterministic meal " +
+                                                "pipeline expected)"
+                                        )
+                                    } else {
+                                        QcDiag.warn(
+                                            "RESOLVE",
+                                            "capTs=$capTs auto-target FAILED " +
+                                                "(singleOrNull=null) → item will be enqueued " +
+                                                "with habitId=NULL and fall to LLM classification"
+                                        )
+                                    }
+                                }
+                            } catch (e: Throwable) {
+                                QcDiag.error(
+                                    "RESOLVE",
+                                    "capTs=$capTs auto-target resolution THREW (previously " +
+                                        "swallowed silently by runCatching): " +
+                                        "${e.javaClass.simpleName}: ${e.message}",
+                                    e
+                                )
+                                resolvedHabit = null
                             }
-                        }.getOrNull()
-
-                        val activeGroup = resolvedHabit?.let {
-                            mealLogRepo.findActiveGroup(it, System.currentTimeMillis())
                         }
-                        queueRepo.enqueue(
+
+                        val now = System.currentTimeMillis()
+                        val activeGroup = resolvedHabit?.let {
+                            mealLogRepo.findActiveGroup(it, now)
+                        }
+                        QcDiag.log(
+                            "GROUP",
+                            "capTs=$capTs attach-group: " +
+                                (activeGroup?.let {
+                                    "will attach to ${QcDiag.short(it.id)} " +
+                                        "(anchorDeltaMs=${now - it.anchorTime()})"
+                                } ?: "no active group — new meal expected")
+                        )
+                        val item = queueRepo.enqueue(
                             imagePath = relativePath,
                             habitId = resolvedHabit,
                             attachToMealLogId = activeGroup?.id
                         )
+                        QcDiag.log(
+                            "ENQUEUE",
+                            "capTs=$capTs item=${QcDiag.short(item.id)} " +
+                                "habitId=${item.habitId ?: "NULL"} " +
+                                "attachToMealLogId=${QcDiag.short(item.attachToMealLogId)} " +
+                                "imagePath=${item.imagePath}"
+                        )
                         VisionProcessingWorker.enqueue(this@MediaCaptureActivity)
+                        QcDiag.log(
+                            "WORKER",
+                            "capTs=$capTs VisionProcessingWorker enqueued after " +
+                                "item=${QcDiag.short(item.id)} — capture flow complete"
+                        )
 
                         runOnUiThread {
                             Toast.makeText(
@@ -601,6 +687,11 @@ class MediaCaptureActivity : ComponentActivity() {
                             finish()
                         }
                     } catch (e: Exception) {
+                        QcDiag.error(
+                            "CAPTURE",
+                            "capTs=$capTs MediaCaptureActivity: save/enqueue FAILED: ${e.message}",
+                            e
+                        )
                         Log.e(TAG, "Failed to save captured image", e)
                         runOnUiThread {
                             Toast.makeText(
@@ -614,6 +705,11 @@ class MediaCaptureActivity : ComponentActivity() {
                 }
 
                 override fun onError(exception: ImageCaptureException) {
+                    QcDiag.error(
+                        "CAPTURE",
+                        "capTs=$capTs MediaCaptureActivity: CameraX error: ${exception.message}",
+                        exception
+                    )
                     Log.e(TAG, "Camera capture error", exception)
                     runOnUiThread {
                         Toast.makeText(
@@ -847,25 +943,72 @@ class MediaCaptureActivity : ComponentActivity() {
      * open) — this screen never blocks on a result.
      */
     private fun enqueueFireAndForget(relativePath: String) {
+        val capTs = System.currentTimeMillis()
+        QcDiag.log(
+            "CAPTURE",
+            "enqueueFireAndForget (gallery tap path): capTs=$capTs imagePath=$relativePath"
+        )
         handler.removeCallbacks(autoFinishTimeout)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val settings = runCatching {
                     SettingsRepository(this@MediaCaptureActivity).settingsFlow.first()
                 }.getOrNull()
+                if (settings == null) {
+                    QcDiag.error(
+                        "RESOLVE",
+                        "capTs=$capTs settings load FAILED in enqueueFireAndForget " +
+                            "(was silently null)"
+                    )
+                } else {
+                    QcDiag.log(
+                        "RESOLVE",
+                        "capTs=$capTs gallery auto-target: ${QcDiag.routingSnapshot(settings)}"
+                    )
+                    QcDiag.log("RESOLVE", "capTs=$capTs ${QcDiag.mismatchHints(settings)}")
+                }
                 val resolvedHabit = targetHabit
                     ?: settings?.let { VisionHabitExecutor.cameraEligibleHabits(it).singleOrNull() }
+                QcDiag.log(
+                    "RESOLVE",
+                    "capTs=$capTs resolvedHabit=${resolvedHabit ?: "NULL → LLM classification path"}"
+                )
                 val mealLogRepo = MealLogRepository(this@MediaCaptureActivity)
+                val now = System.currentTimeMillis()
                 val activeGroup = resolvedHabit?.let {
-                    mealLogRepo.findActiveGroup(it, System.currentTimeMillis())
+                    mealLogRepo.findActiveGroup(it, now)
                 }
-                VisionQueueRepository(this@MediaCaptureActivity).enqueue(
+                QcDiag.log(
+                    "GROUP",
+                    "capTs=$capTs attach-group: " +
+                        (activeGroup?.let {
+                            "will attach to ${QcDiag.short(it.id)} " +
+                                "(anchorDeltaMs=${now - it.anchorTime()})"
+                        } ?: "no active group — new meal expected")
+                )
+                val item = VisionQueueRepository(this@MediaCaptureActivity).enqueue(
                     imagePath = relativePath,
                     habitId = resolvedHabit,
                     attachToMealLogId = activeGroup?.id
                 )
+                QcDiag.log(
+                    "ENQUEUE",
+                    "capTs=$capTs item=${QcDiag.short(item.id)} " +
+                        "habitId=${item.habitId ?: "NULL"} " +
+                        "attachToMealLogId=${QcDiag.short(item.attachToMealLogId)}"
+                )
                 VisionProcessingWorker.enqueue(this@MediaCaptureActivity)
+                QcDiag.log(
+                    "WORKER",
+                    "capTs=$capTs VisionProcessingWorker enqueued after " +
+                        "item=${QcDiag.short(item.id)}"
+                )
             } catch (e: Exception) {
+                QcDiag.error(
+                    "CAPTURE",
+                    "capTs=$capTs enqueueFireAndForget FAILED: ${e.message}",
+                    e
+                )
                 Log.e(TAG, "Failed to enqueue captured image", e)
             }
             runOnUiThread {
@@ -939,10 +1082,24 @@ class MediaCaptureActivity : ComponentActivity() {
         } else {
             singleCameraHabit?.takeIf { settings.mealHabits.contains(it) }
         }
+        QcDiag.log(
+            "ROUTE",
+            "processCaptureInline: targetHabit=${targetHabit ?: "null"} " +
+                "singleCameraHabit=${singleCameraHabit ?: "null"} " +
+                "forcedMealHabit=${forcedMealHabit ?: "NULL → classification pipeline"}"
+        )
+        QcDiag.log("ROUTE", "processCaptureInline: ${QcDiag.routingSnapshot(settings)}")
+        QcDiag.log("ROUTE", "processCaptureInline: ${QcDiag.mismatchHints(settings)}")
 
         val imageFile = File(filesDir, relativePath)
         val service = VisionProcessingService()
+        val llmStart = System.currentTimeMillis()
         val result = if (forcedMealHabit != null) {
+            QcDiag.log(
+                "LLM",
+                "processCaptureInline: DETERMINISTIC meal pipeline for '$forcedMealHabit' " +
+                    "(no habit guessing)"
+            )
             Log.i(TAG, "Deterministic meal pipeline for '$forcedMealHabit'")
             service.processImage(imageFile, config)
         } else {
@@ -951,8 +1108,27 @@ class MediaCaptureActivity : ComponentActivity() {
             val memoryPrompt = VisionMemoryRepository(this@MediaCaptureActivity)
                 .buildMemoryPrompt().ifBlank { null }
             val habitPrompt = VisionHabitExecutor.buildHabitPrompt(settings).ifBlank { null }
+            QcDiag.warn(
+                "LLM",
+                "processCaptureInline: CLASSIFICATION pipeline (habit guessing) — " +
+                    "memoryPrompt=${memoryPrompt != null} " +
+                    "habitPrompt=${habitPrompt != null}(${habitPrompt?.length ?: 0} chars)"
+            )
             service.processImage(imageFile, config, memoryPrompt, habitPrompt)
         }
+        QcDiag.log(
+            "LLM",
+            "processCaptureInline result in ${System.currentTimeMillis() - llmStart}ms: " +
+                "classification=${result?.classification} " +
+                "food=${result?.foodData?.let { "${it.title}/${it.estimatedCalories}cal" }
+                    ?: "none"} " +
+                "habitAction=${result?.habitAction?.let { ha ->
+                    "${ha.habitName}" + (ha.subtypeName?.let { s -> "/$s" } ?: "") +
+                        "x${ha.amount}"
+                } ?: "none"} " +
+                "confidence=${result?.confidenceScore} " +
+                "notes=${result?.processingNotes?.take(150) ?: ""}"
+        )
 
         if (result == null) {
             showResult(
@@ -980,6 +1156,12 @@ class MediaCaptureActivity : ComponentActivity() {
             if (active != null) {
                 // Second course within the group window — merge into the
                 // existing meal: one card, one increment.
+                QcDiag.log(
+                    "MEAL",
+                    "processCaptureInline: MERGE into active meal " +
+                        "${QcDiag.short(active.id)} '${active.title}' " +
+                        "(anchorDeltaMs=${now - active.anchorTime()}) — no new increment"
+                )
                 reviewedLog = active.mergedWith(
                     foodData = result.foodData,
                     extraImageUri = relativePath,
@@ -996,6 +1178,11 @@ class MediaCaptureActivity : ComponentActivity() {
                 if (created != null) {
                     reviewedLog = created
                     mealLogRepo.addLog(created)
+                    QcDiag.log(
+                        "MEAL",
+                        "processCaptureInline: CREATED meal log ${QcDiag.short(created.id)} " +
+                            "'${created.title}' (${created.calories} cal) for '$targetHabitName'"
+                    )
 
                     if (settings.fileUri.isNotEmpty()) {
                         try {
@@ -1010,8 +1197,19 @@ class MediaCaptureActivity : ComponentActivity() {
                             // are timestamped like every other increment path
                             com.example.tail.data.HabitTimestampRepository(this@MediaCaptureActivity)
                                 .addTimestamp(habitName = targetHabitName)
+                            QcDiag.log(
+                                "INCREMENT",
+                                "processCaptureInline: incremented '$targetHabitName' +1 " +
+                                    "and recorded timestamp for meal '${created.title}'"
+                            )
                             Log.i(TAG, "Incremented habit '$targetHabitName' for meal: ${created.title}")
                         } catch (e: Exception) {
+                            QcDiag.error(
+                                "INCREMENT",
+                                "processCaptureInline: increment FAILED for " +
+                                    "'$targetHabitName' (meal log still saved): ${e.message}",
+                                e
+                            )
                             Log.e(TAG, "Failed to increment habit '$targetHabitName'", e)
                         }
                     }
@@ -1079,6 +1277,13 @@ class MediaCaptureActivity : ComponentActivity() {
         // ── Everything else: NEVER a dead end. Open the correction screen
         // so the user can say (by text or voice) what the photo means and
         // pick the habit — the answer goes into the LLM's memory.
+        QcDiag.warn(
+            "REVIEW",
+            "processCaptureInline: NOT actionable → Correcting screen " +
+                "(classification=${result.classification} " +
+                "forcedMealHabit=${forcedMealHabit != null} " +
+                "habitAction=${result.habitAction?.habitName ?: "none"})"
+        )
         correctableHabits = (settings.habitScreens.flatMap { it.habitNames } + settings.habitOrder)
             .filter { it.isNotBlank() && !it.startsWith("app_link:") }
             .distinct()

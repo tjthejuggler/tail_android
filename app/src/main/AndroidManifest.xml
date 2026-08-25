@@ -67,6 +67,7 @@
     <uses-permission android:name="com.example.tail.permission.TAIL_INTEGRATION" />
 
     <application
+        android:name=".TailApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

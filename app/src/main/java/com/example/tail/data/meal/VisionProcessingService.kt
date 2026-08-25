@@ -64,7 +64,19 @@ class VisionProcessingService {
         habitPrompt: String? = null
     ): VisionResult? =
         withContext(Dispatchers.IO) {
+            val startedAt = System.currentTimeMillis()
+            val mode = if (memoryPrompt == null && habitPrompt == null) {
+                "MEAL(deterministic)"
+            } else {
+                "CLASSIFICATION"
+            }
+            QcDiag.log(
+                "LLM",
+                "processImage start: mode=$mode file=${imageFile.name}(" +
+                    "${imageFile.length()}B) model=${config.model}"
+            )
             if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
+                QcDiag.error("LLM", "processImage abort: LLM config incomplete (key/url/model blank)")
                 Log.w(TAG, "Cannot process: LLM config incomplete")
                 return@withContext null
             }
@@ -75,6 +87,11 @@ class VisionProcessingService {
             // 1. Compress / resize the image
             val base64Image = compressAndEncode(imageFile)
                 ?: run {
+                    QcDiag.error(
+                        "LLM",
+                        "processImage abort: compress/encode FAILED for " +
+                            "${imageFile.absolutePath} (${imageFile.length()}B)"
+                    )
                     Log.e(TAG, "Failed to compress/encode image")
                     return@withContext null
                 }
@@ -84,13 +101,37 @@ class VisionProcessingService {
 
             // 3. Execute the HTTP call with retry on 429 / 5xx
             when (val outcome = chatCompletion(fullUrl, requestBody, config)) {
-                is ChatOutcome.Content -> parseVisionResult(outcome.text)
+                is ChatOutcome.Content -> parseVisionResult(outcome.text).also { parsed ->
+                    QcDiag.log(
+                        "LLM",
+                        "processImage done in ${System.currentTimeMillis() - startedAt}ms: " +
+                            "raw=${outcome.text.length} chars " +
+                            "classification=${parsed?.classification} " +
+                            "food=${parsed?.foodData?.let {
+                                "${it.title}/${it.estimatedCalories}cal"
+                            } ?: "none"} " +
+                            "habitAction=${parsed?.habitAction?.habitName ?: "none"} " +
+                            "confidence=${parsed?.confidenceScore}"
+                    )
+                }
                 is ChatOutcome.ErrorNote -> VisionResult(
                     classification = VisionClassification.UNCERTAIN_OTHER,
                     confidenceScore = 0.0,
                     processingNotes = outcome.note
-                )
-                ChatOutcome.NetworkFailure -> null
+                ).also {
+                    QcDiag.warn(
+                        "LLM",
+                        "processImage API error in ${System.currentTimeMillis() - startedAt}ms: " +
+                            outcome.note.take(200)
+                    )
+                }
+                ChatOutcome.NetworkFailure -> null.also {
+                    QcDiag.error(
+                        "LLM",
+                        "processImage NETWORK FAILURE in " +
+                            "${System.currentTimeMillis() - startedAt}ms"
+                    )
+                }
             }
         }
 
@@ -292,6 +333,11 @@ class VisionProcessingService {
                     lastHttpResult = result
                     if (attempt < maxRetries) {
                         val delayMs = 5_000L * attempt  // 5s, 10s
+                        QcDiag.warn(
+                            "LLM",
+                            "HTTP 429 rate limited — retrying in ${delayMs}ms " +
+                                "(attempt $attempt/$maxRetries)"
+                        )
                         Log.w(TAG, "Rate limited (429), retrying in ${delayMs}ms (attempt $attempt/$maxRetries)")
                         delay(delayMs)
                     }
@@ -300,6 +346,11 @@ class VisionProcessingService {
                     lastHttpResult = result
                     if (attempt < maxRetries) {
                         val delayMs = 3_000L * attempt  // 3s, 6s
+                        QcDiag.warn(
+                            "LLM",
+                            "HTTP ${result.code} server error — retrying in ${delayMs}ms " +
+                                "(attempt $attempt/$maxRetries)"
+                        )
                         Log.w(TAG, "Server error ${result.code}, retrying in ${delayMs}ms (attempt $attempt/$maxRetries)")
                         delay(delayMs)
                     }

@@ -100,16 +100,24 @@ object VisionHabitExecutor {
         subtypeName: String?,
         amount: Int
     ): String? {
+        QcDiag.log(
+            "INCREMENT",
+            "execute: habit='$habitName' subtype=${subtypeName ?: "none"} amount=$amount " +
+                "fileUri=${if (settings.fileUri.isEmpty()) "EMPTY" else "set"}"
+        )
         if (settings.fileUri.isEmpty()) {
+            QcDiag.error("INCREMENT", "execute ABORT: no habits file configured (fileUri empty)")
             return "No habits file configured"
         }
         if (amount <= 0) {
+            QcDiag.error("INCREMENT", "execute ABORT: invalid amount $amount")
             return "Invalid amount $amount"
         }
         return try {
             val uri = Uri.parse(settings.fileUri)
             val habitsRepo = HabitsRepository()
             habitsRepo.incrementHabit(uri, context, habitName, amount)
+            QcDiag.log("INCREMENT", "execute: incrementHabit OK '$habitName' +$amount")
             Log.i(TAG, "Incremented habit '$habitName' by $amount via vision pipeline")
 
             if (subtypeName != null) {
@@ -119,22 +127,43 @@ object VisionHabitExecutor {
                         LocalDate.now().toString(),
                         mapOf(subtypeName to amount)
                     )
+                    QcDiag.log(
+                        "INCREMENT",
+                        "execute: subtype breakdown saved '$habitName'/$subtypeName → $amount"
+                    )
                     Log.i(TAG, "Saved subtype breakdown for '$habitName': $subtypeName → $amount")
                 } catch (e: Exception) {
+                    QcDiag.error(
+                        "INCREMENT",
+                        "execute: subtype save FAILED for '$habitName/$subtypeName': ${e.message}",
+                        e
+                    )
                     Log.w(TAG, "Failed to save subtype data for '$habitName': ${e.message}")
                 }
             }
 
             try {
                 HabitTimestampRepository(context).addTimestamp(habitName)
+                QcDiag.log("INCREMENT", "execute: timestamp recorded for '$habitName'")
             } catch (e: Exception) {
+                QcDiag.error(
+                    "INCREMENT",
+                    "execute: timestamp record FAILED for '$habitName': ${e.message}",
+                    e
+                )
                 Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
             }
 
 
             HabitIncrementBus.emit(habitName)
+            QcDiag.log("INCREMENT", "execute: HabitIncrementBus emitted '$habitName'")
             null
         } catch (e: Exception) {
+            QcDiag.error(
+                "INCREMENT",
+                "execute FAILED for '$habitName': ${e.javaClass.simpleName}: ${e.message}",
+                e
+            )
             Log.e(TAG, "Failed to execute vision habit action for '$habitName'", e)
             e.message ?: "Unknown error"
         }

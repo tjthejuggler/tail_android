@@ -131,8 +131,26 @@ class MealLogRepository(private val context: Context) {
         at: Long = System.currentTimeMillis(),
         windowMs: Long = MEAL_GROUP_WINDOW_MS
     ): MealLog? {
-        val recent = loadLogs(habitId).firstOrNull() ?: return null
-        return if (at - recent.anchorTime() <= windowMs) recent else null
+        val recent = loadLogs(habitId).firstOrNull() ?: run {
+            QcDiag.log("GROUP", "findActiveGroup('$habitId'): no logs at all → null")
+            return null
+        }
+        val delta = at - recent.anchorTime()
+        return if (delta <= windowMs) {
+            QcDiag.log(
+                "GROUP",
+                "findActiveGroup('$habitId'): ACTIVE group ${QcDiag.short(recent.id)} " +
+                    "'${recent.title}' anchorDeltaMs=$delta ≤ windowMs=$windowMs → merge"
+            )
+            recent
+        } else {
+            QcDiag.log(
+                "GROUP",
+                "findActiveGroup('$habitId'): newest ${QcDiag.short(recent.id)} too old " +
+                    "(anchorDeltaMs=$delta > windowMs=$windowMs) → null"
+            )
+            null
+        }
     }
 
     /**

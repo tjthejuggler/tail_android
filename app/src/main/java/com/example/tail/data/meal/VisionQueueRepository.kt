@@ -84,6 +84,11 @@ class VisionQueueRepository(
         val items = loadAll()
         items.add(item)
         saveAll(items)
+        QcDiag.log(
+            "QUEUE",
+            "enqueue item=${QcDiag.short(item.id)} habitId=${habitId ?: "NULL"} " +
+                "attach=${QcDiag.short(attachToMealLogId)} image=$imagePath"
+        )
         Log.i(TAG, "Enqueued vision item ${item.id} for habit=$habitId attach=$attachToMealLogId")
         return item
     }
@@ -119,9 +124,16 @@ class VisionQueueRepository(
     fun markProcessing(id: String): Boolean {
         val items = loadAll()
         val idx = items.indexOfFirst { it.id == id && it.status == VisionQueueStatus.PENDING }
-        if (idx < 0) return false
+        if (idx < 0) {
+            QcDiag.warn(
+                "QUEUE",
+                "item=${QcDiag.short(id)} claim FAILED (not PENDING — already claimed or changed)"
+            )
+            return false
+        }
         items[idx] = items[idx].copy(status = VisionQueueStatus.PROCESSING)
         saveAll(items)
+        QcDiag.log("QUEUE", "item=${QcDiag.short(id)} PENDING → PROCESSING")
         return true
     }
 
@@ -136,6 +148,10 @@ class VisionQueueRepository(
                 resultMealLogId = mealLogId
             )
             saveAll(items)
+            QcDiag.log(
+                "QUEUE",
+                "item=${QcDiag.short(id)} → COMPLETED resultMealLog=${QcDiag.short(mealLogId)}"
+            )
         }
     }
 
@@ -158,6 +174,11 @@ class VisionQueueRepository(
             errorLog = "Attempt $newRetryCount: $error"
         )
         saveAll(items)
+        QcDiag.warn(
+            "QUEUE",
+            "item=${QcDiag.short(id)} FAILED attempt=$newRetryCount/$maxRetries " +
+                "willRetry=$willRetry error='${error.take(120)}'"
+        )
         return willRetry
     }
 
@@ -175,6 +196,10 @@ class VisionQueueRepository(
                 reviewNote = note
             )
             saveAll(items)
+            QcDiag.warn(
+                "REVIEW",
+                "item=${QcDiag.short(id)} → NEEDS_REVIEW: ${note.take(160)}"
+            )
             Log.i(TAG, "Item $id needs review: ${note.take(120)}")
         }
     }
@@ -209,6 +234,10 @@ class VisionQueueRepository(
             reviewNote = null
         )
         saveAll(items)
+        QcDiag.log(
+            "QUEUE",
+            "item=${QcDiag.short(id)} re-queued from review with habit=${habitId ?: "unchanged"}"
+        )
         Log.i(TAG, "Item $id re-queued for retry with habit=$habitId")
         return true
     }

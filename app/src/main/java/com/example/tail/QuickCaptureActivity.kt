@@ -44,6 +44,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.meal.MealLogRepository
+import com.example.tail.data.meal.QcDiag
 import com.example.tail.data.meal.VisionHabitExecutor
 import com.example.tail.data.meal.VisionProcessingWorker
 import com.example.tail.data.meal.VisionQueueRepository
@@ -104,11 +105,18 @@ class QuickCaptureActivity : ComponentActivity() {
         ) == PackageManager.PERMISSION_GRANTED
 
         if (!hasCameraPermission) {
+            QcDiag.warn("CAPTURE", "QuickCaptureActivity: CAMERA permission missing — requesting")
             requestPermissionLauncher.launch(Manifest.permission.CAMERA)
             return
         }
 
         val targetHabit = intent.getStringExtra(EXTRA_HABIT_NAME)
+        QcDiag.log(
+            "CAPTURE",
+            "QuickCaptureActivity onCreate (MANUAL path): action=${intent.action} " +
+                "targetHabit=${targetHabit ?: "NULL (no extra — auto-target will be used)"} " +
+                "cameraPermission=$hasCameraPermission"
+        )
 
         setContent {
             QuickCaptureScreen(
@@ -130,7 +138,15 @@ class QuickCaptureActivity : ComponentActivity() {
      * guessing involved.
      */
     private fun capturePhoto(targetHabit: String?) {
+        val capTs = System.currentTimeMillis()
+        QcDiag.log(
+            "CAPTURE",
+            "QuickCaptureActivity shutter tapped: capTs=$capTs " +
+                "targetHabit=${targetHabit ?: "NULL"} thread=${Thread.currentThread().name} " +
+                "imageCaptureReady=${imageCapture != null}"
+        )
         val capture = imageCapture ?: run {
+            QcDiag.error("CAPTURE", "capTs=$capTs QuickCaptureActivity: camera not ready — aborting")
             Toast.makeText(this, "Camera not ready", Toast.LENGTH_SHORT).show()
             return
         }
@@ -141,13 +157,54 @@ class QuickCaptureActivity : ComponentActivity() {
         // Resolve the deterministic target: explicit extra wins; otherwise
         // exactly-one camera-eligible habit removes all ambiguity. Runs on
         // the camera executor thread, so blocking here is fine.
-        val resolvedHabit = targetHabit ?: runCatching {
-            runBlocking {
-                val settings = SettingsRepository(this@QuickCaptureActivity)
-                    .settingsFlow.first()
-                VisionHabitExecutor.cameraEligibleHabits(settings).singleOrNull()
+        //
+        // QC_DIAG/RESOLVE logs EVERY outcome of this resolution — including
+        // the failures that were previously swallowed silently by
+        // runCatching{}.getOrNull(), the #1 suspect for quick captures
+        // landing on the LLM-guessing path.
+        var resolvedHabit: String? = targetHabit
+        if (resolvedHabit != null) {
+            QcDiag.log(
+                "RESOLVE",
+                "capTs=$capTs explicit target from EXTRA_HABIT_NAME='$resolvedHabit' " +
+                    "(manual path — deterministic, no guessing)"
+            )
+        } else {
+            try {
+                runBlocking {
+                    val settings = SettingsRepository(this@QuickCaptureActivity)
+                        .settingsFlow.first()
+                    val eligible = VisionHabitExecutor.cameraEligibleHabits(settings)
+                    QcDiag.log(
+                        "RESOLVE",
+                        "capTs=$capTs auto-target resolution: ${QcDiag.routingSnapshot(settings)}"
+                    )
+                    QcDiag.log("RESOLVE", "capTs=$capTs ${QcDiag.mismatchHints(settings)}")
+                    resolvedHabit = eligible.singleOrNull()
+                    if (resolvedHabit != null) {
+                        QcDiag.log(
+                            "RESOLVE",
+                            "capTs=$capTs auto-target RESOLVED → '$resolvedHabit' " +
+                                "(deterministic meal pipeline expected)"
+                        )
+                    } else {
+                        QcDiag.warn(
+                            "RESOLVE",
+                            "capTs=$capTs auto-target FAILED (singleOrNull=null) → item will be " +
+                                "enqueued with habitId=NULL and fall to LLM classification"
+                        )
+                    }
+                }
+            } catch (e: Throwable) {
+                QcDiag.error(
+                    "RESOLVE",
+                    "capTs=$capTs auto-target resolution THREW (previously swallowed " +
+                        "silently by runCatching): ${e.javaClass.simpleName}: ${e.message}",
+                    e
+                )
+                resolvedHabit = null
             }
-        }.getOrNull()
+        }
 
         // Use a temporary file in cache, then move to meal_images
         val tempFile = File(cacheDir, "capture_${System.currentTimeMillis()}.jpg")
@@ -163,21 +220,46 @@ class QuickCaptureActivity : ComponentActivity() {
                         val bytes = tempFile.readBytes()
                         tempFile.delete()
                         val relativePath = mealLogRepo.saveImageBytes(bytes)
+                        QcDiag.log(
+                            "SAVE",
+                            "capTs=$capTs photo saved: ${bytes.size} bytes → $relativePath"
+                        )
 
                         // Enqueue for vision processing — attaching to the
                         // active meal group when one exists (close-succession
                         // captures merge into one meal / one increment)
+                        val now = System.currentTimeMillis()
                         val activeGroup = resolvedHabit?.let {
-                            mealLogRepo.findActiveGroup(it, System.currentTimeMillis())
+                            mealLogRepo.findActiveGroup(it, now)
                         }
-                        queueRepo.enqueue(
+                        QcDiag.log(
+                            "GROUP",
+                            "capTs=$capTs attach-group: " +
+                                (activeGroup?.let {
+                                    "will attach to ${QcDiag.short(it.id)} " +
+                                        "(anchorDeltaMs=${now - it.anchorTime()})"
+                                } ?: "no active group — new meal expected")
+                        )
+                        val item = queueRepo.enqueue(
                             imagePath = relativePath,
                             habitId = resolvedHabit,
                             attachToMealLogId = activeGroup?.id
                         )
+                        QcDiag.log(
+                            "ENQUEUE",
+                            "capTs=$capTs item=${QcDiag.short(item.id)} " +
+                                "habitId=${item.habitId ?: "NULL"} " +
+                                "attachToMealLogId=${QcDiag.short(item.attachToMealLogId)} " +
+                                "imagePath=${item.imagePath}"
+                        )
 
                         // Trigger the background worker
                         VisionProcessingWorker.enqueue(this@QuickCaptureActivity)
+                        QcDiag.log(
+                            "WORKER",
+                            "capTs=$capTs VisionProcessingWorker enqueued after " +
+                                "item=${QcDiag.short(item.id)} — capture flow complete"
+                        )
 
                         runOnUiThread {
                             Toast.makeText(
@@ -188,6 +270,11 @@ class QuickCaptureActivity : ComponentActivity() {
                             finish()
                         }
                     } catch (e: Exception) {
+                        QcDiag.error(
+                            "CAPTURE",
+                            "capTs=$capTs QuickCaptureActivity: save/enqueue FAILED: ${e.message}",
+                            e
+                        )
                         Log.e(TAG, "Failed to save captured image", e)
                         runOnUiThread {
                             Toast.makeText(
@@ -201,6 +288,11 @@ class QuickCaptureActivity : ComponentActivity() {
                 }
 
                 override fun onError(exception: ImageCaptureException) {
+                    QcDiag.error(
+                        "CAPTURE",
+                        "capTs=$capTs QuickCaptureActivity: CameraX error: ${exception.message}",
+                        exception
+                    )
                     Log.e(TAG, "Camera capture error", exception)
                     runOnUiThread {
                         Toast.makeText(
