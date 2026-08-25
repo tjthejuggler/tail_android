@@ -689,6 +689,14 @@ class HabitViewModel(
     // Keyed by (screen index, selected date) so switching between screens on the same date is instant.
     private val screenHabitCache = mutableMapOf<Pair<Int, LocalDate>, List<Habit>>()
 
+    /** Serializes [rebuildHabitList] runs. Rebuilds are launched from many
+     *  asynchronous triggers (screen switches, HabitIncrementBus events,
+     *  Garmin/Chess/GitHub syncs, …) and each one publishes the whole habit
+     *  list; without serialization an older snapshot can finish last and
+     *  clobber the optimistic increment update (the "tap records the
+     *  timestamp but the square only updates after switching screens" bug). */
+    private val rebuildMutex = Mutex()
+
     /** Public read-only access to the cached database for stats computation. */
     fun getCachedDatabase(): HabitsDatabase = cachedPhoneDb
 
@@ -1856,40 +1864,66 @@ class HabitViewModel(
     }
 
     /** Rebuilds the displayed habit list from cached data for the current selectedDate.
-     *  Stores the result in the per-screen cache for instant retrieval on switch. */
-    private suspend fun rebuildHabitList() {
-        val effectiveOrder = activeHabitOrder()
-        // If screens are configured and the active screen is empty, show nothing.
-        // We must NOT fall back to HABIT_ORDER in this case.
-        if (effectiveOrder.isEmpty() && _habitScreens.value.isNotEmpty()) {
-            _habits.value = emptyList()
-            _todayPoints.value = 0
-            _loadingMetrics.value = LoadingMetrics(0.0, 0.0, 0)
-            screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = emptyList()
-            return
+     *  Stores the result in the per-screen cache for instant retrieval on switch.
+     *
+     *  Race-proofed: runs are serialized by [rebuildMutex] and each run
+     *  re-checks its snapshot before publishing. Rebuilds are launched from
+     *  many asynchronous triggers (screen switches, HabitIncrementBus events,
+     *  Garmin/Chess/GitHub syncs, …), so a rebuild that snapshotted the DB
+     *  BEFORE a tap used to be able to finish AFTER the increment's own
+     *  rebuild and publish the pre-tap list over the optimistic UI update —
+     *  the tap then recorded its timestamp but the square only showed the
+     *  increment after the next screen switch. The snapshot guard makes
+     *  "publish older data than what is currently cached" impossible. */
+    private suspend fun rebuildHabitList() = rebuildMutex.withLock {
+        while (true) {
+            val effectiveOrder = activeHabitOrder()
+            // If screens are configured and the active screen is empty, show nothing.
+            // We must NOT fall back to HABIT_ORDER in this case.
+            if (effectiveOrder.isEmpty() && _habitScreens.value.isNotEmpty()) {
+                _habits.value = emptyList()
+                _todayPoints.value = 0
+                _loadingMetrics.value = LoadingMetrics(0.0, 0.0, 0)
+                screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = emptyList()
+                return@withLock
+            }
+            // Snapshot everything the build depends on, consistently.
+            val dbSnapshot = cachedPhoneDb
+            val targetDate = _selectedDate.value
+            val screenIndex = _activeScreenIndex.value
+            val settingsWithOrder = _settings.value.copy(habitOrder = effectiveOrder)
+            // Run the heavy per-habit calculations on a background CPU thread
+            val newList = withContext(Dispatchers.Default) {
+                habitsRepo.buildHabitList(
+                    db = dbSnapshot,
+                    settings = settingsWithOrder,
+                    targetDate = targetDate
+                )
+            }
+            // Stale-snapshot guard: if the DB, date or screen changed while we
+            // were computing (e.g. a tap just landed), recompute from the
+            // latest state instead of publishing a list that would undo it.
+            if (dbSnapshot !== cachedPhoneDb ||
+                targetDate != _selectedDate.value ||
+                screenIndex != _activeScreenIndex.value
+            ) {
+                continue
+            }
+            _habits.value = newList
+            _todayPoints.value = newList.sumOf { it.todayCount }
+            var freshMetrics = getLoadingMetrics(targetDate)
+            // The daily spark mirrors the app-open spinner: both derive from
+            // the same DB totals, so every spinner in the app — grid, map,
+            // reloads — renders the same tiers.
+            _loadingMetrics.value = freshMetrics
+            // Persist only metrics computed for today so history browsing never
+            // poisons the cold-start cache.
+            if (targetDate == LocalDate.now()) {
+                cacheLoadingMetrics(freshMetrics, targetDate)
+            }
+            screenHabitCache[Pair(screenIndex, targetDate)] = newList
+            return@withLock
         }
-        val settingsWithOrder = _settings.value.copy(habitOrder = effectiveOrder)
-        // Run the heavy per-habit calculations on a background CPU thread
-        val newList = withContext(Dispatchers.Default) {
-            habitsRepo.buildHabitList(
-                db = cachedPhoneDb,
-                settings = settingsWithOrder,
-                targetDate = _selectedDate.value
-            )
-        }
-        _habits.value = newList
-        _todayPoints.value = newList.sumOf { it.todayCount }
-        var freshMetrics = getLoadingMetrics(_selectedDate.value)
-        // The daily spark mirrors the app-open spinner: both derive from
-        // the same DB totals, so every spinner in the app — grid, map,
-        // reloads — renders the same tiers.
-        _loadingMetrics.value = freshMetrics
-        // Persist only metrics computed for today so history browsing never
-        // poisons the cold-start cache.
-        if (_selectedDate.value == LocalDate.now()) {
-            cacheLoadingMetrics(freshMetrics, _selectedDate.value)
-        }
-        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = newList
     }
 
     fun setFileUri(uri: Uri) {
@@ -2240,6 +2274,12 @@ class HabitViewModel(
                 }
                 return@launch
             }
+            // Re-assert the just-persisted state: a concurrent disk reload
+            // (e.g. the HabitIncrementBus collector's ensureDaysExist) may
+            // have replaced cachedPhoneDb with the PRE-persist file while the
+            // write was in flight. The rebuild below must never publish that
+            // stale snapshot over the optimistic UI update from Step 1.
+            cachedPhoneDb = updatedDb
             HabitsDataChangedBus.emit()
             // Full rebuild (streak/ATH recalc) — AFTER the write, and guarded so
             // a rebuild failure can never starve the effects below.
@@ -2387,6 +2427,10 @@ class HabitViewModel(
                 }
                 return@launch
             }
+            // Re-assert the just-persisted state (same rationale as
+            // incrementHabit: a concurrent disk reload during the persist
+            // must not become the snapshot the rebuild publishes).
+            cachedPhoneDb = updatedDb
             HabitsDataChangedBus.emit()
             try {
                 rebuildHabitList()
