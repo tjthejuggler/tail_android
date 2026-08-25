@@ -22,9 +22,17 @@ val BorderPink   = Color(0xFFDD44AA)  // vivid magenta-pink
 val BorderYellow = Color(0xFFDDCC00)  // vivid yellow
 val BorderGlass  = Color(0xFFD0D0E0)  // same as Glass
 val BorderWhite  = Color(0xFFFFFFFF)  // pure white — the tier beyond Glass
-// Post-white tier marker: renders as a mostly-white card with subtle red
-// accents and thin red hairline borders (see SettingsCategory).
-val BorderWhiteRed = Color(0xFFFFF5F3) // near-white with the faintest red whisper
+// Post-white tier markers: near-white bodies with the faintest whisper of
+// each progression hue — the point-ladder's white/colour combo tiers
+// (white/red → white/yellow), mirroring the habit square's Glass + border
+// phases. BorderWhiteRed also renders as a mostly-white card with subtle
+// red accents and thin red hairline borders (see SettingsCategory).
+val BorderWhiteRed    = Color(0xFFFFF5F3) // near-white with the faintest red whisper
+val BorderWhiteOrange = Color(0xFFFFF3E8) // near-white with a warm orange whisper
+val BorderWhiteGreen  = Color(0xFFEDFFF1) // near-white with a fresh green whisper
+val BorderWhiteBlue   = Color(0xFFEAF1FF) // near-white with a cool blue whisper
+val BorderWhitePink   = Color(0xFFFFEDF7) // near-white with a soft pink whisper
+val BorderWhiteYellow = Color(0xFFFFFAE2) // near-white with a golden whisper
 
 /** Background + optional color-tier border(s) for a habit button.
  *

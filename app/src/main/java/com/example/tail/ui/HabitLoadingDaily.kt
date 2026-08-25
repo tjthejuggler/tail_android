@@ -1,8 +1,11 @@
 package com.example.tail.ui
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.lerp
 
@@ -15,7 +18,8 @@ import androidx.compose.ui.graphics.lerp
  * personal touch — the day's own colour burning at the heart of the
  * orrery. Patronage from the monthly and weekly tiers coaxes it to
  * greater life: an ALLY's spark breathes earlier and gains moons sooner;
- * a PATRON's spark becomes a miniature trinity of orbiting light.
+ * a PATRON's spark becomes a miniature trinity of orbiting light; a
+ * CHAMPION's spark becomes a beacon.
  *
  *   tier 0 — dormant (patrons can summon a ghost)
  *   tier 1 — a tiny dot ignites (breathes early with a patron)
@@ -24,6 +28,19 @@ import androidx.compose.ui.graphics.lerp
  *   tier 4 — first micro-moon (+ halo ring & glints with patrons)
  *   tier 5 — twin moons (+ a swarm with patrons)
  *   tier 6 — ripples overflow (+ diamond core & orbit ring at PATRON)
+ *
+ * The WHITE+COLOUR combo tiers — the daily spark is the only layer that
+ * can climb the whole ladder to white/yellow. The core stays WHITE
+ * (the pale glass tint) while the vivid combo hue paints the escalating
+ * phenomena; each tier ADDS a new phenomenon on top of the last:
+ *
+ *   tier 7  — white/red    "Nova Heart"   red pulse rings + orbiting sparks
+ *   tier 8  — white/orange "Solar Flare"  orange flare arcs leap from the core
+ *   tier 9  — white/green  "Verdant Core" green petals breathe around the core
+ *   tier 10 — white/blue   "Micro Galaxy" blue spiral arms + electron ring
+ *   tier 11 — white/pink   "Prism Heart"  pink refracted beams rotate through
+ *   tier 12 — white/yellow "Star of Dawn" golden rays, crown & ripples —
+ *                                 the blazing summit of a perfect day
  */
 
 internal fun DrawScope.drawDailySpark(ctx: LoadingPaintContext) {
@@ -149,5 +166,171 @@ internal fun DrawScope.drawDailySpark(ctx: LoadingPaintContext) {
         rotate(degrees = ctx.phase3 * 90f, pivot = ctx.c) {
             star(lerp(col, Color.White, 0.6f).copy(alpha = 0.7f), ctx.c, R * (0.07f + 0.03f * ctx.breathe2))
         }
+    }
+
+    // ═══ THE WHITE+COLOUR COMBO TIERS (7–12) ═══════════════════════════
+    // The core now burns white; each tier's vivid combo hue adds a new
+    // phenomenon, stacking toward the Star of Dawn.
+
+    val combo = ctx.dayCombo
+
+    // ── tier 7 — Nova Heart (white/red) ───────────────────────────────
+    // Red pulse rings radiate from the white core while red sparks
+    // orbit it with tails of fire.
+    if (d >= 7) {
+        val pulses = 2 + (if (pat >= 2) 1 else 0)
+        for (k in 0 until pulses) {
+            val p = (ctx.phase * 1.3f + k / pulses.toFloat()) % 1f
+            ringArc(
+                combo.copy(alpha = 0.40f * (1f - p)),
+                ctx.c,
+                R * (0.08f + 0.30f * p),
+                0f, 360f,
+                R * 0.012f,
+                StrokeCap.Butt
+            )
+        }
+        val sparks = if (pat >= 1) 4 else 3
+        for (i in 0 until sparks) {
+            val a = ctx.phase2 * 360f + i * (360f / sparks)
+            cometTail(combo.copy(alpha = 0.6f), ctx.c, R * 0.34f, a, 24f, R * 0.012f, segments = 2)
+            dot(combo.copy(alpha = 0.85f), orbitPoint(ctx.c, R * 0.34f, a), R * 0.020f)
+        }
+    }
+
+    // ── tier 8 — Solar Flare (white/orange) ───────────────────────────
+    // Orange flare arcs leap off the white core, rotating like a tiny
+    // sun in the middle of the orrery.
+    if (d >= 8) {
+        val flares = if (pat >= 2) 4 else 3
+        for (k in 0 until flares) {
+            val a = ctx.phase * 360f * 1.2f + k * (360f / flares)
+            val p0 = orbitPoint(ctx.c, R * 0.06f, a)
+            val p1 = orbitPoint(ctx.c, R * (0.16f + 0.06f * ctx.breathe), a + 55f)
+            val mid = Offset((p0.x + p1.x) / 2f, (p0.y + p1.y) / 2f)
+            val dir = Offset(mid.x - ctx.c.x, mid.y - ctx.c.y)
+            val len = kotlin.math.hypot(dir.x, dir.y).coerceAtLeast(1f)
+            val reach = R * (0.14f + 0.06f * ctx.breathe)
+            val ctrl = Offset(mid.x + dir.x / len * reach, mid.y + dir.y / len * reach)
+            val path = Path()
+            path.moveTo(p0.x, p0.y)
+            path.quadraticTo(ctrl.x, ctrl.y, p1.x, p1.y)
+            drawPath(
+                path,
+                combo.copy(alpha = 0.45f + 0.25f * ctx.breathe),
+                style = Stroke(width = R * 0.010f, cap = StrokeCap.Round)
+            )
+            dot(combo.copy(alpha = 0.7f), p1, R * 0.012f)
+        }
+        ringArc(combo.copy(alpha = 0.20f + 0.10f * ctx.breathe), ctx.c, R * 0.38f, 0f, 360f, R * 0.008f, StrokeCap.Butt)
+    }
+
+    // ── tier 9 — Verdant Core (white/green) ───────────────────────────
+    // Green petals breathe around the white core — the heart has become
+    // a small living flower.
+    if (d >= 9) {
+        val petals = if (pat >= 1) 6 else 4
+        for (i in 0 until petals) {
+            val a = -ctx.phase2 * 360f + i * (360f / petals)
+            val breathePetal = 0.5f + 0.5f * kotlin.math.sin((ctx.breathe * Math.PI + i * 1.2f).toDouble()).toFloat()
+            dot(
+                combo.copy(alpha = 0.35f + 0.40f * breathePetal),
+                orbitPoint(ctx.c, R * (0.26f + 0.05f * breathePetal), a),
+                R * (0.016f + 0.012f * breathePetal)
+            )
+        }
+        ringArc(combo.copy(alpha = 0.25f + 0.15f * ctx.breathe2), ctx.c, R * 0.42f, 0f, 360f, R * 0.010f, StrokeCap.Butt)
+    }
+
+    // ── tier 10 — Micro Galaxy (white/blue) ───────────────────────────
+    // Blue spiral arms wind out of the white core — a galaxy in miniature.
+    if (d >= 10) {
+        val arms = if (pat >= 2) 3 else 2
+        rotate(degrees = ctx.phase3 * 360f, pivot = ctx.c) {
+            for (arm in 0 until arms) {
+                spiralArm(
+                    combo.copy(alpha = 0.30f + 0.12f * ctx.breathe),
+                    ctx.c,
+                    R * 0.06f, R * 0.44f, arm * (360f / arms), 260f,
+                    R * 0.008f
+                )
+            }
+        }
+        // An electron racing around a precessing tilted orbit.
+        val tilt = 25f + ctx.phase3 * 80f
+        val theta = ctx.phase * 360f * 2f
+        dot(combo.copy(alpha = 0.8f), ellipsePoint(ctx.c, R * 0.36f, R * 0.16f, tilt, theta), R * 0.014f)
+    }
+
+    // ── tier 11 — Prism Heart (white/pink) ────────────────────────────
+    // Pink refracted beams rotate through the white core, as if the
+    // spark were a prism splitting the orrery's light.
+    if (d >= 11) {
+        val beams = if (pat >= 1) 6 else 4
+        rotate(degrees = ctx.phase2 * 180f, pivot = ctx.c) {
+            for (i in 0 until beams) {
+                val a = Math.toRadians((i * 360f / beams + 22.5f * ctx.breathe).toDouble())
+                val inner = R * 0.05f
+                val outer = R * (0.30f + 0.08f * ctx.breathe2)
+                drawLine(
+                    color = combo.copy(alpha = 0.30f + 0.20f * ctx.breathe2),
+                    start = Offset((ctx.c.x + inner * kotlin.math.cos(a)).toFloat(), (ctx.c.y + inner * kotlin.math.sin(a)).toFloat()),
+                    end = Offset((ctx.c.x + outer * kotlin.math.cos(a)).toFloat(), (ctx.c.y + outer * kotlin.math.sin(a)).toFloat()),
+                    strokeWidth = R * 0.009f,
+                    cap = StrokeCap.Round
+                )
+            }
+        }
+        for (i in 0 until 3) {
+            val a = ctx.phase4 * 360f + i * 120f
+            star(combo.copy(alpha = 0.35f + 0.25f * twinkle(ctx.phase4, i * 2.0f)), orbitPoint(ctx.c, R * 0.40f, a), R * 0.035f)
+        }
+    }
+
+    // ── tier 12 — Star of Dawn (white/yellow) ─────────────────────────
+    // The summit of a perfect day: golden rays, a circling crown of
+    // golden sparkles and rippling dawn-light around a blazing white
+    // heart. Grander than everything beneath it combined.
+    if (d >= 12) {
+        // The golden rays — a great slow-turning star.
+        rotate(degrees = ctx.phase3 * 120f, pivot = ctx.c) {
+            star(lerp(combo, Color.White, 0.35f).copy(alpha = 0.55f + 0.25f * ctx.breathe2), ctx.c, R * (0.16f + 0.04f * ctx.breathe2))
+        }
+        // The crown — golden sparkles circling the heart.
+        val crown = if (pat >= 2) 6 else 4
+        for (i in 0 until crown) {
+            val a = ctx.phase2 * 360f + i * (360f / crown)
+            val tw = twinkle(ctx.phase4, i * 1.5f)
+            star(
+                combo.copy(alpha = 0.45f + 0.45f * tw),
+                orbitPoint(ctx.c, R * 0.46f, a),
+                R * (0.030f + 0.020f * tw)
+            )
+        }
+        // Dawn ripples rolling outward in gold.
+        for (k in 0 until 3) {
+            val p = (ctx.phase + k / 3f) % 1f
+            ringArc(
+                combo.copy(alpha = 0.35f * (1f - p)),
+                ctx.c,
+                R * (0.10f + 0.42f * p),
+                0f, 360f,
+                R * 0.012f,
+                StrokeCap.Butt
+            )
+        }
+        // The blazing white heart of dawn.
+        val dawnGlow = R * (0.10f + 0.05f * ctx.breathe2)
+        drawCircle(
+            brush = androidx.compose.ui.graphics.Brush.radialGradient(
+                0f to Color.White.copy(alpha = 0.55f + 0.30f * ctx.breathe2),
+                1f to Color.Transparent,
+                center = ctx.c,
+                radius = dawnGlow
+            ),
+            radius = dawnGlow,
+            center = ctx.c
+        )
+        dot(Color.White, ctx.c, R * 0.030f)
     }
 }

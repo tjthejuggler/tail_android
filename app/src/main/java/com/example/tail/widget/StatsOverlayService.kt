@@ -7,7 +7,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.res.Resources
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -19,6 +21,7 @@ import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
+import android.text.style.ReplacementSpan
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -561,7 +564,9 @@ class StatsOverlayService : Service() {
     /**
      * Applies the three stats on the main thread, colouring each number with
      * the shared point-tier ranking (red → orange → green → blue → pink →
-     * yellow → white) so the rank reads at a glance.
+     * yellow → white → white/red → … → white/yellow) so the rank reads at a
+     * glance. The white+colour combo tiers (63+) render as WHITE numbers
+     * wearing a thin outline in the tier's vivid hue.
      */
     private fun postStats(today: Int, avg7: Double, avg30: Double) {
         handler.post { statsText?.text = coloredStatsText(today, avg7, avg30) }
@@ -573,6 +578,8 @@ class StatsOverlayService : Service() {
             formatNum(avg7) to Math.round(avg7).toInt(),
             formatNum(avg30) to Math.round(avg30).toInt()
         )
+        // Thin outline that scales with the bar's font size (≈5% of a digit).
+        val outlineWidth = (statsText?.textSize ?: 40f) * 0.055f
         return SpannableStringBuilder().apply {
             parts.forEachIndexed { i, (text, points) ->
                 if (i > 0) append(" ")
@@ -585,6 +592,14 @@ class StatsOverlayService : Service() {
                     start, length,
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
+                val accent = PointTierColors.accentArgbForPoints(points)
+                if (accent != 0) {
+                    setSpan(
+                        OutlineSpan(accent, outlineWidth),
+                        start, length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
             }
         }
     }
@@ -630,6 +645,56 @@ class StatsOverlayService : Service() {
                 ).build()
             )
             .build()
+    }
+}
+
+/**
+ * Draws a thin colored outline around text whose fill is painted by a
+ * [ForegroundColorSpan] — used for the white/color combo tiers (63+), where
+ * the digits stay white but gain a vivid tier-colored rim (mirrors the
+ * habit-square "white with colored border" precedent).
+ *
+ * A [ReplacementSpan] is required because a single TextView paint pass can't
+ * do stroke + fill: we draw the stroke pass first, then restore the fill
+ * color and draw again on top.
+ */
+private class OutlineSpan(
+    private val strokeColor: Int,
+    private val strokeWidthPx: Float
+) : ReplacementSpan() {
+    override fun getSize(
+        paint: Paint,
+        text: CharSequence?,
+        start: Int,
+        end: Int,
+        fm: Paint.FontMetricsInt?
+    ): Int = paint.measureText(text, start, end).toInt()
+
+    override fun draw(
+        canvas: Canvas,
+        text: CharSequence?,
+        start: Int,
+        end: Int,
+        x: Float,
+        top: Int,
+        y: Int,
+        bottom: Int,
+        paint: Paint
+    ) {
+        val fillColor = paint.color
+        val fillStyle = paint.style
+        val chars = text ?: return
+        // Pass 1: colored rim.
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = strokeWidthPx
+        paint.strokeJoin = Paint.Join.ROUND
+        paint.color = strokeColor
+        canvas.drawText(chars, start, end, x, y.toFloat(), paint)
+        // Pass 2: white fill on top.
+        paint.style = Paint.Style.FILL
+        paint.color = fillColor
+        canvas.drawText(chars, start, end, x, y.toFloat(), paint)
+        paint.style = fillStyle
     }
 }
 

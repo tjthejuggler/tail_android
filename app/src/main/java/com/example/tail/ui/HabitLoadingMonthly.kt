@@ -32,7 +32,17 @@ import kotlin.math.sin
  *   3 · BLUE   "Atom"         — tilted elliptical orbits with electrons
  *   4 · PINK   "Rose Window"  — counter-rotating dashed cathedral rings
  *   5 · YELLOW "Binary Suns"  — twin suns in a shimmering sweep
- *   6 · GLASS  "Supernova"    — spectrum rings, particles, rays, shockwaves
+ *   6 · WHITE  "Supernova"    — spectrum rings, particles, rays, shockwaves
+ *
+ * The WHITE+COLOUR combo tiers (the monthly average realistically tops out
+ * around white/blue). The body burns in the near-white glass tint while
+ * the vivid combo hue paints the embellishments — each step grander than
+ * the one from yellow to white was:
+ *
+ *   7 · WHITE/RED    "Phoenix"      — white ring body, red wings, embers
+ *   8 · WHITE/ORANGE "Magnetar"     — white heart, orange field lines, arcs
+ *   9 · WHITE/GREEN  "Aurora Heart" — white star, green curtains, ripples
+ *  10 · WHITE/BLUE   "Galactic Core"— white bulge, blue spiral arms, swarm
  */
 
 /** Short fading trail of dots behind an electron on a tilted ellipse. */
@@ -313,7 +323,7 @@ internal fun DrawScope.drawMonthlyCore(ctx: LoadingPaintContext) {
                     )
                     val path = Path()
                     path.moveTo(p0.x, p0.y)
-                    path.quadraticBezierTo(ctrl.x, ctrl.y, p1.x, p1.y)
+                    path.quadraticTo(ctrl.x, ctrl.y, p1.x, p1.y)
                     drawPath(
                         path,
                         col.copy(alpha = 0.30f + 0.20f * ctx.breathe),
@@ -341,8 +351,8 @@ internal fun DrawScope.drawMonthlyCore(ctx: LoadingPaintContext) {
             }
         }
 
-        // ── 6 · GLASS — Supernova ─────────────────────────────────────
-        else -> {
+        // ── 6 · WHITE — Supernova ─────────────────────────────────────
+        6 -> {
             val rings = if (pat >= 2) 3 else if (pat >= 1) 2 else 1
             val ringRadii = floatArrayOf(coreR, coreR * 0.92f, coreR * 0.84f)
             val ringSpeeds = floatArrayOf(ctx.phase * 360f, -ctx.phase2 * 360f, ctx.phase3 * 720f)
@@ -442,6 +452,285 @@ internal fun DrawScope.drawMonthlyCore(ctx: LoadingPaintContext) {
                 radius = glowR,
                 center = ctx.c
             )
+        }
+
+        // ── 7 · WHITE/RED — Phoenix ───────────────────────────────────
+        // The first combo tier: a white ring body reborn from the
+        // supernova, wearing great red wings that beat with the breath,
+        // trailing embers. A step grander than anything below it.
+        7 -> {
+            val red = ctx.monthCombo
+            // The white body — a luminous ring turning slowly.
+            rotate(degrees = ctx.phase3 * 360f, pivot = ctx.c) {
+                drawCircle(
+                    brush = Brush.sweepGradient(
+                        listOf(
+                            col.copy(alpha = 0.20f),
+                            Color.White,
+                            col.copy(alpha = 0.70f),
+                            Color.White,
+                            col.copy(alpha = 0.20f)
+                        ),
+                        center = ctx.c
+                    ),
+                    radius = coreR * 0.92f,
+                    center = ctx.c,
+                    style = Stroke(width = stroke * 0.8f)
+                )
+            }
+            // The wings — two pairs of great red arcs beating outward.
+            val flap = 0.5f + 0.5f * ctx.breathe
+            val wingPairs = if (pat >= 3) 3 else 2
+            for (w in 0 until wingPairs) {
+                val base = ctx.phase * 360f + w * (360f / wingPairs)
+                val sweep = 60f + 50f * flap + 14f * w
+                ringArc(red.copy(alpha = 0.75f), ctx.c, coreR * (1.04f + 0.05f * w), base, sweep, stroke * 0.85f)
+                ringArc(red.copy(alpha = 0.45f), ctx.c, coreR * (1.04f + 0.05f * w), base + 180f, sweep, stroke * 0.85f)
+                if (pat >= 1) {
+                    cometTail(red.copy(alpha = 0.6f), ctx.c, coreR * (1.04f + 0.05f * w), base + sweep, 36f, stroke * 0.5f, segments = 3)
+                }
+            }
+            // Embers rising from the pyre.
+            val embers = if (pat >= 2) 10 else 6
+            for (i in 0 until embers) {
+                val a = -ctx.phase2 * 360f + i * (360f / embers)
+                val rr = coreR * (0.95f + 0.25f * hash01(i * 2.7f))
+                val tw = twinkle(ctx.phase4, i * 1.5f)
+                dot(
+                    red.copy(alpha = 0.35f + 0.50f * tw),
+                    orbitPoint(ctx.c, rr, a),
+                    R * (0.012f + 0.014f * tw)
+                )
+            }
+            // The white heart of the reborn star.
+            dot(Color.White.copy(alpha = 0.80f + 0.20f * ctx.breathe), ctx.c, R * (0.055f + 0.02f * ctx.breathe))
+            if (pat >= 2) {
+                // Shockwaves of rebirth rolling outward.
+                for (k in 0 until 3) {
+                    val p = (ctx.phase * 1.4f + k / 3f) % 1f
+                    ringArc(red.copy(alpha = 0.28f * (1f - p)), ctx.c, coreR * (0.25f + 0.95f * p), 0f, 360f, R * 0.012f, StrokeCap.Butt)
+                }
+            }
+            if (pat >= 3) {
+                // CHAMPION: a white flare cross through the heart and a
+                // second, vaster wing pair in the supporters' colours.
+                val arm = coreR * 1.35f
+                rotate(degrees = ctx.phase3 * 60f, pivot = ctx.c) {
+                    drawLine(Color.White.copy(alpha = 0.30f + 0.20f * ctx.breathe2), Offset(ctx.c.x - arm, ctx.c.y), Offset(ctx.c.x + arm, ctx.c.y), strokeWidth = R * 0.012f, cap = StrokeCap.Round)
+                    drawLine(Color.White.copy(alpha = 0.30f + 0.20f * ctx.breathe2), Offset(ctx.c.x, ctx.c.y - arm), Offset(ctx.c.x, ctx.c.y + arm), strokeWidth = R * 0.012f, cap = StrokeCap.Round)
+                }
+                for (i in 0 until 2) {
+                    val a = ctx.phase2 * 360f + i * 180f + 90f
+                    dot(
+                        (if (i == 0) s1 else s2).copy(alpha = 0.6f + 0.4f * twinkle(ctx.phase4, i * 2.2f)),
+                        orbitPoint(ctx.c, coreR * 1.18f, a),
+                        R * 0.026f
+                    )
+                }
+            }
+        }
+
+        // ── 8 · WHITE/ORANGE — Magnetar ───────────────────────────────
+        // A white heart wrapped in orange magnetic field lines that
+        // precess like a cage of light, with arcs leaping between poles.
+        8 -> {
+            val orange = ctx.monthCombo
+            dot(Color.White.copy(alpha = 0.85f + 0.15f * ctx.breathe), ctx.c, R * (0.05f + 0.015f * ctx.breathe))
+            ringArc(col.copy(alpha = 0.25f), ctx.c, coreR * 0.55f, 0f, 360f, stroke * 0.3f, StrokeCap.Butt)
+            // The field-line cage — nested tilted ellipses, precessing.
+            val lines = if (pat >= 3) 7 else if (pat >= 2) 6 else if (pat >= 1) 5 else 4
+            val prec = ctx.phase3 * 40f
+            for (i in 0 until lines) {
+                val tilt = i * (180f / lines) + prec
+                val ry = coreR * (0.42f + 0.10f * (i % 2))
+                rotate(degrees = tilt, pivot = ctx.c) {
+                    scale(scaleX = 1f, scaleY = ry / coreR, pivot = ctx.c) {
+                        ringArc(orange.copy(alpha = 0.30f + 0.10f * ctx.breathe), ctx.c, coreR, 0f, 360f, stroke * 0.22f, StrokeCap.Butt)
+                    }
+                }
+                // A riding spark on each line — the field made visible.
+                val theta = ctx.phase * 360f * (if (i % 2 == 0) 1f else -1f) + i * (360f / lines)
+                if (pat >= 1) {
+                    ellipseTrail(orange.copy(alpha = 0.6f), ctx.c, coreR, ry, tilt, theta, if (i % 2 == 0) 1f else -1f, R * 0.038f)
+                }
+                dot(orange.copy(alpha = 0.85f), ellipsePoint(ctx.c, coreR, ry, tilt, theta), R * 0.036f)
+            }
+            // Arcs leaping between the poles.
+            val leaps = if (pat >= 2) 4 else 2
+            for (k in 0 until leaps) {
+                val a = ctx.phase2 * 360f + k * (360f / leaps)
+                val p0 = orbitPoint(ctx.c, coreR * 0.35f, a)
+                val p1 = orbitPoint(ctx.c, coreR * 0.35f, a + 180f)
+                val mid = Offset((p0.x + p1.x) / 2f, (p0.y + p1.y) / 2f)
+                val dir = Offset(mid.x - ctx.c.x, mid.y - ctx.c.y)
+                val len = kotlin.math.hypot(dir.x, dir.y).coerceAtLeast(1f)
+                val reach = coreR * (0.85f + 0.25f * ctx.breathe) * (if (k % 2 == 0) 1f else -1f)
+                val ctrl = Offset(mid.x + dir.x / len * reach, mid.y + dir.y / len * reach)
+                val path = Path()
+                path.moveTo(p0.x, p0.y)
+                path.quadraticTo(ctrl.x, ctrl.y, p1.x, p1.y)
+                drawPath(path, orange.copy(alpha = 0.35f + 0.20f * ctx.breathe), style = Stroke(width = stroke * 0.16f, cap = StrokeCap.Round))
+            }
+            if (pat >= 3) {
+                // CHAMPION: a white star heart and supporter glints riding
+                // the outermost field line.
+                star(lerp(col, Color.White, 0.7f).copy(alpha = 0.7f), ctx.c, R * (0.08f + 0.03f * ctx.breathe2))
+                for (i in 0 until 2) {
+                    val a = -ctx.phase3 * 360f + i * 180f
+                    dot(
+                        (if (i == 0) s1 else s2).copy(alpha = 0.55f + 0.40f * twinkle(ctx.phase4, i * 1.7f)),
+                        orbitPoint(ctx.c, coreR * 1.05f, a),
+                        R * 0.022f
+                    )
+                }
+            }
+        }
+
+        // ── 9 · WHITE/GREEN — Aurora Heart ────────────────────────────
+        // A white star heart with green curtains of light rippling
+        // around it — the orrery's own northern lights.
+        9 -> {
+            val green = ctx.monthCombo
+            star(lerp(col, Color.White, 0.6f).copy(alpha = 0.75f + 0.25f * ctx.breathe), ctx.c, R * (0.09f + 0.03f * ctx.breathe))
+            dot(Color.White.copy(alpha = 0.9f), ctx.c, R * 0.035f)
+            // The curtains — wavy ring ribbons breathing around the heart.
+            val curtains = if (pat >= 2) 4 else 3
+            rotate(degrees = ctx.phase3 * 240f, pivot = ctx.c) {
+                for (i in 0 until curtains) {
+                    val span = 90f + 20f * i
+                    val start = i * (360f / curtains) + 18f * ctx.phase2
+                    val steps = 20
+                    val path = Path()
+                    for (j in 0..steps) {
+                        val t = j / steps.toFloat()
+                        val ang = start + span * t
+                        val wave = sin((ang * 0.12f + ctx.phase3 * 5f * Math.PI + i * 1.9f).toDouble()).toFloat()
+                        val r = coreR * (0.68f + 0.16f * wave + 0.05f * ctx.breathe2)
+                        val p = orbitPoint(ctx.c, r, ang)
+                        if (j == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
+                    }
+                    drawPath(path, green.copy(alpha = 0.20f + 0.12f * ctx.breathe2), style = Stroke(width = stroke * 0.42f, cap = StrokeCap.Round))
+                    drawPath(path, green.copy(alpha = 0.45f + 0.20f * ctx.breathe2), style = Stroke(width = stroke * 0.10f, cap = StrokeCap.Round))
+                }
+            }
+            // Ripples of green light spreading from the heart.
+            val waves = if (pat >= 1) 3 else 2
+            for (k in 0 until waves) {
+                val p = (ctx.phase + k / waves.toFloat()) % 1f
+                ringArc(green.copy(alpha = 0.30f * (1f - p)), ctx.c, coreR * (0.15f + 0.85f * p), 0f, 360f, R * 0.012f, StrokeCap.Butt)
+            }
+            // Petals of light orbiting through the curtains.
+            val petals = if (pat >= 2) 6 else 4
+            for (i in 0 until petals) {
+                val a = ctx.phase2 * 360f + i * (360f / petals)
+                val tw = twinkle(ctx.phase4, i * 1.3f)
+                dot(
+                    green.copy(alpha = 0.40f + 0.45f * tw),
+                    orbitPoint(ctx.c, coreR * 0.80f, a),
+                    R * (0.016f + 0.012f * tw)
+                )
+            }
+            if (pat >= 3) {
+                // CHAMPION: a second, counter-waving curtain layer and a
+                // white glow enveloping the whole heart.
+                rotate(degrees = -ctx.phase3 * 300f, pivot = ctx.c) {
+                    val path = Path()
+                    val steps = 26
+                    for (j in 0..steps) {
+                        val t = j / steps.toFloat()
+                        val ang = 30f + 300f * t
+                        val wave = sin((ang * 0.09f - ctx.phase3 * 6f * Math.PI).toDouble()).toFloat()
+                        val r = coreR * (0.92f + 0.10f * wave)
+                        val p = orbitPoint(ctx.c, r, ang)
+                        if (j == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
+                    }
+                    drawPath(path, lerp(green, Color.White, 0.4f).copy(alpha = 0.25f + 0.12f * ctx.breathe2), style = Stroke(width = stroke * 0.30f, cap = StrokeCap.Round))
+                }
+                val g = coreR * (0.9f + 0.1f * ctx.breathe2)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        0f to Color.White.copy(alpha = 0.12f + 0.08f * ctx.breathe2),
+                        1f to Color.Transparent,
+                        center = ctx.c, radius = g
+                    ),
+                    radius = g, center = ctx.c
+                )
+            }
+        }
+
+        // ── 10+ · WHITE/BLUE — Galactic Core ──────────────────────────
+        // The grandest monthly form (white/blue and beyond): a white
+        // bulge blazing at the centre of blue spiral arms winding
+        // outward, swarming with stars.
+        else -> {
+            val blue = ctx.monthCombo
+            // The white bulge.
+            val bulge = coreR * (0.55f + 0.10f * ctx.breathe2)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    0f to Color.White.copy(alpha = 0.90f),
+                    0.5f to col.copy(alpha = 0.35f),
+                    1f to Color.Transparent,
+                    center = ctx.c,
+                    radius = bulge
+                ),
+                radius = bulge,
+                center = ctx.c
+            )
+            ringArc(col.copy(alpha = 0.30f), ctx.c, coreR * 0.60f, 0f, 360f, stroke * 0.25f, StrokeCap.Butt)
+            // The spiral arms, winding outward and rotating.
+            val arms = if (pat >= 2) 3 else 2
+            rotate(degrees = ctx.phase3 * 360f, pivot = ctx.c) {
+                for (arm in 0 until arms) {
+                    val a0 = arm * (360f / arms)
+                    spiralArm(blue.copy(alpha = 0.30f + 0.12f * ctx.breathe), ctx.c, coreR * 0.22f, coreR * 1.18f, a0, 300f, stroke * 0.34f)
+                    if (pat >= 1) {
+                        spiralArm(blue.copy(alpha = 0.16f), ctx.c, coreR * 0.30f, coreR * 1.05f, a0 + 40f, 260f, stroke * 0.18f)
+                    }
+                }
+            }
+            // The star swarm riding the arms.
+            val swarm = if (pat >= 3) 18 else if (pat >= 2) 14 else 10
+            for (i in 0 until swarm) {
+                val h = hash01(i * 3.3f + 0.9f)
+                val t = hash01(i * 7.1f + 2.5f)
+                val ang = ctx.phase3 * 360f + t * 300f + (i % arms) * (360f / arms)
+                val r = coreR * (0.25f + 0.95f * t)
+                val tw = twinkle(ctx.phase4, i * 1.1f)
+                val pCol = if (pat >= 2 && i % 4 == 0) Color.White else blue
+                dot(
+                    pCol.copy(alpha = 0.30f + 0.55f * tw),
+                    orbitPoint(ctx.c, r, ang + 8f * h),
+                    R * (0.010f + 0.012f * tw)
+                )
+            }
+            // A counter-rotating electron ring through the bulge.
+            val ry = coreR * 0.45f
+            rotate(degrees = -20f + ctx.phase3 * 60f, pivot = ctx.c) {
+                scale(scaleX = 1f, scaleY = ry / coreR, pivot = ctx.c) {
+                    ringArc(blue.copy(alpha = 0.25f), ctx.c, coreR, 0f, 360f, stroke * 0.16f, StrokeCap.Butt)
+                }
+            }
+            if (pat >= 2) {
+                // PATRON+: the core's white lens flare.
+                val arm = coreR * 1.25f
+                val flareAlpha = 0.24f + 0.18f * ctx.breathe2
+                rotate(degrees = ctx.phase3 * 30f, pivot = ctx.c) {
+                    drawLine(Color.White.copy(alpha = flareAlpha), Offset(ctx.c.x - arm, ctx.c.y), Offset(ctx.c.x + arm, ctx.c.y), strokeWidth = R * 0.010f, cap = StrokeCap.Round)
+                    drawLine(Color.White.copy(alpha = flareAlpha), Offset(ctx.c.x, ctx.c.y - arm), Offset(ctx.c.x, ctx.c.y + arm), strokeWidth = R * 0.010f, cap = StrokeCap.Round)
+                }
+            }
+            if (pat >= 3) {
+                // CHAMPION: binary companions in the supporters' colours
+                // herding the outer swarm.
+                for (i in 0 until 2) {
+                    val a = ctx.phase * 360f * (if (i == 0) 1f else -1f) + i * 180f
+                    val bc = orbitPoint(ctx.c, coreR * 1.10f, a)
+                    val bcCol = if (i == 0) s1 else s2
+                    dot(bcCol.copy(alpha = 0.9f), bc, R * 0.032f)
+                    star(bcCol.copy(alpha = 0.35f), bc, R * 0.08f)
+                }
+            }
         }
     }
 }

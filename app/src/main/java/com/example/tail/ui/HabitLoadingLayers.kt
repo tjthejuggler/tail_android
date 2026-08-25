@@ -24,7 +24,10 @@ import kotlin.math.sin
  * (arcs, orbits, comets, twinkles, stars, spirals, patronage tints) plus
  * the GRANDEUR flourishes that celebrate the combined might of all three
  * metrics — nebula, starfield, corona, shooting stars, spectrum crown
- * and, at the perfect 6/6/6, Totality itself.
+ * and, at the perfect 6/6/6, Totality itself. Beyond grandeur 18 the
+ * TRANSCENDENT flourishes awaken: aurora curtains, constellations,
+ * polar jets, the halo of halos and, at the reachable summit (10/10/12),
+ * Transcendence itself.
  *
  * The three personal layers live in the sibling files:
  *   [HabitLoadingMonthly.kt] · [HabitLoadingWeekly.kt] · [HabitLoadingDaily.kt]
@@ -38,6 +41,11 @@ internal class LoadingPaintContext(
     val monthColor: Color,
     val weekColor: Color,
     val dayColor: Color,
+    /** The vivid combo hues — equal to the body colours on plain tiers,
+     *  the coloured half of the white+colour tiers (7+). */
+    val monthCombo: Color,
+    val weekCombo: Color,
+    val dayCombo: Color,
     val phase: Float,
     val phase2: Float,
     val phase3: Float,
@@ -51,9 +59,11 @@ internal class LoadingPaintContext(
 /**
  * A patron-boosted layer burns brighter: its own colour is lerped toward
  * white by its patronage rank, so a PATRON orange is visibly richer than
- * a STRANGER orange while remaining unmistakably orange.
+ * a STRANGER orange while remaining unmistakably orange. A CHAMPION's
+ * layer burns brightest of all.
  */
 internal fun patronTint(base: Color, patron: Int): Color = when (patron) {
+    3 -> lerp(base, Color.White, 0.28f)
     2 -> lerp(base, Color.White, 0.18f)
     1 -> lerp(base, Color.White, 0.08f)
     else -> base
@@ -210,6 +220,22 @@ internal fun DrawScope.drawNebula(ctx: LoadingPaintContext) {
             center = ctx.c
         )
     }
+    if (ctx.tiers.grandeur >= 24) {
+        // The transcendent nebula: the combo hues bleed together into a
+        // third, vast shell — the sky itself is lit by the achievement.
+        val r3 = ctx.radius * (1.02f + 0.05f * ctx.breathe)
+        drawCircle(
+            brush = Brush.radialGradient(
+                0f to ctx.dayCombo.copy(alpha = 0.05f + 0.04f * ctx.breathe),
+                0.5f to lerp(ctx.monthCombo, ctx.weekCombo, 0.5f).copy(alpha = 0.05f),
+                1f to Color.Transparent,
+                center = ctx.c,
+                radius = r3
+            ),
+            radius = r3,
+            center = ctx.c
+        )
+    }
 }
 
 // ─────────────────────────── grandeur: starfield ─────────────────────────
@@ -221,7 +247,8 @@ internal fun DrawScope.drawNebula(ctx: LoadingPaintContext) {
  * metric colours, as if the orrery had set the very sky alight.
  */
 internal fun DrawScope.drawStarfield(ctx: LoadingPaintContext) {
-    val count = (6 + (ctx.tiers.grandeur - GrandeurThresholds.STARFIELD) * 2).coerceAtMost(22)
+    val cap = if (ctx.tiers.grandeur >= GrandeurThresholds.AURORA) 36 else 22
+    val count = (6 + (ctx.tiers.grandeur - GrandeurThresholds.STARFIELD) * 2).coerceAtMost(cap)
     val tints = listOf(ctx.monthColor, ctx.weekColor, ctx.dayColor)
     for (i in 0 until count) {
         val h1 = hash01(i * 1.37f + 0.1f)
@@ -290,7 +317,12 @@ internal fun DrawScope.drawCorona(ctx: LoadingPaintContext) {
  * grand the sky itself participates in the celebration.
  */
 internal fun DrawScope.drawShootingStars(ctx: LoadingPaintContext) {
-    val count = if (ctx.tiers.grandeur >= GrandeurThresholds.TOTALITY) 3 else 2
+    val count = when {
+        ctx.tiers.grandeur >= GrandeurThresholds.TRANSCENDENCE -> 5
+        ctx.tiers.grandeur >= GrandeurThresholds.AURORA -> 4
+        ctx.tiers.grandeur >= GrandeurThresholds.TOTALITY -> 3
+        else -> 2
+    }
     val rim = ctx.radius * 0.98f
     for (i in 0 until count) {
         val w = (ctx.phase3 * 2f + i / count.toFloat()) % 1f
@@ -323,10 +355,21 @@ internal fun DrawScope.drawShootingStars(ctx: LoadingPaintContext) {
  * a reminder of the entire ladder climbed to reach this height.
  */
 internal fun DrawScope.drawSpectrumCrown(ctx: LoadingPaintContext) {
-    val spectrum = listOf(
-        BorderRed, BorderOrange, BorderGreen, BorderBlue,
-        BorderPink, BorderYellow, BorderGlass, Color.White, BorderRed
-    )
+    val spectrum = if (ctx.tiers.grandeur >= GrandeurThresholds.AURORA) {
+        // The transcendent crown remembers the whole thirteen-rung ladder:
+        // the six vivid hues, white, then the six white+colour glass tints.
+        listOf(
+            BorderRed, BorderOrange, BorderGreen, BorderBlue,
+            BorderPink, BorderYellow, BorderGlass, Color.White,
+            BorderWhiteRed, BorderWhiteOrange, BorderWhiteGreen,
+            BorderWhiteBlue, BorderWhitePink, BorderWhiteYellow, BorderRed
+        )
+    } else {
+        listOf(
+            BorderRed, BorderOrange, BorderGreen, BorderBlue,
+            BorderPink, BorderYellow, BorderGlass, Color.White, BorderRed
+        )
+    }
     rotate(degrees = ctx.phase3 * 360f, pivot = ctx.c) {
         drawCircle(
             brush = Brush.sweepGradient(spectrum, center = ctx.c),
@@ -368,6 +411,209 @@ internal fun DrawScope.drawTotality(ctx: LoadingPaintContext) {
     drawCircle(
         brush = Brush.radialGradient(
             0f to Color.White.copy(alpha = 0.10f + 0.08f * ctx.breathe2),
+            1f to Color.Transparent,
+            center = ctx.c,
+            radius = glowR
+        ),
+        radius = glowR,
+        center = ctx.c
+    )
+}
+
+// ───────────────────── grandeur: aurora (transcendent) ───────────────────
+
+/**
+ * Curtains of light waving behind the whole orrery (grandeur ≥ 19 — the
+ * first flourish of the white+colour era, and the biggest single step in
+ * the entire system: crossing from white into white/red wakes the sky
+ * itself). Three ribbons in the three combo hues ripple around the pole,
+ * their radius breathing in long slow waves.
+ */
+internal fun DrawScope.drawAurora(ctx: LoadingPaintContext) {
+    val hues = listOf(ctx.monthCombo, ctx.weekCombo, ctx.dayCombo)
+    val baseR = ctx.radius * 0.80f
+    rotate(degrees = ctx.phase3 * 120f, pivot = ctx.c) {
+        for (i in 0 until 3) {
+            val col = hues[i]
+            val span = 110f + 30f * i
+            val start = i * 120f + 20f * ctx.phase2
+            val steps = 22
+            val path = Path()
+            for (j in 0..steps) {
+                val t = j / steps.toFloat()
+                val ang = start + span * t
+                val wave = sin(
+                    (ang * 0.10f + ctx.phase3 * 4f * Math.PI + i * 2.1f).toDouble()
+                ).toFloat()
+                val r = baseR * (0.90f + 0.10f * wave + 0.04f * ctx.breathe2)
+                val p = orbitPoint(ctx.c, r, ang)
+                if (j == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
+            }
+            drawPath(
+                path,
+                col.copy(alpha = 0.16f + 0.10f * ctx.breathe2),
+                style = Stroke(width = ctx.radius * 0.030f, cap = StrokeCap.Round)
+            )
+            // A brighter hem on the curtain's edge.
+            drawPath(
+                path,
+                col.copy(alpha = 0.30f + 0.18f * ctx.breathe2),
+                style = Stroke(width = ctx.radius * 0.008f, cap = StrokeCap.Round)
+            )
+        }
+    }
+}
+
+// ─────────────────── grandeur: constellation (transcendent) ──────────────
+
+/**
+ * Chains of linked stars strung across the void (grandeur ≥ 22) — as
+ * though the orrery's light had crystallised into new constellations.
+ * Three deterministic chains, their nodes twinkling, their threads in the
+ * blended combo light.
+ */
+internal fun DrawScope.drawConstellation(ctx: LoadingPaintContext) {
+    val hues = listOf(ctx.monthCombo, ctx.weekCombo, ctx.dayCombo)
+    val thread = lerp(ctx.monthCombo, ctx.weekCombo, 0.5f)
+    for (chain in 0 until 3) {
+        val col = hues[chain]
+        val nodes = 4 + chain
+        var prev: Offset? = null
+        for (j in 0 until nodes) {
+            val h1 = hash01(chain * 17.3f + j * 3.7f + 1.1f)
+            val h2 = hash01(chain * 5.9f + j * 11.3f + 4.2f)
+            val ang = h1 * 360f + ctx.phase3 * 60f * (if (chain % 2 == 0) 1f else -1f)
+            val r = ctx.radius * (0.34f + 0.58f * h2)
+            val p = orbitPoint(ctx.c, r, ang)
+            if (prev != null) {
+                drawLine(
+                    color = thread.copy(alpha = 0.14f + 0.08f * ctx.breathe2),
+                    start = prev,
+                    end = p,
+                    strokeWidth = ctx.radius * 0.004f,
+                    cap = StrokeCap.Round
+                )
+            }
+            val tw = twinkle(ctx.phase4, chain * 2.6f + j * 1.3f)
+            star(col.copy(alpha = 0.30f + 0.45f * tw), p, ctx.radius * (0.018f + 0.014f * tw))
+            prev = p
+        }
+    }
+}
+
+// ───────────────────── grandeur: polar jets (transcendent) ───────────────
+
+/**
+ * Beams of light erupting from the orrery's poles (grandeur ≥ 25), slowly
+ * precessing around the sky. Each jet is a tapered stack of segments in
+ * the blended combo light with a burning tip — the achievement has become
+ * a lighthouse visible across the whole habit sky.
+ */
+internal fun DrawScope.drawPolarJets(ctx: LoadingPaintContext) {
+    val col = lerp(lerp(ctx.monthCombo, ctx.weekCombo, 0.5f), ctx.dayCombo, 0.34f)
+    val tilt = ctx.phase3 * 300f
+    rotate(degrees = tilt, pivot = ctx.c) {
+        for (dir in 0 until 2) {
+            val sign = if (dir == 0) -1f else 1f
+            val len = ctx.radius * (0.94f + 0.05f * ctx.breathe2)
+            val segs = 4
+            for (s in 0 until segs) {
+                val t0 = 0.22f + (s / segs.toFloat()) * 0.78f
+                val t1 = 0.22f + ((s + 1) / segs.toFloat()) * 0.78f
+                val fade = 1f - s / segs.toFloat()
+                drawLine(
+                    color = col.copy(alpha = (0.34f + 0.20f * ctx.breathe2) * fade),
+                    start = Offset(ctx.c.x, ctx.c.y + sign * len * t0),
+                    end = Offset(ctx.c.x, ctx.c.y + sign * len * t1),
+                    strokeWidth = ctx.radius * (0.030f - 0.024f * (1f - fade)),
+                    cap = StrokeCap.Round
+                )
+            }
+            val tip = Offset(ctx.c.x, ctx.c.y + sign * len)
+            val tw = twinkle(ctx.phase4, dir * 3.3f)
+            dot(Color.White.copy(alpha = 0.55f + 0.35f * tw), tip, ctx.radius * 0.016f)
+            star(col.copy(alpha = 0.35f), tip, ctx.radius * 0.05f)
+        }
+    }
+}
+
+// ─────────────────── grandeur: halo of halos (transcendent) ──────────────
+
+/**
+ * Miniature spectrum crowns orbiting the rim of the orrery (grandeur ≥
+ * 28) — three tiny full-spectrum rings circling the great one, each
+ * spinning on its own axis. The crown has become a court.
+ */
+internal fun DrawScope.drawHaloOfHalos(ctx: LoadingPaintContext) {
+    val spectrum = listOf(
+        BorderRed, BorderOrange, BorderGreen, BorderBlue,
+        BorderPink, BorderYellow, BorderRed
+    )
+    ringArc(
+        Color.White.copy(alpha = 0.10f + 0.06f * ctx.breathe2),
+        ctx.c, ctx.radius * 1.0f, 0f, 360f,
+        ctx.radius * 0.006f, StrokeCap.Butt
+    )
+    for (i in 0 until 3) {
+        val a = ctx.phase2 * 360f + i * 120f
+        val hc = orbitPoint(ctx.c, ctx.radius * 1.0f, a)
+        val hr = ctx.radius * 0.055f
+        rotate(degrees = ctx.phase4 * 720f + i * 120f, pivot = hc) {
+            drawCircle(
+                brush = Brush.sweepGradient(spectrum, center = hc),
+                radius = hr,
+                center = hc,
+                style = Stroke(width = ctx.radius * 0.008f)
+            )
+        }
+        dot(Color.White.copy(alpha = 0.5f), hc, ctx.radius * 0.007f)
+    }
+}
+
+// ─────────────────── grandeur: transcendence (the summit) ────────────────
+
+/**
+ * TRANSCENDENCE (grandeur ≥ 32 — the reachable summit of 10/10/12, the
+ * white/blue month and week crowned by a white/yellow day). Prismatic
+ * shockwaves roll outward through the full thirteen-rung spectrum while
+ * a dozen vivid sparks orbit the blazing white heart. Totality was the
+ * perfect trinity; Transcendence is the whole ladder climbed at once.
+ */
+internal fun DrawScope.drawTranscendence(ctx: LoadingPaintContext) {
+    val spectrum = listOf(
+        BorderRed, BorderOrange, BorderGreen, BorderBlue,
+        BorderPink, BorderYellow, Color.White,
+        BorderWhiteRed, BorderWhiteOrange, BorderWhiteGreen,
+        BorderWhiteBlue, BorderWhitePink, BorderWhiteYellow, BorderRed
+    )
+    for (k in 0 until 3) {
+        val p = (ctx.breathe2 + k / 3f) % 1f
+        rotate(degrees = ctx.phase3 * 360f * (if (k % 2 == 0) 1f else -1f), pivot = ctx.c) {
+            drawCircle(
+                brush = Brush.sweepGradient(spectrum, center = ctx.c),
+                radius = ctx.radius * (0.30f + 0.68f * p),
+                center = ctx.c,
+                style = Stroke(width = ctx.radius * 0.014f * (1f - 0.5f * p))
+            )
+        }
+    }
+    val vivid = listOf(
+        BorderRed, BorderOrange, BorderGreen,
+        BorderBlue, BorderPink, BorderYellow
+    )
+    for (i in 0 until 12) {
+        val a = ctx.phase2 * 360f + i * 30f
+        val tw = twinkle(ctx.phase4, i * 1.9f)
+        dot(
+            vivid[i % 6].copy(alpha = 0.35f + 0.45f * tw),
+            orbitPoint(ctx.c, ctx.radius * 0.60f, a),
+            ctx.radius * (0.010f + 0.008f * tw)
+        )
+    }
+    val glowR = ctx.radius * (0.20f + 0.12f * ctx.breathe2)
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to Color.White.copy(alpha = 0.16f + 0.12f * ctx.breathe2),
             1f to Color.Transparent,
             center = ctx.c,
             radius = glowR

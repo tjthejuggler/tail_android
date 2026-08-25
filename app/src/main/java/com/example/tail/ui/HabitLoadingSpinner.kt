@@ -28,20 +28,36 @@ import kotlin.math.roundToInt
  *
  *  MONTHLY average (30d) — PRIMARY. Selects the core animation archetype
  *      (Ember → Twin Flames → Comet → Atom → Rose Window → Binary Suns →
- *      Supernova) and its primary colour. This is the soul of the piece.
+ *      Supernova → Phoenix → Magnetar → Aurora Heart → Galactic Core)
+ *      and its primary colour. This is the soul of the piece.
  *
  *  WEEKLY average (7d) — SECONDARY. Grows an orbital halo around the
  *      core: rings, tilted ellipses and satellite swarms, all in the
  *      weekly tier colour.
  *
  *  TODAY's points — MINOR. A central spark (dot → pulse → sparkle cross →
- *      micro-moons → ripples) in the daily tier colour.
+ *      micro-moons → ripples → … → Star of Dawn) in the daily tier colour.
+ *
+ * ── THE THIRTEEN-TIER LADDER ─────────────────────────────────────────
+ *
+ *  0 red · 1 orange · 2 green · 3 blue · 4 pink · 5 yellow · 6 white ·
+ *  7 white/red · 8 white/orange · 9 white/green · 10 white/blue ·
+ *  11 white/pink · 12 white/yellow.
+ *
+ *  Tiers 7+ are the WHITE+COLOUR combos: the layer's body burns in a
+ *  near-white glass tint while its vivid combo hue ([tierComboAccent])
+ *  paints the embellishments — the same white-with-coloured-edge language
+ *  as the stats overlay's outlined numbers and the habit square's
+ *  Glass + border phases. Realistically the monthly/weekly averages top
+ *  out around tier 10 (white/blue, 84+ avg points); the daily spark can
+ *  climb all the way to tier 12 (white/yellow, 98+ points in one day).
  *
  * ── PATRONAGE — no metric animates alone ─────────────────────────────
  *
  *  The quality of the OTHER two numbers upgrades each layer through
- *  three patronage ranks, derived from the SUM of the supporting tiers
- *  (0–12):  STRANGER (0–3) · ALLY (4–7) · PATRON (8–12).
+ *  four patronage ranks, derived from the SUM of the supporting tiers
+ *  (0–24):  STRANGER (0–3) · ALLY (4–7) · PATRON (8–13) ·
+ *  CHAMPION (14+ — only reachable once supporters reach combo tiers).
  *
  *  A boosted layer is drawn brighter — its own colour is lerped toward
  *  white — and grows extra embellishments (trails, sparkles, companion
@@ -52,8 +68,8 @@ import kotlin.math.roundToInt
  *
  * ── GRANDEUR — the whole is more than the sum of its parts ──────────
  *
- *  The sum of all three tiers (0–18) drives the global spectacle. The
- *  canvas itself GROWS with grandeur (72 dp → ~190 dp), and milestone
+ *  The sum of all three tiers (0–36) drives the global spectacle. The
+ *  canvas itself GROWS with grandeur (72 dp → ~240 dp), and milestone
  *  thresholds unlock cross-cutting flourishes behind/around the three
  *  personal layers:
  *
@@ -63,10 +79,22 @@ import kotlin.math.roundToInt
  *      16+  shooting stars— comets streak across the whole canvas
  *      17+  spectrum crown— a full-spectrum ring circling everything
  *      18   TOTALITY      — the perfect 6/6/6: white shockwave pulses
+ *      ── the transcendent range (combo tiers) ──
+ *      19+  aurora        — curtains of light wave behind everything
+ *      22+  constellation — chained stars linked across the sky
+ *      25+  polar jets    — beams erupt from the poles of the orrery
+ *      28+  halo of halos — orbiting mini spectrum crowns circle the rim
+ *      32   TRANSCENDENCE — the reachable summit (10/10/12): prismatic
+ *                           shockwaves and a blazing white heart
  *
- *  7 tiers × 3 patronage ranks = 21 variants per layer, 63 core
+ *  The step into the transcendent range is deliberately grander than
+ *  anything below it — crossing from white into white/red (grandeur 19)
+ *  awakens the aurora, and every threshold after adds a whole new
+ *  celestial phenomenon, not just a richer version of an old one.
+ *
+ *  13 tiers × 4 patronage ranks = 52 variants per layer, 156 core
  *  combinations of form — plus resonance ripples when all three tiers
- *  align, plus the six grandeur flourishes. No two streaks are alike.
+ *  align, plus the eleven grandeur flourishes. No two streaks are alike.
  *
  * The renderers live in [HabitLoadingLayers.kt] (shared primitives and
  * global flourishes), [HabitLoadingMonthly.kt], [HabitLoadingWeekly.kt]
@@ -86,8 +114,15 @@ data class LoadingMetrics(
     val todayPoints: Int
 )
 
-/** Maps a point total to its 0-based tier index (0 = red … 6 = white). */
+/** Maps a point total to its 0-based tier index (0 = red … 12 = white/yellow).
+ *  Boundaries match [PointTierColors.TIERS] exactly. */
 fun habitPointsTier(points: Int): Int = when {
+    points >= 98 -> 12
+    points >= 91 -> 11
+    points >= 84 -> 10
+    points >= 77 -> 9
+    points >= 70 -> 8
+    points >= 63 -> 7
     points >= 56 -> 6
     points >= 49 -> 5
     points >= 42 -> 4
@@ -97,8 +132,19 @@ fun habitPointsTier(points: Int): Int = when {
     else         -> 0
 }
 
-/** The vivid accent colour for a tier index (matches the Border* palette). */
+/**
+ * The body colour for a tier index. Plain tiers (0–6) use the vivid
+ * Border* palette; the white+colour combo tiers (7–12) use their near-white
+ * glass tint, so the layer's body reads as WHITE — the vivid half of the
+ * combo comes from [tierComboAccent].
+ */
 internal fun tierAccent(tier: Int): Color = when (tier) {
+    12 -> BorderWhiteYellow
+    11 -> BorderWhitePink
+    10 -> BorderWhiteBlue
+    9  -> BorderWhiteGreen
+    8  -> BorderWhiteOrange
+    7  -> BorderWhiteRed
     6 -> BorderGlass
     5 -> BorderYellow
     4 -> BorderPink
@@ -109,17 +155,35 @@ internal fun tierAccent(tier: Int): Color = when (tier) {
 }
 
 /**
- * Maps the combined tier sum of a layer's two supporters (0–12) to a
+ * The vivid combo hue for a tier index — the coloured half of the
+ * white+colour tiers (7–12). Plain tiers have no second hue, so their
+ * "combo" is simply their own accent colour.
+ */
+internal fun tierComboAccent(tier: Int): Color = when (tier) {
+    12 -> BorderYellow
+    11 -> BorderPink
+    10 -> BorderBlue
+    9  -> BorderGreen
+    8  -> BorderOrange
+    7  -> BorderRed
+    else -> tierAccent(tier)
+}
+
+/**
+ * Maps the combined tier sum of a layer's two supporters (0–24) to a
  * patronage rank:
  *
  *   0 · STRANGER — the layer burns alone            (support sum 0–3)
  *   1 · ALLY     — one strong companion lends aid   (support sum 4–7)
- *   2 · PATRON   — championed by mighty neighbours  (support sum 8–12)
+ *   2 · PATRON   — championed by mighty neighbours  (support sum 8–13)
+ *   3 · CHAMPION — carried by transcendent company  (support sum 14+,
+ *                  only reachable when supporters reach combo tiers)
  */
 fun patronageFrom(supportSum: Int): Int = when {
-    supportSum >= 8 -> 2
-    supportSum >= 4 -> 1
-    else            -> 0
+    supportSum >= 14 -> 3
+    supportSum >= 8  -> 2
+    supportSum >= 4  -> 1
+    else             -> 0
 }
 
 /**
@@ -127,16 +191,16 @@ fun patronageFrom(supportSum: Int): Int = when {
  * rounded before tiering, matching the map's accent-colour behaviour.
  *
  * Derived properties encode the synergy system:
- *  - [grandeur] — total spectacle (0–18), drives size + global flourishes.
+ *  - [grandeur] — total spectacle (0–36), drives size + global flourishes.
  *  - [monthPatronage] / [weekPatronage] / [dayPatronage] — how strongly
- *    the other two metrics upgrade each layer's animation (0–2).
+ *    the other two metrics upgrade each layer's animation (0–3).
  */
 data class LoadingTiers(val monthly: Int, val weekly: Int, val daily: Int) {
     /** True when all three metrics sit on the same non-zero tier. */
     val resonant: Boolean
         get() = monthly == weekly && weekly == daily && monthly > 0
 
-    /** Sum of all three tiers (0–18) — the global spectacle budget. */
+    /** Sum of all three tiers (0–36) — the global spectacle budget. */
     val grandeur: Int
         get() = monthly + weekly + daily
 
@@ -160,7 +224,9 @@ fun loadingTiers(m: LoadingMetrics): LoadingTiers = LoadingTiers(
     daily = habitPointsTier(m.todayPoints)
 )
 
-/** Grandeur thresholds at which each global flourish unlocks. */
+/** Grandeur thresholds at which each global flourish unlocks.
+ *  6–18: the classical range (unchanged). 19+: the transcendent range,
+ *  unlocked only when metrics reach the white+colour combo tiers. */
 internal object GrandeurThresholds {
     const val NEBULA = 6
     const val STARFIELD = 10
@@ -168,6 +234,11 @@ internal object GrandeurThresholds {
     const val SHOOTING_STARS = 16
     const val SPECTRUM_CROWN = 17
     const val TOTALITY = 18
+    const val AURORA = 19
+    const val CONSTELLATION = 22
+    const val POLAR_JETS = 25
+    const val HALO_OF_HALOS = 28
+    const val TRANSCENDENCE = 32
 }
 
 /**
@@ -206,10 +277,21 @@ fun HabitLoadingSpinner(
     val monthColor = tierAccent(tiers.monthly)
     val weekColor = tierAccent(tiers.weekly)
     val dayColor = tierAccent(tiers.daily)
+    // The vivid combo hues — for plain tiers these simply equal the body
+    // colour; for the white+colour tiers they carry the coloured half.
+    val monthCombo = tierComboAccent(tiers.monthly)
+    val weekCombo = tierComboAccent(tiers.weekly)
+    val dayCombo = tierComboAccent(tiers.daily)
 
     // The canvas itself swells with grandeur — a slow ease-in so mid
-    // tiers stay modest and the summit feels earned (72dp → ~190dp).
-    val growth = 1f + 1.65f * Math.pow((tiers.grandeur / 18f).toDouble(), 1.25).toFloat()
+    // tiers stay modest and the summit feels earned. The classical range
+    // (0–18) is unchanged (72dp → ~191dp); the transcendent range adds a
+    // second swell up to ~3.35× (72dp → ~241dp) at grandeur 32+.
+    val gClassical = tiers.grandeur.coerceAtMost(18)
+    val gTranscendent = (tiers.grandeur - 18).coerceAtLeast(0)
+    val growth = 1f +
+        1.65f * Math.pow((gClassical / 18f).toDouble(), 1.25).toFloat() +
+        0.70f * Math.pow((gTranscendent / 14f).toDouble(), 1.15).toFloat()
 
     val transition = rememberInfiniteTransition(label = "habitSpinner")
 
@@ -282,6 +364,9 @@ fun HabitLoadingSpinner(
             monthColor = monthColor,
             weekColor = weekColor,
             dayColor = dayColor,
+            monthCombo = monthCombo,
+            weekCombo = weekCombo,
+            dayCombo = dayCombo,
             phase = phase,
             phase2 = phase2,
             phase3 = phase3,
@@ -295,6 +380,8 @@ fun HabitLoadingSpinner(
         if (g >= GrandeurThresholds.NEBULA) drawNebula(ctx)
         if (g >= GrandeurThresholds.STARFIELD) drawStarfield(ctx)
         if (g >= GrandeurThresholds.CORONA) drawCorona(ctx)
+        if (g >= GrandeurThresholds.AURORA) drawAurora(ctx)
+        if (g >= GrandeurThresholds.CONSTELLATION) drawConstellation(ctx)
 
         // ── The three personal layers ──────────────────────────────────
         drawWeeklyHalo(ctx)   // outer orbital system, in the weekly colour
@@ -307,6 +394,11 @@ fun HabitLoadingSpinner(
         // ── Global flourishes (in front) ───────────────────────────────
         if (g >= GrandeurThresholds.SHOOTING_STARS) drawShootingStars(ctx)
         if (g >= GrandeurThresholds.SPECTRUM_CROWN) drawSpectrumCrown(ctx)
-        if (g >= GrandeurThresholds.TOTALITY) drawTotality(ctx)
+        if (g == GrandeurThresholds.TOTALITY || g >= GrandeurThresholds.TRANSCENDENCE) {
+            drawTotality(ctx)
+        }
+        if (g >= GrandeurThresholds.POLAR_JETS) drawPolarJets(ctx)
+        if (g >= GrandeurThresholds.HALO_OF_HALOS) drawHaloOfHalos(ctx)
+        if (g >= GrandeurThresholds.TRANSCENDENCE) drawTranscendence(ctx)
     }
 }

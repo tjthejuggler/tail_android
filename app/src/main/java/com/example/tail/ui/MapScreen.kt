@@ -931,11 +931,21 @@ fun MapScreen(
 }
 
 // ── Day → accent colour mapping ─────────────────────────────────────────────
-// Maps daily total points onto the 7-tier Border* palette (vivid versions of
-// the habit colours) so the accent reads clearly against the dark map background.
+// Maps daily total points onto the Border* palette (vivid versions of the
+// habit colours) so the accent reads clearly against the dark map background.
 // Thresholds: <14 red · 14-20 orange · 21-30 green · 31-41 blue ·
-//             42-48 pink · 49-55 yellow · 56+ white
+//             42-48 pink · 49-55 yellow · 56-62 white ·
+//             63-69 white/red · 70-76 white/orange · 77-83 white/green ·
+//             84-90 white/blue · 91-97 white/pink · 98+ white/yellow.
+// The white+colour combo tiers use a bright pastel of their hue — clearly
+// neither the plain white below them nor the deep vivid hue of tier 0-5 days.
 private fun accentColorForPoints(points: Int): Color = when {
+    points >= 98 -> whiteCombo(BorderYellow)
+    points >= 91 -> whiteCombo(BorderPink)
+    points >= 84 -> whiteCombo(BorderBlue)
+    points >= 77 -> whiteCombo(BorderGreen)
+    points >= 70 -> whiteCombo(BorderOrange)
+    points >= 63 -> whiteCombo(BorderRed)
     points >= 56 -> BorderGlass    // white
     points >= 49 -> BorderYellow
     points >= 42 -> BorderPink
@@ -944,6 +954,14 @@ private fun accentColorForPoints(points: Int): Color = when {
     points >= 14 -> BorderOrange
     else         -> BorderRed
 }
+
+/** A white+colour combo tier's accent: the hue brightened far toward white. */
+private fun whiteCombo(hue: Color): Color = Color(
+    red   = (hue.red   + (1f - hue.red)   * 0.55f).coerceIn(0f, 1f),
+    green = (hue.green + (1f - hue.green) * 0.55f).coerceIn(0f, 1f),
+    blue  = (hue.blue  + (1f - hue.blue)  * 0.55f).coerceIn(0f, 1f),
+    alpha = 1f
+)
 
 // ── Habit point → vivid colour mapping ─────────────────────────────────────
 // Maps habit point values (0-6+) to the same vivid Border* palette used for
