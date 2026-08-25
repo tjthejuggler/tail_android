@@ -5367,12 +5367,13 @@ class HabitViewModel(
      */
     fun setChessPhase2Version(version: String) {
         viewModelScope.launch {
-            val normalized =
-                if (version == com.example.tail.widget.ChessPhase2V2Store.VERSION_V2) {
+            val normalized = when (version) {
+                com.example.tail.widget.ChessPhase2V2Store.VERSION_V2 ->
                     com.example.tail.widget.ChessPhase2V2Store.VERSION_V2
-                } else {
-                    com.example.tail.widget.ChessPhase2V2Store.VERSION_V1
-                }
+                com.example.tail.widget.ChessPhase2V2Store.VERSION_V3 ->
+                    com.example.tail.widget.ChessPhase2V2Store.VERSION_V3
+                else -> com.example.tail.widget.ChessPhase2V2Store.VERSION_V1
+            }
             settingsRepo.saveChessPhase2Version(normalized)
             _settings.value = _settings.value.copy(chessPhase2Version = normalized)
             com.example.tail.widget.ChessPhase2V2Store.savePhase2Version(context, normalized)
@@ -8409,8 +8410,16 @@ class HabitViewModel(
         // at the moment the game ended (approved → full Phase 2 audit,
         // otherwise → unapproved in the compliance stats).
         try {
+            // Bridge credentials are auto-derived from the Garmin settings
+            // (same as movies/PC-widget) — no separate configuration exists.
+            val bridgeConn = getBridgeConnection()
             val summary = ChessDeferredGameReconciler.reconcilePending(
-                context, s.chessComUsername
+                context, s.chessComUsername,
+                bridge = bridgeConn?.let {
+                    com.example.tail.widget.ChessAnalysisFetcher.BridgeCredentials(
+                        url = it.first, token = it.second
+                    )
+                }
             )
             if (summary.resolved > 0) {
                 Log.i(
@@ -10366,6 +10375,35 @@ class HabitViewModel(
                 false
             }
             _bridgeStatus.value = if (ok) "✓ Bridge connected!" else "✗ Connection failed"
+        }
+    }
+
+    private val _chessAnalysisTestStatus = kotlinx.coroutines.flow.MutableStateFlow("")
+    val chessAnalysisTestStatus: kotlinx.coroutines.flow.StateFlow<String> =
+        _chessAnalysisTestStatus
+
+    /**
+     * Diagnostics for the v3 post-game audit: verifies the full
+     * phone → bridge → Stockfish pipeline with a tiny built-in test game.
+     */
+    fun testChessAnalysisPipeline() {
+        viewModelScope.launch {
+            _chessAnalysisTestStatus.value = "Testing pipeline…"
+            val conn = getBridgeConnection()
+            if (conn == null) {
+                _chessAnalysisTestStatus.value =
+                    "❌ Bridge not configured — it is auto-derived from the " +
+                        "Garmin connection (Settings → Garmin); set that up once " +
+                        "and every bridge feature (movies, PC widget, chess " +
+                        "analysis) uses it"
+                return@launch
+            }
+            _chessAnalysisTestStatus.value = try {
+                com.example.tail.widget.ChessAnalysisFetcher
+                    .testPipeline(conn.first, conn.second)
+            } catch (e: Exception) {
+                "❌ Test failed: ${e.message}"
+            }
         }
     }
 

@@ -74,6 +74,8 @@ All endpoints require the `X-App-Auth` header (except `/health`).
 | POST | `/api/v1/pc_widget/event` | Queue one PC habit event (bridge assigns ID) |
 | GET | `/api/v1/pc_widget/events` | PC habit events not yet acked by the phone |
 | POST | `/api/v1/pc_widget/acks` | Phone acks; the bridge prunes acked events |
+| GET | `/api/v1/chess_analysis/status` | Tail-owned Stockfish analysis status |
+| POST | `/api/v1/chess_analysis/analyze` | Analyse a PGN → per-side blunder/ACPL stats |
 
 ### Example Response (`/api/v1/movies/latest`)
 
@@ -87,6 +89,36 @@ All endpoints require the `X-App-Auth` header (except `/health`).
   "raw": "All.Her.Fault.S01E02.1080p.WEB-DL.mkv"
 }
 ```
+
+## Chess Analysis (Tail-owned Stockfish)
+
+The bridge runs its **own** Stockfish analysis for the Tail app's chess
+readiness verdicts — the Tail bundle (phone app + bridge) is fully standalone
+and does **not** require the chess-coach program. Dependencies:
+
+```bash
+pip install -r requirements.txt   # includes python-chess
+sudo apt install stockfish        # default path /usr/games/stockfish
+```
+
+- **`POST /api/v1/chess_analysis/analyze`** — body
+  `{pgn, game_id?, username?, depth?}` (default depth 12, max 18). Runs a
+  single-pass Stockfish analysis (~1–2 s/game) and returns per-side
+  `acpl / blunders / mistakes / inaccuracies / unforced_blunders / moves`
+  plus the resolved `user_side`.
+- **Dedup**: results are cached in `data/chess_analysis.db` (SQLite) keyed by
+  the canonical game id (PGN `Link` header). A repeat request returns
+  instantly with `cached: true` — a game is never analysed twice.
+- **Chess-coach handoff (optional courtesy)**: every fresh analysis is pushed
+  best-effort (fire-and-forget, 3 s timeout) to chess-coach's `/ingest`
+  endpoint when it happens to be running, so chess-coach never re-analyses
+  those games. If chess-coach isn't running, the push is silently skipped —
+  the Tail system doesn't care.
+
+Env knobs: `STOCKFISH_PATH`, `CHESS_ANALYSIS_DB`, `CHESS_ANALYSIS_THREADS`
+(default `min(4, cpus)` — modest, the PC may run other engines),
+`CHESS_ANALYSIS_HASH_MB` (default 128), `CHESS_COACH_INGEST_URL`
+(set empty to disable the handoff).
 
 ## Adding a New Source (Future Feature)
 
@@ -161,3 +193,5 @@ enable the bridge toggle in Settings and it connects automatically.
 | `MOVIE_POLL_INTERVAL` | `60` | Watcher poll interval (seconds) |
 | `MOVIE_CACHE_FILE` | `./movie_cache.json` | Cache output path |
 | `GARMIN_CACHE_FILE` | `../garmin_proxy/garmin_cache.json` | Garmin metrics cache path |
+| `STOCKFISH_PATH` | `/usr/games/stockfish` | Stockfish binary for chess analysis |
+| `CHESS_ANALYSIS_NOTIFY` | `1` | Desktop notification (notify-send) after each live Stockfish analysis; `0` disables |

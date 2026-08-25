@@ -22,6 +22,7 @@ who need to understand, maintain, or extend this system.
 9. [Deployment & Reinstall](#9-deployment--reinstall)
 10. [Troubleshooting](#10-troubleshooting)
 11. [File Map](#11-file-map)
+12. [Chess Analysis (Tail-owned Stockfish)](#12-chess-analysis-tail-owned-stockfish)
 
 ---
 
@@ -659,3 +660,60 @@ secret (`ANDROID_PROXY_KEY`).
   `pc_widget_smoke_test.py` spins up an in-process fake bridge and checks
   the full offscreen round-trip (config → tap → ack → prune → bridge-down
   resilience).
+
+---
+
+## 12. Chess Analysis (Tail-owned Stockfish)
+
+**Added 2026-08-25.** The Tail app's chess readiness verdicts (Phase2 v3)
+need per-game blunder data. The bridge runs its **own** Stockfish analysis —
+the Tail bundle is standalone and does **not** depend on the separate
+chess-coach project.
+
+### What runs where
+
+- `tail_bridge/chess_analysis.py` — single-pass Stockfish analyzer
+  (python-chess), a 1:1 port of chess-coach's metric definitions
+  (classification thresholds 50/200/500 cp; unforced blunder = blunder while
+  eval_before > −100cp and clock ≥ 10 s) and its full JSON output format.
+- SQLite registry `tail_bridge/data/chess_analysis.db` keyed by canonical
+  game id (PGN `Link` header) — a game is never analysed twice; cached games
+  return in ~0.01 s.
+- Endpoints (in `bridge_server.py`, auth as usual):
+  `GET /api/v1/chess_analysis/status`, `POST /api/v1/chess_analysis/analyze`
+  `{pgn, game_id?, username?, depth?}` → per-side
+  `acpl/blunders/mistakes/inaccuracies/unforced_blunders/moves`.
+- Engine: fresh Stockfish process per analysis, threads `min(4, cpus)`,
+  hash 128 MB (env: `STOCKFISH_PATH`, `CHESS_ANALYSIS_THREADS`,
+  `CHESS_ANALYSIS_HASH_MB`, `CHESS_ANALYSIS_DB`).
+- After each **live** analysis the PC shows a desktop notification
+  (`notify-send`, app "Tail Bridge": players, depth, duration, blunder
+  counts) so it's always visible when Stockfish actually ran. Cached hits
+  don't notify. Env `CHESS_ANALYSIS_NOTIFY=0` disables.
+
+### Phone side
+
+`ChessAnalysisFetcher.kt` calls the bridge with a 90 s read timeout and
+returns null on every failure (bridge down, PC off, timeout, error) — the
+v3 engine then skips the blunder rule and evaluates everything else
+(`engineBacked = false`). The verdict popup always states which happened:
+a bold green "♟ DESKTOP STOCKFISH VERDICT — engine data used" line when
+backed, a bold amber "⚠ FALLBACK VERDICT — no engine data" line when not,
+and the verdict message text ends with the same statement.
+
+### Chess-coach handoff (optional courtesy)
+
+Every fresh analysis is pushed fire-and-forget (3 s timeout) to
+`CHESS_COACH_INGEST_URL` (default `http://127.0.0.1:8011/ingest`). The
+chess-coach analysis service's `/ingest` endpoint writes the full-format
+JSON into its `analysis/` registry **only if not already present** (a local,
+possibly deeper analysis always wins). Result: when the user does run
+chess-coach, those games are already analysed and never redone. If
+chess-coach isn't running the push is silently skipped — no coupling.
+
+### Install / deps
+
+```bash
+cd tail_bridge && venv/bin/pip install -r requirements.txt  # python-chess
+sudo apt install stockfish   # /usr/games/stockfish
+```

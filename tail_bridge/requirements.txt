@@ -1,3 +1,6 @@
 # Tail Bridge dependencies
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
+python-chess>=1.999
+# System dependency: a Stockfish binary (e.g. `apt install stockfish`,
+# default path /usr/games/stockfish — override with STOCKFISH_PATH).

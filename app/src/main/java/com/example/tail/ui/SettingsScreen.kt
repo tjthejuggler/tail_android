@@ -2416,13 +2416,21 @@ private fun ChessReadinessSettingsSection(
                     "from your personal speed + accuracy Z-scores with a " +
                     "late-evening circadian adjustment, 7:28-day workload ratio " +
                     "and yellow-state hysteresis. Works with either readiness " +
-                    "test version; Chess Guard enforcement is shared.",
+                    "test version; Chess Guard enforcement is shared.\n" +
+                    "v3 — hybrid: v2's rules with ΔE-weighted loss streaks " +
+                    "(expected losses count 1.5, upsets 0.5), v1's strain " +
+                    "accumulator with a readiness buffer, a readiness-scaled " +
+                    "fatigue ceiling, and REAL unforced-blunder counts from " +
+                    "desktop Stockfish via the Tail bridge (needs the bridge " +
+                    "URL + token below; away from the PC the blunder rule " +
+                    "simply stays inactive and everything else still works).",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             listOf(
                 "v1" to "v1 — Adaptive ΔE / strain audit",
-                "v2" to "v2 — Tilt / fatigue / loss-chasing system"
+                "v2" to "v2 — Tilt / fatigue / loss-chasing system",
+                "v3" to "v3 — Hybrid + desktop Stockfish blunders"
             ).forEach { (value, label) ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2433,6 +2441,36 @@ private fun ChessReadinessSettingsSection(
                         onClick = { viewModel.setChessPhase2Version(value) }
                     )
                     Text(label, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+
+            // v3 diagnostics — one tap verifies phone → bridge → Stockfish.
+            if (settings.chessPhase2Version == "v3") {
+                val analysisTestStatus by viewModel.chessAnalysisTestStatus.collectAsState()
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(onClick = { viewModel.testChessAnalysisPipeline() }) {
+                        Text("♟ Test Analysis Pipeline", fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "checks bridge + Stockfish with a tiny test game",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (analysisTestStatus.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = analysisTestStatus,
+                        fontSize = 11.sp,
+                        color = if (analysisTestStatus.startsWith("✅"))
+                            MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error
+                    )
                 }
             }
 

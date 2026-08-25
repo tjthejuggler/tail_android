@@ -55,6 +55,9 @@ object ChessDeferredGameReconciler {
         /** v2 post-game engine audit ran — verdict below. */
         data class AuditedV2(val result: ChessPhase2V2Engine.AuditResultV2) : GameOutcome()
 
+        /** v3 hybrid audit ran (optionally backed by desktop Stockfish). */
+        data class AuditedV3(val result: ChessPhase2V3Engine.AuditResultV3) : GameOutcome()
+
         /** The game was already audited on a previous share (re-share). */
         data class AlreadyAudited(val previous: ChessPhase2Store.Phase2Audit) : GameOutcome()
 
@@ -115,7 +118,12 @@ object ChessDeferredGameReconciler {
      * stats see it immediately, even when the user's own archive still
      * lags behind the opponent's.
      */
-    fun processGame(context: Context, username: String, game: ChessComGameDetail): GameOutcome {
+    suspend fun processGame(
+        context: Context,
+        username: String,
+        game: ChessComGameDetail,
+        bridge: ChessAnalysisFetcher.BridgeCredentials? = null
+    ): GameOutcome {
         // Compliance stats first — cheap, deduped, and correct for every
         // outcome below (authorized games land in the APPROVED bucket).
         try {
@@ -132,9 +140,14 @@ object ChessDeferredGameReconciler {
 
         val gameEndMs = game.endTime * 1000L
 
-        // Phase 2 engine branch: "v2" runs the research-report audit
-        // (tilt vector / fatigue / loss-chasing / ACWR / hysteresis); the
-        // default "v1" path below is untouched.
+        // Phase 2 engine branch: "v3" runs the hybrid audit (v2 rules +
+        // ΔE-weighted streaks + the strain accumulator, with real unforced
+        // blunders from desktop Stockfish when the bridge is reachable);
+        // "v2" runs the research-report audit; the default "v1" path below
+        // is untouched.
+        if (ChessPhase2V2Store.isV3(context)) {
+            return processGameV3(context, username, game, gameEndMs, bridge)
+        }
         if (ChessPhase2V2Store.isV2(context)) {
             return processGameV2(context, username, game, gameEndMs)
         }
@@ -338,6 +351,176 @@ object ChessDeferredGameReconciler {
     }
 
     /**
+     * v3 hybrid audit: the v2 rule skeleton with ΔE-weighted loss streaks,
+     * the v1 strain accumulator (readiness-buffered, with one-dip
+     * forgiveness) and — when [bridge] is configured and reachable — real
+     * unforced-blunder counts from the desktop Stockfish analysis service.
+     * A null analysis simply leaves the blunder term ungated (away-from-PC
+     * fallback); every other rule still evaluates.
+     */
+    private suspend fun processGameV3(
+        context: Context,
+        username: String,
+        game: ChessComGameDetail,
+        gameEndMs: Long,
+        bridge: ChessAnalysisFetcher.BridgeCredentials?
+    ): GameOutcome {
+        val localHour = java.time.Instant.ofEpochMilli(gameEndMs)
+            .atZone(java.time.ZoneId.systemDefault()).hour
+
+        val mapping = ChessPhase2V2Engine.inputFrom(
+            game = game,
+            username = username,
+            sessionMinutesBefore = ChessPhase2Store.sessionMinutesUsed(context, gameEndMs),
+            localHour = localHour
+        )
+        val ready = when (mapping) {
+            is ChessPhase2V2Engine.MappingV2.NotAuditable ->
+                return GameOutcome.NotAuditable(mapping.reason)
+            is ChessPhase2V2Engine.MappingV2.Ready -> mapping
+        }
+
+        // Same authorization rule as v1/v2 — a game outside a green window
+        // is unapproved play, never an audit.
+        val tests = ChessReadinessStore.loadHistory(context)
+        val authorized = authorizedAtGameEnd(
+            tests = tests,
+            audits = ChessPhase2Store.loadAudits(context).map {
+                AuditStamp(it.timestamp, it.outputState)
+            },
+            gameEndMs = gameEndMs
+        )
+        if (!authorized) {
+            val stateAtPlay = tests
+                .filter { it.timestamp <= gameEndMs }
+                .maxByOrNull { it.timestamp }?.state
+            return GameOutcome.Unauthorized(playedAt = gameEndMs, stateAtPlay = stateAtPlay)
+        }
+
+        val tc = ready.input.timeControl
+        val accBaseline = ChessPhase2V2Engine.baselineOf(
+            ChessPhase2V2Store.accuracyHistory(context, tc),
+            ChessPhase2V2Engine.SD_FLOOR_ACCURACY
+        )
+        val moveBaseline = ChessPhase2V2Engine.baselineOf(
+            ChessPhase2V2Store.moveTimeHistory(context, tc),
+            ChessPhase2V2Engine.SD_FLOOR_MOVE_SEC
+        )
+        val sessionGames = ChessPhase2V2Store.currentSessionGames(context, gameEndMs)
+            .mapNotNull { g ->
+                val res = ChessPhase2Engine.GameResult.entries
+                    .firstOrNull { it.name == g.result } ?: return@mapNotNull null
+                ChessPhase2V3Engine.SessionGameV3(
+                    timestamp = g.timestamp,
+                    result = res,
+                    outputState = g.outputState,
+                    expectedScore = g.expectedScore,
+                    strain = g.strain
+                )
+            }
+        val acwr = try {
+            ChessPhase2V2Store.acwrInput(
+                ChessReadinessLogStore.loadGames(context), gameEndMs
+            )
+        } catch (_: Exception) { null }
+
+        // Desktop Stockfish analysis through the bridge — null when away
+        // from the PC / service down (fallback contract, see the fetcher).
+        val isWhite = game.whiteUsername.trim().lowercase() ==
+            username.trim().lowercase()
+        val analysis = ChessAnalysisFetcher.fetch(
+            credentials = bridge,
+            gameId = game.gameId,
+            pgn = game.pgn,
+            username = username,
+            isWhite = isWhite
+        )
+
+        // CCRS of the latest readiness test at/before game end — drives the
+        // fatigue scaling, the strain buffer and one-dip forgiveness.
+        val ccrs = tests
+            .filter { it.timestamp <= gameEndMs }
+            .maxByOrNull { it.timestamp }?.ccrs
+
+        // ΔE history from the shared audit log (the same source v1's
+        // personal percentile floors use).
+        val deltaEHistory = ChessPhase2Store.loadAudits(context)
+            .filter { it.timestamp <= gameEndMs }
+            .map { ChessPhase2Engine.DeltaERecord(it.timestamp, it.deltaE) }
+
+        val expectedScore = ready.input.result.score - ready.deltaE
+
+        val result = ChessPhase2V3Engine.evaluate(
+            input = ChessPhase2V3Engine.GameInputV3(
+                timeControl = tc,
+                result = ready.input.result,
+                accuracy = ready.input.accuracy,
+                avgMoveSec = ready.input.avgMoveSec,
+                sessionElapsedMins = ready.input.sessionElapsedMins,
+                localHour = localHour,
+                shortGame = ready.input.shortGame,
+                expectedScore = expectedScore,
+                deltaE = ready.deltaE,
+                unforcedBlunders = analysis?.userStats?.unforcedBlunders,
+                blunderCount = analysis?.userStats?.blunders,
+                accuracyHistory = ChessPhase2V2Store.accuracyHistory(context, tc),
+                readinessCcrs = ccrs
+            ),
+            sessionGames = sessionGames,
+            accBaseline = accBaseline,
+            moveBaseline = moveBaseline,
+            acwr = acwr,
+            deltaEHistory = deltaEHistory,
+            now = gameEndMs
+        )
+
+        // Personal baselines grow from every game with KNOWN telemetry.
+        ChessPhase2V2Store.appendTelemetry(
+            context, tc,
+            accuracy = ready.input.accuracy.takeIf { ready.accuracyKnown },
+            shortGame = ready.input.shortGame,
+            avgMoveSec = ready.input.avgMoveSec.takeIf { ready.moveTimeKnown }
+        )
+        ChessPhase2V2Store.appendRecentGame(
+            context,
+            ChessPhase2V2Store.RatedGameRecord(
+                timestamp = gameEndMs,
+                result = ready.input.result.name,
+                timeControl = tc.name,
+                outputState = result.outputState.name,
+                estimatedMinutes = ready.estimatedMinutes,
+                expectedScore = expectedScore,
+                strain = result.strain
+            )
+        )
+        // Shared audit history → Chess Guard, rated-play authorization and
+        // session derivation all consume this (strain mapped onto the v1
+        // 0/50/100 scale so switching engines mid-history keeps a
+        // meaningful session tally).
+        ChessPhase2Store.appendAudit(
+            context,
+            ChessPhase2Store.Phase2Audit(
+                timestamp = gameEndMs,
+                timeControl = tc.name,
+                outputState = result.outputState.name,
+                deltaE = ready.deltaE,
+                caps2Accuracy = ready.input.accuracy ?: 0.0,
+                accuracyCounted = ready.accuracyKnown && !ready.input.shortGame,
+                gameId = game.gameId.toString(),
+                estimatedMinutes = ready.estimatedMinutes,
+                strain = when (result.outputState) {
+                    ChessPhase2Engine.OutputState.TERMINATE_SESSION ->
+                        ChessPhase2Engine.STRAIN_TERMINATE_BASE
+                    ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS ->
+                        ChessPhase2Engine.SEVERE_STRAIN
+                    else -> 0.0
+                }
+            )
+        )
+        return GameOutcome.AuditedV3(result)
+    }
+
+    /**
      * Drains the pending-share queue: re-fetches every parked game (the
      * configured username is searched first, then the players recorded
      * from the share text) and processes whatever has appeared. Games that
@@ -350,7 +533,8 @@ object ChessDeferredGameReconciler {
         username: String,
         service: ChessComService = ChessComService(),
         now: Long = System.currentTimeMillis(),
-        excludeGameId: Long? = null
+        excludeGameId: Long? = null,
+        bridge: ChessAnalysisFetcher.BridgeCredentials? = null
     ): Summary {
         val queue = ChessPendingGameStore.pending(context)
             .filterNot { it.gameId == excludeGameId }
@@ -380,7 +564,7 @@ object ChessDeferredGameReconciler {
                     stillPending++
                     continue
                 }
-                when (processGame(context, username, game)) {
+                when (processGame(context, username, game, bridge)) {
                     is GameOutcome.Audited -> audited++
                     is GameOutcome.Unauthorized -> unauthorized++
                     else -> { /* already audited / not auditable — resolved either way */ }

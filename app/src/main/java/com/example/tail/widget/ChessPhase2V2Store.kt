@@ -42,25 +42,32 @@ object ChessPhase2V2Store {
     /** Which post-game engine audits shared games. */
     const val VERSION_V1 = "v1"
     const val VERSION_V2 = "v2"
+    const val VERSION_V3 = "v3"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     // ── Version mirror ─────────────────────────────────────────────────────
 
-    /** "v1" (default — the original adaptive audit) or "v2" (this system). */
+    /** "v1" (default — the original adaptive audit), "v2" or "v3" (hybrid). */
     fun phase2Version(context: Context): String =
         prefs(context).getString(KEY_VERSION, VERSION_V1) ?: VERSION_V1
 
     fun isV2(context: Context): Boolean = phase2Version(context) == VERSION_V2
 
+    fun isV3(context: Context): Boolean = phase2Version(context) == VERSION_V3
+
     /**
      * Mirrored from DataStore by the settings view-model on every change.
-     * Every ACTUAL v1↔v2 switch is appended to the version log so the
+     * Every ACTUAL version switch is appended to the version log so the
      * rating chart can mark which audit engine was active when.
      */
     fun savePhase2Version(context: Context, version: String) {
-        val target = if (version == VERSION_V2) VERSION_V2 else VERSION_V1
+        val target = when (version) {
+            VERSION_V2 -> VERSION_V2
+            VERSION_V3 -> VERSION_V3
+            else -> VERSION_V1
+        }
         val previous = phase2Version(context)
         prefs(context).edit()
             .putString(KEY_VERSION, target)
@@ -119,7 +126,15 @@ object ChessPhase2V2Store {
         /** [ChessPhase2Engine.OutputState] name of this game's audit. */
         val outputState: String,
         /** Base-clock minutes the game contributed to the session tally. */
-        val estimatedMinutes: Double
+        val estimatedMinutes: Double,
+        /**
+         * Elo expected score of that game (0–1) — drives v3's ΔE-weighted
+         * loss streak. Null on rows recorded before v3 (weight falls back
+         * to the normal 1.0 for losses).
+         */
+        val expectedScore: Double? = null,
+        /** Strain this game contributed (v3 Rule 5; 0.0 on v1/v2 rows). */
+        val strain: Double = 0.0
     )
 
     private fun loadWindow(context: Context, key: String): List<Double> {
@@ -190,7 +205,10 @@ object ChessPhase2V2Store {
                     result = o.optString("result", ""),
                     timeControl = o.optString("timeControl", ""),
                     outputState = o.optString("outputState", ""),
-                    estimatedMinutes = o.optDouble("estimatedMinutes", 0.0)
+                    estimatedMinutes = o.optDouble("estimatedMinutes", 0.0),
+                    expectedScore = if (o.has("expectedScore") && !o.isNull("expectedScore"))
+                        o.optDouble("expectedScore") else null,
+                    strain = o.optDouble("strain", 0.0)
                 )
             }
         } catch (_: Exception) { emptyList() }
@@ -208,6 +226,8 @@ object ChessPhase2V2Store {
                 put("timeControl", it.timeControl)
                 put("outputState", it.outputState)
                 put("estimatedMinutes", it.estimatedMinutes)
+                put("expectedScore", it.expectedScore ?: JSONObject.NULL)
+                put("strain", it.strain)
             })
         }
         prefs(context).edit().putString(KEY_RECENT_GAMES, arr.toString()).apply()

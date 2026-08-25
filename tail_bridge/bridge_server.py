@@ -46,6 +46,8 @@ import logging
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -401,6 +403,60 @@ def pc_widget_acks(payload: Dict[str, Any], api_key: str = Security(verify_key))
         })
     logger.info(f"pc_widget acks: {len(acked)} ids, {len(remaining)} still queued")
     return {"ok": True, "remaining": len(remaining)}
+
+
+# ── Chess analysis (Tail-owned Stockfish service) ─────────────────────────────
+#
+# Fully standalone: the bridge runs its own Stockfish analysis (python-chess),
+# cached in a local SQLite registry keyed by canonical game_id. The Tail
+# bundle needs no chess-coach installation. As a courtesy, every fresh
+# analysis is pushed best-effort to chess-coach's /ingest endpoint (when it
+# happens to be running) so chess-coach never re-analyses those games.
+
+try:
+    from chess_analysis import get_service as _chess_analysis_service
+except Exception as _exc:  # python-chess or stockfish missing → phone falls back
+    _chess_analysis_import_error = str(_exc)
+
+    def _chess_analysis_service():
+        raise HTTPException(
+            status_code=503,
+            detail=f"chess analysis unavailable: {_chess_analysis_import_error}",
+        )
+
+
+@app.get("/api/v1/chess_analysis/status", tags=["chess_analysis"])
+def chess_analysis_status(api_key: str = Security(verify_key)):
+    """Tail-owned analysis service status (cache size, engine, busy flag)."""
+    return _chess_analysis_service().status()
+
+
+@app.post("/api/v1/chess_analysis/analyze", tags=["chess_analysis"])
+def chess_analysis_analyze(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """Analyse a PGN with local Stockfish. Returns per-side blunder/ACPL stats.
+
+    Body: {pgn: str, game_id?: str, username?: str, depth?: int}
+    Dedup via the SQLite registry — a cached game returns instantly, a new
+    one runs live analysis (seconds). Blocking call; FastAPI runs it in the
+    threadpool.
+    """
+    pgn = payload.get("pgn")
+    if not isinstance(pgn, str) or not pgn.strip():
+        raise HTTPException(status_code=400, detail="body must contain a 'pgn' string")
+    service = _chess_analysis_service()
+    try:
+        return service.analyze(
+            pgn_text=pgn,
+            game_id=str(payload.get("game_id") or ""),
+            username=str(payload.get("username") or ""),
+            depth=payload.get("depth"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="stockfish binary not found")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"analysis failed: {exc}")
 
 
 if __name__ == "__main__":

@@ -1030,7 +1030,7 @@ class SettingsRepository(private val context: Context) {
             chessReadinessVersion = prefs[KEY_CHESS_READINESS_VERSION]
                 ?.takeIf { it == "v2" } ?: "v1",
             chessPhase2Version = prefs[KEY_CHESS_PHASE2_VERSION]
-                ?.takeIf { it == "v2" } ?: "v1",
+                ?.takeIf { it == "v2" || it == "v3" } ?: "v1",
             gdriveAutoEnabled = prefs[KEY_GDRIVE_AUTO_ENABLED] ?: false,
             gdriveAccountName = prefs[KEY_GDRIVE_ACCOUNT_NAME] ?: "",
             gdriveLastBackupDate = prefs[KEY_GDRIVE_LAST_DATE] ?: "",

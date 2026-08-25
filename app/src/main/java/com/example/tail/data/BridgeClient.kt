@@ -128,20 +128,24 @@ class BridgeClient {
      * @param token      The X-App-Auth shared secret
      * @param path       API path after /api/v1/ (e.g. "pc_widget/config")
      * @param body       JSON request body
+     * @param readTimeoutMs Read timeout — override for slow endpoints (e.g.
+     *                    live Stockfish analysis takes seconds to minutes,
+     *                    far beyond the default 10 s)
      * @return Parsed response JSONObject, or null on any error
      */
     suspend fun post(
         bridgeUrl: String,
         token: String,
         path: String,
-        body: JSONObject
+        body: JSONObject,
+        readTimeoutMs: Int = READ_TIMEOUT
     ): JSONObject? = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = bridgeUrl.trim().trimEnd('/')
             val url = URL("$cleanUrl/api/v1/$path")
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = CONNECT_TIMEOUT
-            conn.readTimeout = READ_TIMEOUT
+            conn.readTimeout = readTimeoutMs
             conn.requestMethod = "POST"
             conn.doOutput = true
             conn.setRequestProperty("X-App-Auth", token)

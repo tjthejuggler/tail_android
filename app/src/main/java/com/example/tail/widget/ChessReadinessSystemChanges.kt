@@ -151,6 +151,31 @@ object ChessReadinessSystemChanges {
                 "a large spike (≥ +1.5σ, the weakly-evidenced pre-illness \"paradoxical " +
                 "surge\" pattern) caps at Tier 2 — never a lockout. Same philosophy as the " +
                 "one-sided RHR and ACWR rules: only gate on the side the science supports."
+        ),
+        ReadinessSystemChange(
+            at("2026-08-25T10:10:00Z"),
+            "Phase 2 audit v3.0 — hybrid verdicts with desktop Stockfish blunder evidence",
+            "The post-game audit became a hybrid of the v1 strain accumulator and the v2 " +
+                "research rules, now backed by REAL move-quality data: after each rated game " +
+                "the phone asks the PC bridge, which runs its own standalone Stockfish " +
+                "analysis (~2 s/game, SQLite dedup by chess.com game id — a game is never " +
+                "analysed twice, and games are evaluated the moment they arrive, in any " +
+                "order). Six rules decide Green/Yellow/Red: (1) readiness-scaled session " +
+                "fatigue — 90 min to Yellow / 120 to Red, lifted by +15/+30 min when the " +
+                "pre-game CCRS was ≥75/≥85; (2) ΔE-weighted loss streak — losses as the " +
+                "favorite (expected score > 0.5) weigh 1.5, even matchups 1.0, underdog " +
+                "losses 0.5, Yellow at ≥2.0 and Red at ≥3.0 weighted points, a single loss " +
+                "never flags; (3) the v2 tilt vector (accuracy/pace Z-scores + circadian " +
+                "window); (4) the v2 ACWR load-balance rule; (5) the v1 strain accumulator " +
+                "(personal-percentile ΔE floors, severe = 50 / moderate = 25 points, " +
+                "accuracy and unforced-blunder violations +25 each, termination at 100 + a " +
+                "readiness buffer, catastrophic ΔE ≤ −0.75 hard cutoff, one-dip forgiveness " +
+                "when CCRS ≥ 85 and the session is otherwise clean); (6) hysteresis — Yellow " +
+                "holds until a win/draw with the deficit Z back ≤ 0 plus 15 minutes. The " +
+                "blunder rule only gates when the Stockfish data actually arrived: away " +
+                "from the PC every other rule still evaluates and the verdict is marked " +
+                "engine-less. Selectable as 'v3' in Settings → Chess, with v1/v2 history " +
+                "kept intact."
         )
     )
 }
