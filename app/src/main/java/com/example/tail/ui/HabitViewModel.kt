@@ -2133,6 +2133,11 @@ class HabitViewModel(
                 applyDivider(currentStored, sourceDivider)
         } else amount
 
+        // Linked-habit timestamps are collected here and recorded only after
+        // the habits file was durably written (see Step 3) — a failed persist
+        // must never leave phantom timestamps for increments that never
+        // reached the file.
+        val pendingLinkedTimestamps = mutableListOf<String>()
         for (linkedName in linkedHabits) {
             // Resolve which value slot of the linked habit this feed targets:
             // Points (default) = its count; Value2/Value3 = its raw secondary slots.
@@ -2152,9 +2157,7 @@ class HabitViewModel(
                 // (the full rebuild below refreshes secondary displays from the DB).
                 updatedDb = habitsRepo.applyIncrementToDb(updatedDb, targetKey, feedAmount, targetDate)
                 if (recordTimestamp) {
-                    viewModelScope.launch {
-                        timestampRepo.addTimestamp(linkedName, targetDate)
-                    }
+                    pendingLinkedTimestamps.add(linkedName)
                 }
                 continue
             }
@@ -2176,9 +2179,7 @@ class HabitViewModel(
                 }
                 // Record timestamp for the linked habit too
                 if (recordTimestamp) {
-                    viewModelScope.launch {
-                        timestampRepo.addTimestamp(linkedName, targetDate)
-                    }
+                    pendingLinkedTimestamps.add(linkedName)
                 }
             }
         }
@@ -2211,40 +2212,73 @@ class HabitViewModel(
             screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
         }
 
-        // Step 3: full rebuild (streak/ATH recalc) + disk write in background
-        viewModelScope.launch {
-            rebuildHabitList()
-            try {
-                val uri = Uri.parse(uriString)
-                habitsRepo.persistDatabase(uri, context, updatedDb)
-                HabitsDataChangedBus.emit()
-            } catch (e: Exception) {
-                _errorMessage.value = "Failed to save: ${e.message}"
-            }
-        }
-
-        // Step 4: if this is a timed habit (and NOT subtyped — subtyped timed habits
-        // record their timed entries in saveSubtypeIncrement instead), append a
-        // timestamped session entry with subtype=null.
-        if (habitName in _settings.value.timedHabits && habitName !in _settings.value.subtypedHabits) {
-            viewModelScope.launch {
-                timedDataRepo.appendEntries(habitName, mapOf(null to amount))
-            }
-        }
-
-        // Step 5: record timestamp(s) if requested. One timestamp PER stored unit
-        // (storedDelta, not amount) so the timestamp editor's increment amounts
-        // always match the day's count — including max-1 clamps and point tiers.
+        // Step 5 delta, computed here while the cache values are stable.
         val storedDelta = newCount - currentStored
-        if (recordTimestamp && storedDelta > 0) {
-            viewModelScope.launch {
-                timestampRepo.addTimestamps(habitName, storedDelta, targetDate)
-            }
-        }
 
-        // Step 6: broadcast a generic "habit incremented" event so same-keystore apps
-        // (e.g. VILD) can react — e.g. auto-switch from night to day mode on wake-up.
-        sendHabitIncrementedBroadcast(habitName, storedDelta.coerceAtLeast(0))
+        // Step 3: disk write FIRST, then every follow-up effect that must never
+        // outlive the count. Previously the timestamps (Steps 4/5) were written
+        // by separate, faster coroutines while the habits-file persist ran
+        // behind an unprotected rebuildHabitList() — so a transient SAF
+        // failure, a rebuild crash or process death between the two writes
+        // silently left a phantom "timestamp without increment" (the
+        // notification-answer bug). Now: persist → emit → rebuild → timed
+        // entries → timestamps → broadcast, and NOTHING is recorded when the
+        // persist fails.
+        viewModelScope.launch {
+            val uri = Uri.parse(uriString)
+            try {
+                habitsRepo.persistDatabase(uri, context, updatedDb)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist increment for '$habitName': ${e.message}", e)
+                _errorMessage.value = "Failed to save: ${e.message}"
+                // Resync the optimistic cache with the file so a later attempt
+                // doesn't early-return against a stale-high count.
+                try {
+                    cachedPhoneDb = habitsRepo.loadDatabase(uri, context)
+                } catch (e2: Exception) {
+                    Log.w(TAG, "Cache resync after failed persist failed too: ${e2.message}")
+                }
+                return@launch
+            }
+            HabitsDataChangedBus.emit()
+            // Full rebuild (streak/ATH recalc) — AFTER the write, and guarded so
+            // a rebuild failure can never starve the effects below.
+            try {
+                rebuildHabitList()
+            } catch (e: Exception) {
+                Log.e(TAG, "Rebuild after increment failed: ${e.message}", e)
+            }
+            // Step 4: if this is a timed habit (and NOT subtyped — subtyped timed
+            // habits record their timed entries in saveSubtypeIncrement instead),
+            // append a timestamped session entry with subtype=null.
+            if (habitName in _settings.value.timedHabits && habitName !in _settings.value.subtypedHabits) {
+                try {
+                    timedDataRepo.appendEntries(habitName, mapOf(null to amount))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to append timed entry for '$habitName': ${e.message}")
+                }
+            }
+            // Step 5: record timestamp(s) if requested. One timestamp PER stored unit
+            // (storedDelta, not amount) so the timestamp editor's increment amounts
+            // always match the day's count — including max-1 clamps and point tiers.
+            if (recordTimestamp && storedDelta > 0) {
+                try {
+                    timestampRepo.addTimestamps(habitName, storedDelta, targetDate)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to record timestamps for '$habitName': ${e.message}")
+                }
+            }
+            for (linkedName in pendingLinkedTimestamps) {
+                try {
+                    timestampRepo.addTimestamp(linkedName, targetDate)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to record linked timestamp for '$linkedName': ${e.message}")
+                }
+            }
+            // Step 6: broadcast a generic "habit incremented" event so same-keystore apps
+            // (e.g. VILD) can react — e.g. auto-switch from night to day mode on wake-up.
+            sendHabitIncrementedBroadcast(habitName, storedDelta.coerceAtLeast(0))
+        }
     }
 
     /**
@@ -2332,36 +2366,53 @@ class HabitViewModel(
         cachedPhoneDb = updatedDb
         screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
 
-        // Step 3: full rebuild (streak/ATH recalc) + disk write in background
-        viewModelScope.launch {
-            rebuildHabitList()
-            try {
-                val uri = Uri.parse(uriString)
-                habitsRepo.persistDatabase(uri, context, updatedDb)
-                HabitsDataChangedBus.emit()
-            } catch (e: Exception) {
-                _errorMessage.value = "Failed to save: ${e.message}"
-            }
-        }
-
-        // Step 4: if this is a timed habit (and NOT subtyped)
-        if (habitName in _settings.value.timedHabits && habitName !in _settings.value.subtypedHabits) {
-            viewModelScope.launch {
-                timedDataRepo.appendEntries(habitName, mapOf(null to amount))
-            }
-        }
-
-        // Step 5: record timestamp(s) if requested. One timestamp PER stored unit
-        // (storedDelta, not amount) so the timestamp editor's increment amounts
-        // always match the day's count — including max-1 clamps and point tiers.
+        // Step 5 delta, computed here while the cache values are stable.
         val storedDelta = newCount - currentStored
-        if (recordTimestamp && storedDelta > 0) {
-            viewModelScope.launch {
-                timestampRepo.addTimestamps(habitName, storedDelta, _selectedDate.value)
-            }
-        }
 
-        sendHabitIncrementedBroadcast(habitName, storedDelta.coerceAtLeast(0))
+        // Step 3: disk write FIRST, then the follow-up effects — same durable-
+        // first ordering as incrementHabit: a failed persist must never leave
+        // phantom timed entries/timestamps for a count that never reached the
+        // file, and a rebuild crash must never starve the persist.
+        viewModelScope.launch {
+            val uri = Uri.parse(uriString)
+            try {
+                habitsRepo.persistDatabase(uri, context, updatedDb)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist roll-forward increment for '$habitName': ${e.message}", e)
+                _errorMessage.value = "Failed to save: ${e.message}"
+                try {
+                    cachedPhoneDb = habitsRepo.loadDatabase(uri, context)
+                } catch (e2: Exception) {
+                    Log.w(TAG, "Cache resync after failed persist failed too: ${e2.message}")
+                }
+                return@launch
+            }
+            HabitsDataChangedBus.emit()
+            try {
+                rebuildHabitList()
+            } catch (e: Exception) {
+                Log.e(TAG, "Rebuild after roll-forward increment failed: ${e.message}", e)
+            }
+            // Step 4: if this is a timed habit (and NOT subtyped)
+            if (habitName in _settings.value.timedHabits && habitName !in _settings.value.subtypedHabits) {
+                try {
+                    timedDataRepo.appendEntries(habitName, mapOf(null to amount))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to append timed entry for '$habitName': ${e.message}")
+                }
+            }
+            // Step 5: record timestamp(s) if requested. One timestamp PER stored unit
+            // (storedDelta, not amount) so the timestamp editor's increment amounts
+            // always match the day's count — including max-1 clamps and point tiers.
+            if (recordTimestamp && storedDelta > 0) {
+                try {
+                    timestampRepo.addTimestamps(habitName, storedDelta, _selectedDate.value)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to record timestamps for '$habitName': ${e.message}")
+                }
+            }
+            sendHabitIncrementedBroadcast(habitName, storedDelta.coerceAtLeast(0))
+        }
     }
 
     /**
@@ -10196,10 +10247,12 @@ class HabitViewModel(
                     } else {
                         onEntryLogged(null)
                     }
-                } else if (yes) {
+                } else if (yes && ask.type == HabitNotification.TYPE_SCHEDULE) {
                     // The ask is about TODAY — never the date the user happens
                     // to be viewing. Matches the system-notification answer
                     // path (HabitAsks.applyAnswer → HabitsRepository.incrementHabit).
+                    // TYPE_INFO asks carry no effect — acknowledging one only
+                    // removes it everywhere (the else branch below).
                     incrementHabit(ask.habitName, date = LocalDate.now())
                     onEntryLogged(null)
                 } else {
@@ -10222,7 +10275,9 @@ class HabitViewModel(
         viewModelScope.launch {
             try {
                 val unseen = notificationStore.notificationsFlow.first()
-                    .firstOrNull { !it.flashShown }
+                    // Info notices never flash — they wait in the bell center
+                    // until acknowledged (no Yes/No semantics to flash with).
+                    .firstOrNull { !it.flashShown && it.type != HabitNotification.TYPE_INFO }
                 if (unseen != null) {
                     notificationStore.markFlashShown(unseen.id)
                 }

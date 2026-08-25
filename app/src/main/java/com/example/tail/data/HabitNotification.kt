@@ -15,8 +15,9 @@ package com.example.tail.data
  *
  * @param id Stable identifier. "movie:<title>@<day>" for movie asks,
  *           "schedule:<habit>:<yyyy-MM-dd>" for scheduled asks.
- * @param habitName Habit the ask belongs to.
- * @param type [TYPE_MOVIE] or [TYPE_SCHEDULE].
+ * @param habitName Habit the ask belongs to. For [TYPE_INFO] notices a short
+ *           label shown in the center instead (e.g. "Quick capture").
+ * @param type [TYPE_MOVIE], [TYPE_SCHEDULE] or [TYPE_INFO].
  * @param title Headline (movie title, or the habit name for scheduled asks).
  * @param question The yes/no question shown to the user.
  * @param createdAtMillis When the ask was created (alarm fire / detection).
@@ -37,6 +38,14 @@ data class HabitNotification(
     companion object {
         const val TYPE_MOVIE = "movie"
         const val TYPE_SCHEDULE = "schedule"
+
+        /**
+         * Informational notice — no Yes/No effect. Acknowledging it (the "OK"
+         * action on the system notification or in the center) only removes it
+         * everywhere. Used e.g. for quick-capture failures, which previously
+         * vanished with a transient toast.
+         */
+        const val TYPE_INFO = "info"
 
         /** Builds the stable id for a scheduled ask of [habitName] on [date]. */
         fun scheduleId(habitName: String, date: String): String =

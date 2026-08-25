@@ -27,6 +27,39 @@ object HabitAsks {
     fun movieAskId(marker: String): String = "movie:$marker"
 
     /**
+     * Posts an informational notice into the notification system (in-app
+     * center + system notification). Unlike asks it has no Yes/No effect —
+     * acknowledging it just removes it everywhere. Used for things the user
+     * must not miss, e.g. quick-capture failures that previously disappeared
+     * with a transient toast.
+     *
+     * @param id Stable unique id; a duplicate id is not re-added (no-op).
+     * @param title Headline, e.g. "📸 Quick capture failed".
+     * @param message Body text explaining what failed.
+     * @param habitLabel Small label shown in the center (defaults to "Notice").
+     */
+    suspend fun postInfo(
+        appContext: Context,
+        id: String,
+        title: String,
+        message: String,
+        habitLabel: String = "Notice"
+    ): HabitNotification {
+        val notice = HabitNotification(
+            id = id,
+            habitName = habitLabel,
+            type = HabitNotification.TYPE_INFO,
+            title = title,
+            question = message,
+            createdAtMillis = System.currentTimeMillis()
+        )
+        NotificationStore(appContext).add(notice)
+        HabitNotifier.postAsk(appContext, notice)
+        Log.i(TAG, "Posted info notification '$id': $title")
+        return notice
+    }
+
+    /**
      * Fires the scheduled daily ask for [habitName]: creates the store record,
      * posts the system notification and marks the habit as fired today.
      * Skips (returns null) when this habit already fired today — this is what
@@ -68,6 +101,9 @@ object HabitAsks {
      * - Schedule + No  → nothing
      */
     suspend fun applyAnswer(appContext: Context, ask: HabitNotification, yes: Boolean) {
+        // Informational notices carry no effect — the caller removes the
+        // record and cancels the system notification (dismiss-everywhere).
+        if (ask.type == HabitNotification.TYPE_INFO) return
         val settingsRepo = SettingsRepository(appContext)
         if (ask.type == HabitNotification.TYPE_MOVIE) {
             // Persist the handled marker (id is "movie:<marker>") so the movie

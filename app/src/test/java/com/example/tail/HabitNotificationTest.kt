@@ -104,6 +104,20 @@ class HabitNotificationTest {
     }
 
     @Test
+    fun `encode then decode round-trips an info notice`() {
+        val notice = HabitNotification(
+            id = "qc-fail:1784444444444",
+            habitName = "Quick capture",
+            type = HabitNotification.TYPE_INFO,
+            title = "📸 Quick capture failed",
+            question = "Camera error, no photo was taken: disk full",
+            createdAtMillis = 1784444444444L
+        )
+        val decoded = HabitNotificationCodec.decode(HabitNotificationCodec.encode(listOf(notice)))
+        assertEquals(listOf(notice), decoded)
+    }
+
+    @Test
     fun `decode skips malformed records`() {
         val good = sampleAsk()
         val encoded = HabitNotificationCodec.encode(listOf(good))

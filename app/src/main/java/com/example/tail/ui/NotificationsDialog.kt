@@ -104,13 +104,17 @@ fun NotificationsDialog(
     }
 }
 
-/** One pending ask with its Yes/No buttons. */
+/** One pending ask with its Yes/No buttons (a single OK for info notices). */
 @Composable
 private fun NotificationAskRow(
     ask: HabitNotification,
     onAnswer: (HabitNotification, Boolean) -> Unit
 ) {
-    val emoji = if (ask.type == HabitNotification.TYPE_MOVIE) "🎬" else "❓"
+    val emoji = when (ask.type) {
+        HabitNotification.TYPE_MOVIE -> "🎬"
+        HabitNotification.TYPE_INFO -> "⚠️"
+        else -> "❓"
+    }
     val timeLabel = try {
         ASK_TIME_FMT.format(Instant.ofEpochMilli(ask.createdAtMillis).atZone(ZoneId.systemDefault()))
     } catch (e: Exception) {
@@ -147,21 +151,34 @@ private fun NotificationAskRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .background(Color(0xFF1B5E20), RoundedCornerShape(6.dp))
-                    .clickable { onAnswer(ask, true) }
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-            ) {
-                Text("✓ Yes", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            }
-            Box(
-                modifier = Modifier
-                    .background(Color(0xFF5A1A1A), RoundedCornerShape(6.dp))
-                    .clickable { onAnswer(ask, false) }
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-            ) {
-                Text("✗ No", color = Color(0xFFFF8888), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            if (ask.type == HabitNotification.TYPE_INFO) {
+                // Informational — acknowledging removes it everywhere; the
+                // answer value itself is a no-op for this type.
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF1B5E20), RoundedCornerShape(6.dp))
+                        .clickable { onAnswer(ask, true) }
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Text("✓ OK", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF1B5E20), RoundedCornerShape(6.dp))
+                        .clickable { onAnswer(ask, true) }
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Text("✓ Yes", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF5A1A1A), RoundedCornerShape(6.dp))
+                        .clickable { onAnswer(ask, false) }
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Text("✗ No", color = Color(0xFFFF8888), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
             Spacer(modifier = Modifier.width(4.dp))
             Text(

@@ -40,7 +40,8 @@ object HabitNotifier {
     }
 
     /**
-     * Posts (or updates) the system notification for [ask] with Yes/No actions.
+     * Posts (or updates) the system notification for [ask] with Yes/No actions
+     * (a single "OK" action for [HabitNotification.TYPE_INFO] notices).
      * Safe to call when permission is not granted — the ask still lives in the
      * in-app notification center.
      */
@@ -70,8 +71,12 @@ object HabitNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val emoji = if (ask.type == HabitNotification.TYPE_MOVIE) "🎬" else "❓"
-        val notification = Notification.Builder(context, CHANNEL_ID)
+        val emoji = when (ask.type) {
+            HabitNotification.TYPE_MOVIE -> "🎬"
+            HabitNotification.TYPE_INFO -> "⚠️"
+            else -> "❓"
+        }
+        val builder = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_tail)
             .setContentTitle("$emoji ${ask.title}")
             .setContentText(ask.question)
@@ -79,9 +84,15 @@ object HabitNotifier {
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
-            .addAction(Notification.Action.Builder(null, "✓ Yes", yesIntent).build())
-            .addAction(Notification.Action.Builder(null, "✗ No", noIntent).build())
-            .build()
+        if (ask.type == HabitNotification.TYPE_INFO) {
+            // Informational — a single acknowledge action; the answer itself
+            // is a no-op that removes the notice everywhere.
+            builder.addAction(Notification.Action.Builder(null, "✓ OK", yesIntent).build())
+        } else {
+            builder.addAction(Notification.Action.Builder(null, "✓ Yes", yesIntent).build())
+            builder.addAction(Notification.Action.Builder(null, "✗ No", noIntent).build())
+        }
+        val notification = builder.build()
 
         try {
             nm.notify(systemNotificationId(ask.id), notification)

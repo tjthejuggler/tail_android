@@ -128,6 +128,28 @@ class QuickCaptureActivity : ComponentActivity() {
     }
 
     /**
+     * Quick-capture failures must not vanish with the toast — record them as
+     * a persistent TYPE_INFO notification (in-app 🔔 center + system
+     * notification), just like any other notification, so a failed capture
+     * hours ago is still visible when the app is next opened.
+     */
+    private fun postCaptureFailureNotice(capTs: Long, detail: String) {
+        try {
+            runBlocking {
+                com.example.tail.notify.HabitAsks.postInfo(
+                    this@QuickCaptureActivity,
+                    "qc-fail:$capTs",
+                    "📸 Quick capture failed",
+                    detail,
+                    habitLabel = "Quick capture"
+                )
+            }
+        } catch (e: Exception) {
+            QcDiag.error("CAPTURE", "capTs=$capTs failed to post failure notice: ${e.message}", e)
+        }
+    }
+
+    /**
      * Captures a photo using the current [ImageCapture] use case, saves it
      * to internal storage, enqueues it for vision processing, and finishes.
      *
@@ -147,6 +169,7 @@ class QuickCaptureActivity : ComponentActivity() {
         )
         val capture = imageCapture ?: run {
             QcDiag.error("CAPTURE", "capTs=$capTs QuickCaptureActivity: camera not ready — aborting")
+            postCaptureFailureNotice(capTs, "Camera was not ready — no photo was taken.")
             Toast.makeText(this, "Camera not ready", Toast.LENGTH_SHORT).show()
             return
         }
@@ -276,6 +299,10 @@ class QuickCaptureActivity : ComponentActivity() {
                             e
                         )
                         Log.e(TAG, "Failed to save captured image", e)
+                        postCaptureFailureNotice(
+                            capTs,
+                            "Photo was taken but could not be saved: ${e.message ?: e.javaClass.simpleName}"
+                        )
                         runOnUiThread {
                             Toast.makeText(
                                 this@QuickCaptureActivity,
@@ -294,6 +321,10 @@ class QuickCaptureActivity : ComponentActivity() {
                         exception
                     )
                     Log.e(TAG, "Camera capture error", exception)
+                    postCaptureFailureNotice(
+                        capTs,
+                        "Camera error, no photo was taken: ${exception.message ?: exception.javaClass.simpleName}"
+                    )
                     runOnUiThread {
                         Toast.makeText(
                             this@QuickCaptureActivity,
