@@ -116,6 +116,27 @@ object ChessReadinessSystemChanges {
                 "impossible to see how the rating responds to a given pass rate. The " +
                 "absolute cutoffs (80/55) and floors (45/30) are unchanged, so the gate " +
                 "still cannot ratchet above 80 or erode below 45."
+        ),
+        ReadinessSystemChange(
+            at("2026-08-24T12:38:58Z"),
+            "Readiness V2 created — neurobiological pre-game gate (phase 1)",
+            "Commit 011add59 (\"chess readiness v2 created, only phase 1 pre-game test\"), " +
+                "authored 24 Aug 2026 at 14:38:58 CEST. A second, independent pre-game test " +
+                "system went live: overnight autonomic recovery (lnRMSSD and resting-heart-rate " +
+                "Z-scores), cognitive-load balance (ACWR) and a 3-minute PVT-B vigilance/reflex " +
+                "test replace the v1 survey + puzzle diagnostic, with the worst module deciding " +
+                "a three-tier verdict (TIER 1 = pass / rated play, TIER 2 = casual only, " +
+                "TIER 3 = locked out). The engine is selectable per version in Settings and " +
+                "keeps its own log, so v1 history stays byte-for-byte intact."
+        ),
+        ReadinessSystemChange(
+            at("2026-08-24T14:53:19Z"),
+            "Readiness V2 stats added",
+            "Commit a5c058e8 (\"ss readiness v2 stats added\"), authored 24 Aug 2026 at " +
+                "16:53:19 CEST. The Readiness Stats screen gained dedicated V2 sections: the " +
+                "pre-game gate telemetry (verdict tiers, PVT-B response time / lapses / false " +
+                "starts over time, passive-module averages) and the Phase 2 v2 post-game audit " +
+                "(verdict distribution, accuracy, Elo delta, strain, session minutes)."
         )
     )
 }

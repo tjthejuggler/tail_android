@@ -2,7 +2,6 @@ package com.example.tail.ui
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
-import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -53,7 +52,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -75,8 +73,10 @@ import com.example.tail.data.ReadinessBlockedRecord
 import com.example.tail.data.ReadinessGameRecord
 import com.example.tail.data.ReadinessStats
 import com.example.tail.data.ReadinessTestRecord
+import com.example.tail.data.Phase2Verdicts
 import com.example.tail.data.V2PvtRecord
 import com.example.tail.data.V2ResultRecord
+import com.example.tail.data.V2Tiers
 import com.example.tail.data.computeBucketWinRates
 import com.example.tail.data.computeComplianceSeries
 import com.example.tail.data.computeDayOfWeekStats
@@ -88,6 +88,7 @@ import com.example.tail.data.computeRatingHistory
 import com.example.tail.data.computeRushScoreSeries
 import com.example.tail.data.computeRatingStats
 import com.example.tail.data.computeReadinessStats
+import com.example.tail.data.computeV2HourlyReadiness
 import com.example.tail.data.computeV2PregameStats
 import com.example.tail.data.computeWinRateByCcrsBand
 import com.example.tail.widget.ChessPhase2Store
@@ -98,6 +99,7 @@ import com.example.tail.widget.ChessReadinessSystemChanges
 import com.example.tail.widget.ChessReadinessV2Store
 import com.example.tail.widget.ReadinessSystemChange
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
@@ -135,6 +137,26 @@ private fun stateLabel(state: String?): String = when (state) {
     else -> "—"
 }
 
+/** Dot colours for the interactive V2 charts (tier → traffic light). */
+private fun v2TierDotColor(tier: String?): Color = when (tier) {
+    V2Tiers.TIER1 -> Color(0xFF22C55E)
+    V2Tiers.TIER2 -> YellowValue
+    V2Tiers.TIER3 -> Color(0xFFEF4444)
+    else -> DimColor
+}
+
+/** Dot colours for the interactive Phase-2 chart (verdict → colour). */
+private fun verdictDotColor(state: String?): Color = when (state) {
+    Phase2Verdicts.CONTINUE -> Color(0xFF22C55E)
+    Phase2Verdicts.PIVOT -> YellowValue
+    Phase2Verdicts.TERMINATE -> Color(0xFFEF4444)
+    else -> DimColor
+}
+
+/** "yyyy-MM-dd" day string → epoch ms at local midnight. */
+private fun dayStartMs(dateStr: String): Long =
+    LocalDate.parse(dateStr).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
 /**
  * Global variant toggle limiting EVERY game-based stat on this screen.
  * `key` is the chess.com variant slug matched against
@@ -164,33 +186,28 @@ fun ChessReadinessStatsScreen(
 ) {
     val context = LocalContext.current
 
-    // Landscape support: this screen owns orientation while composed —
-    // unlock free rotation so the charts can use the full screen width,
-    // and re-apply the app-wide portrait lock when leaving (the grid
-    // destination also re-locks on return).
+    // The screen stays PORTRAIT no matter how the phone is held —
+    // landscape is entered ONLY by tapping a chart, which opens the
+    // interactive full-screen popup (it locks sensor-landscape and
+    // restores this portrait lock on dismiss).
     val activity = context as? Activity
     DisposableEffect(Unit) {
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         onDispose {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
     }
 
-    // In landscape the charts grow to use most of the (shorter) screen
-    // height, so rotating the phone is a quick way to see more detail.
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val chartHeight: Dp = if (isLandscape)
-        (configuration.screenHeightDp * 0.78f).coerceIn(150f, 420f).dp
-    else
-        150.dp
-    val deltaRowHeight = if (isLandscape) 64 else 46
+    val chartHeight: Dp = 150.dp
+    val deltaRowHeight = 46
 
     var tests by remember { mutableStateOf<List<ReadinessTestRecord>>(emptyList()) }
     var games by remember { mutableStateOf<List<ReadinessGameRecord>>(emptyList()) }
     var blocked by remember { mutableStateOf<List<ReadinessBlockedRecord>>(emptyList()) }
     var systemStartMs by remember { mutableStateOf<Long?>(null) }
-    var showChart by remember { mutableStateOf(false) }
+    // The currently-open interactive landscape chart (null = none).
+    var interactiveChart by remember { mutableStateOf<InteractiveChartRequest?>(null) }
+    var showComplianceZoom by remember { mutableStateOf(false) }
     // Game-subset filter for the grouped time-of-day section; also the
     // initial filter of the hourly win-rate popup.
     var bucketFilter by remember { mutableStateOf(GameFilter.ALL) }
@@ -210,6 +227,15 @@ fun ChessReadinessStatsScreen(
     var v2Pvt by remember { mutableStateOf<List<V2PvtRecord>>(emptyList()) }
     var phase2V2Games by remember { mutableStateOf<List<Phase2V2GameRecord>>(emptyList()) }
     var phase2Audits by remember { mutableStateOf<List<Phase2AuditRecord>>(emptyList()) }
+    // v1↔v2 engine switch history → extra ◆ markers on the rating chart,
+    // so it's always visible which system was active relative to rating
+    // changes. Sourced from the switch logs both V2 stores keep.
+    var versionSwitchMarkers by remember { mutableStateOf<List<ReadinessSystemChange>>(emptyList()) }
+    // Currently ACTIVE engine versions — drive the default expansion of the
+    // version-owned stats sections (active system expanded, other collapsed).
+    var pregameIsV2 by remember { mutableStateOf(ChessReadinessV2Store.isV2(context)) }
+    var phase2IsV2 by remember { mutableStateOf(ChessPhase2V2Store.isV2(context)) }
+    var showHourlyV2 by remember { mutableStateOf(false) }
 
     // Runs on first composition AND on every resume (via resumeCount).
     // Only raw data is loaded here; every aggregate is derived below so
@@ -274,6 +300,50 @@ fun ChessReadinessStatsScreen(
                     strain = it.strain
                 )
             }
+            // v1↔v2 engine switches (pre-game + post-game toggles) become
+            // tappable markers on the "Rating Since Readiness System" chart.
+            val switchFmt = DateTimeFormatter.ofPattern("d MMM yyyy · HH:mm")
+            fun switchTime(ts: Long) =
+                Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault()).format(switchFmt)
+            versionSwitchMarkers =
+                ChessReadinessV2Store.loadVersionSwitches(context).map {
+                    val toV2 = it.version == ChessReadinessV2Store.VERSION_V2
+                    ReadinessSystemChange(
+                        timestampMs = it.timestampMs,
+                        title = if (toV2) "Pre-game engine switched → V2"
+                                else "Pre-game engine switched → V1",
+                        description =
+                            (if (toV2)
+                                "You toggled the PRE-GAME readiness test from v1 to v2 — from " +
+                                    "this moment the neurobiological gate (autonomic Z-scores + " +
+                                    "ACWR + PVT-B reflex test) ran your pre-game checks. "
+                            else
+                                "You toggled the PRE-GAME readiness test back from v2 to v1 — " +
+                                    "from this moment the original survey + puzzle diagnostic " +
+                                    "ran your pre-game checks. ") +
+                            "Switched at " + switchTime(it.timestampMs) + "."
+                    )
+                } + ChessPhase2V2Store.loadVersionSwitches(context).map {
+                    val toV2 = it.version == ChessPhase2V2Store.VERSION_V2
+                    ReadinessSystemChange(
+                        timestampMs = it.timestampMs,
+                        title = if (toV2) "Post-game audit switched → V2"
+                                else "Post-game audit switched → V1",
+                        description =
+                            (if (toV2)
+                                "You toggled the POST-GAME (Phase 2) audit from v1 to v2 — from " +
+                                    "this moment rated games were reviewed by the " +
+                                    "research-report system (fatigue ceiling, loss-streak stop " +
+                                    "rules, tilt vector, ACWR, hysteresis). "
+                            else
+                                "You toggled the POST-GAME (Phase 2) audit back from v2 to v1 — " +
+                                    "from this moment the adaptive ΔE/strain evidence model " +
+                                    "reviewed rated games. ") +
+                            "Switched at " + switchTime(it.timestampMs) + "."
+                    )
+                }
+            pregameIsV2 = ChessReadinessV2Store.isV2(context)
+            phase2IsV2 = ChessPhase2V2Store.isV2(context)
             loaded = true
         }
     }
@@ -302,6 +372,18 @@ fun ChessReadinessStatsScreen(
     val phase2V2Stats = remember(phase2V2Games, phase2Audits) {
         computePhase2V2Stats(phase2V2Games, phase2Audits)
     }
+    // V2 hour-of-day aggregates (24 slots) for the hourly popup chart.
+    val v2Hourly = remember(v2Results, v2Pvt) {
+        computeV2HourlyReadiness(v2Results, v2Pvt)
+    }
+    // Static rule-change registry + the user's own engine switches, oldest
+    // first — one ◆ marker each on the "since system" rating chart.
+    val allSystemChanges = remember(versionSwitchMarkers) {
+        (ChessReadinessSystemChanges.ALL + versionSwitchMarkers).sortedBy { it.timestampMs }
+    }
+    // Sections of the v1 readiness system collapse away while the v2
+    // pre-game engine is the active one (and vice versa).
+    val v1SectionsExpanded = !pregameIsV2
 
     // Reload when the screen resumes — e.g. when returning after the
     // chess.com full-history backfill finished while this screen was open.
@@ -397,7 +479,7 @@ fun ChessReadinessStatsScreen(
                 }
 
                 // ── Overview ──────────────────────────────────────────────
-                StatsSection(title = "📊 Readiness Overview") {
+                StatsSection(title = "📊 Readiness Overview", startExpanded = v1SectionsExpanded) {
                     StatRow("Tests logged", s.totalTests.toString())
                     StatRow("Average CCRS", "%.1f".format(s.avgCcrs), valueColor = GoldValue)
                     StatRow(
@@ -423,7 +505,7 @@ fun ChessReadinessStatsScreen(
 
                 // ── Readiness over time ───────────────────────────────────
                 if (s.dailyAvgCcrs.size > 1) {
-                    StatsSection(title = "📈 Readiness Over Time") {
+                    StatsSection(title = "📈 Readiness Over Time", startExpanded = v1SectionsExpanded) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -431,7 +513,21 @@ fun ChessReadinessStatsScreen(
                                 .clickable(
                                     indication = null,
                                     interactionSource = remember { MutableInteractionSource() }
-                                ) { showChart = true },
+                                ) {
+                                    interactiveChart = InteractiveChartRequest(
+                                        title = "♟ Readiness — avg CCRS per day",
+                                        series = listOf(
+                                            IChartSeries(
+                                                name = "Avg CCRS",
+                                                color = Color(0xFFF2994A),
+                                                points = s.dailyAvgCcrs.map { (d, v) ->
+                                                    IChartPoint(dayStartMs(d), v.toDouble())
+                                                }
+                                            )
+                                        ),
+                                        valueFormat = "%.1f"
+                                    )
+                                },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -451,7 +547,8 @@ fun ChessReadinessStatsScreen(
                             )
                         }
                         Text(
-                            "Tap to open the full chart of daily average readiness.",
+                            "Tap for the interactive landscape chart — pinch to zoom, " +
+                                "drag to scroll, tap any point for its exact score and date.",
                             color = DimColor,
                             fontSize = 11.sp
                         )
@@ -461,7 +558,7 @@ fun ChessReadinessStatsScreen(
                 // ── Rated puzzle times over time ───────────────────────────
                 val puzzlePoints = remember(tests) { computePuzzleTimeSeries(tests) }
                 if (puzzlePoints.size >= 2) {
-                    StatsSection(title = "🧩 Rated Puzzle Times Over Time") {
+                    StatsSection(title = "🧩 Rated Puzzle Times Over Time", startExpanded = v1SectionsExpanded) {
                         Text(
                             "Average solve time of the rated puzzles from each readiness " +
                                 "test, oldest to newest. Tap a point for that test's " +
@@ -489,6 +586,25 @@ fun ChessReadinessStatsScreen(
                                 Spacer(modifier = Modifier.height(12.dp))
                             }
                         }
+                        ChartLinkRow(
+                            "Zoomable puzzle-time chart — pinch, scroll, tap any test",
+                            "Interactive 📈"
+                        ) {
+                            interactiveChart = InteractiveChartRequest(
+                                title = "🧩 Rated puzzle times per test",
+                                series = listOf(
+                                    IChartSeries(
+                                        name = "Avg solve time (s)",
+                                        color = Color(0xFFF2994A),
+                                        points = puzzlePoints.map {
+                                            IChartPoint(it.timestampMs, it.avgSec.toDouble())
+                                        }
+                                    )
+                                ),
+                                valueFormat = "%.1f",
+                                valueUnit = " s"
+                            )
+                        }
                         Spacer(modifier = Modifier.height(8.dp))
                         val allTimes = puzzlePoints.flatMap { it.timesSec }
                         val firstAvg = puzzlePoints.take(3).map { it.avgSec }.average()
@@ -511,7 +627,7 @@ fun ChessReadinessStatsScreen(
                 // ── Puzzle rush over time ──────────────────────────────────
                 val rushPoints = remember(tests) { computeRushScoreSeries(tests) }
                 if (rushPoints.size >= 2) {
-                    StatsSection(title = "⚡ Puzzle Rush Over Time") {
+                    StatsSection(title = "⚡ Puzzle Rush Over Time", startExpanded = v1SectionsExpanded) {
                         Text(
                             "Puzzle Rush score (puzzles solved in a 3-minute run) from " +
                                 "each readiness test, oldest to newest. Dashed gold line = " +
@@ -539,6 +655,25 @@ fun ChessReadinessStatsScreen(
                                 Spacer(modifier = Modifier.height(12.dp))
                             }
                         }
+                        ChartLinkRow(
+                            "Zoomable rush chart — pinch, scroll, tap any test",
+                            "Interactive 📈"
+                        ) {
+                            interactiveChart = InteractiveChartRequest(
+                                title = "⚡ Puzzle Rush score per test",
+                                series = listOf(
+                                    IChartSeries(
+                                        name = "Rush score",
+                                        color = GoldValue,
+                                        points = rushPoints.map {
+                                            IChartPoint(it.timestampMs, it.score.toDouble())
+                                        }
+                                    )
+                                ),
+                                valueFormat = "%.0f",
+                                yIncludeZero = true
+                            )
+                        }
                         Spacer(modifier = Modifier.height(8.dp))
                         val scores = rushPoints.map { it.score }
                         StatRow("Best score", scores.max().toString(), valueColor = GoldValue)
@@ -554,7 +689,7 @@ fun ChessReadinessStatsScreen(
 
                 // ── Time of day ───────────────────────────────────────────
                 if (s.totalTests > 0) {
-                    StatsSection(title = "🕐 Readiness by Time of Day") {
+                    StatsSection(title = "🕐 Readiness by Time of Day", startExpanded = v1SectionsExpanded) {
                         // Games column follows the selected game subset.
                         val bucketWinRates = remember(visibleGames, bucketFilter) {
                             computeBucketWinRates(visibleGames, bucketFilter)
@@ -646,7 +781,7 @@ fun ChessReadinessStatsScreen(
 
                 // ── Games vs readiness ────────────────────────────────────
                 if (s.totalGames > 0) {
-                    StatsSection(title = "🎮 Games vs Authorization") {
+                    StatsSection(title = "🎮 Games vs Authorization", startExpanded = v1SectionsExpanded) {
                         StatRow("Games logged", s.totalGames.toString())
                         StatRow(
                             "Played while authorized (Green)",
@@ -711,24 +846,27 @@ fun ChessReadinessStatsScreen(
                     SystemEffectivenessSection(
                         aggregates = aggregates,
                         totalGames = s.totalGames,
-                        totalWins = visibleGames.count { it.won }
+                        totalWins = visibleGames.count { it.won },
+                        startExpanded = v1SectionsExpanded
                     )
                     CcrsBandSection(
-                        bands = remember(visibleGames) { computeWinRateByCcrsBand(visibleGames) }
+                        bands = remember(visibleGames) { computeWinRateByCcrsBand(visibleGames) },
+                        startExpanded = v1SectionsExpanded
                     )
                 }
 
                 // ── Day of week ──────────────────────────────────────────
                 if (s.totalTests > 0) {
                     DayOfWeekSection(
-                        stats = remember(tests, visibleGames) { computeDayOfWeekStats(tests, visibleGames) }
+                        stats = remember(tests, visibleGames) { computeDayOfWeekStats(tests, visibleGames) },
+                        startExpanded = v1SectionsExpanded
                     )
                 }
 
                 // ── Compliance over time ─────────────────────────────────
                 val start = systemStartMs
                 if (start != null) {
-                    StatsSection(title = "⚖️ Compliance Over Time") {
+                    StatsSection(title = "⚖️ Compliance Over Time", startExpanded = v1SectionsExpanded) {
                         Text(
                             "Games per day since the readiness system was adopted " +
                                 "(${fmtDate(start)}). Green = played while authorized; " +
@@ -745,9 +883,20 @@ fun ChessReadinessStatsScreen(
                                 fontSize = 12.sp
                             )
                         } else {
-                            ComplianceBarChart(complianceDays, chartHeight)
+                            ComplianceBarChart(
+                                complianceDays,
+                                chartHeight,
+                                onOpen = { showComplianceZoom = true }
+                            )
                             Spacer(modifier = Modifier.height(6.dp))
                             ComplianceLegend()
+                            Text(
+                                "Tap the chart for the interactive landscape version — " +
+                                    "pinch to zoom, drag to scroll, tap a bar for that " +
+                                    "day's exact counts.",
+                                color = DimColor,
+                                fontSize = 11.sp
+                            )
                             Spacer(modifier = Modifier.height(8.dp))
                             HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
                             Spacer(modifier = Modifier.height(4.dp))
@@ -809,7 +958,33 @@ fun ChessReadinessStatsScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(top = 6.dp)
                             )
-                            RatingHistoryChart(s.points, markers, chartHeight)
+                            RatingHistoryChart(
+                                points = s.points,
+                                markers = markers,
+                                chartHeight = chartHeight,
+                                onOpen = {
+                                    interactiveChart = InteractiveChartRequest(
+                                        title = "📜 Rating — ${s.label}",
+                                        series = listOf(
+                                            IChartSeries(
+                                                name = s.label,
+                                                color = BarGreen,
+                                                points = s.points.map {
+                                                    IChartPoint(
+                                                        it.endTimeMs,
+                                                        it.rating.toDouble(),
+                                                        color = if (it.authorized) BarGreen else BarRed
+                                                    )
+                                                }
+                                            )
+                                        ),
+                                        markers = markers.map { (ts, lbl) ->
+                                            IChartMarker(ts, lbl)
+                                        },
+                                        valueFormat = "%.0f"
+                                    )
+                                }
+                            )
                             StatRow("Start → Now", "${s.startRating} → ${s.endRating}")
                             StatRow(
                                 "Peak / Low",
@@ -836,14 +1011,16 @@ fun ChessReadinessStatsScreen(
                         )
                     }
                     if (sinceSeries.isNotEmpty()) {
-                        StatsSection(title = "📜 Rating Since Readiness System ♟") {
+                        StatsSection(title = "📜 Rating Since Readiness System ♟", startExpanded = true) {
                             Text(
                                 "The same rating timeline, zoomed to the period since " +
                                     "the first recorded readiness test. Each segment is " +
                                     "colored by the game that produced it: green = played " +
                                     "while authorized, red = played without authorization. " +
-                                    "Gold ◆ points mark system rule changes — tap one to " +
-                                    "read what changed and when it took effect.",
+                                    "Gold ◆ points mark system rule changes AND every " +
+                                        "v1↔v2 engine switch (pre-game and post-game) — tap " +
+                                        "one to read what changed and when it took effect; " +
+                                        "tap anywhere else for the interactive zoomable chart.",
                                 color = DimColor,
                                 fontSize = 11.sp
                             )
@@ -858,9 +1035,33 @@ fun ChessReadinessStatsScreen(
                                 )
                                 RatingSinceSystemChart(
                                     points = s.points,
-                                    changes = ChessReadinessSystemChanges.ALL,
+                                    changes = allSystemChanges,
                                     systemStartMs = startMs,
-                                    chartHeight = chartHeight
+                                    chartHeight = chartHeight,
+                                    onOpenZoom = {
+                                        interactiveChart = InteractiveChartRequest(
+                                            title = "📜 Rating since readiness system — ${s.label}",
+                                            series = listOf(
+                                                IChartSeries(
+                                                    name = s.label,
+                                                    color = BarGreen,
+                                                    points = s.points.map {
+                                                        IChartPoint(
+                                                            it.endTimeMs,
+                                                            it.rating.toDouble(),
+                                                            color = if (it.authorized) BarGreen else BarRed
+                                                        )
+                                                    }
+                                                )
+                                            ),
+                                            markers = allSystemChanges.map {
+                                                IChartMarker(
+                                                    it.timestampMs, "◆", it.title, it.description
+                                                )
+                                            },
+                                            valueFormat = "%.0f"
+                                        )
+                                    }
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Row(
@@ -883,7 +1084,7 @@ fun ChessReadinessStatsScreen(
 
                 // ── Rating impact (compliant vs not) ─────────────────────
                 if (ratingPools.isNotEmpty()) {
-                    StatsSection(title = "🏆 Rating Impact — ${variantFilter.label}") {
+                    StatsSection(title = "🏆 Rating Impact — ${variantFilter.label}", startExpanded = v1SectionsExpanded) {
                         Text(
                             "Average rating change per game, split by compliance. Each pair " +
                                 "of bars is one rating pool (Standard per speed; variants " +
@@ -946,12 +1147,89 @@ fun ChessReadinessStatsScreen(
                 // ── V2 systems: pre-game gate + post-game audit ──────────
                 // Dedicated sections for the two v2 chess-readiness systems
                 // (they render nothing until the first v2 record exists).
-                V2PregameSection(stats = v2PregameStats, chartHeight = chartHeight)
-                Phase2V2Section(stats = phase2V2Stats, chartHeight = chartHeight)
+                V2PregameSection(
+                    stats = v2PregameStats,
+                    chartHeight = chartHeight,
+                    startExpanded = pregameIsV2,
+                    hourly = v2Hourly,
+                    onOpenHourly = { showHourlyV2 = true },
+                    onOpenRtChart = {
+                        interactiveChart = InteractiveChartRequest(
+                            title = "⚡ PVT-B mean response time per run",
+                            series = listOf(
+                                IChartSeries(
+                                    name = "Mean RT (ms)",
+                                    color = Color(0xFFF2994A),
+                                    points = v2PregameStats.series
+                                        .filter { it.meanRtMs != null }
+                                        .map {
+                                            IChartPoint(
+                                                it.timestampMs,
+                                                it.meanRtMs!!,
+                                                color = v2TierDotColor(it.tier)
+                                            )
+                                        }
+                                )
+                            ),
+                            valueFormat = "%.0f",
+                            valueUnit = " ms"
+                        )
+                    },
+                    onOpenLapseChart = {
+                        interactiveChart = InteractiveChartRequest(
+                            title = "⚡ PVT-B late & early taps per run",
+                            series = listOf(
+                                IChartSeries(
+                                    name = "Late taps (≥355 ms)",
+                                    color = Color(0xFFEF4444),
+                                    points = v2PregameStats.series.map {
+                                        IChartPoint(it.timestampMs, it.lapses.toDouble())
+                                    }
+                                ),
+                                IChartSeries(
+                                    name = "Early taps (<100 ms)",
+                                    color = YellowValue,
+                                    points = v2PregameStats.series.map {
+                                        IChartPoint(it.timestampMs, it.falseStarts.toDouble())
+                                    }
+                                )
+                            ),
+                            valueFormat = "%.0f",
+                            yIncludeZero = true
+                        )
+                    }
+                )
+                Phase2V2Section(
+                    stats = phase2V2Stats,
+                    chartHeight = chartHeight,
+                    startExpanded = phase2IsV2,
+                    onOpenAccuracyChart = {
+                        interactiveChart = InteractiveChartRequest(
+                            title = "🎯 Accuracy per audited game",
+                            series = listOf(
+                                IChartSeries(
+                                    name = "Accuracy (%)",
+                                    color = Color(0xFFF2994A),
+                                    points = phase2V2Stats.series
+                                        .filter { it.accuracy != null }
+                                        .map {
+                                            IChartPoint(
+                                                it.timestampMs,
+                                                it.accuracy!!,
+                                                color = verdictDotColor(it.outputState)
+                                            )
+                                        }
+                                )
+                            ),
+                            valueFormat = "%.1f",
+                            valueUnit = "%"
+                        )
+                    }
+                )
 
                 // ── Sub-score breakdown ───────────────────────────────────
                 if (s.totalTests > 0) {
-                    StatsSection(title = "🧩 Sub-Score Averages (of 25)") {
+                    StatsSection(title = "🧩 Sub-Score Averages (of 25)", startExpanded = v1SectionsExpanded) {
                         StatRow("😴 Sleep", "%.1f".format(s.avgSleepPts))
                         StatRow("🧠 Clarity", "%.1f".format(s.avgClarityPts))
                         StatRow("♟ Rated puzzles", "%.1f".format(s.avgPuzzlePts))
@@ -1033,14 +1311,12 @@ fun ChessReadinessStatsScreen(
         }
     }
 
-    if (showChart) {
-        StreakGraphPopup(
-            title = "♟ Readiness (avg CCRS/day)",
-            data = stats.dailyAvgCcrs,
-            lineColor = Color(0xFFF2994A),
-            currentValue = stats.dailyAvgCcrs.lastOrNull()?.second,
-            onDismiss = { showChart = false }
-        )
+    interactiveChart?.let { req ->
+        InteractiveChartPopup(request = req, onDismiss = { interactiveChart = null })
+    }
+
+    if (showComplianceZoom) {
+        ComplianceChartPopup(days = complianceDays, onDismiss = { showComplianceZoom = false })
     }
 
     if (showHourlyReadiness) {
@@ -1056,6 +1332,13 @@ fun ChessReadinessStatsScreen(
             games = visibleGames,
             initialFilter = bucketFilter,
             onDismiss = { showHourlyWinRate = false }
+        )
+    }
+
+    if (showHourlyV2) {
+        HourlyV2ReadinessChartPopup(
+            hourly = v2Hourly,
+            onDismiss = { showHourlyV2 = false }
         )
     }
 }
@@ -1105,8 +1388,10 @@ private fun fmtTime(ts: Long?): String =
 @Composable
 private fun StatsSection(
     title: String,
+    startExpanded: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    var expanded by remember(title) { mutableStateOf(startExpanded) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1114,16 +1399,27 @@ private fun StatsSection(
             .background(SectionBg, RoundedCornerShape(10.dp))
             .padding(12.dp)
     ) {
-        Text(
-            text = title,
-            color = SectionTitleColor,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                color = SectionTitleColor,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(if (expanded) "▼" else "▶", color = SectionTitleColor, fontSize = 12.sp)
+        }
         Spacer(modifier = Modifier.height(8.dp))
         HorizontalDivider(color = DividerColor, thickness = 1.dp)
         Spacer(modifier = Modifier.height(8.dp))
-        content()
+        if (expanded) content()
     }
 }
 
@@ -1174,7 +1470,9 @@ private fun fmtDate(ts: Long): String =
 @Composable
 private fun ComplianceBarChart(
     days: List<ComplianceDay>,
-    chartHeight: Dp = 150.dp
+    chartHeight: Dp = 150.dp,
+    /** When set, tapping the chart opens the interactive landscape view. */
+    onOpen: (() -> Unit)? = null
 ) {
     val labelPx = with(LocalDensity.current) { 9.dp.toPx() }
     val labelPaint = android.graphics.Paint().apply {
@@ -1182,7 +1480,14 @@ private fun ComplianceBarChart(
         textSize = labelPx
         isAntiAlias = true
     }
-    Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
+    var canvasMod = Modifier.fillMaxWidth().height(chartHeight)
+    if (onOpen != null) {
+        canvasMod = canvasMod.clickable(
+            indication = null,
+            interactionSource = remember { MutableInteractionSource() }
+        ) { onOpen() }
+    }
+    Canvas(modifier = canvasMod) {
         if (days.isEmpty()) return@Canvas
         val chartLeft = 30.dp.toPx()
         val padRight = 6.dp.toPx()
@@ -1256,7 +1561,9 @@ private fun ComplianceBarChart(
 private fun RatingHistoryChart(
     points: List<RatingHistoryPoint>,
     markers: List<Pair<Long, String>>,
-    chartHeight: Dp = 150.dp
+    chartHeight: Dp = 150.dp,
+    /** When set, tapping the chart opens the interactive landscape view. */
+    onOpen: (() -> Unit)? = null
 ) {
     val labelPx = with(LocalDensity.current) { 9.dp.toPx() }
     val labelPaint = android.graphics.Paint().apply {
@@ -1270,7 +1577,14 @@ private fun RatingHistoryChart(
         isAntiAlias = true
         isFakeBoldText = true
     }
-    Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
+    var canvasMod = Modifier.fillMaxWidth().height(chartHeight)
+    if (onOpen != null) {
+        canvasMod = canvasMod.clickable(
+            indication = null,
+            interactionSource = remember { MutableInteractionSource() }
+        ) { onOpen() }
+    }
+    Canvas(modifier = canvasMod) {
         if (points.size < 2) return@Canvas
         val padL = 38.dp.toPx()
         val padR = 10.dp.toPx()
@@ -1351,7 +1665,9 @@ private fun RatingSinceSystemChart(
     points: List<RatingHistoryPoint>,
     changes: List<ReadinessSystemChange>,
     systemStartMs: Long,
-    chartHeight: Dp = 150.dp
+    chartHeight: Dp = 150.dp,
+    /** Invoked when a tap does NOT hit a ◆ marker (opens the zoom view). */
+    onOpenZoom: () -> Unit = {}
 ) {
     var selected by remember { mutableStateOf<ReadinessSystemChange?>(null) }
     var canvasWidth by remember { mutableStateOf(0f) }
@@ -1394,6 +1710,9 @@ private fun RatingSinceSystemChart(
                     } ?: return@detectTapGestures
                     if (abs(markerX(nearest.timestampMs, canvasWidth) - pos.x) <= threshold) {
                         selected = nearest
+                    } else {
+                        // Tap away from every marker → interactive zoom view.
+                        onOpenZoom()
                     }
                 }
             }

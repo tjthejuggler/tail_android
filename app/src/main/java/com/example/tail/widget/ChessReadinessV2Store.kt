@@ -26,6 +26,7 @@ object ChessReadinessV2Store {
     private const val PREFS_NAME = "tail_chess_readiness_v2"
 
     private const val KEY_VERSION = "readiness_version"
+    private const val KEY_VERSION_LOG = "version_log"
     private const val KEY_SESSION = "session_json"
     private const val KEY_RESULTS = "results"
     private const val KEY_PVT_LOG = "pvt_log"
@@ -35,6 +36,7 @@ object ChessReadinessV2Store {
     private const val MAX_RESULTS = 200
     private const val MAX_PVT = 200
     private const val MAX_LOAD_DAYS = 90
+    private const val MAX_VERSION_SWITCHES = 200
 
     /** An untouched v2 session expires after this long (matches v1). */
     const val STEP_TIMEOUT_MS = 10L * 60 * 1000
@@ -54,11 +56,56 @@ object ChessReadinessV2Store {
 
     fun isV2(context: Context): Boolean = readinessVersion(context) == VERSION_V2
 
-    /** Mirrored from DataStore by the settings view-model on every change. */
+    /**
+     * Mirrored from DataStore by the settings view-model on every change.
+     * Every ACTUAL v1↔v2 switch is appended to the version log so the
+     * rating chart can mark which engine was active when.
+     */
     fun saveReadinessVersion(context: Context, version: String) {
+        val target = if (version == VERSION_V2) VERSION_V2 else VERSION_V1
+        val previous = readinessVersion(context)
         prefs(context).edit()
-            .putString(KEY_VERSION, if (version == VERSION_V2) VERSION_V2 else VERSION_V1)
+            .putString(KEY_VERSION, target)
             .apply()
+        if (target != previous) {
+            appendVersionSwitch(context, target)
+        }
+    }
+
+    /** One recorded v1↔v2 engine switch (chart-marker telemetry). */
+    data class VersionSwitchRecord(
+        val timestampMs: Long,
+        /** The version that became active ("v1"/"v2"). */
+        val version: String
+    )
+
+    private fun appendVersionSwitch(context: Context, version: String) {
+        val arr = prefs(context).getString(KEY_VERSION_LOG, null)?.let {
+            runCatching { JSONArray(it) }.getOrNull()
+        } ?: JSONArray()
+        arr.put(JSONObject().apply {
+            put("timestamp", System.currentTimeMillis())
+            put("version", version)
+        })
+        while (arr.length() > MAX_VERSION_SWITCHES) arr.remove(0)
+        prefs(context).edit().putString(KEY_VERSION_LOG, arr.toString()).apply()
+    }
+
+    /** Engine switches, oldest first (rendered as markers on the rating chart). */
+    fun loadVersionSwitches(context: Context): List<VersionSwitchRecord> {
+        val raw = prefs(context).getString(KEY_VERSION_LOG, null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.getJSONObject(i)
+                VersionSwitchRecord(
+                    timestampMs = o.getLong("timestamp"),
+                    version = o.optString("version", VERSION_V1)
+                )
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     // ── Wizard session ─────────────────────────────────────────────────────

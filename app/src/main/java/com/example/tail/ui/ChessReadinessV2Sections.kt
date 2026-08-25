@@ -2,6 +2,7 @@ package com.example.tail.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,7 @@ import com.example.tail.data.Phase2V2Point
 import com.example.tail.data.Phase2V2Stats
 import com.example.tail.data.Phase2AuditRecord
 import com.example.tail.data.Phase2Verdicts
+import com.example.tail.data.V2HourlyReadiness
 import com.example.tail.data.V2PregameStats
 import com.example.tail.data.V2PvtPoint
 import com.example.tail.data.V2PvtRecord
@@ -138,8 +140,10 @@ private fun resultColor(r: String): Color = when (r) {
 @Composable
 private fun V2Section(
     title: String,
+    startExpanded: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    var expanded by remember(title) { mutableStateOf(startExpanded) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -147,11 +151,31 @@ private fun V2Section(
             .background(SectionBg, RoundedCornerShape(10.dp))
             .padding(12.dp)
     ) {
-        Text(title, color = SectionTitleColor, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                title,
+                color = SectionTitleColor,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                if (expanded) "▼" else "▶",
+                color = SectionTitleColor,
+                fontSize = 12.sp
+            )
+        }
         Spacer(modifier = Modifier.height(8.dp))
         HorizontalDivider(color = DividerColor, thickness = 1.dp)
         Spacer(modifier = Modifier.height(8.dp))
-        content()
+        if (expanded) content()
     }
 }
 
@@ -197,12 +221,24 @@ private fun LegendSwatch(color: Color, label: String) {
 @Composable
 fun V2PregameSection(
     stats: V2PregameStats,
-    chartHeight: Dp = 150.dp
+    chartHeight: Dp = 150.dp,
+    /** Default expansion — true while the v2 pre-game engine is the active one. */
+    startExpanded: Boolean = true,
+    /** Hour-of-day aggregates powering the 24-hour popup chart. */
+    hourly: List<V2HourlyReadiness> = emptyList(),
+    onOpenHourly: () -> Unit = {},
+    /** Opens the interactive landscape mean-RT chart. */
+    onOpenRtChart: () -> Unit = {},
+    /** Opens the interactive landscape lapses/false-starts chart. */
+    onOpenLapseChart: () -> Unit = {}
 ) {
     if (stats.totalTests == 0 && stats.pvtCount == 0) return
     val s = stats
 
-    V2Section(title = "🧬 V2 Pre-Game Gate — Cognitive Readiness") {
+    V2Section(
+        title = "🧬 V2 Pre-Game Gate — Cognitive Readiness",
+        startExpanded = startExpanded
+    ) {
         Text(
             "The v2 pre-game test: overnight autonomic Z-scores and cognitive " +
                 "load (ACWR) combine with the 3-minute PVT-B reflex test — the " +
@@ -228,6 +264,16 @@ fun V2PregameSection(
         if (s.totalTests > 0) {
             StatRow("First test", fmtTime(s.firstTestAt))
             StatRow("Last test", fmtTime(s.lastTestAt))
+        }
+
+        // ── Hour-of-day chart link ──
+        if (s.totalTests > 0 || s.pvtCount > 0) {
+            Spacer(modifier = Modifier.height(6.dp))
+            HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+            ChartLinkRow(
+                "V2 readiness by hour of day (00–23) — CCRS / pass rate / PVT speed",
+                "24-hour chart 📈"
+            ) { onOpenHourly() }
         }
 
         if (s.pvtCount > 0) {
@@ -301,6 +347,10 @@ fun V2PregameSection(
                     LegendSwatch(Color(0xFFEF4444), "Tier 3")
                     LegendSwatch(DimColor, "No verdict")
                 }
+                ChartLinkRow(
+                    "Zoomable response-time chart — pinch, scroll, tap any run",
+                    "Interactive 📈"
+                ) { onOpenRtChart() }
             }
 
             // ── Lapses & false starts over time ──
@@ -312,6 +362,11 @@ fun V2PregameSection(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 V2LapseChart(s.series, chartHeight)
+                Spacer(modifier = Modifier.height(4.dp))
+                ChartLinkRow(
+                    "Zoomable late/early-tap chart — pinch, scroll, tap any run",
+                    "Interactive 📈"
+                ) { onOpenLapseChart() }
             }
 
             // ── Recent runs list ──
@@ -610,12 +665,19 @@ private fun V2LapseChart(
 @Composable
 fun Phase2V2Section(
     stats: Phase2V2Stats,
-    chartHeight: Dp = 150.dp
+    chartHeight: Dp = 150.dp,
+    /** Default expansion — true while the v2 post-game engine is the active one. */
+    startExpanded: Boolean = true,
+    /** Opens the interactive landscape accuracy chart. */
+    onOpenAccuracyChart: () -> Unit = {}
 ) {
     if (stats.totalGames == 0) return
     val s = stats
 
-    V2Section(title = "🔬 V2 Post-Game Audit — Performance Review") {
+    V2Section(
+        title = "🔬 V2 Post-Game Audit — Performance Review",
+        startExpanded = startExpanded
+    ) {
         Text(
             "Every rated game audited by the v2 post-game engine: verdict " +
                 "(CONTINUE / PIVOT TO DRILLS / TERMINATE), result, chess.com " +
@@ -716,6 +778,10 @@ fun Phase2V2Section(
                 LegendSwatch(YellowValue, "Pivot")
                 LegendSwatch(Color(0xFFEF4444), "Terminate")
             }
+            ChartLinkRow(
+                "Zoomable accuracy chart — pinch, scroll, tap any game",
+                "Interactive 📈"
+            ) { onOpenAccuracyChart() }
         }
 
         // ── Recent audits list ──

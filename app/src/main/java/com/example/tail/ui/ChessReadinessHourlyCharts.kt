@@ -56,6 +56,7 @@ import com.example.tail.data.HourlyReadiness
 import com.example.tail.data.HourlyWinRate
 import com.example.tail.data.ReadinessGameRecord
 import com.example.tail.data.ReadinessTestRecord
+import com.example.tail.data.V2HourlyReadiness
 import com.example.tail.data.computeHourlyWinRates
 import java.time.ZoneId
 import kotlin.math.roundToInt
@@ -642,6 +643,233 @@ fun HourlyWinRateChartPopup(
                         maxValue = 100f,
                         avgValue = overallWinRate.toFloat(),
                         avgLabel = "avg ${overallWinRate.roundToInt()}%",
+                        selectedHour = selectedHour,
+                        onTapHour = { h -> selectedHour = if (selectedHour == h) null else h },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Popup: V2 pre-game readiness per hour ────────────────────────────────────
+
+/** Metric shown by [HourlyV2ReadinessChartPopup]. */
+private enum class V2HourMetric(val label: String) {
+    CCRS("Avg CCRS"),
+    PASS("Pass rate"),
+    RT("PVT speed")
+}
+
+private fun v2MetricColor(m: V2HourMetric): Color = when (m) {
+    V2HourMetric.CCRS -> PopupOrange
+    V2HourMetric.PASS -> PopupGreen
+    V2HourMetric.RT -> Color(0xFF6EC6FF)
+}
+
+/**
+ * Full-screen landscape chart of the V2 PRE-GAME gate by hour of day
+ * (0–23): average v2 CCRS, Tier-1 pass rate, or PVT-B mean response time
+ * (lower = faster). The dashed gold line marks the overall average of the
+ * selected metric; tapping a bar shows that hour's full detail (tests,
+ * tier split, reflex speed). The best hour is highlighted in gold.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun HourlyV2ReadinessChartPopup(
+    hourly: List<V2HourlyReadiness>,
+    onDismiss: () -> Unit
+) {
+    ForceLandscape()
+    var metric by remember { mutableStateOf(V2HourMetric.CCRS) }
+    var selectedHour by remember { mutableStateOf<Int?>(null) }
+
+    val totalTests = hourly.sumOf { it.testCount }
+    val totalPvt = hourly.sumOf { it.pvtCount }
+
+    // Overall averages for the dashed reference line.
+    val overallAvgCcrs =
+        if (totalTests > 0) hourly.sumOf { it.avgCcrs * it.testCount } / totalTests else 0.0
+    val overallPassRate =
+        if (totalTests > 0) hourly.sumOf { it.tier1Count } * 100.0 / totalTests else 0.0
+    val rtHours = hourly.filter { it.avgMeanRtMs != null && it.pvtCount > 0 }
+    val overallRt = if (rtHours.isNotEmpty())
+        rtHours.sumOf { (it.avgMeanRtMs ?: 0.0) * it.pvtCount } / rtHours.sumOf { it.pvtCount }
+    else null
+
+    val bestHour = when (metric) {
+        V2HourMetric.CCRS -> hourly.filter { it.testCount > 0 }.maxByOrNull { it.avgCcrs }?.hour
+        V2HourMetric.PASS -> hourly.filter { it.testCount > 0 }.maxByOrNull { it.passRate }?.hour
+        V2HourMetric.RT -> hourly.filter { it.avgMeanRtMs != null && it.pvtCount > 0 }
+            .minByOrNull { it.avgMeanRtMs ?: Double.MAX_VALUE }?.hour
+    }
+
+    val maxValue = when (metric) {
+        V2HourMetric.CCRS -> 100f
+        V2HourMetric.PASS -> 100f
+        V2HourMetric.RT -> hourly.mapNotNull { it.avgMeanRtMs }.maxOrNull()
+            ?.let { maxOf(it.toFloat(), 400f) } ?: 400f
+    }
+
+    val bars = hourly.map { h ->
+        val hasData = when (metric) {
+            V2HourMetric.CCRS -> h.testCount > 0
+            V2HourMetric.PASS -> h.testCount > 0
+            V2HourMetric.RT -> h.avgMeanRtMs != null && h.pvtCount > 0
+        }
+        val frac = when (metric) {
+            V2HourMetric.CCRS ->
+                if (h.testCount > 0) (h.avgCcrs / 100f).toFloat() else 0f
+            V2HourMetric.PASS ->
+                if (h.testCount > 0) (h.passRate / 100f).toFloat() else 0f
+            V2HourMetric.RT ->
+                if (h.avgMeanRtMs != null && h.pvtCount > 0)
+                    (h.avgMeanRtMs.toFloat() / maxValue).coerceIn(0f, 1f) else 0f
+        }
+        val topLabel = when (metric) {
+            V2HourMetric.CCRS ->
+                if (h.testCount > 0) h.avgCcrs.roundToInt().toString() else ""
+            V2HourMetric.PASS ->
+                if (h.testCount > 0) "${h.passRate.roundToInt()}%" else ""
+            V2HourMetric.RT ->
+                if (h.avgMeanRtMs != null && h.pvtCount > 0)
+                    h.avgMeanRtMs.roundToInt().toString() else ""
+        }
+        HourBar(
+            hour = h.hour,
+            hasData = hasData,
+            frac = frac,
+            topLabel = topLabel,
+            color = if (h.hour == bestHour) PopupGold else v2MetricColor(metric)
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(PopupBg)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "♟ V2 pre-game readiness by hour of day",
+                    color = PopupTitleColor,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    "$totalTests tests · $totalPvt PVT runs" +
+                        (bestHour?.let { " · best %02d:00".format(it) } ?: ""),
+                    color = v2MetricColor(metric),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 10.dp, end = 12.dp)
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Close",
+                        tint = PopupLabelColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(2.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                V2HourMetric.entries.forEach { m ->
+                    val active = m == metric
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (active) ChipBgActive else ChipBgIdle)
+                            .clickable {
+                                metric = m
+                                selectedHour = null
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            m.label,
+                            color = if (active) v2MetricColor(m) else PopupLabelColor,
+                            fontSize = 12.sp,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+
+            val sel = selectedHour?.let { h -> hourly.firstOrNull { it.hour == h } }
+            Text(
+                if (sel != null && sel.testCount > 0) {
+                    buildString {
+                        append("%02d:00 — %d tests · avg %.1f CCRS".format(sel.hour, sel.testCount, sel.avgCcrs))
+                        append(" · %d/%d/%d T1/T2/T3".format(sel.tier1Count, sel.tier2Count, sel.tier3Count))
+                        sel.avgMeanRtMs?.let { append(" · PVT %.0f ms (%d runs)".format(it, sel.pvtCount)) }
+                    }
+                } else if (sel != null && sel.avgMeanRtMs != null && sel.pvtCount > 0) {
+                    "%02d:00 — %d PVT runs · avg %.0f ms".format(sel.hour, sel.pvtCount, sel.avgMeanRtMs)
+                } else {
+                    val avgTxt = when (metric) {
+                        V2HourMetric.CCRS -> "avg %.1f CCRS".format(overallAvgCcrs)
+                        V2HourMetric.PASS -> "avg %.0f%% pass".format(overallPassRate)
+                        V2HourMetric.RT ->
+                            overallRt?.let { "avg %.0f ms".format(it) } ?: "no PVT data"
+                    }
+                    "Tap a bar for details. Dashed line = $avgTxt." +
+                        if (metric == V2HourMetric.RT) " Lower = faster." else ""
+                },
+                color = PopupDimColor,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+            if (totalTests == 0 && totalPvt == 0) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No V2 pre-game tests logged yet", color = PopupDimColor, fontSize = 13.sp)
+                }
+            } else {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    val avgValue = when (metric) {
+                        V2HourMetric.CCRS -> overallAvgCcrs.toFloat()
+                        V2HourMetric.PASS -> overallPassRate.toFloat()
+                        V2HourMetric.RT -> overallRt?.toFloat()
+                    }
+                    val avgLabel = when (metric) {
+                        V2HourMetric.CCRS -> "avg %.1f".format(overallAvgCcrs)
+                        V2HourMetric.PASS -> "avg ${overallPassRate.roundToInt()}%"
+                        V2HourMetric.RT ->
+                            overallRt?.let { "avg ${it.roundToInt()} ms" } ?: ""
+                    }
+                    HourlyBarsCanvas(
+                        bars = bars,
+                        maxValue = maxValue,
+                        avgValue = avgValue,
+                        avgLabel = avgLabel,
                         selectedHour = selectedHour,
                         onTapHour = { h -> selectedHour = if (selectedHour == h) null else h },
                         modifier = Modifier.fillMaxSize()

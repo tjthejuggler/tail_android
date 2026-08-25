@@ -2,6 +2,7 @@ package com.example.tail.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -61,8 +66,10 @@ private val GoldValue = Color(0xFFFFC24D)           // warm amber
 @Composable
 private fun StatsSection(
     title: String,
+    startExpanded: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    var expanded by remember(title) { mutableStateOf(startExpanded) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -70,16 +77,27 @@ private fun StatsSection(
             .background(SectionBg, RoundedCornerShape(10.dp))
             .padding(12.dp)
     ) {
-        Text(
-            text = title,
-            color = SectionTitleColor,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                color = SectionTitleColor,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(if (expanded) "▼" else "▶", color = SectionTitleColor, fontSize = 12.sp)
+        }
         Spacer(modifier = Modifier.height(8.dp))
         HorizontalDivider(color = DividerColor, thickness = 1.dp)
         Spacer(modifier = Modifier.height(8.dp))
-        content()
+        if (expanded) content()
     }
 }
 
@@ -204,9 +222,10 @@ private fun WinRateCompareChart(
 internal fun SystemEffectivenessSection(
     aggregates: List<GameCategoryAggregate>,
     totalGames: Int,
-    totalWins: Int
+    totalWins: Int,
+    startExpanded: Boolean = true
 ) {
-    StatsSection(title = "🧪 System Effectiveness") {
+    StatsSection(title = "🧪 System Effectiveness", startExpanded = startExpanded) {
         Text(
             "Every logged game classified by its readiness context. If the " +
                 "system works, Approved games should win noticeably more than " +
@@ -264,8 +283,12 @@ internal fun SystemEffectivenessSection(
  * the system's core claim: higher measured readiness → more wins.
  */
 @Composable
-internal fun CcrsBandSection(bands: List<CcrsBandStats>, chartHeight: Dp = 130.dp) {
-    StatsSection(title = "🎯 Win Rate by Readiness Score") {
+internal fun CcrsBandSection(
+    bands: List<CcrsBandStats>,
+    chartHeight: Dp = 130.dp,
+    startExpanded: Boolean = true
+) {
+    StatsSection(title = "🎯 Win Rate by Readiness Score", startExpanded = startExpanded) {
         Text(
             "Win rate grouped by the CCRS the latest test reported at play " +
                 "time (post-test games only). Bands follow the engine's " +
@@ -367,8 +390,11 @@ private fun dayLabel(d: java.time.DayOfWeek): String =
  * e.g. weekend nights systematically tank readiness or win rate.
  */
 @Composable
-internal fun DayOfWeekSection(stats: List<DayOfWeekStats>) {
-    StatsSection(title = "📅 Day of Week") {
+internal fun DayOfWeekSection(
+    stats: List<DayOfWeekStats>,
+    startExpanded: Boolean = true
+) {
+    StatsSection(title = "📅 Day of Week", startExpanded = startExpanded) {
         val rated = stats.filter { it.testCount > 0 }
         val bestDay = rated.maxByOrNull { it.avgCcrs }
         val worstDay = rated.minByOrNull { it.avgCcrs }

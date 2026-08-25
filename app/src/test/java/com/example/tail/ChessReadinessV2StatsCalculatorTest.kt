@@ -36,12 +36,13 @@ class ChessReadinessV2StatsCalculatorTest {
         zLn: Double? = null,
         zRhr: Double? = null,
         acwr: Double? = null,
-        pvtSkipped: Boolean = false
+        pvtSkipped: Boolean = false,
+        ccrs: Int = 90
     ) = V2ResultRecord(
         timestamp = ts,
         tier = tier,
         stateName = "GREEN_LIGHT",
-        ccrs = 90,
+        ccrs = ccrs,
         zLnRmssd = zLn,
         zRhr = zRhr,
         lapses = 0,
@@ -255,7 +256,8 @@ class ChessReadinessV2StatsCalculatorTest {
             game(base + 600_000, "LOSS"),
             game(base + 900_000, "LOSS"),
             game(base + 1_200_000, "DRAW"),
-            game(base + 1_500_000, "LOSS")
+            game(base + 1_500_000, "LOSS"),
+            game(base + 1_800_000, "WIN")
         )
         val s = computePhase2V2Stats(games, emptyList())
         assertEquals(2, s.wins)
@@ -319,8 +321,9 @@ class ChessReadinessV2StatsCalculatorTest {
         val s = computePhase2V2Stats(games, audits)
         assertEquals(35.0, s.totalMinutes, 0.001)
         assertEquals(8.75, s.avgMinutes, 0.001)
-        // Head (70, 65) avg 67.5 → tail (80, 85) avg 82.5 = +15 pts.
-        assertEquals(15.0, s.accuracyTrend!!, 0.001)
+        // Head (70, 65, 80) avg 71.67 → tail (65, 80, 85) avg 76.67 = +5 pts
+        // (trend is first-3 → last-3, matching the stat's documentation/UI).
+        assertEquals(5.0, s.accuracyTrend!!, 0.001)
     }
 
     @Test
@@ -338,5 +341,75 @@ class ChessReadinessV2StatsCalculatorTest {
         )
         assertEquals(base, s.firstGameAt)
         assertEquals(base + 1_800_000, s.lastGameAt)
+    }
+
+    // ── Pre-game hourly aggregates ───────────────────────────────────────────
+
+    @Test
+    fun `hourly v2 readiness has 24 slots with per-hour aggregates`() {
+        val nine = ms("2026-08-20", 9)
+        val ten = ms("2026-08-20", 10)
+        val results = listOf(
+            result(nine, V2Tiers.TIER1, ccrs = 80),
+            result(nine + 60_000, V2Tiers.TIER3, ccrs = 40),
+            result(ten, V2Tiers.TIER2, ccrs = 60)
+        )
+        val runs = listOf(
+            pvt(nine + 5_000, 300.0),
+            pvt(nine + 65_000, 400.0),
+            pvt(ten + 5_000, 250.0)
+        )
+        val hourly = computeV2HourlyReadiness(results, runs, zone)
+
+        assertEquals(24, hourly.size)
+        assertEquals((0..23).toList(), hourly.map { it.hour })
+
+        val h9 = hourly[9]
+        assertEquals(2, h9.testCount)
+        assertEquals(60.0, h9.avgCcrs, 0.001)          // (80 + 40) / 2
+        assertEquals(1, h9.tier1Count)
+        assertEquals(0, h9.tier2Count)
+        assertEquals(1, h9.tier3Count)
+        assertEquals(50.0, h9.passRate, 0.001)
+        assertEquals(2, h9.pvtCount)
+        assertEquals(350.0, h9.avgMeanRtMs!!, 0.001)   // (300 + 400) / 2
+
+        val h10 = hourly[10]
+        assertEquals(1, h10.testCount)
+        assertEquals(60.0, h10.avgCcrs, 0.001)
+        assertEquals(1, h10.tier2Count)
+        assertEquals(0.0, h10.passRate, 0.001)
+        assertEquals(250.0, h10.avgMeanRtMs!!, 0.001)
+
+        // Untouched hours carry zero counts and null reflex averages.
+        val empty = hourly[15]
+        assertEquals(0, empty.testCount)
+        assertEquals(0.0, empty.avgCcrs, 0.001)
+        assertEquals(0, empty.pvtCount)
+        assertNull(empty.avgMeanRtMs)
+    }
+
+    @Test
+    fun `hourly v2 readiness buckets by the zone-local hour`() {
+        // 23:30 UTC on the 20th == 01:30 on the 21st at UTC+2.
+        val lateUtc = ms("2026-08-20", 23, 30)
+        val results = listOf(result(lateUtc, V2Tiers.TIER1, ccrs = 75))
+        val hourly = computeV2HourlyReadiness(results, emptyList(), ZoneId.of("UTC+2"))
+        assertEquals(0, hourly[23].testCount)
+        assertEquals(1, hourly[1].testCount)
+        assertEquals(75.0, hourly[1].avgCcrs, 0.001)
+    }
+
+    @Test
+    fun `hourly v2 readiness counts PVT runs without a mean RT for the run tally only`() {
+        val noon = ms("2026-08-20", 12)
+        val runs = listOf(
+            pvt(noon, 300.0),
+            pvt(noon + 60_000, 0.0) // engine may omit mean RT (null here via rrt-only record)
+        )
+        val noRt = runs[1].copy(meanRtMs = null)
+        val hourly = computeV2HourlyReadiness(emptyList(), listOf(runs[0], noRt), zone)
+        assertEquals(2, hourly[12].pvtCount)
+        assertEquals(300.0, hourly[12].avgMeanRtMs!!, 0.001)
     }
 }

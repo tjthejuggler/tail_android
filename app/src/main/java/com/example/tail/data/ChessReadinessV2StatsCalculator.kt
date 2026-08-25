@@ -1,5 +1,8 @@
 package com.example.tail.data
 
+import java.time.Instant
+import java.time.ZoneId
+
 /**
  * ════════════════════════════════════════════════════════════════════════
  *  Chess Readiness V2 — pure computation layer for the V2 sections of the
@@ -393,4 +396,79 @@ fun computePhase2V2Stats(
 private fun trendUp(values: List<Double>): Double? {
     if (values.size < 2) return null
     return values.takeLast(3).average() - values.take(3).average()
+}
+
+// ── V2 pre-game hourly aggregates ─────────────────────────────────────────────
+
+/**
+ * V2 pre-game aggregates for one hour of the day (0–23) — the hour-by-hour
+ * companion of [V2PregameStats], so the stats screen can show at which
+ * times of day the v2 gate performs best/worst.
+ */
+data class V2HourlyReadiness(
+    val hour: Int,
+    /** Completed v2 evaluations started in this hour. */
+    val testCount: Int,
+    val avgCcrs: Double,
+    val tier1Count: Int,
+    val tier2Count: Int,
+    val tier3Count: Int,
+    /** PVT-B reflex runs started in this hour. */
+    val pvtCount: Int,
+    /** Average PVT-B mean response time (ms) across this hour's runs that reported one. */
+    val avgMeanRtMs: Double?
+) {
+    /** Tier 1 share of this hour's evaluations, 0–100. */
+    val passRate: Double get() = if (testCount > 0) tier1Count * 100.0 / testCount else 0.0
+}
+
+/**
+ * Average CCRS, tier split and PVT-B reflex speed per hour of day — one
+ * entry for every hour 0–23 (empty hours carry zero counts), mirroring
+ * [computeHourlyReadiness] for the v2 gate. Evaluations and reflex runs
+ * are bucketed independently by their own timestamps.
+ */
+fun computeV2HourlyReadiness(
+    results: List<V2ResultRecord>,
+    pvt: List<V2PvtRecord>,
+    zone: ZoneId = ZoneId.systemDefault()
+): List<V2HourlyReadiness> {
+    val counts = IntArray(24)
+    val ccrsSum = IntArray(24)
+    val t1 = IntArray(24)
+    val t2 = IntArray(24)
+    val t3 = IntArray(24)
+    for (r in results) {
+        val h = Instant.ofEpochMilli(r.timestamp).atZone(zone).hour
+        counts[h]++
+        ccrsSum[h] += r.ccrs
+        when (r.tier) {
+            V2Tiers.TIER1 -> t1[h]++
+            V2Tiers.TIER2 -> t2[h]++
+            V2Tiers.TIER3 -> t3[h]++
+        }
+    }
+    val pvtCounts = IntArray(24)
+    val rtSum = DoubleArray(24)
+    val rtN = IntArray(24)
+    for (p in pvt) {
+        val h = Instant.ofEpochMilli(p.timestamp).atZone(zone).hour
+        pvtCounts[h]++
+        p.meanRtMs?.let {
+            rtSum[h] += it
+            rtN[h]++
+        }
+    }
+    return (0..23).map { h ->
+        V2HourlyReadiness(
+            hour = h,
+            testCount = counts[h],
+            avgCcrs = if (counts[h] > 0) ccrsSum[h].toDouble() / counts[h] else 0.0,
+            tier1Count = t1[h],
+            tier2Count = t2[h],
+            tier3Count = t3[h],
+            pvtCount = pvtCounts[h],
+            avgMeanRtMs = if (rtN[h] > 0) rtSum[h] / rtN[h] else null
+        )
+    }
 }
