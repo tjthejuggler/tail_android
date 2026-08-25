@@ -937,25 +937,36 @@ fun computePuzzleTimeSeries(
     }
 
 /**
- * One readiness test's Puzzle Rush result for the over-time chart. A run
- * counts as a new personal best when its score reached the all-time-high
- * baseline in effect at test time (the baseline is what the engine scored
- * the run against, so ≥ means it matched or raised the record).
+ * One Puzzle Rush result for the over-time chart — either a run reported
+ * inside a v1 readiness test or a standalone Puzzle Rush timer session
+ * (see [RushSource]). A run counts as a new personal best when its score
+ * reached the all-time-high baseline in effect at the time (the baseline
+ * is what the engine scored the run against, so ≥ means it matched or
+ * raised the record).
  */
 data class RushScorePoint(
-    /** Epoch millis when the test was submitted. */
+    /** Epoch millis when the test was submitted / session reported. */
     val timestampMs: Long,
     /** Puzzles solved in the 3-minute run. */
     val score: Int,
     /** Strikes (three wrong moves end the run early). */
     val strikes: Int,
-    /** All-time-high baseline in effect at test time. */
+    /** All-time-high baseline in effect at the time. */
     val allTimeHigh: Int,
     /** True when this run matched or raised the all-time high. */
     val isNewHigh: Boolean,
-    /** Readiness state name of the test (GREEN/YELLOW/RED). */
+    /** Readiness state name of the test (GREEN/YELLOW/RED; "" for timer runs). */
     val state: String,
-    val ccrs: Int
+    val ccrs: Int,
+    /** Where this run was reported — [RushSource.TEST] or [RushSource.TIMER]. */
+    val source: String = RushSource.TEST,
+    /**
+     * True when the wrong puzzles were reviewed after the run. Only
+     * standalone timer sessions ask this — null for readiness-test runs.
+     */
+    val reviewedWrong: Boolean? = null,
+    /** Wall-clock length of the timer session in seconds (null for test runs). */
+    val durationSec: Long? = null
 )
 
 /**
@@ -975,6 +986,7 @@ fun computeRushScoreSeries(
             allTimeHigh = it.rushAllTimeHigh,
             isNewHigh = it.rushAllTimeHigh > 0 && it.rushScore >= it.rushAllTimeHigh,
             state = it.state,
-            ccrs = it.ccrs
+            ccrs = it.ccrs,
+            source = RushSource.TEST
         )
     }

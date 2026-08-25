@@ -164,8 +164,20 @@ class FloatingBubbleService : Service() {
     // if the bubble is re-started (user re-entered the app) meanwhile.
     private var startGeneration = 0
     private var lingerStopGeneration = -1
-    private val delayedStopRunnable = Runnable {
-        if (lingerStopGeneration == startGeneration) stopSelf()
+    private val delayedStopRunnable: Runnable = object : Runnable {
+        override fun run() {
+            if (lingerStopGeneration == startGeneration) {
+                // A Puzzle Rush report still due? The overlay window dies
+                // with the service, so hold off until it is answered or
+                // skipped — the pending report itself is persisted, so an
+                // expired prompt simply never re-opens.
+                if (chessPuzzleRushOverlay?.isShowing() == true) {
+                    handler.postDelayed(this, LINGER_STOP_DELAY_MS)
+                } else {
+                    stopSelf()
+                }
+            }
+        }
     }
 
     // ── Long-press detection ──────────────────────────────────────────────
@@ -732,6 +744,15 @@ class FloatingBubbleService : Service() {
             return
         }
 
+        // A due Puzzle Rush report equally owns the bubble: the rush timer
+        // ended and its result was never entered. loadPending() self-clears
+        // expired reports, so a null here falls through to normal behaviour.
+        if (ChessPuzzleRushStore.loadPending(this) != null) {
+            hideHabitPickerMenu()
+            openPuzzleRushReport()
+            return
+        }
+
         val habit = triggerHabitName
         if (habit == null) {
             if (chessReadinessActive || triggerHabitNames.size > 1) {
@@ -1074,6 +1095,7 @@ class FloatingBubbleService : Service() {
     private var chessReadinessOverlay: ChessReadinessOverlay? = null
     private var chessReadinessV2Overlay: ChessReadinessV2Overlay? = null
     private var chessStatusOverlay: ChessStatusOverlay? = null
+    private var chessPuzzleRushOverlay: ChessPuzzleRushOverlay? = null
 
     /**
      * Shows the Phase 1 readiness wizard as a floating overlay dialog.
@@ -1109,14 +1131,30 @@ class FloatingBubbleService : Service() {
         } catch (e: Exception) { /* never crash the bubble */ }
     }
 
+    /** Shows the Puzzle Rush end-of-session report overlay dialog. */
+    private fun openPuzzleRushReport() {
+        try {
+            chessReadinessOverlay?.dismiss()
+            chessReadinessOverlay = null
+            chessReadinessV2Overlay?.dismiss()
+            chessReadinessV2Overlay = null
+            chessStatusOverlay?.dismiss()
+            chessStatusOverlay = null
+            chessPuzzleRushOverlay?.dismiss()
+            chessPuzzleRushOverlay = ChessPuzzleRushOverlay(this).also { it.show() }
+        } catch (e: Exception) { /* never crash the bubble */ }
+    }
+
     /** Removes any open chess overlay dialog (e.g. when the service dies). */
     private fun dismissChessOverlays() {
         try { chessReadinessOverlay?.dismiss() } catch (_: Exception) {}
         try { chessReadinessV2Overlay?.dismiss() } catch (_: Exception) {}
         try { chessStatusOverlay?.dismiss() } catch (_: Exception) {}
+        try { chessPuzzleRushOverlay?.dismiss() } catch (_: Exception) {}
         chessReadinessOverlay = null
         chessReadinessV2Overlay = null
         chessStatusOverlay = null
+        chessPuzzleRushOverlay = null
     }
 
     /** Starts the timer for [habit] and updates the bubble visuals. */
@@ -1235,12 +1273,19 @@ class FloatingBubbleService : Service() {
      * Stops the habit's timer, hides the live display and — if at least a
      * (rounded) minute elapsed — writes the minutes to the habit's "minutes"
      * secondary value (`secondary_value:<habit>` in habitsdb.txt).
+     *
+     * When the habit is the linked Puzzle Rush habit, the timer is an
+     * official Puzzle Rush run: the session's times are parked as a due
+     * report and the result prompt opens on top of the chess app.
      */
     private fun stopTimerAndRecord(habit: String, onFinished: (() -> Unit)? = null) {
+        // Captured BEFORE the stop clears the persisted start timestamp.
+        val rushStartMillis = WidgetTimerStore.timerStartMillis(this, habit)
         val minutes = WidgetTimerStore.stopTimerAndComputeMinutes(this, habit)
         hideTimerChip()
         setBubbleRunningVisuals(running = false)
         if (minutes > 0) {
+            maybePromptPuzzleRush(habit, rushStartMillis)
             writeMinutesToHabit(habit, minutes, onFinished)
         } else {
             Toast.makeText(
@@ -1248,6 +1293,21 @@ class FloatingBubbleService : Service() {
             ).show()
             onFinished?.invoke()
         }
+    }
+
+    /**
+     * Parks a due Puzzle Rush report and opens the result prompt when the
+     * timer that just stopped belonged to the linked Puzzle Rush habit.
+     * Best-effort: any failure here must never break the minutes write.
+     */
+    private fun maybePromptPuzzleRush(habit: String, startedAt: Long) {
+        try {
+            if (startedAt <= 0L) return
+            val rushHabit = ChessReadinessStore.linkedRushHabit(this).trim()
+            if (rushHabit.isEmpty() || habit != rushHabit) return
+            ChessPuzzleRushStore.savePending(this, startedAt, System.currentTimeMillis())
+            openPuzzleRushReport()
+        } catch (_: Exception) { /* never crash the timer stop */ }
     }
 
     /**

@@ -968,7 +968,7 @@ private fun ChessComSettingsSection(
             IconButton(onClick = onNavigateToStats, modifier = Modifier.size(28.dp)) {
                 Icon(
                     Icons.Filled.BarChart,
-                    contentDescription = "Chess readiness stats",
+                    contentDescription = "Chess stats",
                     tint = BorderOrange,
                     modifier = Modifier.size(18.dp)
                 )

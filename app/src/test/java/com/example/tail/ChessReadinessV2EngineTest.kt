@@ -9,6 +9,7 @@ import com.example.tail.widget.ChessReadinessV2Engine.GameLoad
 import com.example.tail.widget.ChessReadinessV2Engine.PvtClassification
 import com.example.tail.widget.ChessReadinessV2Engine.PvtSample
 import com.example.tail.widget.ChessReadinessV2Engine.PvtSummary
+import com.example.tail.widget.ChessReadinessV2Engine.SpeedSample
 import com.example.tail.widget.ChessReadinessV2Engine.V2GatingInput
 import com.example.tail.widget.ChessReadinessV2Engine.V2Tier
 import org.junit.Assert.assertEquals
@@ -17,6 +18,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
 
 /**
  * Unit tests for the v2 Cognitive Readiness Gating engine — the research
@@ -456,5 +459,164 @@ class ChessReadinessV2EngineTest {
         assertEquals(65, ChessReadinessV2Engine.syntheticCcrs(V2Tier.TIER2_RESTRICTED, 0))
         assertEquals(50, ChessReadinessV2Engine.syntheticCcrs(V2Tier.TIER3_LOCKOUT, 1))
         assertEquals(30, ChessReadinessV2Engine.syntheticCcrs(V2Tier.TIER3_LOCKOUT, 2))
+    }
+
+    // ── Module 2b: personal speed baseline (Tier-1 performance gate) ──────
+
+    /** Clean-run baseline samples one day apart (hour irrelevant when ts is null). */
+    private fun speedSamples(vararg rrt: Double): List<SpeedSample> =
+        rrt.mapIndexed { i, v ->
+            SpeedSample(timestampMs = 1_700_000_000_000L + i * 24 * 3_600_000L, meanRrt = v)
+        }
+
+    private fun pvtEvalWithSpeed(rrt: Double?): PvtSummary =
+        PvtSummary(
+            validResponses = 20, lapses = 0, falseStarts = 0,
+            meanRrt = rrt, meanRtMs = rrt?.let { 1000.0 / it }, maxRtMs = 340,
+            tier = ChessReadinessV2Engine.pvtTier(0, 0)   // TIER1 by absolute bands
+        )
+
+    @Test
+    fun speedBaseline_belowMinSamples_isInactive() {
+        // 7 clean runs < MIN_SPEED_BASELINE_SAMPLES (8) → gate not active.
+        val e = ChessReadinessV2Engine.evaluateSpeedBaseline(
+            speedSamples(5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0),
+            currentRrt = 1.0, currentTimestampMs = null
+        )
+        assertFalse(e.active)
+        assertFalse(e.demotesTier1)
+        assertNull(e.percentile)
+    }
+
+    @Test
+    fun speedBaseline_nullRrt_neverDemotes() {
+        val e = ChessReadinessV2Engine.evaluateSpeedBaseline(
+            speedSamples(5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0),
+            currentRrt = null, currentTimestampMs = null
+        )
+        assertFalse(e.active)
+        assertFalse(e.demotesTier1)
+    }
+
+    @Test
+    fun speedBaseline_personalBottom_demotes() {
+        // 8 baseline runs at 4.0–5.4; current 3.0 is slower than all → P0.
+        val e = ChessReadinessV2Engine.evaluateSpeedBaseline(
+            speedSamples(4.0, 4.2, 4.4, 4.6, 4.8, 5.0, 5.2, 5.4),
+            currentRrt = 3.0, currentTimestampMs = null
+        )
+        assertTrue(e.active)
+        assertEquals(0.0, e.percentile!!, 1e-9)
+        assertTrue(e.demotesTier1)
+    }
+
+    @Test
+    fun speedBaseline_aboveBottomBand_passes() {
+        // Current beats 7 of 8 → P87.5 — well clear of the bottom 30 %.
+        val e = ChessReadinessV2Engine.evaluateSpeedBaseline(
+            speedSamples(3.0, 3.2, 3.4, 3.6, 3.8, 4.0, 4.2, 4.4),
+            currentRrt = 4.3, currentTimestampMs = null
+        )
+        assertEquals(87.5, e.percentile!!, 1e-9)
+        assertFalse(e.demotesTier1)
+    }
+
+    @Test
+    fun speedBaseline_exactlyThirtyPercentile_demotes() {
+        // P30 is the inclusive boundary — 3 of 10 slower → demoted.
+        val e = ChessReadinessV2Engine.evaluateSpeedBaseline(
+            speedSamples(3.0, 3.0, 3.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0),
+            currentRrt = 3.5, currentTimestampMs = null
+        )
+        assertEquals(30.0, e.percentile!!, 1e-9)
+        assertTrue(e.demotesTier1)
+    }
+
+    @Test
+    fun speedBaseline_hourMatching_usesSameHourSubset() {
+        // 4 fast morning runs + 6 slow night runs; a slow MORNING test must
+        // be judged against the morning subset (P0 → demoted), not against
+        // the night-heavy pool that would flatter it.
+        val zone = ZoneId.systemDefault()
+        fun ts(day: Int, hour: Int) =
+            ZonedDateTime.of(2026, 8, day, hour, 0, 0, 0, zone).toInstant().toEpochMilli()
+        val morning = (1..4).map { SpeedSample(ts(10 + it, 10), 5.0) }
+        val night = (1..6).map { SpeedSample(ts(10 + it, 22), 2.0) }
+        val e = ChessReadinessV2Engine.evaluateSpeedBaseline(
+            morning + night, currentRrt = 3.0,
+            currentTimestampMs = ts(20, 10), zone = zone
+        )
+        assertTrue(e.hourMatched)
+        assertEquals(0.0, e.percentile!!, 1e-9)
+        assertTrue(e.demotesTier1)
+    }
+
+    @Test
+    fun speedBaseline_hourMatching_fallsBackWhenTooFewSameHour() {
+        // Only 2 morning runs (< MIN_SPEED_HOUR_SAMPLES 4) → the full pool
+        // is used: 6 of 8 slower → P75, no demotion.
+        val zone = ZoneId.systemDefault()
+        fun ts(day: Int, hour: Int) =
+            ZonedDateTime.of(2026, 8, day, hour, 0, 0, 0, zone).toInstant().toEpochMilli()
+        val morning = (1..2).map { SpeedSample(ts(10 + it, 10), 5.0) }
+        val night = (1..6).map { SpeedSample(ts(10 + it, 22), 2.0) }
+        val e = ChessReadinessV2Engine.evaluateSpeedBaseline(
+            morning + night, currentRrt = 3.0,
+            currentTimestampMs = ts(20, 10), zone = zone
+        )
+        assertFalse(e.hourMatched)
+        assertEquals(75.0, e.percentile!!, 1e-9)
+        assertFalse(e.demotesTier1)
+    }
+
+    @Test
+    fun gate_personalSpeedBottom_demotesTier1ToTier2() {
+        // Absolute bands say Tier 1 (0 lapses, 0 false starts), but the run
+        // is the user's personal slowest → rated play not unlocked.
+        val r = ChessReadinessV2Engine.gate(
+            V2GatingInput(
+                autoEval(0.0, 0.0), pvtEvalWithSpeed(3.0), acwrEval(1.0),
+                speedBaseline = speedSamples(4.0, 4.2, 4.4, 4.6, 4.8, 5.0, 5.2, 5.4)
+            )
+        )
+        assertEquals(V2Tier.TIER2_RESTRICTED, r.tier)
+        assertEquals(ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name, r.stateName)
+        assertEquals(V2Tier.TIER2_RESTRICTED, r.pvt!!.tier)
+    }
+
+    @Test
+    fun gate_personalSpeedGate_neverLocksOut() {
+        // Even the slowest-ever clean run stays Tier 2 — the personal gate
+        // can never produce a Tier 3 lockout.
+        val r = ChessReadinessV2Engine.gate(
+            V2GatingInput(
+                autoEval(0.0, 0.0), pvtEvalWithSpeed(1.0), acwrEval(1.0),
+                speedBaseline = speedSamples(4.0, 4.2, 4.4, 4.6, 4.8, 5.0, 5.2, 5.4)
+            )
+        )
+        assertEquals(V2Tier.TIER2_RESTRICTED, r.tier)
+    }
+
+    @Test
+    fun gate_speedBaselineIncomplete_absoluteBandsStillRule() {
+        // 7 clean runs (< 8): a slow run with clean counts still passes.
+        val r = ChessReadinessV2Engine.gate(
+            V2GatingInput(
+                autoEval(0.0, 0.0), pvtEvalWithSpeed(1.0), acwrEval(1.0),
+                speedBaseline = speedSamples(5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0)
+            )
+        )
+        assertEquals(V2Tier.TIER1_PEAK, r.tier)
+    }
+
+    @Test
+    fun gate_personalSpeedAboveBottom_staysTier1() {
+        val r = ChessReadinessV2Engine.gate(
+            V2GatingInput(
+                autoEval(0.0, 0.0), pvtEvalWithSpeed(4.3), acwrEval(1.0),
+                speedBaseline = speedSamples(3.0, 3.2, 3.4, 3.6, 3.8, 4.0, 4.2, 4.4)
+            )
+        )
+        assertEquals(V2Tier.TIER1_PEAK, r.tier)
     }
 }

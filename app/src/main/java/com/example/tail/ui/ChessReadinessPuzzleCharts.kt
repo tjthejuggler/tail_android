@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.PuzzleTimePoint
 import com.example.tail.data.RushScorePoint
+import com.example.tail.data.RushSource
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -444,12 +445,29 @@ private fun RushDetailDialog(p: RushScorePoint, onDismiss: () -> Unit) {
         text = {
             Column {
                 Text(fmtDateTime(p.timestampMs), color = ChartLabel, fontSize = 13.sp)
-                Text(
-                    "CCRS ${p.ccrs} · ${stateName(p.state)}",
-                    color = stateColor(p.state),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                if (p.source == RushSource.TIMER) {
+                    // Standalone timer run — no readiness context exists.
+                    Text(
+                        "Puzzle Rush timer session",
+                        color = ChartOrange,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    p.durationSec?.let { sec ->
+                        Text(
+                            "Session length ${sec / 60} m ${sec % 60} s",
+                            color = ChartLabel,
+                            fontSize = 13.sp
+                        )
+                    }
+                } else {
+                    Text(
+                        "CCRS ${p.ccrs} · ${stateName(p.state)}",
+                        color = stateColor(p.state),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     "Score ${p.score} in 3 min",
@@ -462,6 +480,14 @@ private fun RushDetailDialog(p: RushScorePoint, onDismiss: () -> Unit) {
                     color = if (p.strikes >= 2) ChartRed else ChartLabel,
                     fontSize = 13.sp
                 )
+                p.reviewedWrong?.let { reviewed ->
+                    Text(
+                        if (reviewed) "✓ Reviewed the wrong puzzles"
+                        else "✗ Wrong puzzles not reviewed",
+                        color = if (reviewed) ChartGreen else ChartRed,
+                        fontSize = 13.sp
+                    )
+                }
                 Text(
                     if (p.isNewHigh) "★ Matched or raised the all-time high (${p.allTimeHigh})"
                     else "All-time high at test time: ${p.allTimeHigh}",

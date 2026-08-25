@@ -77,6 +77,7 @@ import com.example.tail.data.Phase2Verdicts
 import com.example.tail.data.V2PvtRecord
 import com.example.tail.data.V2ResultRecord
 import com.example.tail.data.V2Tiers
+import com.example.tail.data.PuzzleRushSessionRecord
 import com.example.tail.data.computeBucketWinRates
 import com.example.tail.data.computeComplianceSeries
 import com.example.tail.data.computeDayOfWeekStats
@@ -86,6 +87,9 @@ import com.example.tail.data.computePhase2V2Stats
 import com.example.tail.data.computePuzzleTimeSeries
 import com.example.tail.data.computeRatingHistory
 import com.example.tail.data.computeRushScoreSeries
+import com.example.tail.data.computeRushSessionPoints
+import com.example.tail.data.mergeRushSeries
+import com.example.tail.data.rushReviewRate
 import com.example.tail.data.computeRatingStats
 import com.example.tail.data.computeReadinessStats
 import com.example.tail.data.computeV2HourlyReadiness
@@ -169,13 +173,14 @@ private enum class VariantOption(val label: String, val key: String?) {
 }
 
 /**
- * ♟ Chess Readiness Stats — the special screen fed by the detailed
- * readiness activity log ([ChessReadinessLogStore]):
+ * ♟ Chess Stats — the special screen fed by the detailed chess activity
+ * log ([ChessReadinessLogStore]):
  *
  *  - readiness ratings over time (per-day average CCRS chart)
  *  - readiness by time of day (6 × 4-hour buckets)
  *  - games played inside valid GREEN authorization windows vs. without
  *    authorization, win rates in each case, and games per authorized session
+ *  - Puzzle Rush stats (readiness-test runs + standalone timer sessions)
  *
  * Reached from the App Stats screen (Settings → App Stats → Chess Readiness).
  */
@@ -204,6 +209,10 @@ fun ChessReadinessStatsScreen(
     var tests by remember { mutableStateOf<List<ReadinessTestRecord>>(emptyList()) }
     var games by remember { mutableStateOf<List<ReadinessGameRecord>>(emptyList()) }
     var blocked by remember { mutableStateOf<List<ReadinessBlockedRecord>>(emptyList()) }
+    // Standalone Puzzle Rush timer sessions (reported via the rush prompt).
+    var rushSessions by remember {
+        mutableStateOf<List<PuzzleRushSessionRecord>>(emptyList())
+    }
     var systemStartMs by remember { mutableStateOf<Long?>(null) }
     // The currently-open interactive landscape chart (null = none).
     var interactiveChart by remember { mutableStateOf<InteractiveChartRequest?>(null) }
@@ -249,6 +258,7 @@ fun ChessReadinessStatsScreen(
             tests = ChessReadinessLogStore.loadTests(context)
             games = ChessReadinessLogStore.loadGames(context)
             blocked = ChessReadinessLogStore.loadBlocked(context)
+            rushSessions = ChessReadinessLogStore.loadRushSessions(context)
             systemStartMs = tests.minOfOrNull { it.timestamp }
             // V2 pre-game gate: verdict log + PVT-B reflex runs.
             v2Results = ChessReadinessV2Store.loadResults(context).map {
@@ -402,7 +412,7 @@ fun ChessReadinessStatsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        "♟ Chess Readiness Stats",
+                        "♟ Chess Stats",
                         color = Color.White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
@@ -625,13 +635,21 @@ fun ChessReadinessStatsScreen(
                 }
 
                 // ── Puzzle rush over time ──────────────────────────────────
-                val rushPoints = remember(tests) { computeRushScoreSeries(tests) }
+                // Merged series: rush runs reported inside v1 readiness
+                // tests + standalone Puzzle Rush timer sessions.
+                val rushPoints = remember(tests, rushSessions) {
+                    mergeRushSeries(
+                        computeRushScoreSeries(tests),
+                        computeRushSessionPoints(rushSessions)
+                    )
+                }
                 if (rushPoints.size >= 2) {
                     StatsSection(title = "⚡ Puzzle Rush Over Time", startExpanded = v1SectionsExpanded) {
                         Text(
                             "Puzzle Rush score (puzzles solved in a 3-minute run) from " +
-                                "each readiness test, oldest to newest. Dashed gold line = " +
-                                "all-time record. Tap a point for strikes and record status.",
+                                "each readiness test and each standalone Puzzle Rush timer " +
+                                "session, oldest to newest. Dashed gold line = all-time " +
+                                "record. Tap a point for strikes, review status and record.",
                             color = DimColor,
                             fontSize = 11.sp
                         )
@@ -684,6 +702,22 @@ fun ChessReadinessStatsScreen(
                             rushPoints.maxOf { maxOf(it.score, it.allTimeHigh) }.toString(),
                             valueColor = GoldValue
                         )
+                        // Review discipline — only timer sessions report it.
+                        rushReviewRate(rushPoints)?.let { rate ->
+                            StatRow(
+                                "Reviewed wrong puzzles",
+                                "%.0f%%".format(rate),
+                                valueColor = if (rate >= 50.0) GreenValue else RedValue
+                            )
+                        }
+                        val timerDurations = rushPoints.mapNotNull { it.durationSec }
+                        if (timerDurations.isNotEmpty()) {
+                            val avgSec = timerDurations.average().toLong()
+                            StatRow(
+                                "Avg timer session",
+                                "%d:%02d".format(avgSec / 60, avgSec % 60)
+                            )
+                        }
                     }
                 }
 
@@ -1173,6 +1207,27 @@ fun ChessReadinessStatsScreen(
                             ),
                             valueFormat = "%.0f",
                             valueUnit = " ms"
+                        )
+                    },
+                    onOpenCleanSpeedChart = {
+                        interactiveChart = InteractiveChartRequest(
+                            title = "⚡ PVT-B response speed — clean runs (0 early taps)",
+                            series = listOf(
+                                IChartSeries(
+                                    name = "Response speed (1000/RT)",
+                                    color = Color(0xFFF2994A),
+                                    points = v2PregameStats.series
+                                        .filter { it.meanRrt != null && it.falseStarts == 0 }
+                                        .map {
+                                            IChartPoint(
+                                                it.timestampMs,
+                                                it.meanRrt!!,
+                                                color = v2TierDotColor(it.tier)
+                                            )
+                                        }
+                                )
+                            ),
+                            valueFormat = "%.2f"
                         )
                     },
                     onOpenLapseChart = {

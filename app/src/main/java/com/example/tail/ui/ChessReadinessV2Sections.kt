@@ -229,6 +229,8 @@ fun V2PregameSection(
     onOpenHourly: () -> Unit = {},
     /** Opens the interactive landscape mean-RT chart. */
     onOpenRtChart: () -> Unit = {},
+    /** Opens the interactive response-speed chart, clean runs only (0 early taps). */
+    onOpenCleanSpeedChart: () -> Unit = {},
     /** Opens the interactive landscape lapses/false-starts chart. */
     onOpenLapseChart: () -> Unit = {}
 ) {
@@ -351,6 +353,25 @@ fun V2PregameSection(
                     "Zoomable response-time chart — pinch, scroll, tap any run",
                     "Interactive 📈"
                 ) { onOpenRtChart() }
+
+                // ── Response speed over time — clean runs only (zero early taps) ──
+                val cleanSpeedPoints = rtPoints.filter { it.falseStarts == 0 }
+                if (cleanSpeedPoints.size >= 2) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Response speed (1000/RT) — clean runs only, zero early " +
+                            "taps (${cleanSpeedPoints.size} of ${rtPoints.size} runs) — " +
+                            "same metric as the result popup, higher = faster:",
+                        color = DimColor, fontSize = 11.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    V2SpeedChart(cleanSpeedPoints, chartHeight)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    ChartLinkRow(
+                        "Zoomable clean-run speed chart — pinch, scroll, tap any run",
+                        "Interactive 📈"
+                    ) { onOpenCleanSpeedChart() }
+                }
             }
 
             // ── Lapses & false starts over time ──
@@ -573,6 +594,150 @@ private fun V2RtChart(
                         Text("Verdict: ${tierLabel(p.tier)}", color = tierColor(p.tier), fontSize = 13.sp)
                         p.meanRtMs?.let { Text("Mean response time: %.0f ms".format(it), color = LabelColor, fontSize = 13.sp) }
                         p.meanRrt?.let { Text("Response speed (1000/RT): %.2f".format(it), color = LabelColor, fontSize = 13.sp) }
+                        p.maxRtMs?.let { Text("Slowest response: $it ms", color = LabelColor, fontSize = 13.sp) }
+                        Text("Valid responses: ${p.validResponses}", color = LabelColor, fontSize = 13.sp)
+                        Text("Late taps (lapses): ${p.lapses}", color = LabelColor, fontSize = 13.sp)
+                        Text("Early taps (false starts): ${p.falseStarts}", color = LabelColor, fontSize = 13.sp)
+                    }
+                },
+                containerColor = SectionBg
+            )
+        }
+    }
+}
+
+/**
+ * Mean response-SPEED line chart (1000/RT — higher = faster), one
+ * evenly-spaced slot per run; each dot is colored by the verdict that run
+ * produced. Mirrors the "Response speed (1000/RT)" figure shown on the v2
+ * result popup so both surfaces speak the same unit. Tapping a point opens
+ * a dialog with the run's full detail.
+ */
+@Composable
+private fun V2SpeedChart(
+    points: List<V2PvtPoint>,
+    chartHeight: Dp = 150.dp
+) {
+    var selected by remember { mutableStateOf<Int?>(null) }
+    var canvasWidth by remember { mutableStateOf(0f) }
+    val density = LocalDensity.current
+    val labelPx = with(density) { 9.dp.toPx() }
+    val labelPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#888888")
+        textSize = labelPx
+        isAntiAlias = true
+    }
+    val padL = with(density) { 40.dp.toPx() }
+    val padR = with(density) { 10.dp.toPx() }
+    val n = points.size
+
+    fun xAt(i: Int, w: Float): Float {
+        val chartW = (w - padL - padR).coerceAtLeast(1f)
+        return if (n < 2) padL + chartW / 2f else padL + chartW * i / (n - 1)
+    }
+
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(chartHeight)
+            .onSizeChanged { canvasWidth = it.width.toFloat() }
+            .pointerInput(points, canvasWidth) {
+                detectTapGestures { pos ->
+                    if (canvasWidth <= 0f || n == 0) return@detectTapGestures
+                    val threshold = with(density) { 24.dp.toPx() }
+                    val nearest = ((pos.x - padL) / (canvasWidth - padL - padR).coerceAtLeast(1f)
+                        * (n - 1)).roundToInt().coerceIn(0, n - 1)
+                    if (abs(xAt(nearest, canvasWidth) - pos.x) <= threshold) {
+                        selected = if (selected == nearest) null else nearest
+                    }
+                }
+            }
+    ) {
+        if (n == 0) return@Canvas
+        val padT = 12.dp.toPx()
+        val padB = 20.dp.toPx()
+        val w = size.width
+        val h = size.height
+        val chartH = h - padT - padB
+
+        val values = points.mapNotNull { it.meanRrt }
+        val vMin = values.min()
+        val vMax = values.max()
+        val vPad = maxOf(0.1, (vMax - vMin) * 0.15)
+        val lo = (vMin - vPad).coerceAtLeast(0.0)
+        val hi = vMax + vPad
+        val vSpan = maxOf(0.1, hi - lo)
+
+        fun y(v: Double) = padT + chartH * (1f - ((v - lo) / vSpan).toFloat())
+
+        // Gridlines + y labels (1000/RT — up = faster)
+        val step = maxOf(0.1, (hi - lo) / 4).let { target ->
+            listOf(0.1, 0.25, 0.5, 1.0).firstOrNull { it >= target } ?: 1.0
+        }
+        var v = ceil(lo / step) * step
+        while (v <= hi) {
+            val gy = y(v)
+            drawLine(ChartGrid, Offset(padL, gy), Offset(w - padR, gy), strokeWidth = 1f)
+            drawContext.canvas.nativeCanvas.drawText(
+                "%.1f".format(v), 0f, gy + labelPx / 3, labelPaint
+            )
+            v += step
+        }
+
+        // Line + verdict-colored dots
+        val path = Path()
+        points.forEachIndexed { i, p ->
+            val speed = p.meanRrt ?: return@forEachIndexed
+            val c = Offset(xAt(i, w), y(speed))
+            if (i == 0 || points[i - 1].meanRrt == null) path.moveTo(c.x, c.y)
+            else path.lineTo(c.x, c.y)
+        }
+        drawPath(path, ChartOrange, style = Stroke(width = 2.dp.toPx()))
+        points.forEachIndexed { i, p ->
+            val speed = p.meanRrt ?: return@forEachIndexed
+            drawCircle(tierColor(p.tier), radius = 3.dp.toPx(), center = Offset(xAt(i, w), y(speed)))
+        }
+
+        // Selection guide
+        selected?.let { idx ->
+            points.getOrNull(idx)?.let { p ->
+                val speed = p.meanRrt ?: return@let
+                val sx = xAt(idx, w)
+                drawLine(GoldValue, Offset(sx, padT), Offset(sx, padT + chartH), strokeWidth = 1.5f)
+                drawCircle(GoldValue, radius = 5.dp.toPx(), center = Offset(sx, y(speed)))
+            }
+        }
+
+        // X-axis endpoint labels
+        drawContext.canvas.nativeCanvas.drawText(
+            fmtShort(points.first().timestampMs), padL, h - 6.dp.toPx(), labelPaint
+        )
+        val lastLabel = fmtShort(points.last().timestampMs)
+        drawContext.canvas.nativeCanvas.drawText(
+            lastLabel, w - padR - labelPaint.measureText(lastLabel), h - 6.dp.toPx(), labelPaint
+        )
+    }
+
+    selected?.let { idx ->
+        points.getOrNull(idx)?.let { p ->
+            AlertDialog(
+                onDismissRequest = { selected = null },
+                confirmButton = {
+                    TextButton(onClick = { selected = null }) {
+                        Text("Close", color = GoldValue, fontWeight = FontWeight.Bold)
+                    }
+                },
+                title = {
+                    Text(
+                        "PVT-B run · ${fmtTime(p.timestampMs)}",
+                        color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp
+                    )
+                },
+                text = {
+                    Column {
+                        Text("Verdict: ${tierLabel(p.tier)}", color = tierColor(p.tier), fontSize = 13.sp)
+                        p.meanRrt?.let { Text("Response speed (1000/RT): %.2f".format(it), color = LabelColor, fontSize = 13.sp) }
+                        p.meanRtMs?.let { Text("Mean response time: %.0f ms".format(it), color = LabelColor, fontSize = 13.sp) }
                         p.maxRtMs?.let { Text("Slowest response: $it ms", color = LabelColor, fontSize = 13.sp) }
                         Text("Valid responses: ${p.validResponses}", color = LabelColor, fontSize = 13.sp)
                         Text("Late taps (lapses): ${p.lapses}", color = LabelColor, fontSize = 13.sp)

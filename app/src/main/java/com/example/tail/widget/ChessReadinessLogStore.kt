@@ -2,6 +2,7 @@ package com.example.tail.widget
 
 import android.content.Context
 import com.example.tail.data.ChessComGame
+import com.example.tail.data.PuzzleRushSessionRecord
 import com.example.tail.data.ReadinessBlockedRecord
 import com.example.tail.data.ReadinessGameRecord
 import com.example.tail.data.ReadinessTestRecord
@@ -23,6 +24,9 @@ import org.json.JSONObject
  *  - every submitted Phase-1 test with its FULL telemetry (sub-scores,
  *    raw sleep/clarity inputs, puzzle times, rush score/strikes, session
  *    duration) — written by [ChessReadinessOverlay] at submission time
+ *  - every standalone Puzzle Rush timer session (score, strikes, review
+ *    of wrong puzzles, start/end times) — written by
+ *    [ChessPuzzleRushOverlay] when the rush timer stops
  *  - every chess.com game (polled via [com.example.tail.data.ChessComRepository])
  *    with the readiness context at the moment it ended (latest CCRS/state,
  *    and whether that game was played inside a valid GREEN authorization
@@ -40,6 +44,7 @@ object ChessReadinessLogStore {
     private const val KEY_TESTS = "tests"
     private const val KEY_GAMES = "games"
     private const val KEY_BLOCKED = "blocked"
+    private const val KEY_RUSH_SESSIONS = "rushSessions"
     private const val KEY_BACKFILL_USER = "backfillUser"
     private const val KEY_BACKFILL_AT = "backfillAt"
 
@@ -222,6 +227,21 @@ object ChessReadinessLogStore {
         return added
     }
 
+    /**
+     * Records a standalone Puzzle Rush timer session reported through the
+     * [ChessPuzzleRushOverlay] prompt (score, strikes, whether the wrong
+     * puzzles were reviewed, and the session's start/end times).
+     */
+    fun logRushSession(context: Context, record: PuzzleRushSessionRecord) {
+        synchronized(lock) {
+            val root = readRoot(context)
+            val arr = root.optJSONArray(KEY_RUSH_SESSIONS) ?: JSONArray()
+            arr.put(encodeRushSession(record))
+            root.put(KEY_RUSH_SESSIONS, arr)
+            writeRoot(context, root)
+        }
+    }
+
     /** Records a blocked test attempt (why the gate refused a re-test). */
     fun logBlockedAttempt(context: Context, reason: String) {
         val record = ReadinessBlockedRecord(
@@ -297,6 +317,15 @@ object ChessReadinessLogStore {
             }
         }
 
+    /** All standalone Puzzle Rush timer sessions, in stored order. */
+    fun loadRushSessions(context: Context): List<PuzzleRushSessionRecord> =
+        synchronized(lock) {
+            val arr = readRoot(context).optJSONArray(KEY_RUSH_SESSIONS) ?: return emptyList()
+            (0 until arr.length()).mapNotNull { i ->
+                decodeRushSession(arr.getJSONObject(i))
+            }
+        }
+
     // ── JSON codec ──────────────────────────────────────────────────────────
 
     private fun readRoot(context: Context): JSONObject = try {
@@ -332,6 +361,7 @@ object ChessReadinessLogStore {
         try {
             trimOldest(root, KEY_GAMES, MAX_EVENTS)
             trimOldest(root, KEY_TESTS, MAX_EVENTS)
+            trimOldest(root, KEY_RUSH_SESSIONS, MAX_EVENTS)
             trimOldest(root, KEY_BLOCKED, MAX_EVENTS / 10)
             file(context).writeText(root.toString())
         } catch (_: Exception) {
@@ -395,6 +425,30 @@ object ChessReadinessLogStore {
             rushStrikes = o.optInt("rushStrikes", 0),
             rushAllTimeHigh = o.optInt("rushAllTimeHigh", 0),
             sessionStartedAt = o.optLong("sessionStartedAt", o.getLong("timestamp"))
+        )
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun encodeRushSession(s: PuzzleRushSessionRecord): JSONObject = JSONObject().apply {
+        put("timestamp", s.timestamp)
+        put("startedAt", s.startedAt)
+        put("durationSec", s.durationSec)
+        put("score", s.score)
+        put("strikes", s.strikes)
+        put("reviewedWrong", s.reviewedWrong)
+        put("allTimeHigh", s.allTimeHigh)
+    }
+
+    private fun decodeRushSession(o: JSONObject): PuzzleRushSessionRecord? = try {
+        PuzzleRushSessionRecord(
+            timestamp = o.getLong("timestamp"),
+            startedAt = o.optLong("startedAt", o.getLong("timestamp")),
+            durationSec = o.optLong("durationSec", 0L),
+            score = o.optInt("score", 0),
+            strikes = o.optInt("strikes", 0),
+            reviewedWrong = o.optBoolean("reviewedWrong", false),
+            allTimeHigh = o.optInt("allTimeHigh", 0)
         )
     } catch (_: Exception) {
         null

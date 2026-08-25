@@ -30,6 +30,15 @@ import kotlin.math.sqrt
  *      within 100 ms of it (physiologically impossible → anticipation).
  *      Response speed is the reciprocal transform 1000 / RT_ms.
  *
+ *  Module 2b — PERSONAL SPEED BASELINE (Tier-1 performance gate)
+ *      Once ≥ 8 past CLEAN runs (zero early taps) exist, a run whose
+ *      response speed lands in the personal bottom 30% (percentile rank
+ *      vs the user's own rolling clean-run baseline, ±2 h circadian
+ *      matching when enough same-hour samples exist) is demoted Tier 1 →
+ *      Tier 2 — "play rated only when relatively at your best". It can
+ *      NEVER produce a Tier 3: absolute population thresholds remain the
+ *      only lockout path, so chronic baseline drift is still caught.
+ *
  *  Module 3 — CUMULATIVE LOAD (cognitive ACWR, EWMA model)
  *      Daily cognitive training impulse cTRIMP = minutes × intensity
  *      (sRPE-equivalent). EWMA acute λ = 2/(7+1) = 0.25, chronic
@@ -116,6 +125,23 @@ object ChessReadinessV2Engine {
     /** The v2 test session itself (PVT ≈ 3 min) as cTRIMP minutes×intensity. */
     const val TEST_SESSION_MINUTES = 3.0
     const val TEST_SESSION_INTENSITY = 4.0
+
+    // ── Personal speed baseline (Module 2b — Tier-1 performance gate) ──────
+
+    /** Past CLEAN runs (0 early taps) considered for the personal speed baseline. */
+    const val SPEED_BASELINE_WINDOW = 30
+
+    /** Clean runs required before the personal speed gate activates. */
+    const val MIN_SPEED_BASELINE_SAMPLES = 8
+
+    /** Circadian matching: baseline runs within ±this many hours of the test. */
+    const val SPEED_BASELINE_HOUR_WINDOW_H = 2
+
+    /** Hour-matched samples required to prefer the same-hour subset. */
+    const val MIN_SPEED_HOUR_SAMPLES = 4
+
+    /** Percentile rank at/below which the run is "personal bottom" (demotes 1 → 2). */
+    const val SPEED_DEMOTE_PERCENTILE = 30.0
 
     // ── Tier model ─────────────────────────────────────────────────────────
 
@@ -360,6 +386,100 @@ object ChessReadinessV2Engine {
         else -> V2Tier.TIER1_PEAK
     }
 
+    // ── Module 2b: Personal speed baseline (Tier-1 performance gate) ───────
+
+    /**
+     * One PAST clean PVT run (zero early taps) feeding the personal speed
+     * baseline. The caller EXCLUDES the run currently being judged.
+     */
+    data class SpeedSample(
+        val timestampMs: Long,
+        /** Mean reciprocal response speed 1000/RT (higher = faster). */
+        val meanRrt: Double
+    )
+
+    /** The personal speed-baseline verdict for the run being judged. */
+    data class SpeedBaselineEvaluation(
+        /** True when enough clean-run history exists to gate. */
+        val active: Boolean,
+        /** Percentile rank of this run's speed among the baseline (0–100, higher = faster). */
+        val percentile: Double?,
+        /** Clean runs the percentile was computed against. */
+        val baselineN: Int,
+        /** True when a ±2 h same-hour subset was used (circadian matching). */
+        val hourMatched: Boolean,
+        /** Baseline median speed (for display). */
+        val baselineMedian: Double?,
+        /** True when the run sits in the personal bottom band → Tier 1 demoted to Tier 2. */
+        val demotesTier1: Boolean
+    )
+
+    /**
+     * Judges this run's response speed against the user's OWN rolling
+     * baseline of clean runs — the "play rated only when relatively at
+     * your best" gate:
+     *  - baseline = the last [SPEED_BASELINE_WINDOW] clean runs BEFORE this
+     *    one (the caller excludes the current run);
+     *  - inactive below [MIN_SPEED_BASELINE_SAMPLES] samples — until then
+     *    the absolute bands alone decide Tier 1;
+     *  - circadian matching: when ≥ [MIN_SPEED_HOUR_SAMPLES] baseline runs
+     *    sit within ±[SPEED_BASELINE_HOUR_WINDOW_H] h of this test, only
+     *    those are used (PVT speed swings 10–20 % across the day);
+     *  - percentile = share of baseline runs SLOWER than this one (ties
+     *    count in the user's favour);
+     *  - demotes Tier 1 → Tier 2 at/below [SPEED_DEMOTE_PERCENTILE]; NEVER
+     *    adds a Tier 3 — absolute population thresholds remain the only
+     *    lockout path, so chronic baseline drift is still caught.
+     */
+    fun evaluateSpeedBaseline(
+        baseline: List<SpeedSample>,
+        currentRrt: Double?,
+        currentTimestampMs: Long?,
+        zone: java.time.ZoneId = java.time.ZoneId.systemDefault()
+    ): SpeedBaselineEvaluation {
+        val windowed = baseline.sortedBy { it.timestampMs }.takeLast(SPEED_BASELINE_WINDOW)
+        if (currentRrt == null || windowed.size < MIN_SPEED_BASELINE_SAMPLES) {
+            return SpeedBaselineEvaluation(
+                active = false,
+                percentile = null,
+                baselineN = windowed.size,
+                hourMatched = false,
+                baselineMedian = windowed.map { it.meanRrt }.medianOrNull(),
+                demotesTier1 = false
+            )
+        }
+        var pool = windowed
+        var hourMatched = false
+        if (currentTimestampMs != null) {
+            val curHour = java.time.Instant.ofEpochMilli(currentTimestampMs).atZone(zone).hour
+            val sameHour = windowed.filter { s ->
+                val h = java.time.Instant.ofEpochMilli(s.timestampMs).atZone(zone).hour
+                val d = abs(h - curHour)
+                val circular = minOf(d, 24 - d)
+                circular <= SPEED_BASELINE_HOUR_WINDOW_H
+            }
+            if (sameHour.size >= MIN_SPEED_HOUR_SAMPLES) {
+                pool = sameHour
+                hourMatched = true
+            }
+        }
+        val percentile = pool.count { it.meanRrt < currentRrt } * 100.0 / pool.size
+        return SpeedBaselineEvaluation(
+            active = true,
+            percentile = percentile,
+            baselineN = pool.size,
+            hourMatched = hourMatched,
+            baselineMedian = pool.map { it.meanRrt }.medianOrNull(),
+            demotesTier1 = percentile <= SPEED_DEMOTE_PERCENTILE
+        )
+    }
+
+    /** Median of a non-empty double list (null when empty). */
+    private fun List<Double>.medianOrNull(): Double? =
+        if (isEmpty()) null else sorted().let {
+            if (it.size % 2 == 1) it[it.size / 2] else (it[it.size / 2 - 1] + it[it.size / 2]) / 2.0
+        }
+
     // ── Module 3: Cognitive ACWR (EWMA) ────────────────────────────────────
 
     /** One chess.com game reduced to its load inputs. */
@@ -474,7 +594,11 @@ object ChessReadinessV2Engine {
     data class V2GatingInput(
         val autonomic: AutonomicEvaluation?,
         val pvt: PvtSummary?,
-        val acwr: AcwrEvaluation?
+        val acwr: AcwrEvaluation?,
+        /** Past CLEAN PVT runs for the personal Tier-1 speed gate (current run excluded). */
+        val speedBaseline: List<SpeedSample> = emptyList(),
+        /** When the judged PVT completed (epoch ms; enables circadian matching). */
+        val pvtCompletedAtMs: Long? = null
     )
 
     /** Why each module landed on its tier (human-readable, shown on the result). */
@@ -528,7 +652,10 @@ object ChessReadinessV2Engine {
     fun gate(input: V2GatingInput): V2GatingResult {
         val autoVerdict = input.autonomic?.let { verdictAutonomic(it) }
         val loadVerdict = input.acwr?.let { verdictWorkload(it) }
-        val pvtVerdict = input.pvt?.let { verdictPvt(it) }
+        val speedEval = input.pvt?.let { p ->
+            evaluateSpeedBaseline(input.speedBaseline, p.meanRrt, input.pvtCompletedAtMs)
+        }
+        val pvtVerdict = input.pvt?.let { verdictPvt(it, speedEval) }
 
         val prePvtTier = (autoVerdict?.tier ?: V2Tier.NO_DATA)
             .worstOf(loadVerdict?.tier ?: V2Tier.NO_DATA)
@@ -592,7 +719,7 @@ object ChessReadinessV2Engine {
         return ModuleVerdict(a.tier, reasons)
     }
 
-    private fun verdictPvt(p: PvtSummary): ModuleVerdict {
+    private fun verdictPvt(p: PvtSummary, speed: SpeedBaselineEvaluation?): ModuleVerdict {
         val reasons = ArrayList<String>()
         reasons.add(
             when {
@@ -609,7 +736,26 @@ object ChessReadinessV2Engine {
             }
         )
         p.meanRrt?.let { reasons.add(String.format("Response speed %.2f (1000/RT)", it)) }
-        return ModuleVerdict(p.tier, reasons)
+        speed?.let { s ->
+            reasons.add(
+                when {
+                    s.demotesTier1 -> String.format(
+                        "P%.0f vs your %d clean runs — personal bottom %d%% (Tier 2)",
+                        s.percentile ?: 0.0, s.baselineN, SPEED_DEMOTE_PERCENTILE.toInt()
+                    )
+                    s.active -> String.format(
+                        "P%.0f vs your %d clean runs%s",
+                        s.percentile ?: 0.0, s.baselineN,
+                        if (s.hourMatched) " (same-hour)" else ""
+                    )
+                    else -> "Personal speed baseline building (${s.baselineN}/$MIN_SPEED_BASELINE_SAMPLES clean runs)"
+                }
+            )
+        }
+        val tier = if (speed?.demotesTier1 == true && p.tier == V2Tier.TIER1_PEAK) {
+            V2Tier.TIER2_RESTRICTED
+        } else p.tier
+        return ModuleVerdict(tier, reasons)
     }
 
     private fun verdictWorkload(w: AcwrEvaluation): ModuleVerdict {

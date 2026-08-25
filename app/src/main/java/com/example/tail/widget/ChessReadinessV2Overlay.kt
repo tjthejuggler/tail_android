@@ -360,10 +360,16 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
             }
             pvt.onComplete = { samples ->
                 val summary = ChessReadinessV2Engine.summarizePvt(samples)
+                // Personal speed baseline = PAST clean runs only (this run is
+                // not appended yet, so it cannot judge itself).
+                val speedBaseline = ChessReadinessV2Store.loadPvt(context)
+                    .filter { it.falseStarts == 0 && it.meanRrt != null }
+                    .map { ChessReadinessV2Engine.SpeedSample(it.timestamp, it.meanRrt!!) }
+                val completedAt = System.currentTimeMillis()
                 ChessReadinessV2Store.appendPvt(
                     context,
                     ChessReadinessV2Store.PvtRecord(
-                        timestamp = System.currentTimeMillis(),
+                        timestamp = completedAt,
                         validResponses = summary.validResponses,
                         lapses = summary.lapses,
                         falseStarts = summary.falseStarts,
@@ -372,7 +378,11 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
                         maxRtMs = summary.maxRtMs
                     )
                 )
-                finalizeGating(pvt = summary)
+                finalizeGating(
+                    pvt = summary,
+                    speedBaseline = speedBaseline,
+                    pvtCompletedAtMs = completedAt
+                )
             }
             customView(pvt, 300)
             pvt.startRun()
@@ -392,13 +402,19 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
      * the performance grade: Tier 1 unlocks rated play, Tier 2 restricts to
      * unrated study, Tier 3 locks everything.
      */
-    private fun finalizeGating(pvt: ChessReadinessV2Engine.PvtSummary?) {
+    private fun finalizeGating(
+        pvt: ChessReadinessV2Engine.PvtSummary?,
+        speedBaseline: List<ChessReadinessV2Engine.SpeedSample> = emptyList(),
+        pvtCompletedAtMs: Long? = null
+    ) {
         pvtSummary = pvt
         val result = ChessReadinessV2Engine.gate(
             ChessReadinessV2Engine.V2GatingInput(
                 autonomic = autonomic,
                 pvt = pvt,
-                acwr = acwr
+                acwr = acwr,
+                speedBaseline = speedBaseline,
+                pvtCompletedAtMs = pvtCompletedAtMs
             )
         )
         gating = result
