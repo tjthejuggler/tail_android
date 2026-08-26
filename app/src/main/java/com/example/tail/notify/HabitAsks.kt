@@ -64,6 +64,11 @@ object HabitAsks {
      * posts the system notification and marks the habit as fired today.
      * Skips (returns null) when this habit already fired today — this is what
      * keeps alarms, boot catch-up and app-open catch-up from double-asking.
+     *
+     * Also skips max-1 habits that are already incremented today: "Yes" would
+     * be capped away by [applyAnswer] and "No" changes nothing, so the ask is
+     * moot. The schedule is still marked as fired so catch-up paths don't
+     * re-check (and re-load the habits file) for the rest of the day.
      */
     suspend fun fireScheduledAsk(
         appContext: Context,
@@ -74,6 +79,18 @@ object HabitAsks {
         val today = LocalDate.now().toString()
         val lastFired = store.scheduleLastFired()[habitName]
         if (lastFired == today) return null
+
+        val settings = SettingsRepository(appContext).settingsFlow.first()
+        if (habitName in settings.maxOneHabits && settings.fileUri.isNotEmpty()) {
+            val todayCount = HabitsRepository()
+                .loadDatabase(Uri.parse(settings.fileUri), appContext)
+                .get(habitName)?.get(today) ?: 0
+            if (todayCount >= 1) {
+                store.setScheduleFired(habitName, today)
+                Log.i(TAG, "Skipping scheduled ask for '$habitName' — already at max 1 today")
+                return null
+            }
+        }
 
         store.setScheduleFired(habitName, today)
         val ask = HabitNotification(
