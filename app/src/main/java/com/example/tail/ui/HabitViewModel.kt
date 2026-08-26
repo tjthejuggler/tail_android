@@ -3101,6 +3101,11 @@ class HabitViewModel(
             _settings.value = _settings.value.copy(invertedBinaryHabits = current)
             // Rebuild so streaks/points immediately reflect the new semantics
             rebuildHabitList()
+            // The PC widget config carries the inverted_binary flag — refresh
+            // it when a PC-widget habit's type changes.
+            if (habitName in _settings.value.pcWidgetHabits) {
+                pushPcWidgetConfig()
+            }
         }
     }
 
@@ -3278,6 +3283,12 @@ class HabitViewModel(
             settingsRepo.saveHabitDividers(current)
             _settings.value = _settings.value.copy(habitDividers = current)
             rebuildHabitList()
+            // The PC widget config carries the divider — refresh it when a
+            // PC-widget habit's divider changes, or the PC keeps scoring with
+            // the stale one (raw minutes shown as points).
+            if (habitName in _settings.value.pcWidgetHabits) {
+                pushPcWidgetConfig()
+            }
         }
     }
 
@@ -4200,6 +4211,11 @@ class HabitViewModel(
         _settings.value = _settings.value.copy(noPointsHabits = current)
         viewModelScope.launch {
             settingsRepo.saveNoPointsHabits(current)
+            // The PC widget config carries the no_points flag — refresh it
+            // when a PC-widget habit's flag changes.
+            if (habitName in _settings.value.pcWidgetHabits) {
+                pushPcWidgetConfig()
+            }
         }
     }
 

@@ -238,7 +238,8 @@ class VisionProcessingService {
                 put("temperature", 0.2)
                 // Multi-food descriptions produce long JSON — 700 truncated
                 // responses mid-object and made parsing fail.
-                put("max_tokens", 1500)
+                put("max_tokens", 4096)
+                applyGlmThinkingOverride(config.model)
             }
 
             when (val outcome = chatCompletion(fullUrl, requestBody, config)) {
@@ -552,7 +553,27 @@ class VisionProcessingService {
                 })
             })
             put("temperature", 0.2)
-            put("max_tokens", 1000)
+            put("max_tokens", 4096)
+            applyGlmThinkingOverride(config.model)
+        }
+    }
+
+    /**
+     * GLM thinking-mode guard (root cause of the 2026-08-25 quick-capture
+     * failures): GLM-4.x vision models enable chain-of-thought "thinking" by
+     * default, and reasoning tokens count against `max_tokens`. On image-heavy
+     * prompts the reasoning alone could exhaust a 1000-token budget, so the
+     * API returned HTTP 200 with `content: ""` — which surfaced downstream as
+     * the cryptic "Parse error: End of input at character 0 of" review note.
+     * Disabling thinking removes the hidden token drain entirely (verified:
+     * 919 → 336 completion tokens, 2.4× faster, identical answer quality).
+     *
+     * Guarded by model name so non-GLM OpenAI-compatible endpoints (which
+     * reject unknown request parameters with a 400) are unaffected.
+     */
+    private fun JSONObject.applyGlmThinkingOverride(model: String) {
+        if (model.contains("glm", ignoreCase = true)) {
+            put("thinking", JSONObject().apply { put("type", "disabled") })
         }
     }
 
@@ -628,7 +649,8 @@ class VisionProcessingService {
                 })
             })
             put("temperature", 0.2)
-            put("max_tokens", 800)
+            put("max_tokens", 4096)
+            applyGlmThinkingOverride(config.model)
         }
     }
 
@@ -777,7 +799,13 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
             // Content can be a string or an array of content parts
             val content = message.opt("content") ?: return null
             when (content) {
-                is String -> content
+                // Blank string content (e.g. GLM thinking exhausted max_tokens
+                // before emitting anything) must NOT be returned as "" — the
+                // caller would then try to parse an empty response and report
+                // a cryptic "End of input at character 0" parse error. Null
+                // routes it to the "No content in LLM response" error path,
+                // which includes the raw response (finish_reason etc.).
+                is String -> content.ifBlank { null }
                 is JSONArray -> {
                     // Concatenate all text parts
                     val sb = StringBuilder()
