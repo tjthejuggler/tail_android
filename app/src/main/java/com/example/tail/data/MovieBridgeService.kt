@@ -3,6 +3,7 @@ package com.example.tail.data
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -54,6 +55,73 @@ class MovieBridgeService {
 
     companion object {
         private const val TAG = "MovieBridge"
+
+        /**
+         * Parses one bridge movie JSON object into a [BridgeMovie]. Public so
+         * the phone-local cache ([MovieCacheStore]) can reuse the exact same
+         * codec as live bridge responses. Returns null for blank titles or
+         * malformed input.
+         */
+        fun parseMovie(json: JSONObject): BridgeMovie? {
+            return try {
+                val title = json.optString("title", "")
+                if (title.isBlank()) return null
+
+                val sessions = mutableListOf<MovieSession>()
+                val sessionsArray = json.optJSONArray("sessions")
+                if (sessionsArray != null) {
+                    for (i in 0 until sessionsArray.length()) {
+                        val s = sessionsArray.getJSONObject(i)
+                        sessions.add(MovieSession(
+                            start = s.optString("start", ""),
+                            end = s.optString("end", ""),
+                            startUnix = s.optLong("start_unix", 0),
+                            endUnix = s.optLong("end_unix", 0).takeIf { it > 0 },
+                            durationMin = s.optInt("duration_min", -1).takeIf { it >= 0 }
+                        ))
+                    }
+                }
+
+                BridgeMovie(
+                    title = title,
+                    season = json.optInt("season", -1).takeIf { it >= 0 },
+                    episode = json.optInt("episode", -1).takeIf { it >= 0 },
+                    date = json.optString("date", ""),
+                    lastWatched = json.optString("last_watched", json.optString("datetime", "")),
+                    sessions = sessions,
+                    totalWatchMin = json.optInt("total_watch_min", -1).takeIf { it >= 0 }
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse movie JSON: ${e.message}")
+                null
+            }
+        }
+
+        /**
+         * Serializes a [BridgeMovie] back into the bridge's JSON shape (the
+         * inverse of [parseMovie]) so cached entries round-trip losslessly.
+         */
+        fun movieToJson(movie: BridgeMovie): JSONObject {
+            val json = JSONObject()
+            json.put("title", movie.title)
+            movie.season?.let { json.put("season", it) }
+            movie.episode?.let { json.put("episode", it) }
+            json.put("date", movie.date)
+            json.put("last_watched", movie.lastWatched)
+            movie.totalWatchMin?.let { json.put("total_watch_min", it) }
+            val sessions = JSONArray()
+            movie.sessions.forEach { s ->
+                sessions.put(JSONObject().apply {
+                    put("start", s.start)
+                    put("end", s.end)
+                    put("start_unix", s.startUnix)
+                    s.endUnix?.let { put("end_unix", it) }
+                    s.durationMin?.let { put("duration_min", it) }
+                })
+            }
+            json.put("sessions", sessions)
+            return json
+        }
     }
 
     private val client = BridgeClient()
@@ -117,39 +185,6 @@ class MovieBridgeService {
         client.checkHealth(bridgeUrl, token)
 
     // ── Parsing ─────────────────────────────────────────────────────────────
-
-    private fun parseMovie(json: JSONObject): BridgeMovie? {
-        return try {
-            val title = json.optString("title", "")
-            if (title.isBlank()) return null
-
-            val sessions = mutableListOf<MovieSession>()
-            val sessionsArray = json.optJSONArray("sessions")
-            if (sessionsArray != null) {
-                for (i in 0 until sessionsArray.length()) {
-                    val s = sessionsArray.getJSONObject(i)
-                    sessions.add(MovieSession(
-                        start = s.optString("start", ""),
-                        end = s.optString("end", ""),
-                        startUnix = s.optLong("start_unix", 0),
-                        endUnix = s.optLong("end_unix", 0).takeIf { it > 0 },
-                        durationMin = s.optInt("duration_min", -1).takeIf { it >= 0 }
-                    ))
-                }
-            }
-
-            BridgeMovie(
-                title = title,
-                season = json.optInt("season", -1).takeIf { it >= 0 },
-                episode = json.optInt("episode", -1).takeIf { it >= 0 },
-                date = json.optString("date", ""),
-                lastWatched = json.optString("last_watched", json.optString("datetime", "")),
-                sessions = sessions,
-                totalWatchMin = json.optInt("total_watch_min", -1).takeIf { it >= 0 }
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse movie JSON: ${e.message}")
-            null
-        }
-    }
+    // parseMovie / movieToJson live in the companion object so the cache
+    // store shares the exact codec with live responses.
 }

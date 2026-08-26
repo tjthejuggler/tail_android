@@ -3,10 +3,12 @@ package com.example.tail.notify
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.example.tail.data.BridgeMovie
 import com.example.tail.data.HabitNotification
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.NotificationStore
+import com.example.tail.data.OmdbService
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.ui.HabitIncrementBus
@@ -225,6 +227,163 @@ object HabitAsks {
             )
         } catch (e: Exception) {
             null
+        }
+    }
+
+    // ── Movie-ask detection (shared by app-open path and background sync) ────
+
+    /** Max age (ms) of a desktop-detected movie before we stop asking about it. */
+    const val MOVIE_PROMPT_MAX_AGE_MS = 48 * 60 * 60 * 1000L
+
+    /**
+     * Stable marker identifying a prompted movie ("title@watchDate"). Keyed on
+     * the watch DAY (not lastWatched) because the desktop watcher can merge or
+     * extend sessions of the same play, which shifts lastWatched — the day
+     * never changes, so an answered movie is never re-asked.
+     */
+    fun moviePromptMarker(movie: BridgeMovie): String {
+        val day = movie.date.ifBlank { movie.lastWatched.take(10) }
+        return "${movie.title.trim().lowercase()}@$day"
+    }
+
+    /** True when the movie's most recent session started within the prompt window. */
+    fun isMoviePromptRecent(
+        movie: BridgeMovie,
+        maxAgeMs: Long = MOVIE_PROMPT_MAX_AGE_MS
+    ): Boolean {
+        val lastStartUnix = movie.sessions.maxOfOrNull { it.startUnix }?.takeIf { it > 0 }
+        if (lastStartUnix != null) {
+            val ageMs = System.currentTimeMillis() - lastStartUnix * 1000L
+            return ageMs in 0..maxAgeMs
+        }
+        val parsed = try {
+            java.time.LocalDateTime.parse(
+                movie.lastWatched,
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            )
+        } catch (e: Exception) { null }
+        return parsed?.let {
+            java.time.Duration.between(it, java.time.LocalDateTime.now()).toMillis()
+                .let { age -> age in 0..maxAgeMs }
+        } ?: true // unparseable → assume recent so the user still gets asked once
+    }
+
+    /**
+     * Case/whitespace-insensitive title match against logged entry texts.
+     * Compares parsed cache keys so entries carrying a "(N min)" length
+     * annotation still match the bare suggested title.
+     */
+    fun titleLogged(title: String, entries: List<Pair<String, String>>): Boolean {
+        val needle = OmdbService.parseTitle(title).cacheKey
+        return entries.any { OmdbService.parseTitle(it.second).cacheKey == needle }
+    }
+
+    /** Entry time for a confirmed movie: its last start time today, else now. */
+    fun moviePromptEntryTime(movie: BridgeMovie): LocalTime {
+        val parsed = try {
+            java.time.LocalDateTime.parse(
+                movie.lastWatched,
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            )
+        } catch (e: Exception) { null }
+        return if (parsed != null && parsed.toLocalDate() == LocalDate.now()) {
+            parsed.toLocalTime()
+        } else {
+            LocalTime.now()
+        }
+    }
+
+    /**
+     * Scans [movies] (newest-first, as served by the bridge / kept in the
+     * phone-local cache) for one worth asking about, and registers the ask in
+     * the notification system (in-app center + system notification) when
+     * found. Shared by the app-open catch-up path and the background
+     * [MovieSyncWorker], so the "Watched this?" notification can appear
+     * without the app being opened at all.
+     *
+     * A movie is askable when its most recent session started within the
+     * prompt window, its handled marker is absent (never answered) and its
+     * title is not already logged for the habit on the watch day.
+     *
+     * @return The movie the ask was posted for, or null when there is nothing
+     *   to ask about.
+     */
+    suspend fun checkAndPostMovieAsk(
+        appContext: Context,
+        habitName: String,
+        movies: List<BridgeMovie>,
+        maxAgeMs: Long = MOVIE_PROMPT_MAX_AGE_MS
+    ): BridgeMovie? {
+        if (movies.isEmpty()) return null
+        val settingsRepo = SettingsRepository(appContext)
+        val settings = try {
+            settingsRepo.settingsFlow.first()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read settings for movie ask: ${e.message}")
+            return null
+        }
+        val handled = try {
+            settingsRepo.getMoviePromptHandled()
+        } catch (e: Exception) {
+            emptySet()
+        }
+
+        for (movie in movies) {
+            if (!isMoviePromptRecent(movie, maxAgeMs)) continue
+            val marker = moviePromptMarker(movie)
+            if (marker in handled) continue
+            // Skip titles already logged on the movie's own watch day (the
+            // day the ask would log it on).
+            val watchDay = parseDateOrNull(movie.date.ifBlank { movie.lastWatched.take(10) })
+                ?: LocalDate.now()
+            val dayEntries = loadDayTextEntries(settings, habitName, watchDay, appContext)
+            if (titleLogged(movie.title, dayEntries)) continue
+
+            val entryTime = moviePromptEntryTime(movie)
+                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+            val ask = HabitNotification(
+                id = movieAskId(marker),
+                habitName = habitName,
+                type = HabitNotification.TYPE_MOVIE,
+                title = movie.title,
+                question = "Watched this?",
+                createdAtMillis = System.currentTimeMillis(),
+                // "HH:mm:ss|<minutes>" — the length lets the answer path
+                // annotate the entry so the minutes slot fills automatically.
+                payload = HabitNotification.moviePayload(entryTime, movie.totalWatchMin ?: 0)
+            )
+            NotificationStore(appContext).add(ask)
+            HabitNotifier.postAsk(appContext, ask)
+            Log.i(TAG, "Posted movie ask '${movie.title}' for '$habitName'")
+            return movie
+        }
+        return null
+    }
+
+    private fun parseDateOrNull(dateStr: String): LocalDate? = try {
+        LocalDate.parse(dateStr)
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Text entries logged for [habitName] on [day], as (timestamp, text) pairs. */
+    private suspend fun loadDayTextEntries(
+        settings: com.example.tail.data.AppSettings,
+        habitName: String,
+        day: LocalDate,
+        appContext: Context
+    ): List<Pair<String, String>> {
+        val uriStr = settings.textInputFileUris[habitName] ?: return emptyList()
+        if (uriStr.isEmpty()) return emptyList()
+        return try {
+            val prefix = day.toString()
+            TextInputRepository()
+                .loadTextLog(Uri.parse(uriStr), appContext)
+                .filterKeys { it.startsWith(prefix) }
+                .map { (ts, text) -> ts to text }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load text entries for movie ask: ${e.message}")
+            emptyList()
         }
     }
 }

@@ -27,6 +27,7 @@ import com.example.tail.data.GitHubRateLimitException
 import com.example.tail.data.GitHubRepository
 import com.example.tail.data.ImportResult
 import com.example.tail.data.MovieBridgeService
+import com.example.tail.data.MovieCacheStore
 import com.example.tail.data.HabitNotification
 import com.example.tail.data.NotificationStore
 import com.example.tail.data.DatedEntryRepository
@@ -640,6 +641,70 @@ class HabitViewModel(
      */
     private val _movieSuggestion = MutableStateFlow<BridgeMovie?>(null)
     val movieSuggestion: StateFlow<BridgeMovie?> = _movieSuggestion.asStateFlow()
+
+    /**
+     * Phone-local copy of the desktop's movie watch history
+     * ([MovieCacheStore]), refreshed by the background sync worker and on
+     * app open. Null until first loaded from disk. Every movie surface
+     * (ask check, increment suggestion, last-watched picker) reads from
+     * this — no network round trip on the UI path.
+     */
+    private val _movieCache = MutableStateFlow<List<BridgeMovie>?>(null)
+    val movieCache: StateFlow<List<BridgeMovie>?> = _movieCache.asStateFlow()
+
+    /** When [movieCache] was last pulled from the bridge (0 = never). */
+    private var movieCacheFetchedAt = 0L
+
+    /** Snapshot of the cache for instant UI use (empty before first load). */
+    fun currentMovieCache(): List<BridgeMovie> = _movieCache.value.orEmpty()
+
+    /** Loads the cache from disk once; later calls reuse the in-memory copy. */
+    private suspend fun loadMovieCacheOnce(): List<BridgeMovie> {
+        _movieCache.value?.let { return it }
+        val cached = try {
+            MovieCacheStore.load(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load movie cache: ${e.message}")
+            null
+        } ?: return emptyList()
+        movieCacheFetchedAt = cached.fetchedAtMs
+        _movieCache.value = cached.movies
+        return cached.movies
+    }
+
+    /**
+     * Pulls the recent watch history from the bridge into the local cache.
+     * Returns the fresh list, or null when the bridge was unreachable (the
+     * cache is left untouched in that case).
+     */
+    private suspend fun refreshMovieCacheFromBridge(): List<BridgeMovie>? {
+        val conn = getBridgeConnection() ?: return null
+        val fresh = try {
+            movieBridgeService.fetchRecent(conn.first, conn.second, MovieCacheStore.CAPACITY)
+        } catch (e: Exception) {
+            Log.w(TAG, "Movie cache refresh failed: ${e.message}")
+            null
+        } ?: return null
+        if (fresh.isNotEmpty()) {
+            MovieCacheStore.save(context, fresh)
+            movieCacheFetchedAt = System.currentTimeMillis()
+            _movieCache.value = fresh
+        }
+        return fresh
+    }
+
+    /**
+     * The newest cached movie whose title is not in [excludeKeys] (parsed
+     * cache keys of entries already logged for the day) — the same
+     * semantics as the bridge's `movies/suggest` endpoint, but resolved
+     * locally with zero network.
+     */
+    private fun suggestMovieFromCache(
+        movies: List<BridgeMovie>,
+        excludeKeys: Set<String>
+    ): BridgeMovie? = movies.firstOrNull {
+        OmdbService.parseTitle(it.title).cacheKey !in excludeKeys
+    }
 
     // ── OMDb / IMDb ratings integration ────────────────────────────────────
     private val omdbService = OmdbService()
@@ -10095,57 +10160,69 @@ class HabitViewModel(
 
     // ── Movie confirmation flash (auto-prompt on app open) ────────────────────
 
-    /** Max age (ms) of a desktop-detected movie before we stop asking about it. */
-    private val moviePromptMaxAgeMs = 48 * 60 * 60 * 1000L
+    /**
+     * One emitted step of the increment-dialog suggestion pipeline. The
+     * dialog opens instantly and updates as these arrive.
+     *
+     * @param movie Newest not-yet-logged cached movie, or null.
+     * @param recent The last watched movies (picker list), newest first.
+     * @param loading True while a bridge refresh is still in flight.
+     */
+    data class MovieSuggestion(
+        val movie: BridgeMovie?,
+        val recent: List<BridgeMovie>,
+        val loading: Boolean
+    )
 
     /**
-     * Stable marker identifying a prompted movie ("title@watchDate"). Keyed on
-     * the watch DAY (not lastWatched) because the desktop watcher can merge or
-     * extend sessions of the same play, which shifts lastWatched — the day
-     * never changes, so an answered movie is never re-asked.
+     * Keeps the open increment dialog's movie suggestion fed: resolves from
+     * the phone-local cache instantly (no network), then refreshes the cache
+     * from the bridge in the background and re-emits when newer data lands.
+     * Emits at most twice — once from cache, once after the refresh.
      */
-    private fun moviePromptMarker(movie: BridgeMovie): String {
-        val day = movie.date.ifBlank { movie.lastWatched.take(10) }
-        return "${movie.title.trim().lowercase()}@$day"
-    }
-
-    /**
-     * Case/whitespace-insensitive title match against logged entry texts.
-     * Compares parsed cache keys so entries carrying a "(N min)" length
-     * annotation still match the bare suggested title.
-     */
-    private fun titleLogged(title: String, entries: List<Pair<String, String>>): Boolean {
-        val needle = OmdbService.parseTitle(title).cacheKey
-        return entries.any { OmdbService.parseTitle(it.second).cacheKey == needle }
-    }
-
-    /** True when the movie's most recent session started within the prompt window. */
-    private fun isMoviePromptRecent(movie: BridgeMovie): Boolean {
-        val lastStartUnix = movie.sessions.maxOfOrNull { it.startUnix }?.takeIf { it > 0 }
-        if (lastStartUnix != null) {
-            val ageMs = System.currentTimeMillis() - lastStartUnix * 1000L
-            return ageMs in 0..moviePromptMaxAgeMs
+    fun streamMovieSuggestion(
+        habitName: String,
+        date: LocalDate,
+        onUpdate: (MovieSuggestion) -> Unit
+    ) {
+        loadTextEntriesWithTimestamps(habitName, date) { entries ->
+            val excludeKeys = entries
+                .map { OmdbService.parseTitle(it.second).cacheKey }
+                .toSet()
+            viewModelScope.launch {
+                val cached = loadMovieCacheOnce()
+                val stale = !MovieCacheStore.Cached(cached, movieCacheFetchedAt).isFresh
+                onUpdate(
+                    MovieSuggestion(
+                        movie = suggestMovieFromCache(cached, excludeKeys),
+                        recent = cached.take(5),
+                        loading = stale
+                    )
+                )
+                if (!stale) return@launch
+                val fresh = refreshMovieCacheFromBridge()
+                val final = if (fresh.isNullOrEmpty()) cached else fresh
+                onUpdate(
+                    MovieSuggestion(
+                        movie = suggestMovieFromCache(final, excludeKeys),
+                        recent = final.take(5),
+                        loading = false
+                    )
+                )
+            }
         }
-        val parsed = try {
-            java.time.LocalDateTime.parse(
-                movie.lastWatched,
-                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-            )
-        } catch (e: Exception) { null }
-        return parsed?.let {
-            java.time.Duration.between(it, java.time.LocalDateTime.now()).toMillis()
-                .let { age -> age in 0..moviePromptMaxAgeMs }
-        } ?: true // unparseable → assume recent so the user still gets asked once
     }
 
     /**
      * Looks for an unconfirmed recently-watched desktop movie to ask about in
-     * the bottom flash when the app opens. Skips titles already logged today
-     * for [habitName], prompts already handled (answered Yes/No or timed out)
-     * and watches older than the prompt window.
+     * the bottom flash / notification center when the app opens.
      *
-     * @param onResult Called with the movie to ask about, or null when there
-     *                 is nothing to confirm. Runs on the main thread.
+     * Cache-first: the check runs instantly against the phone-local cache
+     * (kept fresh by the background sync worker), then the cache is refreshed
+     * from the bridge and the check re-runs — so a movie that synced moments
+     * after the last cache write is still caught, and a transient network
+     * failure at app open no longer swallows the ask. One delayed retry
+     * covers the "app opened before Wi-Fi reconnected" case.
      */
     fun prepareMoviePrompt(
         habitName: String,
@@ -10156,83 +10233,30 @@ class HabitViewModel(
             onResult(null)
             return
         }
-        loadTextEntriesWithTimestamps(habitName, date) { todayEntries ->
-            val excludeTitles = todayEntries.map { it.second }
-            fetchMovieSuggestion(excludeTitles) { movie ->
-                if (movie == null || titleLogged(movie.title, todayEntries)) {
-                    // Bridge unreachable / no data, or the suggest endpoint fell
-                    // back to a title that is already logged today — nothing to ask.
-                    onResult(null)
-                    return@fetchMovieSuggestion
-                }
-                // The suggestion may be for a movie played on an earlier day;
-                // skip it when that exact title was already logged on its own
-                // watch day (the day the flash is asking about).
-                val watchDate = com.example.tail.data.parseDate(movie.date)
-                if (watchDate != null && watchDate != date) {
-                    loadTextEntriesWithTimestamps(habitName, watchDate) { watchDayEntries ->
-                        if (titleLogged(movie.title, watchDayEntries)) {
-                            onResult(null)
-                        } else {
-                            finishMoviePromptCheck(habitName, movie, onResult)
-                        }
-                    }
-                } else {
-                    finishMoviePromptCheck(habitName, movie, onResult)
-                }
-            }
-        }
-    }
-
-    /** Final gate: already-handled marker and recency window. */
-    private fun finishMoviePromptCheck(
-        habitName: String,
-        movie: BridgeMovie,
-        onResult: (BridgeMovie?) -> Unit
-    ) {
         viewModelScope.launch {
-            val handled = try {
-                settingsRepo.getMoviePromptHandled()
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to read movie prompt markers: ${e.message}")
-                emptySet()
+            // 1) Instant check on the local cache.
+            val cached = loadMovieCacheOnce()
+            val askedFromCache = com.example.tail.notify.HabitAsks
+                .checkAndPostMovieAsk(context, habitName, cached)
+            if (askedFromCache != null) {
+                onResult(askedFromCache)
+                return@launch
             }
-            if (moviePromptMarker(movie) in handled || !isMoviePromptRecent(movie)) {
+            // 2) Refresh from the bridge and re-check.
+            var fresh = refreshMovieCacheFromBridge()
+            if (fresh == null) {
+                // Wi-Fi may still be reconnecting after unlock — one retry.
+                kotlinx.coroutines.delay(8_000)
+                fresh = refreshMovieCacheFromBridge()
+            }
+            if (fresh == null) {
                 onResult(null)
-            } else {
-                // Register the ask in the notification system (in-app center +
-                // system notification) BEFORE showing the flash, so an
-                // unanswered flash is preserved as a pending notification.
-                registerMovieAsk(habitName, movie)
-                onResult(movie)
+                return@launch
             }
-        }
-    }
-
-    /**
-     * Adds the movie ask to the [NotificationStore] and posts the matching
-     * system notification. Idempotent — an ask with the same id is not
-     * duplicated.
-     */
-    private suspend fun registerMovieAsk(habitName: String, movie: BridgeMovie) {
-        try {
-            val entryTime = moviePromptEntryTime(movie)
-                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
-            val ask = HabitNotification(
-                id = com.example.tail.notify.HabitAsks.movieAskId(moviePromptMarker(movie)),
-                habitName = habitName,
-                type = HabitNotification.TYPE_MOVIE,
-                title = movie.title,
-                question = "Watched this?",
-                createdAtMillis = System.currentTimeMillis(),
-                // "HH:mm:ss|<minutes>" — the length lets the answer path
-                // annotate the entry so the minutes slot fills automatically.
-                payload = HabitNotification.moviePayload(entryTime, movie.totalWatchMin ?: 0)
+            onResult(
+                com.example.tail.notify.HabitAsks
+                    .checkAndPostMovieAsk(context, habitName, fresh)
             )
-            notificationStore.add(ask)
-            com.example.tail.notify.HabitNotifier.postAsk(context, ask)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to register movie ask: ${e.message}")
         }
     }
 
@@ -10259,7 +10283,7 @@ class HabitViewModel(
         onLogged: (String) -> Unit = {}
     ) {
         markMoviePromptHandled(movie)
-        val entryTime = moviePromptEntryTime(movie)
+        val entryTime = com.example.tail.notify.HabitAsks.moviePromptEntryTime(movie)
         saveTextEntries(habitName, listOf(annotatedMovieTitle(movie)), null, entryTime)
         onLogged(entryTime.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
     }
@@ -10269,27 +10293,14 @@ class HabitViewModel(
         markMoviePromptHandled(movie)
     }
 
-    /** Entry time for a confirmed movie: its last start time today, else now. */
-    private fun moviePromptEntryTime(movie: BridgeMovie): java.time.LocalTime {
-        val parsed = try {
-            java.time.LocalDateTime.parse(
-                movie.lastWatched,
-                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-            )
-        } catch (e: Exception) { null }
-        return if (parsed != null && parsed.toLocalDate() == java.time.LocalDate.now()) {
-            parsed.toLocalTime()
-        } else {
-            java.time.LocalTime.now()
-        }
-    }
-
     /** Persists the handled marker so the same movie is never re-asked. */
     private fun markMoviePromptHandled(movie: BridgeMovie) {
         viewModelScope.launch {
             try {
                 val current = settingsRepo.getMoviePromptHandled()
-                settingsRepo.saveMoviePromptHandled(current + moviePromptMarker(movie))
+                settingsRepo.saveMoviePromptHandled(
+                    current + com.example.tail.notify.HabitAsks.moviePromptMarker(movie)
+                )
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to save movie prompt marker: ${e.message}")
             }

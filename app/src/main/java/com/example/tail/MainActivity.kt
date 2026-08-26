@@ -82,6 +82,11 @@ class MainActivity : ComponentActivity() {
         // died (process kill, APK update, OEM cleanup). No-op when off/running.
         com.example.tail.widget.StatsOverlayService.ensureRunning(applicationContext)
 
+        // Keep the phone-local movie cache warm and post "did you watch this?"
+        // asks even when the app is not open. Periodic (15 min min interval),
+        // network-constrained; KEEP policy means re-launches never reset it.
+        com.example.tail.notify.MovieSyncWorker.schedule(applicationContext)
+
         val debugPrefs = DebugPreferences(applicationContext)
         val debugNoteRepo = DebugNoteRepository(applicationContext, debugPrefs)
 

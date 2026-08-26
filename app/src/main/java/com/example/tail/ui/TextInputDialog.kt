@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +31,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.tail.data.BridgeMovie
 
 /**
  * Dialog shown when the user taps a habit that has "text input" enabled.
@@ -84,12 +87,18 @@ fun TextInputDialog(
     initialText: String = "",
     suggestionLabel: String = "",
     suggestedMinutes: Int? = null,
+    recentMovies: List<BridgeMovie> = emptyList(),
+    suggestionLoading: Boolean = false,
+    loadingMetrics: LoadingMetrics? = null,
     onConfirm: (List<String>, Int, Int) -> Unit,
     onDismiss: () -> Unit,
     onEdit: (String, String) -> Unit = { _, _ -> },
     onDelete: (String) -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf(initialText) }
+    // Set once the user types (or picks a recent movie) — later-arriving
+    // suggestion updates must never clobber a deliberate choice.
+    var userEditedText by remember { mutableStateOf(false) }
     var editingTimestamp by remember { mutableStateOf<String?>(null) }
     var editingText by remember { mutableStateOf("") }
 
@@ -109,6 +118,19 @@ fun TextInputDialog(
     val hasLengthSuggestion = suggestedMinutes != null
     var lengthMinutes by remember { mutableIntStateOf(suggestedMinutes ?: 0) }
     var showLengthPicker by remember { mutableStateOf(false) }
+    // Same guard as the text: a late length suggestion only applies until
+    // the user edits the wheel or picks a movie.
+    var lengthTouched by remember { mutableStateOf(false) }
+
+    // The dialog opens instantly and the movie suggestion (text + length)
+    // can arrive afterwards from the cache/bridge pipeline — apply it only
+    // while the user hasn't taken over the fields.
+    LaunchedEffect(initialText) {
+        if (!userEditedText) inputText = initialText
+    }
+    LaunchedEffect(suggestedMinutes) {
+        if (!lengthTouched && suggestedMinutes != null) lengthMinutes = suggestedMinutes
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -133,6 +155,104 @@ fun TextInputDialog(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium
                 )
+            }
+
+            // ── Suggestion loading indicator ────────────────────────────────
+            // Shown while the movie suggestion resolves (cache → bridge). Uses
+            // the points-driven Orrery spinner, shrunk to fit the dialog row.
+            if (suggestionLoading) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    loadingMetrics?.let { m ->
+                        HabitLoadingSpinner(
+                            monthlyAverage = m.monthlyAverage,
+                            weeklyAverage = m.weeklyAverage,
+                            todayPoints = m.todayPoints,
+                            size = 20.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text(
+                        text = "Fetching suggestion from desktop…",
+                        color = Color(0xFF888888),
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            // ── Last-watched movies (quick picker) ──────────────────────────
+            if (recentMovies.isNotEmpty()) {
+                var showRecentMovies by remember { mutableStateOf(false) }
+                Spacer(modifier = Modifier.height(6.dp))
+                TextButton(
+                    onClick = { showRecentMovies = !showRecentMovies },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        start = 0.dp, end = 0.dp, top = 0.dp, bottom = 0.dp
+                    )
+                ) {
+                    Text(
+                        text = if (showRecentMovies) "🎬 Last watched ▴" else "🎬 Last watched ▾",
+                        color = Color(0xFFFFAA00),
+                        fontSize = 12.sp
+                    )
+                }
+                if (showRecentMovies) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp)
+                            .background(Color(0xFF111111), RoundedCornerShape(6.dp))
+                    ) {
+                        LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
+                            items(recentMovies.take(5)) { movie ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            userEditedText = true
+                                            inputText = movie.title
+                                            movie.totalWatchMin?.takeIf { it > 0 }?.let {
+                                                lengthTouched = true
+                                                lengthMinutes = it
+                                            }
+                                            showRecentMovies = false
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = movie.title,
+                                            color = Color(0xFFFFD700),
+                                            fontSize = 13.sp,
+                                            maxLines = 1
+                                        )
+                                        val meta = buildString {
+                                            if (movie.lastWatched.isNotBlank()) {
+                                                append("watched ${movie.lastWatched.take(10)}")
+                                            }
+                                            movie.totalWatchMin?.takeIf { it > 0 }?.let {
+                                                if (isNotEmpty()) append(" · ")
+                                                append("$it min")
+                                            }
+                                        }
+                                        if (meta.isNotEmpty()) {
+                                            Text(
+                                                text = meta,
+                                                color = Color(0xFF888888),
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+                                }
+                                HorizontalDivider(
+                                    color = Color(0xFF2A2A2A),
+                                    thickness = 0.5.dp
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -351,7 +471,10 @@ fun TextInputDialog(
                         ) {
                             DurationWheelPicker(
                                 totalMinutes = lengthMinutes,
-                                onDurationChange = { lengthMinutes = it },
+                                onDurationChange = {
+                                    lengthTouched = true
+                                    lengthMinutes = it
+                                },
                                 accent = Color(0xFFFFAA00)
                             )
                         }
@@ -368,7 +491,10 @@ fun TextInputDialog(
                 ) {
                     OutlinedTextField(
                         value = inputText,
-                        onValueChange = { inputText = it },
+                        onValueChange = {
+                            userEditedText = true
+                            inputText = it
+                        },
                         label = { Text("Entry", color = Color(0xFF888888)) },
                         singleLine = true,
                         modifier = Modifier.weight(1f),

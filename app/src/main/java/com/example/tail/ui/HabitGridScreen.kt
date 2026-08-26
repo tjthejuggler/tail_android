@@ -160,6 +160,7 @@ import com.example.tail.data.isTextIconName
 import com.example.tail.data.renderTextIconBitmap
 import com.example.tail.data.textIconCharOf
 import com.example.tail.data.textIconNameOf
+import com.example.tail.data.BridgeMovie
 import com.example.tail.data.ChessComType
 import com.example.tail.data.GarminType
 import com.example.tail.data.GitHubMetric
@@ -199,7 +200,11 @@ private data class TextInputDialogState(
     /** Label shown above the text field when suggestedText is non-empty. */
     val suggestionLabel: String = "",
     /** Suggested watch-length in minutes (movie bridge); null = no length section. */
-    val suggestedMinutes: Int? = null
+    val suggestedMinutes: Int? = null,
+    /** True while the movie suggestion is still resolving (cache → bridge). */
+    val suggestionLoading: Boolean = false,
+    /** Last watched movies (newest first) for the quick picker. */
+    val recentMovies: List<BridgeMovie> = emptyList()
 )
 
 // Grid is 8 columns × 10 rows = 80 cells
@@ -1206,64 +1211,74 @@ fun HabitGridScreen(
                                     val isMovieLinked = habit.name in settings.bridgeMovieHabits &&
                                         settings.bridgeEnabled
 
-                                    // Helper: build and show the dialog state
+                                    // Helper: open the dialog IMMEDIATELY with what is
+                                    // already known; today's entries (and options) stream
+                                    // in afterwards — the dialog reacts to state updates,
+                                    // so nothing blocks the popup from appearing.
                                     fun showDialog(
                                         suggestedText: String = "",
                                         suggestionLabel: String = "",
-                                        suggestedMinutes: Int? = null
+                                        suggestedMinutes: Int? = null,
+                                        suggestionLoading: Boolean = false,
+                                        recentMovies: List<BridgeMovie> = emptyList()
                                     ) {
+                                        textInputDialogState = TextInputDialogState(
+                                            habit = habit,
+                                            showOptions = showOpts,
+                                            options = emptyList(),
+                                            todayEntries = emptyList(),
+                                            suggestedText = suggestedText,
+                                            suggestionLabel = suggestionLabel,
+                                            suggestedMinutes = suggestedMinutes,
+                                            suggestionLoading = suggestionLoading,
+                                            recentMovies = recentMovies
+                                        )
                                         viewModel.loadTextEntriesWithTimestamps(habit.name, selectedDate) { todayEntries ->
+                                            val cur = textInputDialogState
+                                            if (cur?.habit?.name == habit.name) {
+                                                textInputDialogState = cur.copy(todayEntries = todayEntries)
+                                            }
                                             if (showOpts) {
                                                 viewModel.loadTextOptions(habit.name) { opts ->
-                                                    textInputDialogState = TextInputDialogState(
-                                                        habit = habit,
-                                                        showOptions = true,
-                                                        options = opts,
-                                                        todayEntries = todayEntries,
-                                                        suggestedText = suggestedText,
-                                                        suggestionLabel = suggestionLabel,
-                                                        suggestedMinutes = suggestedMinutes
-                                                    )
+                                                    val c2 = textInputDialogState
+                                                    if (c2?.habit?.name == habit.name) {
+                                                        textInputDialogState = c2.copy(options = opts)
+                                                    }
                                                 }
-                                            } else {
-                                                textInputDialogState = TextInputDialogState(
-                                                    habit = habit,
-                                                    showOptions = false,
-                                                    options = emptyList(),
-                                                    todayEntries = todayEntries,
-                                                    suggestedText = suggestedText,
-                                                    suggestionLabel = suggestionLabel,
-                                                    suggestedMinutes = suggestedMinutes
-                                                )
                                             }
                                         }
                                     }
 
                                     if (isMovieLinked) {
-                                        // Fetch the latest movie from the desktop bridge.
-                                        // Exclude titles already logged today so we suggest the next one.
-                                        viewModel.loadTextEntriesWithTimestamps(habit.name, selectedDate) { todayEntries ->
-                                            val excludeTitles = todayEntries.map { it.second }
-                                            viewModel.fetchMovieSuggestion(excludeTitles) { movie ->
-                                                if (movie != null) {
-                                                    val label = buildString {
-                                                        append("🎬 Suggested from desktop")
-                                                        if (movie.lastWatched.isNotBlank()) {
-                                                            append(" — watched ${movie.lastWatched.take(10)}")
+                                        // The dialog opens instantly; the suggestion is
+                                        // resolved from the phone-local movie cache (no
+                                        // network wait) and topped up by a background
+                                        // bridge refresh. While it resolves, the dialog
+                                        // shows a small loading indicator.
+                                        showDialog(
+                                            suggestionLoading = true,
+                                            recentMovies = viewModel.currentMovieCache().take(5)
+                                        )
+                                        viewModel.streamMovieSuggestion(habit.name, selectedDate) { sugg ->
+                                            val cur = textInputDialogState
+                                            if (cur?.habit?.name == habit.name) {
+                                                textInputDialogState = cur.copy(
+                                                    suggestedText = sugg.movie?.title ?: "",
+                                                    suggestionLabel = sugg.movie?.let { movie ->
+                                                        buildString {
+                                                            append("🎬 Suggested from desktop")
+                                                            if (movie.lastWatched.isNotBlank()) {
+                                                                append(" — watched ${movie.lastWatched.take(10)}")
+                                                            }
                                                         }
-                                                    }
-                                                    // Pre-fill the text with the movie title; the file
-                                                    // duration (from ffprobe) goes into the separate,
-                                                    // wheel-editable Length field of the dialog.
-                                                    showDialog(
-                                                        suggestedText = movie.title,
-                                                        suggestionLabel = label,
-                                                        suggestedMinutes = movie.totalWatchMin?.takeIf { it > 0 }
-                                                    )
-                                                } else {
-                                                    // Bridge unreachable or no data — show normal dialog
-                                                    showDialog()
-                                                }
+                                                    } ?: "",
+                                                    // The file duration (from ffprobe) goes into
+                                                    // the separate, wheel-editable Length field.
+                                                    suggestedMinutes = sugg.movie?.totalWatchMin
+                                                        ?.takeIf { it > 0 },
+                                                    suggestionLoading = sugg.loading,
+                                                    recentMovies = sugg.recent
+                                                )
                                             }
                                         }
                                     } else {
@@ -2341,6 +2356,9 @@ fun HabitGridScreen(
             initialText = state.suggestedText,
             suggestionLabel = state.suggestionLabel,
             suggestedMinutes = state.suggestedMinutes,
+            recentMovies = state.recentMovies,
+            suggestionLoading = state.suggestionLoading,
+            loadingMetrics = loadingMetrics,
             onConfirm = { entries, hour, minute ->
                 val entryTime = java.time.LocalTime.of(hour, minute)
                 // Only pass selectedDate if it's not today - for today, use current date
