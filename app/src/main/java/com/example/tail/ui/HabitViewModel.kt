@@ -10242,14 +10242,21 @@ class HabitViewModel(
                 onResult(askedFromCache)
                 return@launch
             }
-            // 2) Refresh from the bridge and re-check.
+            // 2) Refresh from the bridge and re-check. The typical failure is
+            //    transient: the app is opened seconds after unlock, while
+            //    Wi-Fi/Tailscale is still reconnecting — so retry with
+            //    backoff (8 s, 16 s, 32 s) instead of giving up after one
+            //    attempt and silently dropping the ask for this session.
             var fresh = refreshMovieCacheFromBridge()
-            if (fresh == null) {
-                // Wi-Fi may still be reconnecting after unlock — one retry.
-                kotlinx.coroutines.delay(8_000)
+            var attempt = 0
+            while (fresh == null && attempt < 3) {
+                kotlinx.coroutines.delay(8_000L shl attempt)
                 fresh = refreshMovieCacheFromBridge()
+                attempt++
             }
             if (fresh == null) {
+                Log.w(TAG, "Movie prompt: bridge unreachable after $attempt retries — " +
+                    "no ask this session (background worker will retry)")
                 onResult(null)
                 return@launch
             }

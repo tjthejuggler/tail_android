@@ -236,6 +236,21 @@ object HabitAsks {
     const val MOVIE_PROMPT_MAX_AGE_MS = 48 * 60 * 60 * 1000L
 
     /**
+     * Up to how many new asks one check may post. Bounded so a long unwatched
+     * backlog (e.g. first sync after days away) cannot flood the notification
+     * shade in a single pass; the rest are picked up by later checks.
+     */
+    const val MAX_NEW_ASKS_PER_CHECK = 5
+
+    /**
+     * Clock skew tolerated by [isMoviePromptRecent]: the desktop's clock can
+     * be slightly ahead of the phone's, making a just-started movie look like
+     * it starts "in the future" (negative age). Anything within this window
+     * still counts as recent.
+     */
+    private val CLOCK_SKEW_TOLERANCE_MS = 10 * 60 * 1000L
+
+    /**
      * Stable marker identifying a prompted movie ("title@watchDate"). Keyed on
      * the watch DAY (not lastWatched) because the desktop watcher can merge or
      * extend sessions of the same play, which shifts lastWatched — the day
@@ -254,7 +269,9 @@ object HabitAsks {
         val lastStartUnix = movie.sessions.maxOfOrNull { it.startUnix }?.takeIf { it > 0 }
         if (lastStartUnix != null) {
             val ageMs = System.currentTimeMillis() - lastStartUnix * 1000L
-            return ageMs in 0..maxAgeMs
+            // Negative age down to the skew tolerance = desktop clock slightly
+            // ahead; still a just-started/ongoing watch.
+            return ageMs in -CLOCK_SKEW_TOLERANCE_MS..maxAgeMs
         }
         val parsed = try {
             java.time.LocalDateTime.parse(
@@ -264,7 +281,7 @@ object HabitAsks {
         } catch (e: Exception) { null }
         return parsed?.let {
             java.time.Duration.between(it, java.time.LocalDateTime.now()).toMillis()
-                .let { age -> age in 0..maxAgeMs }
+                .let { age -> age in -CLOCK_SKEW_TOLERANCE_MS..maxAgeMs }
         } ?: true // unparseable → assume recent so the user still gets asked once
     }
 
@@ -295,18 +312,22 @@ object HabitAsks {
 
     /**
      * Scans [movies] (newest-first, as served by the bridge / kept in the
-     * phone-local cache) for one worth asking about, and registers the ask in
-     * the notification system (in-app center + system notification) when
-     * found. Shared by the app-open catch-up path and the background
-     * [MovieSyncWorker], so the "Watched this?" notification can appear
-     * without the app being opened at all.
+     * phone-local cache) for ones worth asking about, and registers an ask in
+     * the notification system (in-app center + system notification) for EVERY
+     * newly askable movie — not just the first. Shared by the app-open
+     * catch-up path and the background [MovieSyncWorker], so the "Watched
+     * this?" notification can appear without the app being opened at all.
      *
      * A movie is askable when its most recent session started within the
-     * prompt window, its handled marker is absent (never answered) and its
-     * title is not already logged for the habit on the watch day.
+     * prompt window, its handled marker is absent (never answered), no ask
+     * for it is already waiting in the store, and its title is not already
+     * logged for the habit on the watch day. Continuing past movies whose
+     * ask already exists matters: several episodes are often watched before
+     * the phone checks, and stopping at the first pending ask would starve
+     * the older ones forever.
      *
-     * @return The movie the ask was posted for, or null when there is nothing
-     *   to ask about.
+     * @return The first movie an ask was newly posted for (the one the
+     *   in-app flash should surface), or null when there is nothing to ask.
      */
     suspend fun checkAndPostMovieAsk(
         appContext: Context,
@@ -327,11 +348,24 @@ object HabitAsks {
         } catch (e: Exception) {
             emptySet()
         }
+        val store = NotificationStore(appContext)
+        val pendingAskIds = try {
+            store.notificationsFlow.first().map { it.id }.toSet()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read pending asks: ${e.message}")
+            emptySet()
+        }
 
+        var firstPosted: BridgeMovie? = null
+        var postedCount = 0
         for (movie in movies) {
+            if (postedCount >= MAX_NEW_ASKS_PER_CHECK) break
             if (!isMoviePromptRecent(movie, maxAgeMs)) continue
             val marker = moviePromptMarker(movie)
             if (marker in handled) continue
+            // An ask for this movie is already waiting to be answered —
+            // skip it but keep scanning so other watched titles get theirs.
+            if (movieAskId(marker) in pendingAskIds) continue
             // Skip titles already logged on the movie's own watch day (the
             // day the ask would log it on).
             val watchDay = parseDateOrNull(movie.date.ifBlank { movie.lastWatched.take(10) })
@@ -352,12 +386,13 @@ object HabitAsks {
                 // annotate the entry so the minutes slot fills automatically.
                 payload = HabitNotification.moviePayload(entryTime, movie.totalWatchMin ?: 0)
             )
-            NotificationStore(appContext).add(ask)
+            store.add(ask)
             HabitNotifier.postAsk(appContext, ask)
             Log.i(TAG, "Posted movie ask '${movie.title}' for '$habitName'")
-            return movie
+            if (firstPosted == null) firstPosted = movie
+            postedCount++
         }
-        return null
+        return firstPosted
     }
 
     private fun parseDateOrNull(dateStr: String): LocalDate? = try {
