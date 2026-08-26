@@ -571,6 +571,9 @@ fun HabitGridScreen(
     // Timestamp editor dialog state
     var timestampEditorHabitName by remember { mutableStateOf<String?>(null) }
     var timestampEditorList by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Per-timestamp minutes (`"HH:mm:ss" -> minutes`) for the open editor —
+    // loaded only for minutes-primary habits (see TimestampEditorDialog).
+    var timestampEditorMinutes by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     // Text entries for the currently selected edit-mode habit (for view/edit in edit bar)
     var editModeTextEntries by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     // Schedule block details popup: the tapped block + its instance texts
@@ -1721,6 +1724,10 @@ fun HabitGridScreen(
                         onShowTimestamps = { name ->
                             timestampScope.launch {
                                 timestampEditorList = viewModel.timestampRepo.getTimestampsForDay(name, selectedDate)
+                                timestampEditorMinutes =
+                                    if (viewModel.isMinutesPrimaryHabit(name)) {
+                                        viewModel.timestampRepo.getMinutesForDay(name, selectedDate)
+                                    } else emptyMap()
                                 timestampEditorHabitName = name
                             }
                             // Refresh text entries so the timestamp cards can show
@@ -2083,6 +2090,10 @@ fun HabitGridScreen(
                 timestampScope.launch {
                     timestampEditorList = viewModel.timestampRepo
                         .getTimestampsForDay(habitName, selectedDate)
+                    timestampEditorMinutes =
+                        if (viewModel.isMinutesPrimaryHabit(habitName)) {
+                            viewModel.timestampRepo.getMinutesForDay(habitName, selectedDate)
+                        } else emptyMap()
                     timestampEditorHabitName = habitName
                     // Clear stale text entries first so the editor never
                     // briefly shows another habit's log (e.g. movie
@@ -2112,22 +2123,45 @@ fun HabitGridScreen(
             },
             isMealHabit = habitName in settings.mealHabits,
             canEditText = habitName in settings.textInputHabits,
+            isMinutesPrimary = viewModel.isMinutesPrimaryHabit(habitName),
+            minutesByTime = timestampEditorMinutes,
             onUpdateTimeGroup = { oldTime, newTime ->
                 timestampScope.launch {
                     timestampEditorList = viewModel.timestampRepo.updateTimestampsAtTime(
                         habitName, selectedDate, oldTime, newTime
                     )
                     selectedHabitTimestampCount = timestampEditorList.size
+                    // The group's per-timestamp minutes moved with it.
+                    if (viewModel.isMinutesPrimaryHabit(habitName)) {
+                        timestampEditorMinutes = viewModel.timestampRepo
+                            .getMinutesForDay(habitName, selectedDate)
+                    }
                     // Group size unchanged — no habit count adjustment needed.
                 }
             },
             onDeleteTimeGroup = { time ->
                 timestampScope.launch {
                     val removed = timestampEditorList.count { it == time }
+                    val minutesPrimary = viewModel.isMinutesPrimaryHabit(habitName)
+                    // Minutes-primary: the group's minutes leave the day total too.
+                    val groupMinutes = if (minutesPrimary) {
+                        timestampEditorMinutes[time] ?: removed
+                    } else 0
                     timestampEditorList = viewModel.timestampRepo.deleteTimestampsAtTime(
                         habitName, selectedDate, time
                     )
                     selectedHabitTimestampCount = timestampEditorList.size
+                    if (minutesPrimary) {
+                        timestampEditorMinutes = viewModel.timestampRepo
+                            .getMinutesForDay(habitName, selectedDate)
+                        if (groupMinutes > 0) {
+                            viewModel.setHabitMinutesCount(
+                                habitName,
+                                (viewModel.getMinutesTodayCount(habitName) - groupMinutes)
+                                    .coerceAtLeast(0)
+                            )
+                        }
+                    }
                     // Decrement the habit count to match the removed units
                     val currentHabit = habits.find { it.name == habitName }
                     if (currentHabit != null && removed > 0 &&
@@ -2155,6 +2189,25 @@ fun HabitGridScreen(
                                 viewModel.setHabitCount(habitName, currentHabit.rawTodayCount + delta)
                             }
                         }
+                    }
+                }
+            },
+            onSetGroupMinutes = { time, newMinutes ->
+                timestampScope.launch {
+                    val oldMinutes = timestampEditorMinutes[time]
+                        ?: timestampEditorList.count { it == time }
+                    timestampEditorMinutes = viewModel.timestampRepo.setMinutesAtTime(
+                        habitName, selectedDate, time, newMinutes
+                    )
+                    // Keep the day's minutes total (minutes:<habit>) in step
+                    // with the edited per-timestamp value.
+                    val delta = newMinutes - oldMinutes
+                    if (delta != 0) {
+                        viewModel.setHabitMinutesCount(
+                            habitName,
+                            (viewModel.getMinutesTodayCount(habitName) + delta)
+                                .coerceAtLeast(0)
+                        )
                     }
                 }
             },

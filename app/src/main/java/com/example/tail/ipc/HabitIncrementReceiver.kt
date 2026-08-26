@@ -156,7 +156,17 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                     )
                     if (sessions > 0) {
                         try {
-                            HabitTimestampRepository(appContext).addTimestamps(habitName, sessions)
+                            val tsRepo = HabitTimestampRepository(appContext)
+                            val today = java.time.LocalDate.now()
+                            val now = HabitTimestampRepository.nowTime()
+                            tsRepo.addTimestamps(habitName, sessions, today, now)
+                            // Sessions carried minutes (timer-fed habit): record
+                            // them AT this timestamp so the timestamp editor can
+                            // show/edit per-timestamp minutes for minutes-primary
+                            // habits.
+                            if (minutes > 0) {
+                                tsRepo.addMinutesAtTime(habitName, today, now, minutes)
+                            }
                         } catch (e: Exception) {
                             Log.w(TAG, "Failed to record timestamp for '$habitName': ${e.message}")
                         }

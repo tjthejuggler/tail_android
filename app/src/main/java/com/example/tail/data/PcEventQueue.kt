@@ -446,6 +446,12 @@ class PcEventQueueProcessor(private val context: Context) {
             val time = event.startTime ?: HabitTimestampRepository.nowTime()
             try {
                 tsRepo.addTimestamp(event.habit, event.date, time)
+                // Timer sessions contribute their minutes AT this timestamp,
+                // so the timestamp editor can show/edit per-timestamp minutes
+                // for minutes-primary habits.
+                if (event.isSession && event.minutes > 0) {
+                    tsRepo.addMinutesAtTime(event.habit, event.date, time, event.minutes)
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to record timestamp for PC event: ${e.message}")
             }
@@ -524,6 +530,9 @@ class PcEventQueueProcessor(private val context: Context) {
                 val time = event.startTime ?: HabitTimestampRepository.nowTime()
                 try {
                     tsRepo.addTimestamp(event.habit, event.date, time)
+                    if (event.minutes > 0) {
+                        tsRepo.addMinutesAtTime(event.habit, event.date, time, event.minutes)
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to record corrected timestamp: ${e.message}")
                 }

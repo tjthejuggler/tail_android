@@ -35,8 +35,10 @@ class HabitTimestampRepository(private val context: Context) {
     private val gson = Gson()
     private val prettyGson = GsonBuilder().setPrettyPrinting().create()
     private val mapType = object : TypeToken<MutableMap<String, MutableMap<String, MutableList<String>>>>() {}.type
+    private val minutesMapType = object : TypeToken<MutableMap<String, MutableMap<String, MutableMap<String, Int>>>>() {}.type
 
     private val file: File get() = File(context.filesDir, "habit_timestamps.json")
+    private val minutesFile: File get() = File(context.filesDir, "habit_timestamp_minutes.json")
 
     companion object {
         private val TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -220,6 +222,105 @@ class HabitTimestampRepository(private val context: Context) {
         return data[habitName]?.get(dateStr)?.sorted() ?: emptyList()
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Per-timestamp minutes (minutes-primary habits)
+    //
+    // The timestamp file stores ONE "HH:mm:ss" string per increment unit
+    // (a session for timer-fed habits), so a timer session's minutes live
+    // only in the day total of the habits DB. This sidecar file records the
+    // minutes contributed AT each timestamp:
+    // { "Habit": { "2026-04-13": { "17:30:45": 25 } } }
+    // It is read by the timestamp editor to show/edit per-timestamp minutes
+    // for minutes-primary habits; absent entries fall back to the group's
+    // unit count (manual +N increments store one unit per minute).
+    // ─────────────────────────────────────────────────────────────────────
+
+    /** Minutes recorded at each timestamp for [habitName] on [date] (`time -> minutes`). */
+    suspend fun getMinutesForDay(
+        habitName: String,
+        date: LocalDate = LocalDate.now()
+    ): Map<String, Int> {
+        val data = loadMinutesMutable()
+        return data[habitName]?.get(dateString(date))?.toMap() ?: emptyMap()
+    }
+
+    /**
+     * Records that [minutes] were contributed at [time] for [habitName] on
+     * [date], ADDING to any minutes already recorded at that time (two timer
+     * sessions ending within the same second). A result ≤ 0 removes the entry.
+     */
+    suspend fun addMinutesAtTime(
+        habitName: String,
+        date: LocalDate,
+        time: String,
+        minutes: Int
+    ) {
+        if (minutes == 0) return
+        fileMutex.withLock {
+            val data = loadMinutesMutable()
+            val day = data.getOrPut(habitName) { mutableMapOf() }
+                .getOrPut(dateString(date)) { mutableMapOf() }
+            val new = (day[time] ?: 0) + minutes
+            if (new > 0) day[time] = new else day.remove(time)
+            pruneEmptyMinutesEntries(data)
+            saveMinutes(data)
+        }
+    }
+
+    /**
+     * SETS the minutes contributed at [time] for [habitName] on [date] (the
+     * timestamp editor's per-timestamp minutes editor). A value ≤ 0 removes
+     * the entry, restoring the unit-count fallback. Returns the updated
+     * `time -> minutes` map for the day.
+     */
+    suspend fun setMinutesAtTime(
+        habitName: String,
+        date: LocalDate,
+        time: String,
+        minutes: Int
+    ): Map<String, Int> {
+        fileMutex.withLock {
+            val data = loadMinutesMutable()
+            val day = data.getOrPut(habitName) { mutableMapOf() }
+                .getOrPut(dateString(date)) { mutableMapOf() }
+            if (minutes > 0) day[time] = minutes else day.remove(time)
+            pruneEmptyMinutesEntries(data)
+            saveMinutes(data)
+            return data[habitName]?.get(dateString(date))?.toMap() ?: emptyMap()
+        }
+    }
+
+    private fun pruneEmptyMinutesEntries(data: MutableMap<String, MutableMap<String, MutableMap<String, Int>>>) {
+        for (habit in data.keys.toList()) {
+            val days = data[habit] ?: continue
+            days.entries.removeAll { it.value.isEmpty() }
+            if (days.isEmpty()) data.remove(habit)
+        }
+    }
+
+    private suspend fun loadMinutesMutable():
+        MutableMap<String, MutableMap<String, MutableMap<String, Int>>> =
+        withContext(Dispatchers.IO) {
+            // Always called under fileMutex. The minutes sidecar is tiny and
+            // rarely read, so a plain parse (no snapshot cache) suffices.
+            try {
+                if (!minutesFile.exists()) mutableMapOf()
+                else gson.fromJson(minutesFile.readText(), minutesMapType) ?: mutableMapOf()
+            } catch (_: Exception) {
+                mutableMapOf()
+            }
+        }
+
+    private suspend fun saveMinutes(data: Map<String, Map<String, Map<String, Int>>>) {
+        withContext(Dispatchers.IO) {
+            try {
+                if (data.isEmpty()) minutesFile.delete() else prettyGson.toJson(data).let(minutesFile::writeText)
+            } catch (_: Exception) {
+                // Best-effort
+            }
+        }
+    }
+
     /**
      * Synchronously returns a map of `dateStr -> timestamp count` for [habitName].
      *
@@ -264,6 +365,19 @@ class HabitTimestampRepository(private val context: Context) {
                 data.remove(habitName)
             }
             saveAll(data)
+            // SET semantics: drop per-timestamp minutes recorded at times
+            // that no longer exist (Inuit backfill, chess trim, movie sync).
+            val minutesData = loadMinutesMutable()
+            val dayMinutes = minutesData[habitName]?.get(dateStr)
+            if (dayMinutes != null) {
+                val keep = timestamps.toSet()
+                dayMinutes.entries.removeAll { it.key !in keep }
+                if (dayMinutes.isEmpty()) {
+                    minutesData[habitName]?.remove(dateStr)
+                }
+                pruneEmptyMinutesEntries(minutesData)
+                saveMinutes(minutesData)
+            }
         }
     }
 
@@ -333,6 +447,16 @@ class HabitTimestampRepository(private val context: Context) {
                 habitMap[dateStr] = dayList.map { if (it == oldTime) newTime else it }.toMutableList()
                 habitMap[dateStr]!!.sort()
                 saveAll(data)
+                // The group's per-timestamp minutes move with it (merged with
+                // any minutes already recorded at the destination time).
+                val minutesData = loadMinutesMutable()
+                val dayMinutes = minutesData.getOrPut(habitName) { mutableMapOf() }
+                    .getOrPut(dateStr) { mutableMapOf() }
+                dayMinutes.remove(oldTime)?.let { moving ->
+                    dayMinutes[newTime] = (dayMinutes[newTime] ?: 0) + moving
+                }
+                pruneEmptyMinutesEntries(minutesData)
+                saveMinutes(minutesData)
                 habitMap[dateStr]!!.toList()
             } else {
                 dayList.toList()
@@ -362,6 +486,11 @@ class HabitTimestampRepository(private val context: Context) {
                 data.remove(habitName)
             }
             saveAll(data)
+            // The group's per-timestamp minutes go with it.
+            val minutesData = loadMinutesMutable()
+            minutesData[habitName]?.get(dateStr)?.remove(time)
+            pruneEmptyMinutesEntries(minutesData)
+            saveMinutes(minutesData)
             habitMap[dateStr]?.sorted() ?: emptyList()
         }
     }
@@ -474,6 +603,12 @@ class HabitTimestampRepository(private val context: Context) {
             if (data.containsKey(oldName)) {
                 data[newName] = data.remove(oldName)!!
                 saveAll(data)
+            }
+            // Per-timestamp minutes survive the rename too.
+            val minutesData = loadMinutesMutable()
+            if (minutesData.containsKey(oldName)) {
+                minutesData[newName] = minutesData.remove(oldName)!!
+                saveMinutes(minutesData)
             }
         }
     }

@@ -86,12 +86,21 @@ fun TimestampEditorDialog(
     isMealHabit: Boolean = false,
     /** True when the habit has a text log (text field shown in card edit mode). */
     canEditText: Boolean = false,
+    /** True when minutes is the habit's PRIMARY value — the per-timestamp
+     *  number then shows/edits the minutes contributed at that time. */
+    isMinutesPrimary: Boolean = false,
+    /** Minutes recorded at each timestamp (`"HH:mm:ss" -> minutes`). Times
+     *  without an entry fall back to the group's unit count (manual +N
+     *  increments store one unit per minute). */
+    minutesByTime: Map<String, Int> = emptyMap(),
     /** Re-time every increment at [oldTime] to [newTime]. */
     onUpdateTimeGroup: (oldTime: String, newTime: String) -> Unit,
     /** Delete every increment at [time]. */
     onDeleteTimeGroup: (time: String) -> Unit,
     /** Set the increment amount contributed at [time] to [newAmount]. */
     onSetGroupAmount: (time: String, newAmount: Int) -> Unit,
+    /** Set the minutes contributed at [time] to [newMinutes] (minutes-primary habits). */
+    onSetGroupMinutes: (time: String, newMinutes: Int) -> Unit = { _, _ -> },
     /** Upsert the text logged at [time] (empty string clears it). */
     onUpdateText: (time: String, newText: String) -> Unit,
     /** Open the pre-existing meal editor for the meal logged at [time]. */
@@ -138,10 +147,15 @@ fun TimestampEditorDialog(
         },
         text = {
             Column {
+                // Minutes-primary habits summarise the day in minutes (the
+                // primary value), not in increment units.
+                val totalMinutes = groups.sumOf { (minutesByTime[it.time] ?: it.amount).coerceAtLeast(0) }
                 Text(
                     text = when {
                         timestamps.isEmpty() && groups.isNotEmpty() ->
                             "${groups.size} text entr${if (groups.size != 1) "ies" else "y"}"
+                        isMinutesPrimary ->
+                            "$totalMinutes across ${groups.size} time${if (groups.size != 1) "s" else ""}"
                         groups.size == 1 && groups.first().amount == 1 ->
                             "1 timestamped increment"
                         else ->
@@ -197,6 +211,10 @@ fun TimestampEditorDialog(
                                     isEditing = editingCard == group.time,
                                     isMealHabit = isMealHabit,
                                     canEditText = canEditText,
+                                    isMinutesPrimary = isMinutesPrimary,
+                                    displayAmount = if (isMinutesPrimary) {
+                                        minutesByTime[group.time] ?: group.amount
+                                    } else group.amount,
                                     onStartEditTime = {
                                         val parsed = runCatching { LocalTime.parse(group.time) }
                                             .getOrDefault(LocalTime.now())
@@ -214,7 +232,13 @@ fun TimestampEditorDialog(
                                     },
                                     onCancelEditInfo = { editingCard = null },
                                     onSaveEditInfo = { newAmount, newText ->
-                                        if (newAmount != group.amount) {
+                                        if (isMinutesPrimary) {
+                                            // The stepper edited minutes: persist them
+                                            // (and the parent adjusts the day's minutes total).
+                                            if (newAmount != (minutesByTime[group.time] ?: group.amount)) {
+                                                onSetGroupMinutes(group.time, newAmount)
+                                            }
+                                        } else if (newAmount != group.amount) {
                                             onSetGroupAmount(group.time, newAmount)
                                         }
                                         if (canEditText && newText != textEntries[group.time].orEmpty()) {
@@ -304,6 +328,12 @@ fun TimestampEditorDialog(
  * A single increment card: underlined (tappable) time, amount chip, abbreviated
  * text with expand toggle, pencil + delete actions. When [isEditing] the amount
  * and text become editable inputs with Save/Cancel.
+ *
+ * [displayAmount] is the number shown in the chip and edited by the stepper:
+ * the group's increment-unit count, or — for minutes-primary habits
+ * ([isMinutesPrimary]) — the minutes contributed at this time (recorded
+ * per-timestamp, falling back to the unit count). Minutes-primary chips carry
+ * no "+" prefix and no unit label: minutes IS the habit's primary value.
  */
 @Composable
 private fun TimestampCard(
@@ -313,6 +343,8 @@ private fun TimestampCard(
     isEditing: Boolean,
     isMealHabit: Boolean,
     canEditText: Boolean,
+    isMinutesPrimary: Boolean,
+    displayAmount: Int,
     onStartEditTime: () -> Unit,
     onStartEditInfo: () -> Unit,
     onCancelEditInfo: () -> Unit,
@@ -324,7 +356,7 @@ private fun TimestampCard(
     var textOverflows by remember(group.time) { mutableStateOf(false) }
     // Editable fields — re-seeded whenever the underlying group data changes
     // so re-entering edit mode never shows a stale amount or text.
-    var amountText by remember(group.time, group.amount) { mutableStateOf(group.amount.toString()) }
+    var amountText by remember(group.time, displayAmount) { mutableStateOf(displayAmount.toString()) }
     var editText by remember(group.time, text) { mutableStateOf(text) }
 
     Column(
@@ -360,18 +392,20 @@ private fun TimestampCard(
                     .clickable(onClick = onStartEditTime)
                     .weight(1f)
             )
-            // Amount chip: how much was contributed at this time.
+            // Amount chip: how much was contributed at this time (increment
+            // units, or minutes for minutes-primary habits — no "+" prefix or
+            // label there, minutes is the primary value).
             // Text-only entries (no increments at this time) show no chip.
-            if (group.amount > 0) {
+            if (displayAmount > 0) {
                 Text(
-                    text = "+${group.amount}",
+                    text = if (isMinutesPrimary) "$displayAmount" else "+$displayAmount",
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    color = if (group.amount > 1) Color(0xFF66FFAA) else Color(0xFF889988),
+                    color = if (displayAmount > 1) Color(0xFF66FFAA) else Color(0xFF889988),
                     modifier = Modifier
                         .background(
-                            if (group.amount > 1) Color(0xFF003322) else Color(0xFF222826),
+                            if (displayAmount > 1) Color(0xFF003322) else Color(0xFF222826),
                             RoundedCornerShape(6.dp)
                         )
                         .padding(horizontal = 8.dp, vertical = 2.dp)
@@ -433,8 +467,10 @@ private fun TimestampCard(
             Spacer(modifier = Modifier.height(6.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Amount:", fontSize = 12.sp, color = Color(0xFF999999))
-                Spacer(modifier = Modifier.width(8.dp))
+                if (!isMinutesPrimary) {
+                    Text("Amount:", fontSize = 12.sp, color = Color(0xFF999999))
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
                 Box(
                     modifier = Modifier
                         .background(Color(0xFF333333), RoundedCornerShape(6.dp))
@@ -496,7 +532,7 @@ private fun TimestampCard(
                         .background(Color(0xFF333333), RoundedCornerShape(6.dp))
                         .clickable {
                             // Reset local edits and leave edit mode.
-                            amountText = group.amount.toString()
+                            amountText = displayAmount.toString()
                             editText = text
                             onCancelEditInfo()
                         }
@@ -507,7 +543,7 @@ private fun TimestampCard(
                     modifier = Modifier
                         .background(Color(0xFF004488), RoundedCornerShape(6.dp))
                         .clickable {
-                            val n = (amountText.toIntOrNull() ?: group.amount).coerceAtLeast(0)
+                            val n = (amountText.toIntOrNull() ?: displayAmount).coerceAtLeast(0)
                             onSaveEditInfo(n, editText.trim())
                         }
                         .padding(horizontal = 14.dp, vertical = 6.dp)
