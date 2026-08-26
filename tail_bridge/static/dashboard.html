@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tail Bridge · PC Dashboard</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #0e1116;
+    --card: #151a23;
+    --card2: #10141c;
+    --border: #232a37;
+    --text: #d7dce4;
+    --muted: #8b93a3;
+    --accent: #8ab4f8;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --purple: #c4a7f8;
+    --cyan: #7dd3fc;
+    --mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: 48px;
+  }
+
+  /* ── header ─────────────────────────────────────────────── */
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 16px 24px 12px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: rgba(14,17,22,.92); backdrop-filter: blur(6px);
+    z-index: 10;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header h1 .paw { margin-right: 6px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--card);
+  }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pill.ok .dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .pill.bad .dot { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .pill.ok { color: var(--green); border-color: rgba(74,222,128,.35); }
+  .pill.bad { color: var(--red); border-color: rgba(248,113,113,.35); }
+  .spacer { flex: 1; }
+  .hdr-right { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+  /* ── layout ─────────────────────────────────────────────── */
+  main { padding: 18px 24px; display: flex; flex-direction: column; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 980px) { .grid2 { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; min-width: 0;
+  }
+  .card h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--muted); margin: 0 0 10px; font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card h2 .count {
+    margin-left: auto; font-size: 11px; color: var(--accent);
+    background: rgba(138,180,248,.1); padding: 1px 8px; border-radius: 999px;
+    font-family: var(--mono);
+  }
+
+  /* connection cards */
+  .conn { display: flex; flex-direction: column; gap: 8px; }
+  .conn .top { display: flex; align-items: center; gap: 10px; }
+  .conn .emoji { font-size: 22px; }
+  .conn .name { font-weight: 650; font-size: 14px; }
+  .conn .state { margin-left: auto; font-size: 12px; font-weight: 650; }
+  .conn .state.on { color: var(--green); }
+  .conn .state.off { color: var(--muted); }
+  .conn .row { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+  .conn .row .k { color: var(--muted); }
+  .conn .row .v { font-family: var(--mono); font-size: 12px; text-align: right;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+
+  /* chips */
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 650; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--card2);
+  }
+  .chip.phone { color: var(--green); border-color: rgba(74,222,128,.35); }
+  .chip.pc { color: var(--cyan); border-color: rgba(125,211,252,.35); }
+  .chip.bridge { color: var(--purple); border-color: rgba(196,167,248,.35); }
+  .chip.kind { color: var(--accent); }
+  .chip.min { color: var(--amber); }
+  .chip.warn { color: var(--amber); border-color: rgba(251,191,36,.4); }
+
+  /* habits */
+  .habits { display: flex; flex-direction: column; gap: 6px; }
+  .habit {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card2); border: 1px solid var(--border); border-radius: 9px;
+    padding: 7px 11px;
+  }
+  .habit .hicon {
+    width: 26px; height: 26px; border-radius: 7px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(138,180,248,.12); color: var(--accent); font-weight: 700; font-size: 13px;
+  }
+  .habit .hname { font-weight: 600; font-size: 13px; overflow: hidden;
+                  text-overflow: ellipsis; white-space: nowrap; }
+  .habit .hbadges { margin-left: auto; display: flex; gap: 5px; flex: none; }
+
+  /* lists / tables */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th {
+    text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .6px; padding: 4px 8px; border-bottom: 1px solid var(--border);
+    font-weight: 700;
+  }
+  td { padding: 5px 8px; border-bottom: 1px solid rgba(35,42,55,.5); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.mono, .mono { font-family: var(--mono); font-size: 11.5px; }
+  td .dim { color: var(--muted); }
+
+  /* feed rows */
+  .feed { display: flex; flex-direction: column; }
+  .feed .frow {
+    display: flex; align-items: baseline; gap: 10px; padding: 4px 2px;
+    border-bottom: 1px solid rgba(35,42,55,.5); font-size: 12.5px;
+  }
+  .feed .frow:last-child { border-bottom: none; }
+  .feed .ts { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: none;
+              width: 64px; }
+  .feed .path { font-family: var(--mono); font-size: 11.5px; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
+  .feed .ms { margin-left: auto; color: var(--muted); font-family: var(--mono);
+              font-size: 11px; flex: none; }
+  .feed .st { flex: none; font-family: var(--mono); font-size: 11px; }
+  .st.s2 { color: var(--green); } .st.s4, .st.s5 { color: var(--red); }
+
+  /* history timeline */
+  .hist .frow .txt { overflow-wrap: anywhere; }
+  .act-ico { flex: none; width: 20px; text-align: center; }
+
+  /* garmin metrics */
+  .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 8px; }
+  .metric { background: var(--card2); border: 1px solid var(--border); border-radius: 9px;
+            padding: 7px 9px; }
+  .metric .mk { color: var(--muted); font-size: 10.5px; text-transform: uppercase;
+                letter-spacing: .4px; }
+  .metric .mv { font-family: var(--mono); font-size: 15px; font-weight: 650; margin-top: 1px; }
+  .metric .mv small { font-size: 10px; color: var(--muted); font-weight: 400; }
+
+  .empty { color: var(--muted); font-size: 12.5px; padding: 10px 2px; font-style: italic; }
+
+  /* scrollable long lists */
+  .scroll { max-height: 320px; overflow-y: auto; }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: #2a3242; border-radius: 4px; }
+  .scroll::-webkit-scrollbar-track { background: transparent; }
+
+  /* edit buttons */
+  .ebtn {
+    flex: none; background: var(--card2); color: var(--accent);
+    border: 1px solid var(--border); border-radius: 7px;
+    width: 26px; height: 24px; cursor: pointer; font-size: 12px; line-height: 1;
+  }
+  .ebtn:hover { border-color: var(--accent); background: rgba(138,180,248,.12); }
+
+  /* modal */
+  #modalBack {
+    position: fixed; inset: 0; background: rgba(5,7,10,.65);
+    display: flex; align-items: center; justify-content: center; z-index: 50;
+  }
+  #modalBack[hidden] { display: none; }
+  .modal {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px 20px; width: min(400px, calc(100vw - 40px));
+    box-shadow: 0 18px 50px rgba(0,0,0,.5);
+  }
+  .modal h3 { margin: 0 0 12px; font-size: 15px; }
+  .mrow { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .mrow .mk { color: var(--muted); width: 110px; flex: none; font-size: 12.5px; }
+  .mrow input {
+    flex: 1; background: var(--card2); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); padding: 6px 10px;
+    font-family: var(--mono); font-size: 13px; color-scheme: dark;
+  }
+  .mrow input:focus { outline: none; border-color: var(--accent); }
+  .mhint { color: var(--muted); font-size: 11.5px; margin: 10px 0 4px; }
+  .mbtns { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+  .mbtns button {
+    border-radius: 8px; padding: 7px 14px; cursor: pointer; font-weight: 650;
+    border: 1px solid var(--border); background: var(--card2); color: var(--text);
+  }
+  .mbtns button.primary { background: var(--accent); color: #0b0e13; border: none; }
+  .mbtns button.danger { color: var(--red); border-color: rgba(248,113,113,.4); }
+  #mMsg { color: var(--amber); font-size: 12px; margin-top: 8px; min-height: 15px; }
+  .section-note { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
+  footer { text-align: center; color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+  a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="paw">🐾</span>Tail Bridge <span style="color:var(--muted);font-weight:400">· PC Dashboard</span></h1>
+  <span class="pill" id="serverPill"><span class="dot"></span><span id="serverPillTxt">connecting…</span></span>
+  <span class="pill" id="uptimePill" style="color:var(--muted)">—</span>
+  <div class="spacer"></div>
+  <div class="hdr-right">
+    <span id="updatedTxt">—</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- connections -->
+  <div class="grid3" id="connections">
+    <div class="card conn" id="cardServer">
+      <div class="top"><span class="emoji">🖥️</span><span class="name">Bridge server</span>
+        <span class="state" id="srvState">…</span></div>
+      <div class="row"><span class="k">Status</span><span class="v" id="srvStatus">—</span></div>
+      <div class="row"><span class="k">Version</span><span class="v" id="srvVersion">—</span></div>
+      <div class="row"><span class="k">Started</span><span class="v" id="srvStarted">—</span></div>
+      <div class="row"><span class="k">Sources</span><span class="v" id="srvSources">—</span></div>
+    </div>
+    <div class="card conn" id="cardPhone">
+      <div class="top"><span class="emoji">📱</span><span class="name">Android app</span>
+        <span class="state" id="phoneState">…</span></div>
+      <div class="row"><span class="k">Last seen</span><span class="v" id="phoneSeen">—</span></div>
+      <div class="row"><span class="k">Last request</span><span class="v" id="phoneReq">—</span></div>
+      <div class="row"><span class="k">Pending queue</span><span class="v" id="phoneQueue">—</span></div>
+    </div>
+    <div class="card conn" id="cardWidget">
+      <div class="top"><span class="emoji">🫧</span><span class="name">PC bubble widget</span>
+        <span class="state" id="widgetState">…</span></div>
+      <div class="row"><span class="k">Last seen</span><span class="v" id="widgetSeen">—</span></div>
+      <div class="row"><span class="k">Last request</span><span class="v" id="widgetReq">—</span></div>
+      <div class="row"><span class="k">Habits shown</span><span class="v" id="widgetHabits">—</span></div>
+    </div>
+  </div>
+
+  <!-- widget config + queue -->
+  <div class="grid2">
+    <div class="card">
+      <h2>📱 Android app → PC widget<span class="count" id="habitsCount"></span></h2>
+      <div class="section-note" style="margin:0 0 8px" id="configUpdated"></div>
+      <div class="habits scroll" id="habitsList"><div class="empty">No config pushed yet.</div></div>
+    </div>
+    <div class="card">
+      <h2>⏳ Pending event queue<span class="count" id="pendingCount"></span></h2>
+      <div class="section-note" style="margin:0 0 8px">
+        PC-widget events waiting for the phone to pull & acknowledge.
+      </div>
+      <div class="feed scroll" id="pendingList"><div class="empty">Queue empty — phone is up to date.</div></div>
+    </div>
+  </div>
+
+  <!-- pc widget history (editable) -->
+  <div class="card">
+    <h2>🫧 PC widget history<span class="count" id="widgetHistCount"></span></h2>
+    <div class="section-note" style="margin:0 0 8px">
+      Every habit event the widget queued, newest first. ✎ opens the editor —
+      still-pending items are fixed in place; already-synced ones queue a correction
+      the phone applies on its next poll.
+    </div>
+    <div class="feed scroll" id="widgetHistList"><div class="empty">No widget events recorded yet.</div></div>
+  </div>
+
+  <!-- activity + history -->
+  <div class="grid2">
+    <div class="card">
+      <h2>⚡ Live activity<span class="count" id="activityCount"></span></h2>
+      <div class="feed scroll" id="activityFeed"><div class="empty">No requests yet.</div></div>
+    </div>
+    <div class="card">
+      <h2>🕘 History — what did what when<span class="count" id="historyCount"></span></h2>
+      <div class="feed hist scroll" id="historyFeed"><div class="empty">Nothing logged yet.</div></div>
+    </div>
+  </div>
+
+  <!-- sources -->
+  <div class="grid3">
+    <div class="card">
+      <h2>🍿 Movies · recent watches</h2>
+      <div class="feed scroll" id="moviesList"><div class="empty">No movie data.</div></div>
+      <div class="section-note" id="moviesHealth"></div>
+    </div>
+    <div class="card">
+      <h2>⌚ Garmin · latest day</h2>
+      <div class="section-note" style="margin:0 0 8px" id="garminDate"></div>
+      <div class="metrics" id="garminMetrics"></div>
+      <div class="section-note" id="garminHealth"></div>
+    </div>
+    <div class="card">
+      <h2>♟ Chess analysis</h2>
+      <div class="section-note" style="margin:0 0 8px" id="chessStatus"></div>
+      <div class="scroll" style="overflow-x:auto">
+        <table id="chessTable">
+          <thead><tr><th>Game</th><th>Result</th><th>Depth</th><th>Blunders W/B</th><th>When</th></tr></thead>
+          <tbody id="chessBody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="chessEmpty" style="display:none">No games analysed yet.</div>
+    </div>
+  </div>
+
+  <footer>
+    Informational view · the only controls are the ✎ widget-event editors ·
+    snapshot endpoint <span class="mono">GET /api/v1/dashboard</span> · auto-refreshes every 5 s
+  </footer>
+</main>
+
+<!-- edit modal -->
+<div id="modalBack" hidden>
+  <div class="modal">
+    <h3>✎ Edit widget event</h3>
+    <div class="mrow"><span class="mk">Habit</span><b id="mHabit" style="font-size:13.5px"></b></div>
+    <div class="mrow"><span class="mk">Date</span><input type="date" id="mDate"></div>
+    <div class="mrow"><span class="mk">Started</span><input type="time" step="60" id="mStart"></div>
+    <div class="mrow"><span class="mk">Ended</span><input type="time" step="60" id="mEnd"></div>
+    <div class="mrow"><span class="mk">Duration (min)</span><input type="number" id="mMin" min="0" max="1440"></div>
+    <div class="mhint">Moving the start keeps the duration; changing the end (or the
+      duration) updates the other. Sessions crossing midnight keep their duration.</div>
+    <div class="mbtns">
+      <button id="mDelete" class="danger">Delete</button>
+      <span class="spacer"></span>
+      <button id="mCancel">Cancel</button>
+      <button id="mSave" class="primary">Save</button>
+    </div>
+    <div id="mMsg"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const REFRESH_MS = 5000;
+const PHONE_ONLINE_SEC = 90;    // long-poll cycle ≈ 50 s + retry slack
+const WIDGET_ONLINE_SEC = 180;  // widget config poll cadence
+
+let snapshot = null;
+let lastFetchOk = null;
+
+/* ── helpers ─────────────────────────────────────────────── */
+
+const $ = (id) => document.getElementById(id);
+
+const ESC_DIV = document.createElement("div");
+function esc(s) {
+  ESC_DIV.textContent = String(s ?? "");
+  return ESC_DIV.innerHTML;
+}
+
+function ago(iso) {
+  if (!iso) return "—";
+  const sec = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 5) return "just now";
+  if (sec < 60) return Math.round(sec) + "s ago";
+  if (sec < 3600) return Math.round(sec / 60) + "m ago";
+  if (sec < 86400) return Math.round(sec / 3600) + "h ago";
+  return Math.round(sec / 86400) + "d ago";
+}
+
+function hhmmss(iso) {
+  if (!iso) return "—";
+  return iso.length >= 19 ? iso.slice(11, 19) : iso;
+}
+
+function fmtUptime(sec) {
+  if (sec == null) return "—";
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600),
+        m = Math.floor(sec % 3600 / 60), s = Math.floor(sec % 60);
+  return (d ? d + "d " : "") + (h || d ? String(h).padStart(2,"0") + "h " : "")
+       + String(m).padStart(2,"0") + "m " + String(s).padStart(2,"0") + "s";
+}
+
+function actorChip(actor) {
+  const label = {phone: "📱 phone", pc: "🖥 pc", bridge: "🌉 bridge"}[actor] || actor;
+  return `<span class="chip ${esc(actor)}">${label}</span>`;
+}
+
+function statusChip(st) {
+  if (!st) return "";
+  const cls = st === "ok" ? "s2" : (String(st)[0] === "4" || String(st)[0] === "5") ? "s4" : "";
+  return `<span class="st ${cls}">${esc(st)}</span>`;
+}
+
+/* ── fetch loop ──────────────────────────────────────────── */
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/v1/dashboard", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    snapshot = await res.json();
+    lastFetchOk = true;
+    render();
+  } catch (err) {
+    lastFetchOk = false;
+    renderHeader();
+  }
+}
+
+setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+
+/* ── renderers ───────────────────────────────────────────── */
+
+function renderHeader() {
+  const pill = $("serverPill"), txt = $("serverPillTxt");
+  if (lastFetchOk === true) {
+    pill.className = "pill ok"; txt.textContent = "running";
+  } else if (lastFetchOk === false) {
+    pill.className = "pill bad"; txt.textContent = "unreachable";
+  } else {
+    pill.className = "pill"; txt.textContent = "connecting…";
+  }
+  $("updatedTxt").textContent = lastFetchOk === true
+    ? "updated " + ago(snapshot?.server?.now) : "not updating";
+  $("uptimePill").textContent = snapshot ? "⏱ " + fmtUptime(snapshot.server.uptime_sec) : "—";
+}
+
+function setState(id, on, onTxt, offTxt) {
+  const el = $(id);
+  el.textContent = on ? onTxt : offTxt;
+  el.className = "state " + (on ? "on" : "off");
+}
+
+function renderConnections() {
+  const s = snapshot.server, c = snapshot.clients;
+
+  $("srvStatus").textContent = s.status;
+  $("srvVersion").textContent = "v" + s.version;
+  $("srvStarted").textContent = s.started_at + " (" + ago(s.started_at) + ")";
+  const srcNames = snapshot.sources.map((x) => x.name).join(", ");
+  $("srvSources").textContent = srcNames + " (" + snapshot.sources.length + ")";
+  setState("srvState", true, "● running", "○ stopped");
+
+  const ph = c.phone, phOn = ph.age_sec != null && ph.age_sec < PHONE_ONLINE_SEC;
+  $("phoneSeen").textContent = ph.last_seen ? ago(ph.last_seen) : "never";
+  $("phoneReq").textContent = ph.last_request || "—";
+  $("phoneReq").title = ph.last_request || "";
+  $("phoneQueue").textContent = snapshot.pc_widget.pending_count + " event(s)";
+  setState("phoneState", phOn, "● connected", "○ not seen");
+
+  const pc = c.pc, pcOn = pc.age_sec != null && pc.age_sec < WIDGET_ONLINE_SEC;
+  $("widgetSeen").textContent = pc.last_seen ? ago(pc.last_seen) : "never";
+  $("widgetReq").textContent = pc.last_request || "—";
+  $("widgetReq").title = pc.last_request || "";
+  $("widgetHabits").textContent = (snapshot.pc_widget.config.habits || []).length + " habit(s)";
+  setState("widgetState", pcOn, "● active", "○ idle");
+}
+
+function renderHabits() {
+  const cfg = snapshot.pc_widget.config;
+  const habits = cfg.habits || [];
+  $("configUpdated").textContent = cfg.updated_at
+    ? "Last pushed by the phone " + ago(cfg.updated_at) + " (" + cfg.updated_at + ")"
+    : "The phone has not pushed a widget config yet.";
+  $("habitsCount").textContent = habits.length || "";
+  if (!habits.length) {
+    $("habitsList").innerHTML = '<div class="empty">No habits enabled for the PC widget.</div>';
+    return;
+  }
+  $("habitsList").innerHTML = habits.map((h) => {
+    const badges = [];
+    if (h.minutes_primary) badges.push('<span class="chip min">min</span>');
+    if (h.divider) badges.push(`<span class="chip">÷${esc(h.divider)}</span>`);
+    if (h.inverted_binary) badges.push('<span class="chip">inverted</span>');
+    if (h.no_points) badges.push('<span class="chip">no pts</span>');
+    const icon = (typeof h.icon === "string" && h.icon && h.icon.length <= 4)
+      ? esc(h.icon) : esc((h.name || "?").trim().charAt(0).toUpperCase() || "?");
+    return `<div class="habit">
+      <span class="hicon">${icon}</span>
+      <span class="hname" title="${esc(h.name)}">${esc(h.name)}</span>
+      <span class="hbadges">${badges.join("")}</span>
+    </div>`;
+  }).join("");
+}
+
+function editableKind(kind) {
+  return kind === "session" || kind === "tap";
+}
+
+function editBtn(id) {
+  return `<button class="ebtn" data-edit="${esc(id)}" title="Edit this event">✎</button>`;
+}
+
+function renderPending() {
+  const ev = snapshot.pc_widget.pending_events || [];
+  $("pendingCount").textContent = ev.length || "";
+  if (!ev.length) {
+    $("pendingList").innerHTML =
+      '<div class="empty">Queue empty — phone is up to date.</div>';
+    return;
+  }
+  $("pendingList").innerHTML = ev.map((e) => `
+    <div class="frow">
+      <span class="ts">${esc(e.date?.slice(5) || "")}</span>
+      ${actorChip("pc")}
+      <span class="path"><b>${esc(e.habit)}</b>
+        <span class="chip kind">${esc(e.kind)}</span>
+        ${e.minutes ? `<span class="chip min">${esc(e.minutes)}m</span>` : ""}
+        <span class="dim mono">${esc(e.start)}–${esc(e.end)}</span></span>
+      ${editableKind(e.kind) ? editBtn(e.id) : ""}
+      <span class="ms mono" title="${esc(e.id)}">${esc(String(e.id).slice(3, 13))}…</span>
+    </div>`).join("");
+}
+
+function renderWidgetHistory() {
+  const hist = snapshot.pc_widget_history || [];
+  $("widgetHistCount").textContent = hist.length || "";
+  if (!hist.length) {
+    $("widgetHistList").innerHTML =
+      '<div class="empty">No widget events recorded yet.</div>';
+    return;
+  }
+  $("widgetHistList").innerHTML = hist.map((e) => {
+    const state = e.correction === "deleted"
+      ? '<span class="chip warn">deleted</span>'
+      : e.state === "acked"
+        ? '<span class="chip phone">synced</span>'
+        : '<span class="chip warn">pending</span>';
+    const corrected = e.correction === "edited"
+      ? '<span class="chip">edited</span>' : "";
+    const corr = (e.kind === "session_edit" || e.kind === "session_delete")
+      ? `<span class="chip kind">↳ ${esc(e.kind)}</span>` : "";
+    const mins = e.minutes ? `<span class="chip min">${esc(e.minutes)}m</span>` : "";
+    return `<div class="frow">
+      <span class="ts">${esc((e.date || "").slice(5))}</span>
+      <span class="path"><b>${esc(e.habit)}</b>
+        <span class="chip kind">${esc(e.kind)}</span>${corr}${mins}
+        <span class="dim mono">${esc(e.start)}–${esc(e.end)}</span>
+        ${state}${corrected}</span>
+      ${(editableKind(e.kind) && e.correction !== "deleted") ? editBtn(e.id) : ""}
+    </div>`;
+  }).join("");
+}
+
+/* ── widget event editor modal ───────────────────────────── */
+
+let editingId = null;
+
+function t2m(t) {
+  const [h, m] = String(t || "0:0").split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function m2t(m) {
+  m = ((Math.round(m) % 1440) + 1440) % 1440;
+  return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+}
+
+function findItem(id) {
+  const pend = (snapshot?.pc_widget?.pending_events || []).find((e) => e.id === id);
+  if (pend) return pend;
+  return (snapshot?.pc_widget_history || []).find((e) => e.id === id) || null;
+}
+
+function openEditor(id) {
+  const it = findItem(id);
+  if (!it) return;
+  editingId = id;
+  $("mHabit").textContent = it.habit || "?";
+  $("mDate").value = it.date || "";
+  $("mStart").value = (it.start || "").slice(0, 5);
+  $("mEnd").value = (it.end || "").slice(0, 5);
+  $("mMin").value = Math.max(0, it.minutes || 0);
+  $("mMsg").textContent = "";
+  $("modalBack").hidden = false;
+}
+
+function closeEditor() {
+  editingId = null;
+  $("modalBack").hidden = true;
+}
+
+/* linked fields: start keeps duration; end/duration update each other */
+$("mStart").addEventListener("change", () => {
+  $("mEnd").value = m2t(t2m($("mStart").value) + Number($("mMin").value || 0));
+});
+$("mEnd").addEventListener("change", () => {
+  const dur = (t2m($("mEnd").value) - t2m($("mStart").value) + 1440) % 1440;
+  $("mMin").value = dur;
+});
+$("mMin").addEventListener("change", () => {
+  $("mEnd").value = m2t(t2m($("mStart").value) + Number($("mMin").value || 0));
+});
+
+$("mCancel").addEventListener("click", closeEditor);
+$("modalBack").addEventListener("click", (e) => {
+  if (e.target === $("modalBack")) closeEditor();
+});
+
+$("mSave").addEventListener("click", async () => {
+  if (!editingId) return;
+  const body = {
+    id: editingId,
+    date: $("mDate").value,
+    start: ($("mStart").value || "00:00") + ":00",
+    end: ($("mEnd").value || "00:00") + ":00",
+    minutes: Math.max(0, Number($("mMin").value || 0)),
+  };
+  try {
+    const res = await fetch("/api/v1/dashboard/widget_edit", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      $("mMsg").textContent = err.detail || ("save failed (HTTP " + res.status + ")");
+      return;
+    }
+    closeEditor();
+    refresh();
+  } catch {
+    $("mMsg").textContent = "save failed — bridge unreachable";
+  }
+});
+
+$("mDelete").addEventListener("click", async () => {
+  if (!editingId) return;
+  const it = findItem(editingId);
+  const what = it ? `${it.habit} (${it.start}–${it.end})` : "this event";
+  if (!confirm(`Delete ${what}?`)) return;
+  try {
+    const res = await fetch("/api/v1/dashboard/widget_delete", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({id: editingId}),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      $("mMsg").textContent = err.detail || ("delete failed (HTTP " + res.status + ")");
+      return;
+    }
+    closeEditor();
+    refresh();
+  } catch {
+    $("mMsg").textContent = "delete failed — bridge unreachable";
+  }
+});
+
+/* ✎ buttons (delegated — rows are re-rendered every poll) */
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-edit]");
+  if (btn) openEditor(btn.dataset.edit);
+});
+
+function renderActivity() {
+  const act = snapshot.activity || [];
+  $("activityCount").textContent = act.length || "";
+  if (!act.length) {
+    $("activityFeed").innerHTML = '<div class="empty">No requests since server start.</div>';
+    return;
+  }
+  $("activityFeed").innerHTML = [...act].reverse().map((a) => `
+    <div class="frow">
+      <span class="ts">${hhmmss(a.ts)}</span>
+      ${actorChip(a.actor)}
+      <span class="path">${esc(a.method)} ${esc(a.path)}</span>
+      ${statusChip(a.status)}
+      <span class="ms">${a.ms != null ? esc(a.ms) + " ms" : ""}</span>
+    </div>`).join("");
+}
+
+const ACTION_ICONS = {
+  server_start: "🚀", config_push: "📋", event_queued: "⏱",
+  events_acked: "✅", chess_analyzed: "♟",
+};
+
+function renderHistory() {
+  const hist = snapshot.history || [];
+  $("historyCount").textContent = hist.length || "";
+  if (!hist.length) {
+    $("historyFeed").innerHTML = '<div class="empty">Nothing logged yet.</div>';
+    return;
+  }
+  $("historyFeed").innerHTML = [...hist].reverse().map((h) => `
+    <div class="frow">
+      <span class="ts">${hhmmss(h.ts)}</span>
+      <span class="act-ico">${ACTION_ICONS[h.action] || "•"}</span>
+      ${actorChip(h.actor)}
+      <span class="txt">${esc(h.text)}</span>
+    </div>`).join("");
+}
+
+function sourceByName(name) {
+  return snapshot.sources.find((s) => s.name === name);
+}
+
+function renderMovies() {
+  const src = sourceByName("movies");
+  if (!src) { $("moviesList").innerHTML = '<div class="empty">Source not registered.</div>'; return; }
+  const items = src.recent || [];
+  $("moviesHealth").textContent =
+    `source health: ${src.health?.status ?? "?"}` +
+    (src.health?.total_entries != null ? ` · ${src.health.total_entries} entries` : "");
+  if (!items.length) {
+    $("moviesList").innerHTML = '<div class="empty">No movie data.</div>';
+    return;
+  }
+  $("moviesList").innerHTML = items.map((m) => {
+    const se = (m.season && m.episode)
+      ? ` <span class="dim mono">S${esc(m.season)}E${esc(m.episode)}</span>` : "";
+    return `<div class="frow">
+      <span class="ts">${esc((m.date || "").slice(5))}</span>
+      <span class="path" title="${esc(m.raw || m.title || "")}"><b>${esc(m.title)}</b>${se}</span>
+      <span class="ms">${hhmmss((m.datetime || "").replace("T", " "))}</span>
+    </div>`;
+  }).join("");
+}
+
+const GARMIN_METRICS = [
+  ["vo2_max", "VO₂ max", (v) => v],
+  ["resting_hr", "Rest HR", (v) => v + " <small>bpm</small>"],
+  ["hrv_last_night", "HRV", (v) => v + " <small>ms</small>"],
+  ["sleep_score", "Sleep", (v) => v],
+  ["steps", "Steps", (v) => Number(v).toLocaleString()],
+  ["stress_score", "Stress", (v) => v],
+  ["calories", "Energy", (v) => Number(v).toLocaleString() + " <small>kcal</small>"],
+  ["active_minutes", "Active", (v) => v + " <small>min</small>"],
+  ["distance_meters", "Distance", (v) => (v / 1000).toFixed(1) + " <small>km</small>"],
+  ["floors_climbed", "Floors", (v) => v],
+];
+
+function renderGarmin() {
+  const src = sourceByName("garmin");
+  if (!src) { $("garminMetrics").innerHTML = ""; return; }
+  const latest = src.latest;
+  $("garminHealth").textContent =
+    `source health: ${src.health?.status ?? "?"}` +
+    (src.health?.total_days != null ? ` · ${src.health.total_days} days cached` : "");
+  if (!latest) {
+    $("garminDate").textContent = "No Garmin data cached.";
+    $("garminMetrics").innerHTML = "";
+    return;
+  }
+  $("garminDate").textContent = "📅 " + (latest.date || "?") +
+    "  ·  " + (src.recent || []).length + " recent days available";
+  $("garminMetrics").innerHTML = GARMIN_METRICS
+    .filter(([k]) => latest[k] != null)
+    .map(([k, label, fmt]) =>
+      `<div class="metric"><div class="mk">${label}</div>
+       <div class="mv">${fmt(latest[k])}</div></div>`).join("");
+}
+
+function renderChess() {
+  const ch = snapshot.chess;
+  if (!ch.available) {
+    $("chessStatus").innerHTML =
+      '<span class="chip warn">unavailable</span> ' + esc(ch.error || "service not loaded");
+    $("chessBody").innerHTML = ""; $("chessEmpty").style.display = "block";
+    return;
+  }
+  const st = ch.status || {};
+  $("chessStatus").innerHTML =
+    `<span class="chip ${st.busy_live ? "warn" : "phone"}">${st.busy_live ? "● analysing" : "● idle"}</span>` +
+    ` <span class="dim">${st.analyzed ?? 0} games analysed · depth-cached · engine
+     <span class="mono">${esc(st.stockfish || "?")}</span></span>`;
+  const rows = ch.recent || [];
+  $("chessEmpty").style.display = rows.length ? "none" : "block";
+  $("chessBody").innerHTML = rows.map((g) => `
+    <tr>
+      <td><b>${esc(g.white)}</b> <span class="dim">vs</span> <b>${esc(g.black)}</b></td>
+      <td class="mono">${esc(g.result || "—")}</td>
+      <td class="mono">${esc(g.depth ?? "—")}</td>
+      <td class="mono">${esc(g.white_blunders)} / ${esc(g.black_blunders)}</td>
+      <td class="mono dim">${esc(g.date || "")}</td>
+    </tr>`).join("");
+}
+
+function render() {
+  if (!snapshot) return;
+  renderHeader();
+  renderConnections();
+  renderHabits();
+  renderPending();
+  renderWidgetHistory();
+  renderActivity();
+  renderHistory();
+  renderMovies();
+  renderGarmin();
+  renderChess();
+}
+
+/* first paint */
+refresh();
+</script>
+</body>
+</html>

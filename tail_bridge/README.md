@@ -55,6 +55,51 @@ systemctl --user daemon-reload
 systemctl --user enable --now tail-bridge.service movie-watcher.service
 ```
 
+## PC Dashboard
+
+The bridge serves a status dashboard on the PC — open
+`http://localhost:8001/` in any browser. It shows:
+
+* **Connections** — bridge server status/uptime, when the Android app was
+  last seen (and what it last requested), when the PC bubble widget last
+  polled.
+* **Android app → PC widget** — which habits are currently toggled ON in the
+  app for the PC widget (with `minutes_primary` / divider / inverted /
+  no-points badges) and when the phone last pushed the config.
+* **Pending event queue** — widget events waiting for the phone to ack,
+  each with an ✎ edit button (pending events are fixed in place before
+  the phone ever sees them).
+* **PC widget history** — every widget event the bridge has ever queued
+  (`~/.config/tail_bridge/pc_widget_history.json`), separate from the
+  other histories, with synced/pending state and edited/deleted badges.
+  Every session/tap row has ✎ edit and delete buttons.
+* **Live activity** — every API request since server start (who, what, how
+  long). Requests are classified by origin: loopback → PC, LAN → phone.
+* **History** — a persistent, restart-surviving "what did what when" log
+  (`~/.config/tail_bridge/bridge_history.json`): config pushes, queued
+  widget sessions/taps, phone acks, live Stockfish analyses, server starts.
+* **Sources** — recent movie watches, the latest Garmin metrics, and chess
+  analysis history from the SQLite registry.
+
+The page polls one aggregated endpoint, `GET /api/v1/dashboard`, every 5 s —
+no token needed: the backend authorizes the dashboard itself and serves it
+only to private-network clients (loopback / RFC1918 LAN / Tailscale CGNAT),
+never to arbitrary public addresses. Long sections scroll in place so the
+page stays compact.
+
+The one thing the dashboard *can* change is PC-widget events, via the popup
+editor (the replacement for the bubble widget's old right-click "Today's
+history" dialog, which has been removed):
+
+* **pending event** → edited/deleted **in place** (the phone never applied
+  it, so no correction is needed);
+* **already-acked event** → a `session_edit` / `session_delete`
+  **correction** is queued carrying `ref_id` + `orig` (the values the phone
+  did apply), which the phone inverts before applying the fix — the exact
+  same contract as `pc_widget_sync.append_correction_event`.
+
+Everything else on the page is informational only.
+
 ## API Endpoints
 
 All endpoints require the `X-App-Auth` header (except `/health`).
@@ -62,6 +107,10 @@ All endpoints require the `X-App-Auth` header (except `/health`).
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Server health (no auth) |
+| GET | `/` | PC dashboard UI (no auth) |
+| GET | `/api/v1/dashboard` | Aggregated snapshot incl. `pc_widget_history` (private-network clients only, no token) |
+| POST | `/api/v1/dashboard/widget_edit` | Edit a widget event — in place if pending, else queue a `session_edit` correction (no token, private network only) |
+| POST | `/api/v1/dashboard/widget_delete` | Delete a widget event — drop if pending, else queue a `session_delete` correction (no token, private network only) |
 | GET | `/api/v1/sources` | List registered sources |
 | GET | `/api/v1/movies/latest` | Most recently watched movie/series |
 | GET | `/api/v1/movies/recent?limit=10` | N most recent movies |
@@ -170,6 +219,8 @@ Done. The server auto-generates `/api/v1/my_thing/latest`, `/recent`, `/health`.
 | `movie_name_cleaner.py` | Reusable filename → clean title parser |
 | `movie_watcher.py` | KDE Activity DB poller daemon |
 | `bridge_server.py` | Unified FastAPI server |
+| `dashboard.py` | Read-only dashboard: snapshot endpoint, activity middleware, history log |
+| `static/dashboard.html` | Single-file dashboard UI (dark theme, vanilla JS) |
 | `sources/base.py` | BridgeSource abstract interface |
 | `sources/movies.py` | Movie data source implementation |
 | `sources/garmin.py` | Garmin health-metrics source (reads `garmin_cache.json`) |

@@ -657,6 +657,37 @@ class ChessAnalysisService:
             "stockfish": self.engine_path,
         }
 
+    def recent(self, limit: int = 10) -> list:
+        """Newest-first analysis history for the dashboard (compact rows)."""
+        with self._db_lock:
+            rows = self._conn.execute(
+                "SELECT game_id, json, depth, analyzed_at FROM analyses"
+                " ORDER BY analyzed_at DESC LIMIT ?",
+                (max(1, min(int(limit), 50)),),
+            ).fetchall()
+        out = []
+        for game_id, js, depth, analyzed_at in rows:
+            try:
+                data = json.loads(js)
+            except Exception:
+                continue  # corrupt row — skip, never crash the dashboard
+            meta = data.get("metadata", {})
+            stats = data.get("stats", {})
+            out.append({
+                "game_id": game_id,
+                "white": meta.get("White", "?"),
+                "black": meta.get("Black", "?"),
+                "result": meta.get("Result", ""),
+                "date": meta.get("Date", ""),
+                "depth": depth,
+                "analyzed_at": analyzed_at,
+                "white_blunders": stats.get("white_blunders", 0),
+                "black_blunders": stats.get("black_blunders", 0),
+                "white_acpl": round(stats.get("white_acpl", 0.0), 1),
+                "black_acpl": round(stats.get("black_acpl", 0.0), 1),
+            })
+        return out
+
 
 # Module-level singleton for the FastAPI endpoints (def endpoints run in the
 # threadpool, so blocking engine calls are fine).

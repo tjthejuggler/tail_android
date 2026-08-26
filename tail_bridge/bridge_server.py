@@ -63,6 +63,8 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from sources import get_all_sources, BridgeSource
 
+import dashboard  # read-only PC status UI (routes + activity + history log)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] bridge: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -303,15 +305,16 @@ def pc_widget_set_config(payload: Dict[str, Any], api_key: str = Security(verify
     }
     _pc_widget_write(PC_WIDGET_CONFIG_PATH, body)
     logger.info(f"pc_widget config updated: {len(clean)} habits")
+    dashboard.note("phone", "config_push",
+                   f"Phone pushed PC-widget config: {len(clean)} habit(s) enabled")
     return {"ok": True, "count": len(clean)}
 
 
-@app.post("/api/v1/pc_widget/event", tags=["pc_widget"])
-async def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(verify_key)):
-    """PC widget appends one habit event; the bridge assigns its id.
+def _pc_widget_queue_event(payload: Dict[str, Any], actor: str = "pc") -> Dict[str, Any]:
+    """Queue one PC-widget event and assign its id.
 
-    (async so it can wake the pc_widget/events/wait long-pollers on the
-    event loop — the file writes it does are tiny and local.)
+    Shared by the authed widget endpoint and the dashboard's editor
+    (actor labels who queued it). Returns the stored event dict.
     """
     habit = payload.get("habit")
     if not isinstance(habit, str) or not habit.strip():
@@ -332,10 +335,10 @@ async def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(v
         # at-least-once redelivery stays idempotent on the phone
         event["enabled"] = bool(payload.get("enabled", True))
     if kind in ("session_edit", "session_delete"):
-        # history-dialog corrections: the phone undoes `orig` (exactly
-        # what it originally applied) and, for session_edit, applies
-        # this event's corrected times; ref_id ties the correction to
-        # the original bridge event id
+        # history corrections: the phone undoes `orig` (exactly what it
+        # originally applied) and, for session_edit, applies this event's
+        # corrected times; ref_id ties the correction to the original
+        # bridge event id
         event["ref_id"] = str(payload.get("ref_id") or "")
         orig = payload.get("orig")
         event["orig"] = orig if isinstance(orig, dict) else {}
@@ -350,7 +353,66 @@ async def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(v
         "events": events,
     })
     logger.info(f"pc_widget event queued: {event['habit']} ({event['kind']}, {event['minutes']}m)")
+    dashboard.note(actor, "event_queued",
+                   f"{event['habit']}: {event['kind']} · {event['minutes']} min "
+                   f"({event['start']}–{event['end']})",
+                   data={"id": event["id"], "kind": event["kind"],
+                         "minutes": event["minutes"]})
+    dashboard.widget_history_add(event)
+    if event["kind"] in ("session_edit", "session_delete"):
+        dashboard.widget_history_mark_corrected(
+            event["ref_id"],
+            "edited" if event["kind"] == "session_edit" else "deleted")
     PC_WIDGET_EVENT_SIGNAL.set()
+    return event
+
+
+def _pc_widget_edit_pending(event_id: str, date: str, start: str,
+                            end: str, minutes: int) -> bool:
+    """Rewrite a STILL-PENDING event in place — the phone never applied
+    it, so no correction event is needed. False when the id isn't queued
+    (already acked → caller falls back to a session_edit correction)."""
+    events = _pc_widget_pending_events()
+    changed = False
+    for e in events:
+        if e.get("id") == event_id:
+            e["date"] = date
+            e["start"] = start
+            e["end"] = end
+            e["minutes"] = max(0, int(minutes or 0))
+            changed = True
+    if changed:
+        _pc_widget_write(PC_WIDGET_EVENTS_PATH, {
+            "version": 1,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "events": events,
+        })
+        PC_WIDGET_EVENT_SIGNAL.set()
+    return changed
+
+
+def _pc_widget_delete_pending(event_id: str) -> bool:
+    """Drop a STILL-PENDING event from the queue (phone never sees it)."""
+    events = _pc_widget_pending_events()
+    remaining = [e for e in events if e.get("id") != event_id]
+    if len(remaining) == len(events):
+        return False
+    _pc_widget_write(PC_WIDGET_EVENTS_PATH, {
+        "version": 1,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "events": remaining,
+    })
+    return True
+
+
+@app.post("/api/v1/pc_widget/event", tags=["pc_widget"])
+async def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """PC widget appends one habit event; the bridge assigns its id.
+
+    (async so it can wake the pc_widget/events/wait long-pollers on the
+    event loop — the file writes it does are tiny and local.)
+    """
+    event = _pc_widget_queue_event(payload, actor="pc")
     return {"ok": True, "id": event["id"]}
 
 
@@ -402,6 +464,11 @@ def pc_widget_acks(payload: Dict[str, Any], api_key: str = Security(verify_key))
             "events": remaining,
         })
     logger.info(f"pc_widget acks: {len(acked)} ids, {len(remaining)} still queued")
+    if acked:
+        dashboard.widget_history_mark_acked(acked)
+        dashboard.note("phone", "events_acked",
+                       f"Phone applied {len(acked)} event(s); "
+                       f"{len(remaining)} still queued")
     return {"ok": True, "remaining": len(remaining)}
 
 
@@ -445,7 +512,7 @@ def chess_analysis_analyze(payload: Dict[str, Any], api_key: str = Security(veri
         raise HTTPException(status_code=400, detail="body must contain a 'pgn' string")
     service = _chess_analysis_service()
     try:
-        return service.analyze(
+        result = service.analyze(
             pgn_text=pgn,
             game_id=str(payload.get("game_id") or ""),
             username=str(payload.get("username") or ""),
@@ -457,6 +524,30 @@ def chess_analysis_analyze(payload: Dict[str, Any], api_key: str = Security(veri
         raise HTTPException(status_code=503, detail="stockfish binary not found")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"analysis failed: {exc}")
+    if not result.get("cached"):
+        dashboard.note("phone", "chess_analyzed",
+                       f"Stockfish analysed {result.get('game_id') or 'game'} "
+                       f"(depth {result.get('depth')}, "
+                       f"{result.get('engine_ms')} ms)")
+    return result
+
+
+# ── Dashboard (read-only PC status UI) ────────────────────────────────────────
+# Serves static/dashboard.html at "/" and exposes GET /api/v1/dashboard —
+# one aggregated snapshot (clients, sources, widget config/queue, chess,
+# history, live activity). Informational only; no controls.
+
+dashboard.install(
+    app,
+    version=app.version,
+    get_sources=lambda: _sources,
+    get_pending_events=_pc_widget_pending_events,
+    config_path=PC_WIDGET_CONFIG_PATH,
+    chess_service=lambda: _chess_analysis_service(),
+    queue_event=lambda payload: _pc_widget_queue_event(payload, actor="dashboard"),
+    edit_pending=_pc_widget_edit_pending,
+    delete_pending=_pc_widget_delete_pending,
+)
 
 
 if __name__ == "__main__":
