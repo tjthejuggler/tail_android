@@ -450,7 +450,8 @@ object ChessReadinessLogStore {
         put("durationSec", s.durationSec)
         put("score", s.score)
         put("strikes", s.strikes)
-        put("reviewedWrong", s.reviewedWrong)
+        // Omitted when the question was never asked (strike-free runs).
+        s.reviewedWrong?.let { put("reviewedWrong", it) }
         put("allTimeHigh", s.allTimeHigh)
     }
 
@@ -461,7 +462,8 @@ object ChessReadinessLogStore {
             durationSec = o.optLong("durationSec", 0L),
             score = o.optInt("score", 0),
             strikes = o.optInt("strikes", 0),
-            reviewedWrong = o.optBoolean("reviewedWrong", false),
+            reviewedWrong = if (o.has("reviewedWrong") && !o.isNull("reviewedWrong"))
+                o.optBoolean("reviewedWrong", false) else null,
             allTimeHigh = o.optInt("allTimeHigh", 0)
         )
     } catch (_: Exception) {

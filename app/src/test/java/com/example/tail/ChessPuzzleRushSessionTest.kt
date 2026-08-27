@@ -27,7 +27,7 @@ class ChessPuzzleRushSessionTest {
         at: Long,
         score: Int,
         strikes: Int = 0,
-        reviewed: Boolean = true,
+        reviewed: Boolean? = true,
         ath: Int = 20,
         durationSec: Long = 180L,
         startedAt: Long = at - durationSec * 1000
@@ -146,6 +146,21 @@ class ChessPuzzleRushSessionTest {
         )
 
         assertEquals(2.0 / 3.0 * 100.0, rushReviewRate(points)!!, 0.001)
+    }
+
+    @Test
+    fun `strike-free sessions carry no review answer and do not dilute the rate`() {
+        val points = computeRushSessionPoints(
+            listOf(
+                // Strike-free run: the review question is never asked.
+                session(ms("2026-08-21", 9), score = 20, strikes = 0, reviewed = null),
+                session(ms("2026-08-22", 9), score = 21, strikes = 1, reviewed = true)
+            )
+        )
+
+        assertNull(points[0].reviewedWrong)
+        assertEquals(true, points[1].reviewedWrong)
+        assertEquals(100.0, rushReviewRate(points)!!, 0.001)
     }
 
     @Test

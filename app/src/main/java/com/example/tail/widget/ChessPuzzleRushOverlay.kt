@@ -80,10 +80,11 @@ object ChessPuzzleRushStore {
  * wizard, so the chess app stays the focused app underneath).
  *
  * Asks exactly what the v1 readiness test asked for its rush step —
- * puzzles solved + strikes — plus one new question: whether the user
- * reviewed the puzzles they got wrong. The answers (with the session's
- * start/end times) are logged to [ChessReadinessLogStore] and feed the
- * Puzzle Rush section of the Chess Stats screen.
+ * puzzles solved + strikes — plus one follow-up, only when the run had
+ * strikes: whether the user reviewed the puzzles they got wrong. The
+ * answers (with the session's start/end times) are logged to
+ * [ChessReadinessLogStore] and feed the Puzzle Rush section of the
+ * Chess Stats screen.
  */
 class ChessPuzzleRushOverlay(service: Context) {
 
@@ -126,9 +127,10 @@ class ChessPuzzleRushOverlay(service: Context) {
             var saveButton: TextView? = null
             fun updateSave() {
                 val btn = saveButton ?: return
+                // The review question only exists for runs with strikes.
                 val ready = rushScoreText.isNotBlank() &&
                     rushStrikes >= 0 &&
-                    reviewedWrong != null
+                    (rushStrikes == 0 || reviewedWrong != null)
                 btn.isEnabled = ready
                 btn.alpha = if (ready) 1f else 0.5f
             }
@@ -145,16 +147,18 @@ class ChessPuzzleRushOverlay(service: Context) {
             spacer(8)
             body("Strikes (failures)", bold = true)
             chipRow(listOf("0", "1", "2", "3"), rushStrikes) { rushStrikes = it; updateSave() }
-            spacer(8)
-            body("Reviewed the puzzles you got wrong?", bold = true)
-            chipRow(
-                listOf("No", "Yes"),
-                when (reviewedWrong) {
-                    true -> 1
-                    false -> 0
-                    null -> -1
-                }
-            ) { reviewedWrong = it == 1; updateSave() }
+            if (rushStrikes > 0) {
+                spacer(8)
+                body("Reviewed the puzzles you got wrong?", bold = true)
+                chipRow(
+                    listOf("No", "Yes"),
+                    when (reviewedWrong) {
+                        true -> 1
+                        false -> 0
+                        null -> -1
+                    }
+                ) { reviewedWrong = it == 1; updateSave() }
+            }
             saveButton = primaryButton("Save result") { submit() }
             updateSave()
             textButton("Skip — don't record") {
@@ -182,7 +186,8 @@ class ChessPuzzleRushOverlay(service: Context) {
                 durationSec = pending.durationSec,
                 score = rushScore,
                 strikes = rushStrikes.coerceAtLeast(0),
-                reviewedWrong = reviewedWrong == true,
+                // Null for strike-free runs — the question was never asked.
+                reviewedWrong = if (rushStrikes > 0) reviewedWrong else null,
                 allTimeHigh = ath
             )
         )

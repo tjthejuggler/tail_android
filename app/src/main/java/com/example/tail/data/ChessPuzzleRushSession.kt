@@ -10,8 +10,9 @@ package com.example.tail.data
  * system switched to v2 — which has no puzzle component — the rush runs
  * moved to the habit-timer widget: the habit linked as "Puzzle Rush
  * habit" in Settings is now an official Puzzle Rush timer, and every
- * finished timer session asks the user to report how it went (and
- * whether they reviewed the puzzles they got wrong).
+ * finished timer session asks the user to report how it went (and, when
+ * the run had strikes, whether they reviewed the puzzles they got
+ * wrong).
  *
  * Those reports are persisted by
  * [com.example.tail.widget.ChessReadinessLogStore] alongside the
@@ -43,8 +44,12 @@ data class PuzzleRushSessionRecord(
     val score: Int,
     /** Strikes (failures) — three wrong moves end a rush run early. */
     val strikes: Int,
-    /** True when the user reviewed the puzzles they got wrong. */
-    val reviewedWrong: Boolean,
+    /**
+     * True when the user reviewed the puzzles they got wrong. Null when
+     * the question was never asked — i.e. strike-free runs (nothing to
+     * review) — so [rushReviewRate] skips them instead of diluting it.
+     */
+    val reviewedWrong: Boolean?,
     /** All-time-high rush baseline in effect at session time. */
     val allTimeHigh: Int
 )
