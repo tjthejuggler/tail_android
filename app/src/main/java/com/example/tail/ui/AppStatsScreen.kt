@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -104,6 +106,12 @@ fun AppStatsScreen(
     val dividers = settings.habitDividers
 
     val disabledHabits = settings.disabledHabits
+    val garminHabits = settings.garminHabitLinks.keys
+
+    // Stats-list exclusion toggles (settings popup, top-right gear icon)
+    var excludeGarminFromLists by rememberSaveable { mutableStateOf(true) }
+    var excludeDisabledFromLists by rememberSaveable { mutableStateOf(true) }
+    var showListSettings by remember { mutableStateOf(false) }
     val noPointsHabits = settings.noPointsHabits
     val secondaryValueHabits = settings.secondaryValueHabits
     val secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits
@@ -112,8 +120,12 @@ fun AppStatsScreen(
 
     // Compute all stats from the cached database
     val db = viewModel.getCachedDatabase()
-    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits) {
-        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits)
+    val listExcludedHabits = buildSet {
+        if (excludeGarminFromLists) addAll(garminHabits)
+        if (excludeDisabledFromLists) addAll(disabledHabits)
+    }
+    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits, listExcludedHabits) {
+        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits, listExcludedHabits)
     }
 
     // State for the habit-list popup
@@ -121,17 +133,31 @@ fun AppStatsScreen(
     var popupItems by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var showPopup by remember { mutableStateOf(false) }
 
+    // Expand/collapse state for the top-habits lists (show top 10 vs full list)
+    var expandedTotalPoints by rememberSaveable { mutableStateOf(false) }
+    var expandedLongestStreak by rememberSaveable { mutableStateOf(false) }
+    var expandedCurrentStreak by rememberSaveable { mutableStateOf(false) }
+    var expandedAntiStreak by rememberSaveable { mutableStateOf(false) }
+    var expandedSingleDay by rememberSaveable { mutableStateOf(false) }
+
     // State for the streak graph popup — use rememberSaveable so it survives
     // the configuration change triggered by forcing landscape orientation.
     // We store a graph key (string) and derive data from stats on recomposition.
     var graphPopupKey by rememberSaveable { mutableStateOf<String?>(null) }
+
+    fun openPopup(title: String, items: List<Pair<String, String>>) {
+        popupTitle = title
+        popupItems = items
+        showPopup = true
+    }
 
     // Derive graph data from the key + stats
     data class GraphInfo(
         val title: String,
         val data: List<Pair<String, Int>>,
         val color: Color,
-        val currentValue: Int?
+        val currentValue: Int?,
+        val onValueClick: ((LocalDate, Int) -> Unit)? = null
     )
 
     val graphInfo: GraphInfo? = when (graphPopupKey) {
@@ -164,6 +190,18 @@ fun AppStatsScreen(
             stats.dailyCumulativePoints,
             GoldValue,
             stats.totalPointsAllTime.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        )
+        "today_points" -> GraphInfo(
+            "Habits Done Per Day Over Time",
+            stats.dailyHabitsDone,
+            GreenValue,
+            stats.dailyHabitsDone.lastOrNull()?.second,
+            onValueClick = { date, count ->
+                openPopup(
+                    "Habits Done on $date ($count)",
+                    stats.dailyHabitsDoneLists[com.example.tail.data.dateString(date)].orEmpty()
+                )
+            }
         )
         // Rolling-average graphs each take a colour from the app's rainbow
         // progression so the charts themselves carry the rainbow theme.
@@ -200,12 +238,6 @@ fun AppStatsScreen(
         else -> null
     }
 
-    fun openPopup(title: String, items: List<Pair<String, String>>) {
-        popupTitle = title
-        popupItems = items
-        showPopup = true
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -213,6 +245,11 @@ fun AppStatsScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showListSettings = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Stats list settings")
                     }
                 }
             )
@@ -269,6 +306,12 @@ fun AppStatsScreen(
                         value = formatLargeNumber(stats.totalPointsAllTime),
                         valueColor = GoldValue,
                         onClick = { graphPopupKey = "cumulative_points" }
+                    )
+                    StatGraphableRow(
+                        label = "Today's points",
+                        value = stats.todayPoints.toString(),
+                        valueColor = GreenValue,
+                        onClick = { graphPopupKey = "today_points" }
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
@@ -351,7 +394,6 @@ fun AppStatsScreen(
 
                 // ── Daily Averages ────────────────────────────────────────────
                 StatsSection(title = "📈 Daily Averages", accentIndex = 2) {
-                    StatRow("Today's points", stats.todayPoints.toString())
                     StatGraphableRow(
                         label = "Average (last 7 days)",
                         value = "%.2f".format(stats.avgLast7Days),
@@ -387,13 +429,13 @@ fun AppStatsScreen(
                 // ── Streaks (aggregate) ───────────────────────────────────────
                 StatsSection(title = "🔥 Aggregate Streaks", accentIndex = 3) {
                     StatRow(
-                        "Current streak (days with any points)",
-                        "${stats.currentAggregateStreak} days",
+                        "Current streak",
+                        formatStreakDays(stats.currentAggregateStreak),
                         valueColor = if (stats.currentAggregateStreak > 0) GreenValue else DimColor
                     )
                     StatRow(
-                        "Longest streak (days with any points)",
-                        "${stats.longestAggregateStreak} days",
+                        "Longest streak",
+                        formatStreakDays(stats.longestAggregateStreak),
                         valueColor = GoldValue
                     )
                     StatDateRow(
@@ -408,46 +450,52 @@ fun AppStatsScreen(
                     )
                     StatRow(
                         "Current zero-day streak",
-                        "${stats.currentZeroDayStreak} days",
+                        formatStreakDays(stats.currentZeroDayStreak),
                         valueColor = if (stats.currentZeroDayStreak > 0) RedValue else DimColor
                     )
                 }
 
                 // ── Top Habits by Total Points ────────────────────────────────
                 StatsSection(title = "⭐ Top 10 Habits by Total Points", accentIndex = 4) {
-                    stats.topHabitsByTotalPoints.forEachIndexed { index, (name, points) ->
+                    val shown = if (expandedTotalPoints) stats.topHabitsByTotalPoints
+                        else stats.topHabitsByTotalPoints.take(10)
+                    shown.forEachIndexed { index, (name, points) ->
                         StatRow(
                             "${index + 1}. $name",
-                            formatLargeNumber(points),
-                            valueColor = when (index) {
-                                0 -> GoldValue
-                                1 -> Color(0xFFC0C0C0)
-                                2 -> Color(0xFFCD7F32)
-                                else -> ValueColor
-                            }
+                            formatLargeNumber(points)
                         )
                     }
+                    ExpandListToggle(
+                        totalCount = stats.topHabitsByTotalPoints.size,
+                        expanded = expandedTotalPoints,
+                        onToggle = { expandedTotalPoints = !expandedTotalPoints }
+                    )
                 }
 
                 // ── Top Habits by Longest Streak ──────────────────────────────
                 StatsSection(title = "🔗 Top 10 Habits by Longest Streak", accentIndex = 5) {
-                    stats.topHabitsByLongestStreak.forEachIndexed { index, (name, streak) ->
-                        StatRow(
-                            "${index + 1}. $name",
-                            "$streak days",
-                            valueColor = when (index) {
-                                0 -> GoldValue
-                                1 -> Color(0xFFC0C0C0)
-                                2 -> Color(0xFFCD7F32)
-                                else -> ValueColor
-                            }
+                    val shown = if (expandedLongestStreak) stats.topHabitsByLongestStreak
+                        else stats.topHabitsByLongestStreak.take(10)
+                    shown.forEachIndexed { index, (name, streak, endDate) ->
+                        StatDateValueRow(
+                            label = "${index + 1}. $name",
+                            value = "$streak days",
+                            date = endDate,
+                            onNavigateToDate = onNavigateToDate
                         )
                     }
+                    ExpandListToggle(
+                        totalCount = stats.topHabitsByLongestStreak.size,
+                        expanded = expandedLongestStreak,
+                        onToggle = { expandedLongestStreak = !expandedLongestStreak }
+                    )
                 }
 
                 // ── Top Habits by Current Streak ──────────────────────────────
                 StatsSection(title = "🏃 Top 10 Habits by Current Streak", accentIndex = 6) {
-                    stats.topHabitsByCurrentStreak.forEachIndexed { index, (name, streak) ->
+                    val shown = if (expandedCurrentStreak) stats.topHabitsByCurrentStreak
+                        else stats.topHabitsByCurrentStreak.take(10)
+                    shown.forEachIndexed { index, (name, streak) ->
                         StatRow(
                             "${index + 1}. $name",
                             "$streak days",
@@ -459,22 +507,36 @@ fun AppStatsScreen(
                             }
                         )
                     }
+                    ExpandListToggle(
+                        totalCount = stats.topHabitsByCurrentStreak.size,
+                        expanded = expandedCurrentStreak,
+                        onToggle = { expandedCurrentStreak = !expandedCurrentStreak }
+                    )
                 }
 
                 // ── Worst Anti-Streaks ────────────────────────────────────────
                 StatsSection(title = "💤 Top 10 Longest Current Anti-Streaks", accentIndex = 7) {
-                    stats.topHabitsByAntiStreak.forEachIndexed { index, (name, antiStreak) ->
+                    val shown = if (expandedAntiStreak) stats.topHabitsByAntiStreak
+                        else stats.topHabitsByAntiStreak.take(10)
+                    shown.forEachIndexed { index, (name, antiStreak) ->
                         StatRow(
                             "${index + 1}. $name",
                             "$antiStreak days",
                             valueColor = RedValue
                         )
                     }
+                    ExpandListToggle(
+                        totalCount = stats.topHabitsByAntiStreak.size,
+                        expanded = expandedAntiStreak,
+                        onToggle = { expandedAntiStreak = !expandedAntiStreak }
+                    )
                 }
 
                 // ── Habits with Highest Single-Day Count ──────────────────────
                 StatsSection(title = "💥 Highest Single-Day Count per Habit", accentIndex = 8) {
-                    stats.topHabitsBySingleDayHigh.forEachIndexed { index, triple ->
+                    val shown = if (expandedSingleDay) stats.topHabitsBySingleDayHigh
+                        else stats.topHabitsBySingleDayHigh.take(10)
+                    shown.forEachIndexed { index, triple ->
                         StatDateValueRow(
                             label = "${index + 1}. ${triple.first}",
                             value = triple.second.toString(),
@@ -482,29 +544,77 @@ fun AppStatsScreen(
                             onNavigateToDate = onNavigateToDate
                         )
                     }
+                    ExpandListToggle(
+                        totalCount = stats.topHabitsBySingleDayHigh.size,
+                        expanded = expandedSingleDay,
+                        onToggle = { expandedSingleDay = !expandedSingleDay }
+                    )
                 }
 
                 // ── Day of Week Analysis ──────────────────────────────────────
-                StatsSection(title = "📅 Average Points by Day of Week", accentIndex = 9) {
+                StatsSection(
+                    title = "📅 Average Points by Day of Week",
+                    accentIndex = 9,
+                    infoText = "Full weeks with zero points are excluded from these averages."
+                ) {
+                    val maxDow = stats.avgPointsByDayOfWeek.maxByOrNull { it.second }?.second
+                    val minDow = stats.avgPointsByDayOfWeek.filter { it.second > 0 }
+                        .minByOrNull { it.second }?.second
                     stats.avgPointsByDayOfWeek.forEach { (dayName, avg) ->
-                        val isHighest = avg == stats.avgPointsByDayOfWeek.maxByOrNull { it.second }?.second
                         StatRow(
                             dayName,
                             "%.2f".format(avg),
-                            valueColor = if (isHighest) GoldValue else ValueColor
+                            valueColor = when (avg) {
+                                maxDow -> GoldValue
+                                minDow -> RedValue
+                                else -> ValueColor
+                            }
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    StatRow(
-                        "Best day of the week",
-                        stats.bestDayOfWeek,
-                        valueColor = GoldValue
-                    )
-                    StatRow(
-                        "Worst day of the week",
-                        stats.worstDayOfWeek,
-                        valueColor = RedValue
-                    )
+                }
+
+                // ── Day of Month Analysis ─────────────────────────────────────
+                StatsSection(
+                    title = "📅 Average Points by Day of Month",
+                    accentIndex = 9,
+                    infoText = "Full months with zero points are excluded from these averages."
+                ) {
+                    val maxDom = stats.avgPointsByDayOfMonth.maxByOrNull { it.second }?.second
+                    val minDom = stats.avgPointsByDayOfMonth.filter { it.second > 0 }
+                        .minByOrNull { it.second }?.second
+                    stats.avgPointsByDayOfMonth.forEach { (dayLabel, avg) ->
+                        StatRow(
+                            dayLabel,
+                            "%.2f".format(avg),
+                            valueColor = when (avg) {
+                                maxDom -> GoldValue
+                                minDom -> RedValue
+                                else -> ValueColor
+                            }
+                        )
+                    }
+                }
+
+                // ── Yearly Averages ───────────────────────────────────────────
+                StatsSection(
+                    title = "📅 Average Points by Year",
+                    accentIndex = 9,
+                    infoText = "Years with no data (or all-zero days) are excluded from this list."
+                ) {
+                    val maxYear = stats.avgPointsByYear.maxByOrNull { it.second }?.second
+                    val minYear = stats.avgPointsByYear.filter { it.second > 0 }
+                        .minByOrNull { it.second }?.second
+                    stats.avgPointsByYear.forEach { (yearLabel, avg) ->
+                        StatRow(
+                            yearLabel,
+                            "%.2f".format(avg),
+                            valueColor = when (avg) {
+                                maxYear -> GoldValue
+                                minYear -> RedValue
+                                else -> ValueColor
+                            }
+                        )
+                    }
                 }
 
                 // ── Monthly Trends ────────────────────────────────────────────
@@ -512,13 +622,7 @@ fun AppStatsScreen(
                     stats.topMonths.forEachIndexed { index, (monthLabel, points) ->
                         StatRow(
                             "${index + 1}. $monthLabel",
-                            formatLargeNumber(points),
-                            valueColor = when (index) {
-                                0 -> GoldValue
-                                1 -> Color(0xFFC0C0C0)
-                                2 -> Color(0xFFCD7F32)
-                                else -> ValueColor
-                            }
+                            formatLargeNumber(points)
                         )
                     }
                 }
@@ -595,11 +699,27 @@ fun AppStatsScreen(
                         }
                     )
                     StatRow("Average habits done per day", "%.1f".format(stats.avgHabitsDonePerDay))
-                    StatDateRow(
-                        "Day with most unique habits done",
-                        stats.dayWithMostUniqueHabits.first,
-                        onNavigateToDate,
-                        suffix = " (${stats.dayWithMostUniqueHabits.second} habits)"
+                    StatClickableCountRow(
+                        label = "Unique habits done today",
+                        count = stats.uniqueHabitsToday,
+                        onClick = {
+                            openPopup(
+                                "Unique Habits Done Today (${stats.uniqueHabitsToday})",
+                                stats.uniqueHabitsTodayList
+                            )
+                        }
+                    )
+                    StatCountDateRow(
+                        label = "Day with most unique habits done",
+                        count = stats.dayWithMostUniqueHabits.second,
+                        dateStr = stats.dayWithMostUniqueHabits.first,
+                        onNavigateToDate = onNavigateToDate,
+                        onClickCount = {
+                            openPopup(
+                                "Unique Habits on ${stats.dayWithMostUniqueHabits.first} (${stats.dayWithMostUniqueHabits.second})",
+                                stats.dayWithMostUniqueHabitsList
+                            )
+                        }
                     )
                 }
 
@@ -627,6 +747,73 @@ fun AppStatsScreen(
         }
     }
 
+    // ── Stats list settings popup ──────────────────────────────────────────────
+    if (showListSettings) {
+        Dialog(onDismissRequest = { showListSettings = false }) {
+            Column(
+                modifier = Modifier
+                    .background(Color(0xFF1A1A2E), RoundedCornerShape(12.dp))
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = "Stats List Settings",
+                    color = SectionTitleColor,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = DividerColor)
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { excludeGarminFromLists = !excludeGarminFromLists },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = excludeGarminFromLists,
+                        onCheckedChange = { excludeGarminFromLists = it }
+                    )
+                    Text(
+                        text = "Exclude Garmin habits from lists",
+                        color = LabelColor,
+                        fontSize = 13.sp
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { excludeDisabledFromLists = !excludeDisabledFromLists },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = excludeDisabledFromLists,
+                        onCheckedChange = { excludeDisabledFromLists = it }
+                    )
+                    Text(
+                        text = "Exclude disabled habits from lists",
+                        color = LabelColor,
+                        fontSize = 13.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Button(
+                        onClick = { showListSettings = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A4A))
+                    ) {
+                        Text("Close", color = LabelColor)
+                    }
+                }
+            }
+        }
+    }
+
     // ── Habit list popup ──────────────────────────────────────────────────────
     if (showPopup) {
         HabitListPopup(
@@ -643,7 +830,12 @@ fun AppStatsScreen(
             data = graphInfo.data,
             lineColor = graphInfo.color,
             currentValue = graphInfo.currentValue,
-            onDismiss = { graphPopupKey = null }
+            onDismiss = { graphPopupKey = null },
+            onNavigateToDate = { date ->
+                graphPopupKey = null
+                onNavigateToDate(date)
+            },
+            onValueClick = graphInfo.onValueClick
         )
     }
 }
@@ -740,8 +932,10 @@ private fun HabitListPopup(
 private fun StatsSection(
     title: String,
     accentIndex: Int = 0,
+    infoText: String? = null,
     content: @Composable () -> Unit
 ) {
+    var showInfo by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -749,16 +943,43 @@ private fun StatsSection(
             .background(rainbowSectionBg(accentIndex), RoundedCornerShape(10.dp))
             .padding(12.dp)
     ) {
-        Text(
-            text = title,
-            color = rainbowTitleColor(accentIndex),
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = title,
+                color = rainbowTitleColor(accentIndex),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+            if (infoText != null) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "ⓘ",
+                    color = DateLinkColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { showInfo = true }
+                )
+            }
+        }
         Spacer(modifier = Modifier.height(8.dp))
         HorizontalDivider(color = DividerColor, thickness = 1.dp)
         Spacer(modifier = Modifier.height(8.dp))
         content()
+    }
+    if (showInfo && infoText != null) {
+        Dialog(onDismissRequest = { showInfo = false }) {
+            Text(
+                text = infoText,
+                color = LabelColor,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .background(Color(0xFF1A1A2E), RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+            )
+        }
     }
 }
 
@@ -828,6 +1049,96 @@ private fun StatClickableCountRow(
                 onClick = onClick
             )
         )
+    }
+}
+
+/**
+ * A "Show all / Show top 10" toggle row for expandable top-habits lists.
+ * Only rendered when the full list is longer than 10 entries.
+ */
+@Composable
+private fun ExpandListToggle(
+    totalCount: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    if (totalCount <= 10) return
+    Text(
+        text = if (expanded) "▲ Show top 10" else "▼ Show all ($totalCount)",
+        color = DateLinkColor,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        textDecoration = TextDecoration.Underline,
+        modifier = Modifier
+            .padding(top = 4.dp)
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onToggle
+            )
+    )
+}
+
+/**
+ * A stat row with a clickable count (opens a habit list popup) and a
+ * separately clickable date (navigates to that day).
+ */
+@Composable
+private fun StatCountDateRow(
+    label: String,
+    count: Int,
+    dateStr: String?,
+    onNavigateToDate: (LocalDate) -> Unit,
+    onClickCount: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = label,
+            color = LabelColor,
+            fontSize = 12.sp,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = count.toString(),
+                color = ClickableCountColor,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onClickCount
+                )
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            val localDate = dateStr?.let { parseDate(it) }
+            if (localDate != null) {
+                Text(
+                    text = localDate.format(DISPLAY_FMT),
+                    color = DateLinkColor,
+                    fontSize = 12.sp,
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { onNavigateToDate(localDate) }
+                )
+            } else {
+                Text(
+                    text = dateStr ?: "—",
+                    color = ValueColor,
+                    fontSize = 12.sp
+                )
+            }
+        }
     }
 }
 
@@ -1052,6 +1363,8 @@ private data class AppStats(
     val lastDayWithData: String? = null,
     val totalPointsAllTime: Long = 0,
     val dailyCumulativePoints: List<Pair<String, Int>> = emptyList(),
+    val dailyHabitsDone: List<Pair<String, Int>> = emptyList(),
+    val dailyHabitsDoneLists: Map<String, List<Pair<String, String>>> = emptyMap(),
 
     // Streak aggregate stats (Overview section)
     val totalStreakDays: Int = 0,                // sum of all current streak values
@@ -1096,15 +1409,15 @@ private data class AppStats(
 
     // Top habits
     val topHabitsByTotalPoints: List<Pair<String, Long>> = emptyList(),
-    val topHabitsByLongestStreak: List<Pair<String, Int>> = emptyList(),
+    val topHabitsByLongestStreak: List<Triple<String, Int, String?>> = emptyList(),
     val topHabitsByCurrentStreak: List<Pair<String, Int>> = emptyList(),
     val topHabitsByAntiStreak: List<Pair<String, Int>> = emptyList(),
     val topHabitsBySingleDayHigh: List<Triple<String, Int, String>> = emptyList(),
 
-    // Day of week
+    // Day of week / month / year averages
     val avgPointsByDayOfWeek: List<Pair<String, Double>> = emptyList(),
-    val bestDayOfWeek: String = "",
-    val worstDayOfWeek: String = "",
+    val avgPointsByDayOfMonth: List<Pair<String, Double>> = emptyList(),
+    val avgPointsByYear: List<Pair<String, Double>> = emptyList(),
 
     // Monthly
     val topMonths: List<Pair<String, Long>> = emptyList(),
@@ -1126,7 +1439,10 @@ private data class AppStats(
     val habitsNeverDone: Int = 0,
     val habitsNeverDoneList: List<Pair<String, String>> = emptyList(),
     val avgHabitsDonePerDay: Double = 0.0,
+    val uniqueHabitsToday: Int = 0,
+    val uniqueHabitsTodayList: List<Pair<String, String>> = emptyList(),
     val dayWithMostUniqueHabits: Pair<String?, Int> = Pair(null, 0),
+    val dayWithMostUniqueHabitsList: List<Pair<String, String>> = emptyList(),
 
     // Recent
     val last7DaysBreakdown: List<Pair<String, Int>> = emptyList(),
@@ -1145,7 +1461,8 @@ private fun computeAppStats(
     secondaryValueHabits: Set<String> = emptySet(),
     secondaryValueFallbackHabits: Set<String> = emptySet(),
     timerMinutesPrimaryHabits: Set<String> = emptySet(),
-    invertedBinaryHabits: Set<String> = emptySet()
+    invertedBinaryHabits: Set<String> = emptySet(),
+    listExcludedHabits: Set<String> = emptySet()
 ): AppStats {
     if (db.isEmpty()) return AppStats()
 
@@ -1189,6 +1506,8 @@ private fun computeAppStats(
     val dailyTotals = mutableMapOf<String, Int>()
     val dailyHabitCounts = mutableMapOf<String, Int>()
 
+    // Per-day list of habits done (name + points) for graph value popups
+    val dailyHabitsDoneNames = mutableMapOf<String, MutableList<Pair<String, String>>>()
     for (dateStr in sortedDates) {
         var totalPoints = 0
         var habitsCount = 0
@@ -1199,10 +1518,17 @@ private fun computeAppStats(
             val raw = entries[dateStr] ?: 0
             val points = effPts(habitName, raw, dateStr)
             totalPoints += points
-            if (points > 0) habitsCount++
+            if (points > 0) {
+                habitsCount++
+                dailyHabitsDoneNames.getOrPut(dateStr) { mutableListOf() }
+                    .add(Pair(habitName, "$points pts"))
+            }
         }
         dailyTotals[dateStr] = totalPoints
         dailyHabitCounts[dateStr] = habitsCount
+    }
+    val dailyHabitsDoneLists = dailyHabitsDoneNames.mapValues { (_, list) ->
+        list.sortedByDescending { it.second.removeSuffix(" pts").toIntOrNull() ?: 0 }
     }
 
     // ── Overview ──────────────────────────────────────────────────────────
@@ -1234,6 +1560,10 @@ private fun computeAppStats(
             Pair(entry.key, cumulative.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         }
     }
+
+    // ── Habits done per day over time (for graph) ────────────────────────
+    val dailyHabitsDone = dailyHabitCounts.entries.sortedBy { it.key }
+        .map { Pair(it.key, it.value) }
 
     // ── Highest points day ────────────────────────────────────────────────
     val bestDay = dailyTotals.maxByOrNull { it.value }
@@ -1375,8 +1705,17 @@ private fun computeAppStats(
     var longestStreakEnd = ""
     var runLength = 0
     var runStart = ""
+    var prevStreakDate: LocalDate? = null
     for ((idx, dateStr) in sortedDatesList.withIndex()) {
-        if ((dailyTotals[dateStr] ?: 0) > 0) {
+        val currDate = parseDate(dateStr)
+        // A calendar gap between dates that have data breaks the run: the
+        // days in between had no data at all, so they are zero-days, not
+        // contiguous streak days. Without this check a lone entry years ago
+        // chains onto later data and produces a bogus giant streak.
+        val gapBreak = prevStreakDate != null && currDate != null &&
+            ChronoUnit.DAYS.between(prevStreakDate, currDate) > 1L
+        val hasPoints = (dailyTotals[dateStr] ?: 0) > 0
+        if (hasPoints && !gapBreak) {
             if (runLength == 0) runStart = dateStr
             runLength++
         } else {
@@ -1385,8 +1724,9 @@ private fun computeAppStats(
                 longestStreakStart = runStart
                 longestStreakEnd = if (idx > 0) sortedDatesList[idx - 1] else runStart
             }
-            runLength = 0
+            if (hasPoints) { runStart = dateStr; runLength = 1 } else runLength = 0
         }
+        prevStreakDate = currDate
     }
     if (runLength > longestStreak) {
         longestStreak = runLength
@@ -1399,6 +1739,7 @@ private fun computeAppStats(
         val name: String,
         val totalPoints: Long,
         val longestStreak: Int,
+        val longestStreakEndDate: String,
         val currentStreak: Int,
         val antiStreak: Int,
         val singleDayHigh: Int,
@@ -1429,17 +1770,33 @@ private fun computeAppStats(
         var maxDay = 0
         var maxDayDate = ""
         var longest = 0
+        var longestEnd = ""
         var run = 0
+        var lastRunDate = ""
+        var prevEntryDate: LocalDate? = null
 
         val sortedEntries = mergedEntries.entries.sortedBy { it.key }
         for ((dateStr, _) in sortedEntries) {
+            val currDate = parseDate(dateStr)
+            // Calendar gaps between entry dates break the streak run (same
+            // rationale as the aggregate streak fix above).
+            val gapBreak = prevEntryDate != null && currDate != null &&
+                ChronoUnit.DAYS.between(prevEntryDate, currDate) > 1L
             val raw = entries[dateStr] ?: 0
             val pts = effPts(habitName, raw, dateStr)
             total += pts
             if (pts > maxDay) { maxDay = pts; maxDayDate = dateStr }
-            if (pts > 0) run++ else { longest = maxOf(longest, run); run = 0 }
+            if (pts > 0 && !gapBreak) {
+                run++
+                lastRunDate = dateStr
+            } else {
+                if (run > longest) { longest = run; longestEnd = lastRunDate }
+                run = if (pts > 0) 1 else 0
+                if (pts > 0) lastRunDate = dateStr
+            }
+            prevEntryDate = currDate
         }
-        longest = maxOf(longest, run)
+        if (run > longest) { longest = run; longestEnd = lastRunDate }
 
         // Expand entries to include all calendar days up to today so that
         // missing days count as zeros (matching desktop/calculateStreakDisplay behavior)
@@ -1462,7 +1819,10 @@ private fun computeAppStats(
             if (effPts(habitName, raw, dateStr) == 0) antiStreak++ else break
         }
 
-        HabitStat(habitName, total, longest, curStreak, antiStreak, maxDay, maxDayDate)
+        // If the longest streak is still ongoing, report today as its end date
+        val longestEndFinal = if (longest > 0 && curStreak >= longest) todayStr else longestEnd
+
+        HabitStat(habitName, total, longest, longestEndFinal, curStreak, antiStreak, maxDay, maxDayDate)
     }
 
     // ── Streak aggregate stats for Overview ─────────────────────────────
@@ -1563,28 +1923,61 @@ private fun computeAppStats(
     val dailyStreakCounts = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateStreakCount[idx]) }
     val dailyAntiStreakCounts = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateAntiStreakCount[idx]) }
 
-    val topByTotal = habitStats.sortedByDescending { it.totalPoints }.take(10)
+    // Habits excluded from the ranked lists (Garmin-linked and/or disabled,
+    // per the stats settings popup). Only the top-10 lists and the diversity
+    // ever/never-done lists are filtered; point totals and streak aggregates
+    // stay untouched.
+    val listHabitStats = habitStats.filter { it.name !in listExcludedHabits }
+    // Full ranked lists — the UI slices the top 10 and can expand to all.
+    val topByTotal = listHabitStats.sortedByDescending { it.totalPoints }
         .map { Pair(it.name, it.totalPoints) }
-    val topByLongestStreak = habitStats.sortedByDescending { it.longestStreak }.take(10)
-        .map { Pair(it.name, it.longestStreak) }
-    val topByCurrentStreak = habitStats.filter { it.currentStreak > 0 }
-        .sortedByDescending { it.currentStreak }.take(10)
+    val topByLongestStreak = listHabitStats.sortedByDescending { it.longestStreak }
+        .map { Triple(it.name, it.longestStreak, it.longestStreakEndDate) }
+    val topByCurrentStreak = listHabitStats.filter { it.currentStreak > 0 }
+        .sortedByDescending { it.currentStreak }
         .map { Pair(it.name, it.currentStreak) }
-    val topByAntiStreak = habitStats.filter { it.antiStreak > 0 }
-        .sortedByDescending { it.antiStreak }.take(10)
+    val topByAntiStreak = listHabitStats.filter { it.antiStreak > 0 }
+        .sortedByDescending { it.antiStreak }
         .map { Pair(it.name, it.antiStreak) }
-    val topBySingleDay = habitStats.filter { it.singleDayHigh > 0 }
-        .sortedByDescending { it.singleDayHigh }.take(10)
+    val topBySingleDay = listHabitStats.filter { it.singleDayHigh > 0 }
+        .sortedByDescending { it.singleDayHigh }
         .map { Triple(it.name, it.singleDayHigh, it.singleDayHighDate) }
 
-    // ── Day of week analysis ──────────────────────────────────────────────
-    val dayOfWeekSums = mutableMapOf<DayOfWeek, Long>()
-    val dayOfWeekCounts = mutableMapOf<DayOfWeek, Int>()
+    // ── Day of week / day of month / year analysis ────────────────────────
+    // Full weeks (or months) with zero points are excluded from the weekday
+    // (or day-of-month) averages so dormant periods don't drag them down.
+    // Years with no data or all-zero days are excluded from the yearly list.
+    fun isoWeekKey(ld: LocalDate): String {
+        val wf = java.time.temporal.WeekFields.ISO
+        return "%04d-W%02d".format(ld.get(wf.weekBasedYear()), ld.get(wf.weekOfWeekBasedYear()))
+    }
+
+    val weekTotals = mutableMapOf<String, Long>()
+    val monthTotalsForAvg = mutableMapOf<String, Long>()
     for ((dateStr, pts) in dailyTotals) {
         val ld = parseDate(dateStr) ?: continue
-        val dow = ld.dayOfWeek
-        dayOfWeekSums[dow] = (dayOfWeekSums[dow] ?: 0L) + pts
-        dayOfWeekCounts[dow] = (dayOfWeekCounts[dow] ?: 0) + 1
+        val wk = isoWeekKey(ld)
+        weekTotals[wk] = (weekTotals[wk] ?: 0L) + pts
+        val mk = dateStr.substring(0, 7)
+        monthTotalsForAvg[mk] = (monthTotalsForAvg[mk] ?: 0L) + pts
+    }
+
+    val dayOfWeekSums = mutableMapOf<DayOfWeek, Long>()
+    val dayOfWeekCounts = mutableMapOf<DayOfWeek, Int>()
+    val dayOfMonthSums = mutableMapOf<Int, Long>()
+    val dayOfMonthCounts = mutableMapOf<Int, Int>()
+    for ((dateStr, pts) in dailyTotals) {
+        val ld = parseDate(dateStr) ?: continue
+        if ((weekTotals[isoWeekKey(ld)] ?: 0L) > 0L) {
+            val dow = ld.dayOfWeek
+            dayOfWeekSums[dow] = (dayOfWeekSums[dow] ?: 0L) + pts
+            dayOfWeekCounts[dow] = (dayOfWeekCounts[dow] ?: 0) + 1
+        }
+        if ((monthTotalsForAvg[dateStr.substring(0, 7)] ?: 0L) > 0L) {
+            val dom = ld.dayOfMonth
+            dayOfMonthSums[dom] = (dayOfMonthSums[dom] ?: 0L) + pts
+            dayOfMonthCounts[dom] = (dayOfMonthCounts[dom] ?: 0) + 1
+        }
     }
     val dayOfWeekOrder = listOf(
         DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
@@ -1595,8 +1988,25 @@ private fun computeAppStats(
         val count = dayOfWeekCounts[dow] ?: 1
         Pair(dow.name.lowercase().replaceFirstChar { it.uppercase() }, sum.toDouble() / count)
     }
-    val bestDow = avgByDow.maxByOrNull { it.second }?.first ?: ""
-    val worstDow = avgByDow.minByOrNull { it.second }?.first ?: ""
+    val avgByDom = (1..31).map { dom ->
+        val sum = dayOfMonthSums[dom] ?: 0L
+        val count = dayOfMonthCounts[dom] ?: 1
+        Pair("Day $dom", sum.toDouble() / count)
+    }
+
+    // Yearly averages: total points per year divided by the days of that year
+    // present in the dataset. Years with zero total points are omitted.
+    val yearSums = mutableMapOf<Int, Long>()
+    val yearDayCounts = mutableMapOf<Int, Int>()
+    for ((dateStr, pts) in dailyTotals) {
+        val year = dateStr.substring(0, 4).toIntOrNull() ?: continue
+        yearSums[year] = (yearSums[year] ?: 0L) + pts
+        yearDayCounts[year] = (yearDayCounts[year] ?: 0) + 1
+    }
+    val avgByYear = yearSums.entries
+        .filter { it.value > 0L }
+        .sortedBy { it.key }
+        .map { (year, sum) -> Pair(year.toString(), sum.toDouble() / (yearDayCounts[year] ?: 1)) }
 
     // ── Monthly totals ────────────────────────────────────────────────────
     val monthlyTotals = mutableMapOf<String, Long>()
@@ -1634,15 +2044,34 @@ private fun computeAppStats(
     val mostHabitsDay = dailyHabitCounts.maxByOrNull { it.value }
 
     // ── Diversity ─────────────────────────────────────────────────────────
-    val habitsEverDoneList = habitStats.filter { it.totalPoints > 0 }
+    val habitsEverDoneList = listHabitStats.filter { it.totalPoints > 0 }
         .sortedByDescending { it.totalPoints }
         .map { Pair(it.name, formatLargeNumber(it.totalPoints) + " pts") }
-    val habitsNeverDoneList = habitStats.filter { it.totalPoints == 0L }
+    val habitsNeverDoneList = listHabitStats.filter { it.totalPoints == 0L }
         .sortedBy { it.name }
         .map { Pair(it.name, "") }
     val avgHabitsDonePerDay = if (dailyTotals.isNotEmpty())
         dailyHabitCounts.values.sum().toDouble() / dailyTotals.size else 0.0
     val dayMostUnique = dailyHabitCounts.maxByOrNull { it.value }
+    // Unique-habits-done lists (respect the list exclusion toggles so the
+    // popup contents match the displayed counts)
+    val uniqueTodayList = mutableListOf<Pair<String, String>>()
+    val mostUniqueDayList = mutableListOf<Pair<String, String>>()
+    val mostUniqueDayDateStr = dayMostUnique?.key
+    for ((habitName, entries) in db) {
+        if (isInternalValueKey(habitName)) continue
+        if (habitName in noPointsHabits) continue
+        if (habitName in listExcludedHabits) continue
+        val ptsToday = effPts(habitName, entries[todayStr] ?: 0, todayStr)
+        if (ptsToday > 0) uniqueTodayList.add(Pair(habitName, "$ptsToday pts"))
+        if (mostUniqueDayDateStr != null) {
+            val ptsThatDay = effPts(habitName, entries[mostUniqueDayDateStr] ?: 0, mostUniqueDayDateStr)
+            if (ptsThatDay > 0) mostUniqueDayList.add(Pair(habitName, "$ptsThatDay pts"))
+        }
+    }
+    uniqueTodayList.sortByDescending { it.second }
+    mostUniqueDayList.sortByDescending { it.second }
+    val uniqueHabitsToday = uniqueTodayList.size
 
     // ── Last 7 days breakdown ─────────────────────────────────────────────
     val last7Days = (0 until 7).map { i ->
@@ -1660,6 +2089,8 @@ private fun computeAppStats(
         lastDayWithData = lastDayWithData,
         totalPointsAllTime = totalPointsAllTime,
         dailyCumulativePoints = dailyCumulativePoints,
+        dailyHabitsDone = dailyHabitsDone,
+        dailyHabitsDoneLists = dailyHabitsDoneLists,
         totalStreakDays = totalStreakDays,
         totalAntiStreakDays = totalAntiStreakDays,
         habitsWithStreak = habitsWithStreakCount,
@@ -1697,8 +2128,8 @@ private fun computeAppStats(
         topHabitsByAntiStreak = topByAntiStreak,
         topHabitsBySingleDayHigh = topBySingleDay,
         avgPointsByDayOfWeek = avgByDow,
-        bestDayOfWeek = bestDow,
-        worstDayOfWeek = worstDow,
+        avgPointsByDayOfMonth = avgByDom,
+        avgPointsByYear = avgByYear,
         topMonths = topMonths,
         daysWithAtLeastOnePoint = daysWithPoints,
         daysWithZeroPoints = daysWithZero,
@@ -1714,11 +2145,17 @@ private fun computeAppStats(
         habitsNeverDone = habitsNeverDoneList.size,
         habitsNeverDoneList = habitsNeverDoneList,
         avgHabitsDonePerDay = avgHabitsDonePerDay,
+        uniqueHabitsToday = uniqueHabitsToday,
+        uniqueHabitsTodayList = uniqueTodayList,
         dayWithMostUniqueHabits = Pair(dayMostUnique?.key, dayMostUnique?.value ?: 0),
+        dayWithMostUniqueHabitsList = mostUniqueDayList,
         last7DaysBreakdown = last7Days,
         disabledHabitsCount = disabledHabitsCount
     )
 }
+
+private fun formatStreakDays(n: Int): String =
+    if (n >= 365) "${n}d (${n / 365}y ${n % 365}d)" else "${n}d"
 
 private fun formatLargeNumber(n: Long): String = when {
     n >= 1_000_000 -> "%.1fM".format(n / 1_000_000.0)

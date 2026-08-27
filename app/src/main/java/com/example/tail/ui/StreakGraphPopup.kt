@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -117,7 +119,9 @@ fun StreakGraphPopup(
     data: List<Pair<String, Int>>,
     lineColor: Color,
     currentValue: Int? = null,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onNavigateToDate: ((LocalDate) -> Unit)? = null,
+    onValueClick: ((LocalDate, Int) -> Unit)? = null
 ) {
     // Force landscape orientation — state is saved via rememberSaveable in the
     // caller so it survives the configuration change this triggers. On close,
@@ -144,6 +148,16 @@ fun StreakGraphPopup(
 
     // Scrub crosshair x-position (px within the chart Box), null when idle.
     var scrubX by remember { mutableStateOf<Float?>(null) }
+
+    // Index of the selected data point (persists after the finger lifts so
+    // the tooltip / header label stays visible).
+    var selectedIdx by remember { mutableStateOf<Int?>(null) }
+
+    // When locked, pinch-zoom and pan are disabled — dragging only moves the
+    // crosshair/tooltip. This lets the user slide their finger across the
+    // chart without disturbing the viewport.
+    var locked by remember { mutableStateOf(false) }
+    val lockedCurrent by rememberUpdatedState(locked)
 
     val windowDays = (windowEnd - windowStart).coerceAtLeast(0.001f)
     val zoomed = totalRange > 0f && windowDays < totalRange * 0.999f
@@ -195,6 +209,15 @@ fun StreakGraphPopup(
                     )
                 }
 
+                // Lock toggle: freeze pan/zoom so scrubbing can't move the chart
+                Text(
+                    text = if (locked) "🔒" else "🔓",
+                    fontSize = 16.sp,
+                    modifier = Modifier
+                        .clickable { locked = !locked }
+                        .padding(horizontal = 6.dp)
+                )
+
                 IconButton(
                     onClick = onDismiss,
                     modifier = Modifier.size(32.dp)
@@ -205,6 +228,44 @@ fun StreakGraphPopup(
                         tint = LabelColor,
                         modifier = Modifier.size(20.dp)
                     )
+                }
+            }
+
+            // ── Selected point label: clickable date + clickable value ─────
+            val selIdx = selectedIdx
+            if (selIdx != null && selIdx in model.dayIdx.indices) {
+                val selDate = model.startDate.plusDays(model.dayIdx[selIdx].toLong())
+                val selValue = model.values[selIdx]
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = selDate.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d yyyy")),
+                        color = Color(0xFF66CCFF),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textDecoration = TextDecoration.Underline,
+                        modifier = Modifier.clickable { onNavigateToDate?.invoke(selDate) }
+                    )
+                    Text(
+                        text = "  •  ",
+                        color = DimColor,
+                        fontSize = 12.sp
+                    )
+                    Text(
+                        text = selValue.toString(),
+                        color = lineColor,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        textDecoration = if (onValueClick != null) TextDecoration.Underline else TextDecoration.None,
+                        modifier = Modifier.clickable(enabled = onValueClick != null) {
+                            onValueClick?.invoke(selDate, selValue)
+                        }
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
 
@@ -310,9 +371,20 @@ fun StreakGraphPopup(
                                     val centroid = event.calculateCentroid(useCurrent = true)
                                     if (centroid.isSpecified) {
                                         scrubX = centroid.x
+                                        // Track the nearest data point for the
+                                        // persistent tooltip / header label.
+                                        val frac = ((centroid.x - chartLeftPx) / plotWidthPx)
+                                            .coerceIn(0f, 1f)
+                                        val winDaysNow = (windowEnd - windowStart)
+                                            .coerceAtLeast(0.001f)
+                                        val targetDay = (windowStart + frac * winDaysNow)
+                                            .coerceIn(0f, (model.totalDays - 1).toFloat())
+                                        selectedIdx = nearestIndex(model.dayIdx, targetDay)
                                     }
 
-                                    if (pastSlop) {
+                                    // When locked, gestures never move the viewport —
+                                    // the finger only steers the crosshair.
+                                    if (pastSlop && !lockedCurrent) {
                                         applyGesture(panChange.x, zoomChange, centroid.x)
                                         event.changes.forEach { change ->
                                             if (change.positionChanged()) change.consume()
@@ -320,10 +392,11 @@ fun StreakGraphPopup(
                                     }
                                 }
 
-                                // Pointer(s) released — hide crosshair, detect double-tap.
-                                scrubX = null
+                                // Pointer(s) released — keep the crosshair and
+                                // selection in place so the tooltip persists;
+                                // detect double-tap (disabled while locked).
                                 val wasTap = !pastSlop && upTime - downTime < TAP_MAX_DURATION_MS
-                                if (wasTap) {
+                                if (wasTap && !lockedCurrent) {
                                     if (downTime - lastTapDownTime < DOUBLE_TAP_TIMEOUT_MS) {
                                         // Double-tap: toggle between reset and zoom-in at tap point.
                                         // Read the viewport fresh — the composition-scoped
