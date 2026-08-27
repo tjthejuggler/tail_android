@@ -110,7 +110,9 @@ fun MealEditorContent(
     var summary by remember { mutableStateOf(log.summary ?: "") }
     var tags by remember { mutableStateOf(log.ingredientsDetected) }
     var ratings by remember { mutableStateOf(log.macroRatings ?: MacroRatings()) }
-    var vegan by remember { mutableStateOf(log.isVeganVerified) }
+    // Vegan defaults ON for meals that have no details yet (fresh entries);
+    // meals with existing details keep their stored value.
+    var vegan by remember { mutableStateOf(log.isVeganVerified || log.needsDetails()) }
     var removedImages by remember { mutableStateOf(setOf<String>()) }
     var addedImages by remember { mutableStateOf(listOf<String>()) }
 
@@ -207,6 +209,11 @@ fun MealEditorContent(
             }
         }
     }
+
+    // ── AI text-description fill (like voice / photo, but typed) ──────
+    var mealDescription by remember { mutableStateOf("") }
+    var descParsing by remember { mutableStateOf(false) }
+    var descParseError by remember { mutableStateOf<String?>(null) }
 
     // A fresh mic result recorded while this editor is open is parsed by the
     // LLM — standalone, or together with the meal's first photo — and the
@@ -318,6 +325,40 @@ fun MealEditorContent(
         }
         analysisError?.let {
             Text("📷 $it", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+        }
+
+        // ── Describe by text: the LLM fills the form fields ────────────
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = mealDescription,
+            onValueChange = { mealDescription = it },
+            label = { Text("✍️ Describe the meal (AI fills the form)") },
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = androidx.compose.material3.LocalTextStyle.current.copy(fontSize = 13.sp)
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        OutlinedButton(
+            onClick = {
+                if (mealDescription.isNotBlank()) {
+                    descParsing = true
+                    descParseError = null
+                    scope.launch {
+                        val res = MealPhotoAnalyser.analyseVoice(
+                            context, mealDescription, images.firstOrNull()
+                        )
+                        descParsing = false
+                        res.foodData?.let { applyFoodData(it) }
+                            ?: run { descParseError = res.error ?: "AI could not parse the description" }
+                    }
+                }
+            },
+            enabled = !descParsing && mealDescription.isNotBlank(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (descParsing) "✍️ AI is filling the form…" else "✍️ Fill form from description (AI)")
+        }
+        descParseError?.let {
+            Text("✍️ $it", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
         }
 
         Spacer(modifier = Modifier.height(8.dp))

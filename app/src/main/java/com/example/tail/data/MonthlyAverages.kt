@@ -58,6 +58,10 @@ fun monthlyAveragesBulk(
         val entries = db[name] ?: continue
         val divider = settings.habitDividers[name] ?: 1
         val inverted = name in settings.invertedBinaryHabits
+        // Inverted habits earn nothing before their first day with actual
+        // data (non-zero count) — explicit zeros can predate real tracking.
+        val invertedStart =
+            if (inverted) entries.filterValues { it != 0 }.keys.minOrNull() else null
         val minutesPrimary = name in settings.widgetTimerMinutesPrimary
         // Minutes-primary habits read the first-class minutes slot; sessions-
         // primary fallback habits read the legacy secondary slot when they use
@@ -74,7 +78,7 @@ fun monthlyAveragesBulk(
             val raw = entries[ds] ?: 0
             // Mirrors the ViewModel's effectivePointsForDate() branch order.
             val pts = when {
-                inverted -> invertedBinaryPoints(raw)
+                inverted -> if (invertedStart != null && ds >= invertedStart) invertedBinaryPoints(raw) else 0
                 minutesPrimary -> effectivePointsWithFallback(
                     secEntries?.get(ds) ?: 0, divider, raw, true
                 )

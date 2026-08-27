@@ -124,6 +124,24 @@ fun calculateStreakDisplay(entries: Map<String, Int>, targetDate: LocalDate? = n
 fun invertedBinaryPoints(rawCount: Int): Int = if (rawCount > 0) 0 else 1
 
 /**
+ * Points for an inverted-binary habit on a SPECIFIC date.
+ *
+ * Days strictly before the habit's first day with ACTUAL data (a non-zero
+ * raw count) earn NO points: a habit must not accrue "clean day" points
+ * retroactively for history that predates real tracking of it. Explicit
+ * zero entries cannot mark the start of tracking — desktop-synced DBs
+ * record 0 for every calendar day of every habit, so the first non-zero
+ * entry is the only reliable "tracking started here" marker. Days from
+ * that point onward keep the normal inverted semantics (1 point when not
+ * done, 0 when done). A habit with no non-zero entries earns nothing.
+ */
+fun invertedBinaryPointsForDate(entries: Map<String, Int>, dateStr: String): Int {
+    val firstData = entries.filterValues { it != 0 }.keys.minOrNull() ?: return 0
+    if (dateStr < firstData) return 0
+    return invertedBinaryPoints(entries[dateStr] ?: 0)
+}
+
+/**
  * Builds the inverted view of a habit's entries for inverted-binary habits.
  *
  * Every calendar day between the first and last entry (plus [targetDate] when
@@ -137,11 +155,18 @@ fun invertEntriesForInvertedBinary(
     targetDate: LocalDate? = null
 ): Map<String, Int> {
     if (entries.isEmpty()) return emptyMap()
+    // Bound the series by the first day with ACTUAL data (non-zero raw
+    // count). Explicit zero entries can predate real tracking (desktop DBs
+    // record 0 for every calendar day), and those pre-tracking days must
+    // not count as clean-day successes — otherwise streaks stretch back
+    // hundreds of days before the habit was ever tracked.
+    val firstDataDate = entries.filterValues { it != 0 }.keys.minOrNull() ?: return emptyMap()
+    val bounded = entries.filterKeys { it >= firstDataDate }
     val withTarget = if (targetDate != null) {
         val targetDateStr = dateString(targetDate)
-        if (targetDateStr !in entries) entries + (targetDateStr to 0) else entries
+        if (targetDateStr !in bounded) bounded + (targetDateStr to 0) else bounded
     } else {
-        entries
+        bounded
     }
     return expandEntriesToCalendarDaysPublic(withTarget).mapValues { if (it.value == 0) 1 else 0 }
 }
@@ -402,7 +427,7 @@ fun buildHabit(
 
     // todayCount shown on the button is the effective points value (with fallback)
     val countForDate = when {
-        invertedBinary -> invertedBinaryPoints(rawCountForDate)
+        invertedBinary -> invertedBinaryPointsForDate(effectiveEntries, targetDateStr)
         swapPrimarySecondary -> effectivePointsWithFallback(secValForDate, divider, rawCountForDate, true)
         else -> effectivePointsWithFallback(rawCountForDate, divider, secValForDate, useSecondaryFallback)
     }
@@ -485,7 +510,7 @@ fun computeTaskerStats(
             if (isInternalValueKey(habitName)) return@sumOf 0
             // Inverted-binary habits contribute 1 point on not-done days
             if (habitName in invertedBinaryHabits) {
-                return@sumOf invertedBinaryPoints(entries[ds] ?: 0)
+                return@sumOf invertedBinaryPointsForDate(entries, ds)
             }
             if (habitName in timerMinutesPrimaryHabits) {
                 // Minutes (first-class minutes slot) is primary; sessions are the fallback

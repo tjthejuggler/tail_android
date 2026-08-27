@@ -7,6 +7,7 @@ import com.example.tail.data.dateString
 import com.example.tail.data.effectivePointsWithFallback
 import com.example.tail.data.fallbackSlotKey
 import com.example.tail.data.invertedBinaryPoints
+import com.example.tail.data.invertedBinaryPointsForDate
 import com.example.tail.data.minutesKey
 import com.example.tail.data.monthlyAveragesBulk
 import com.example.tail.data.secondaryValueKey
@@ -35,7 +36,7 @@ class MonthlyAveragesBulkTest {
         val raw = db[name]?.get(dateStr) ?: 0
         val divider = settings.habitDividers[name] ?: 1
         return when {
-            name in settings.invertedBinaryHabits -> invertedBinaryPoints(raw)
+            name in settings.invertedBinaryHabits -> invertedBinaryPointsForDate(db[name] ?: emptyMap(), dateStr)
             // Minutes-primary: minutes live in the first-class `minutes:` slot;
             // sessions (the habit's own slot) are the fallback.
             name in settings.widgetTimerMinutesPrimary -> effectivePointsWithFallback(

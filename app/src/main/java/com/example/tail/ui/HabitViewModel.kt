@@ -4379,8 +4379,13 @@ class HabitViewModel(
         val divider = _settings.value.habitDividers[habitName] ?: 1
         // Minutes-primary habits: minutes (the first-class minutes slot) drive
         // points (divider applies), sessions are the zero-minutes fallback.
-        // Inverted-binary habits: 1 point on not-done days, 0 on done days
+        // Inverted-binary habits: 1 point on not-done days, 0 on done days —
+        // but never before the habit's first recorded entry (no retroactive
+        // points for dates that predate the habit or any data on it).
         if (habitName in _settings.value.invertedBinaryHabits) {
+            val firstDataDate = cachedPhoneDb[habitName]
+                ?.filterValues { it != 0 }?.keys?.minOrNull()
+            if (firstDataDate == null || dateStr < firstDataDate) return 0
             return com.example.tail.data.invertedBinaryPoints(rawCount)
         }
         if (habitName in _settings.value.widgetTimerMinutesPrimary) {

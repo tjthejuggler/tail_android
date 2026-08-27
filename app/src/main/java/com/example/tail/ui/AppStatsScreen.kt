@@ -50,7 +50,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.applyDivider
-import com.example.tail.data.invertedBinaryPoints
+import com.example.tail.data.invertedBinaryPointsForDate
 import com.example.tail.data.isInternalValueKey
 import com.example.tail.data.effectiveEntriesWithFallback
 import com.example.tail.data.effectivePointsWithFallback
@@ -1473,8 +1473,12 @@ private fun computeAppStats(
     // slot — the fallback value is used directly (no divider) when the
     // primary value is 0.
     fun effPts(habitName: String, raw: Int, dateStr: String): Int {
-        // Inverted-binary habits: 1 point on not-done days, 0 on done days
-        if (habitName in invertedBinaryHabits) return invertedBinaryPoints(raw)
+        // Inverted-binary habits: 1 point on not-done days, 0 on done days —
+        // but ONLY from the habit's first recorded entry onward; days before
+        // the habit existed / had any data earn nothing.
+        if (habitName in invertedBinaryHabits) {
+            return invertedBinaryPointsForDate(db[habitName] ?: emptyMap(), dateStr)
+        }
         val div = dividers[habitName] ?: 1
         if (habitName in timerMinutesPrimaryHabits) {
             // Minutes primary: minutes drive points, sessions are the fallback
