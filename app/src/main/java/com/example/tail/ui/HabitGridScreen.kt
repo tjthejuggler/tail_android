@@ -71,6 +71,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -703,6 +704,8 @@ fun HabitGridScreen(
     }
     val habitRestorePreview by viewModel.habitRestorePreview.collectAsState()
     val habitRestoreStatus by viewModel.habitRestoreStatus.collectAsState()
+    val datedEntryRefreshPreview by viewModel.datedEntryRefreshPreview.collectAsState()
+    val datedEntryRefreshStatus by viewModel.datedEntryRefreshStatus.collectAsState()
 
     // Show errors as snackbar
     LaunchedEffect(errorMessage) {
@@ -1593,6 +1596,7 @@ fun HabitGridScreen(
                             datedEntryPickerHabit = name
                             datedEntryFilePicker.launch(arrayOf("text/plain", "text/markdown", "*/*"))
                         },
+                        onRefreshDatedEntry = { name -> viewModel.previewDatedEntryRefresh(name) },
                         onDeleteHabit = { name -> deleteConfirmHabitName = name },
                         onChangeIcon = { name -> iconPickerHabitName = name },
                         onSetCount = { name, count -> viewModel.setHabitCount(name, count) },
@@ -2827,6 +2831,22 @@ fun HabitGridScreen(
         val status = habitRestoreStatus ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(status)
         viewModel.clearHabitRestoreStatus()
+    }
+
+    // Dated-entry refresh confirmation dialog (single habit only)
+    datedEntryRefreshPreview?.let { preview ->
+        DatedEntryRefreshConfirmDialog(
+            preview = preview,
+            onConfirm = { viewModel.applyDatedEntryRefresh() },
+            onDismiss = { viewModel.cancelDatedEntryRefresh() }
+        )
+    }
+
+    // Dated-entry refresh status / error toast
+    LaunchedEffect(datedEntryRefreshStatus) {
+        val status = datedEntryRefreshStatus ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(status)
+        viewModel.clearDatedEntryRefreshStatus()
     }
 
     // Global search dialog — clicking a result closes it (state is preserved
@@ -5068,6 +5088,8 @@ private fun EditModeControlBar(
     onCreateTextInputFile: (String) -> Unit = {},
     onToggleDatedEntry: (String) -> Unit,
     onPickDatedEntryFile: (String) -> Unit,
+    /** Called when the user taps "Refresh" to re-parse the linked dated-entry file. */
+    onRefreshDatedEntry: (String) -> Unit = {},
     onDeleteHabit: (String) -> Unit,
     onChangeIcon: (String) -> Unit,
     onRenameHabit: (String, String) -> Unit,
@@ -5852,23 +5874,41 @@ private fun EditModeControlBar(
                                     fontSize = 10.sp
                                 )
                             }
-                            Button(
-                                onClick = { onPickDatedEntryFile(selectedHabitName) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Folder,
-                                    contentDescription = "Pick dated entry source file",
-                                    tint = Color(0xFFFFCC44),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    if (hasDatedFile) "Change" else "Link File",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFFFFCC44)
-                                )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (hasDatedFile) {
+                                    Button(
+                                        onClick = { onRefreshDatedEntry(selectedHabitName) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A1A)),
+                                        modifier = Modifier.height(32.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Refresh,
+                                            contentDescription = "Re-parse linked file and refresh values",
+                                            tint = Color(0xFF88FF88),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Refresh", fontSize = 11.sp, color = Color(0xFF88FF88))
+                                    }
+                                }
+                                Button(
+                                    onClick = { onPickDatedEntryFile(selectedHabitName) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Folder,
+                                        contentDescription = "Pick dated entry source file",
+                                        tint = Color(0xFFFFCC44),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        if (hasDatedFile) "Change" else "Link File",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFFFCC44)
+                                    )
+                                }
                             }
                         }
                     }
@@ -8177,6 +8217,179 @@ private fun DatedEntryInfoDialog(onDismiss: () -> Unit) {
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A3A00))
                 ) {
                     Text("Got it", color = Color(0xFFFFCC44))
+                }
+            }
+        }
+    }
+}
+
+// ── Dated Entry refresh confirmation dialog ───────────────────────────────────
+
+/**
+ * Confirmation dialog shown before manually refreshing a dated-entry habit
+ * from its linked file. Warns that the current values will be overwritten and
+ * lists exactly which dates change and how. Only the selected habit is
+ * affected; confirmation applies the parsed counts shown in the preview.
+ */
+@Composable
+private fun DatedEntryRefreshConfirmDialog(
+    preview: HabitViewModel.DatedEntryRefreshPreview,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val delta = preview.totalDelta
+    val deltaColor = when {
+        delta > 0 -> Color(0xFF66BB6A)
+        delta < 0 -> Color(0xFFEF5350)
+        else -> Color(0xFFCCCCCC)
+    }
+    val deltaText = when {
+        delta > 0 -> "Total: ${preview.currentTotal} → ${preview.newTotal} (+$delta)"
+        delta < 0 -> "Total: ${preview.currentTotal} → ${preview.newTotal} ($delta)"
+        else -> "Total unchanged (${preview.currentTotal})"
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = "Refresh \"${preview.habitName}\" from file?",
+                color = Color(0xFF88AAFF),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "This will overwrite the current values for \"${preview.habitName}\" " +
+                        "with the counts re-parsed from the linked file. This cannot be undone.",
+                color = Color(0xFFEF9A9A),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (!preview.hasChanges) {
+                Text(
+                    text = "No changes — the stored values already match the file " +
+                            "(${preview.newDayCount} day(s), total ${preview.newTotal}).",
+                    color = Color(0xFF66BB6A),
+                    fontSize = 13.sp
+                )
+            } else {
+                Text(
+                    text = "Current: ${preview.currentTotal} over ${preview.currentDayCount} day(s)",
+                    color = Color(0xFFCCCCCC),
+                    fontSize = 13.sp
+                )
+                Text(
+                    text = "From file: ${preview.newTotal} over ${preview.newDayCount} day(s)",
+                    color = Color(0xFFCCCCCC),
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = deltaText,
+                    color = deltaColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (preview.changedDates.isNotEmpty()) {
+                    Text(
+                        text = "Changed (${preview.changedDates.size}):",
+                        color = Color(0xFFFFCC44), fontSize = 12.sp, fontWeight = FontWeight.SemiBold
+                    )
+                    for ((date, old, new) in preview.changedDates.take(8)) {
+                        val diff = new - old
+                        Text(
+                            text = "  $date: $old → $new (${if (diff > 0) "+" else ""}$diff)",
+                            color = if (diff > 0) Color(0xFF66BB6A) else Color(0xFFEF5350),
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    if (preview.changedDates.size > 8) {
+                        Text(
+                            text = "  … and ${preview.changedDates.size - 8} more",
+                            color = Color(0xFF888888), fontSize = 11.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                if (preview.addedDates.isNotEmpty()) {
+                    Text(
+                        text = "New from file (${preview.addedDates.size}):",
+                        color = Color(0xFFFFCC44), fontSize = 12.sp, fontWeight = FontWeight.SemiBold
+                    )
+                    for ((date, count) in preview.addedDates.take(8)) {
+                        Text(
+                            text = "  $date: +$count",
+                            color = Color(0xFF66BB6A),
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    if (preview.addedDates.size > 8) {
+                        Text(
+                            text = "  … and ${preview.addedDates.size - 8} more",
+                            color = Color(0xFF888888), fontSize = 11.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                if (preview.removedDates.isNotEmpty()) {
+                    Text(
+                        text = "Removed (${preview.removedDates.size}):",
+                        color = Color(0xFFFFCC44), fontSize = 12.sp, fontWeight = FontWeight.SemiBold
+                    )
+                    for ((date, old) in preview.removedDates.take(8)) {
+                        Text(
+                            text = "  $date: had $old (dropped)",
+                            color = Color(0xFFEF5350),
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    if (preview.removedDates.size > 8) {
+                        Text(
+                            text = "  … and ${preview.removedDates.size - 8} more",
+                            color = Color(0xFF888888), fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "Only this habit's values are replaced — linked habits are not adjusted.",
+                color = Color(0xFF888888),
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = Color(0xFF888888))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onConfirm,
+                    enabled = preview.hasChanges,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1A1A3A),
+                        disabledContainerColor = Color(0xFF2A2A2A)
+                    )
+                ) {
+                    Text(
+                        "Refresh",
+                        color = if (preview.hasChanges) Color(0xFF88AAFF) else Color(0xFF555566)
+                    )
                 }
             }
         }

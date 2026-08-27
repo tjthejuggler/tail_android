@@ -7983,6 +7983,177 @@ class HabitViewModel(
     }
 
     /**
+     * Non-destructive preview of what a manual dated-entry refresh would do.
+     * Shown to the user for confirmation BEFORE any data is overwritten.
+     * Mirrors [com.example.tail.data.backup.HabitRestorePreview].
+     */
+    data class DatedEntryRefreshPreview(
+        /** Name of the habit being refreshed. */
+        val habitName: String,
+        /** Total (sum over all dates) currently stored for this habit. */
+        val currentTotal: Int,
+        /** Total after applying the freshly parsed file counts. */
+        val newTotal: Int,
+        /** Number of dated entries (days) currently stored for this habit. */
+        val currentDayCount: Int,
+        /** Number of dated entries (days) in the freshly parsed file. */
+        val newDayCount: Int,
+        /** Dates present in the file but not in the DB: date → new count. */
+        val addedDates: List<Pair<String, Int>>,
+        /** Dates present in the DB but not in the file: date → old count. */
+        val removedDates: List<Pair<String, Int>>,
+        /** Dates whose count differs: (date, old count, new count). */
+        val changedDates: List<Triple<String, Int, Int>>,
+        /** The freshly parsed date → count map that confirmation would apply. */
+        val newCounts: Map<String, Int>
+    ) {
+        val totalDelta: Int get() = newTotal - currentTotal
+        val hasChanges: Boolean get() =
+            addedDates.isNotEmpty() || removedDates.isNotEmpty() || changedDates.isNotEmpty()
+
+        companion object {
+            /** Pure diff between the stored [current] map and the [parsed] file map. */
+            fun diff(
+                habitName: String,
+                current: Map<String, Int>,
+                parsed: Map<String, Int>
+            ): DatedEntryRefreshPreview {
+                val added = (parsed.keys - current.keys)
+                    .map { it to parsed.getValue(it) }
+                    .sortedBy { it.first }
+                val removed = (current.keys - parsed.keys)
+                    .map { it to current.getValue(it) }
+                    .sortedBy { it.first }
+                val changed = current.keys.intersect(parsed.keys)
+                    .filter { current.getValue(it) != parsed.getValue(it) }
+                    .map { Triple(it, current.getValue(it), parsed.getValue(it)) }
+                    .sortedBy { it.first }
+                return DatedEntryRefreshPreview(
+                    habitName = habitName,
+                    currentTotal = current.values.sum(),
+                    newTotal = parsed.values.sum(),
+                    currentDayCount = current.size,
+                    newDayCount = parsed.size,
+                    addedDates = added,
+                    removedDates = removed,
+                    changedDates = changed,
+                    newCounts = parsed
+                )
+            }
+        }
+    }
+
+    /** Non-null while a dated-entry refresh confirmation dialog is showing. */
+    private val _datedEntryRefreshPreview = MutableStateFlow<DatedEntryRefreshPreview?>(null)
+    val datedEntryRefreshPreview: StateFlow<DatedEntryRefreshPreview?> = _datedEntryRefreshPreview.asStateFlow()
+
+    /** Status / error message for the most recent dated-entry refresh. */
+    private val _datedEntryRefreshStatus = MutableStateFlow<String?>(null)
+    val datedEntryRefreshStatus: StateFlow<String?> = _datedEntryRefreshStatus.asStateFlow()
+
+    /**
+     * Re-parses the dated-entry source file linked to [habitName] (ignoring the
+     * file-size change check used by the automatic sync) and publishes a
+     * non-destructive [DatedEntryRefreshPreview] via [datedEntryRefreshPreview]
+     * so the UI can show a confirmation dialog. Does NOT modify any data.
+     */
+    fun previewDatedEntryRefresh(habitName: String) {
+        val uriStr = _settings.value.datedEntryFileUris[habitName]
+        if (uriStr.isNullOrEmpty()) {
+            _datedEntryRefreshStatus.value = "No source file linked for '$habitName'."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val uri = Uri.parse(uriStr)
+                val size = withContext(Dispatchers.IO) {
+                    datedEntryRepo.getFileSize(uri, context)
+                }
+                val parsed = withContext(Dispatchers.IO) {
+                    datedEntryRepo.parseFile(uri, context)
+                }
+                if (parsed.isEmpty() && size > 0) {
+                    _datedEntryRefreshStatus.value =
+                        "Could not read the linked file for '$habitName'."
+                    return@launch
+                }
+                val current = cachedPhoneDb[habitName] ?: emptyMap()
+                _datedEntryRefreshPreview.value =
+                    DatedEntryRefreshPreview.diff(habitName, current, parsed)
+                _datedEntryRefreshStatus.value = null
+            } catch (e: Exception) {
+                _datedEntryRefreshStatus.value = "Refresh preview failed: ${e.message}"
+            }
+        }
+    }
+
+    /** Dismisses the pending dated-entry refresh confirmation (no data is changed). */
+    fun cancelDatedEntryRefresh() {
+        _datedEntryRefreshPreview.value = null
+    }
+
+    /** Clears the transient dated-entry refresh status message. */
+    fun clearDatedEntryRefreshStatus() {
+        _datedEntryRefreshStatus.value = null
+    }
+
+    /**
+     * Applies the pending dated-entry refresh: REPLACES the habit's entire
+     * date → count map with the parsed file counts from the preview (so dates
+     * missing from the file are removed, not merely updated), persists the DB,
+     * and records the current file size so the next foreground sync is a no-op.
+     *
+     * Only the refreshed habit's own values are overwritten — conditionally
+     * linked habits are left untouched.
+     */
+    fun applyDatedEntryRefresh() {
+        val preview = _datedEntryRefreshPreview.value
+        if (preview == null) {
+            _datedEntryRefreshStatus.value = "Nothing to refresh."
+            return
+        }
+        _datedEntryRefreshPreview.value = null
+        val habitName = preview.habitName
+        val uriStr = _settings.value.datedEntryFileUris[habitName]
+        val phoneUriStr = _settings.value.fileUri
+        _datedEntryRefreshStatus.value = "Refreshing '$habitName'…"
+        viewModelScope.launch {
+            try {
+                val mutableDb = cachedPhoneDb.toMutableMap()
+                mutableDb[habitName] = preview.newCounts.toSortedMap()
+                cachedPhoneDb = mutableDb
+
+                // Record the file size so the next foreground sync sees no change.
+                val currentSize = if (uriStr != null) {
+                    withContext(Dispatchers.IO) {
+                        datedEntryRepo.getFileSize(Uri.parse(uriStr), context)
+                    }
+                } else -1L
+                val newSizes = _settings.value.datedEntryFileSizes.toMutableMap()
+                if (currentSize >= 0) newSizes[habitName] = currentSize
+                _settings.value = _settings.value.copy(datedEntryFileSizes = newSizes)
+
+                rebuildHabitList()
+
+                if (phoneUriStr.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
+                        settingsRepo.saveDatedEntryFileSizes(newSizes)
+                    }
+                }
+                val affected = preview.addedDates.size + preview.removedDates.size +
+                        preview.changedDates.size
+                _datedEntryRefreshStatus.value =
+                    "Refreshed '$habitName' ($affected date(s) updated)."
+                Log.d(TAG, "DatedEntry[$habitName]: manual refresh applied ($affected dates)")
+            } catch (e: Exception) {
+                Log.e(TAG, "DatedEntry[$habitName]: refresh failed: ${e.message}")
+                _datedEntryRefreshStatus.value = "Refresh failed: ${e.message}"
+            }
+        }
+    }
+
+    /**
      * Tracks the date on which [onAppStarted] last snapped the selected date.
      * Null means it has never run yet.
      *
