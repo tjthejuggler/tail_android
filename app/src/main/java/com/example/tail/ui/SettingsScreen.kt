@@ -2801,7 +2801,10 @@ private fun ChessReadinessSettingsSection(
                     "each step's minutes are added to the habit's minutes value " +
                     "(Rated Puzzles credit their solve time — a failed attempt " +
                     "counts as 3 min — and Puzzle Rush credits its 3-minute " +
-                    "run), plus +1 session per puzzle/run.",
+                    "run), plus +1 session per puzzle/run.\n" +
+                    "The Puzzle Rush habit also drives the results dialog: " +
+                    "when its timer stops (or it is manually incremented), " +
+                    "the Puzzle Rush report prompt opens to log the run.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
