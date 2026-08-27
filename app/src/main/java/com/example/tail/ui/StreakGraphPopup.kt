@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -210,13 +212,17 @@ fun StreakGraphPopup(
                 }
 
                 // Lock toggle: freeze pan/zoom so scrubbing can't move the chart
-                Text(
-                    text = if (locked) "🔒" else "🔓",
-                    fontSize = 16.sp,
-                    modifier = Modifier
-                        .clickable { locked = !locked }
-                        .padding(horizontal = 6.dp)
-                )
+                IconButton(
+                    onClick = { locked = !locked },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        if (locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                        contentDescription = if (locked) "Unlock chart" else "Lock chart",
+                        tint = if (locked) TitleColor else DimColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
 
                 IconButton(
                     onClick = onDismiss,

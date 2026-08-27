@@ -573,16 +573,16 @@ fun AppStatsScreen(
                     }
                 }
 
-                // ── Day of Month Analysis ─────────────────────────────────────
+                // ── Average Habits per Month ──────────────────────────────────
                 StatsSection(
-                    title = "📅 Average Points by Day of Month",
+                    title = "📅 Average Habits per Month",
                     accentIndex = 9,
                     infoText = "Full months with zero points are excluded from these averages."
                 ) {
-                    val maxDom = stats.avgPointsByDayOfMonth.maxByOrNull { it.second }?.second
-                    val minDom = stats.avgPointsByDayOfMonth.filter { it.second > 0 }
+                    val maxDom = stats.avgHabitsByMonth.maxByOrNull { it.second }?.second
+                    val minDom = stats.avgHabitsByMonth.filter { it.second > 0 }
                         .minByOrNull { it.second }?.second
-                    stats.avgPointsByDayOfMonth.forEach { (dayLabel, avg) ->
+                    stats.avgHabitsByMonth.forEach { (dayLabel, avg) ->
                         StatRow(
                             dayLabel,
                             "%.2f".format(avg),
@@ -591,6 +591,18 @@ fun AppStatsScreen(
                                 minDom -> RedValue
                                 else -> ValueColor
                             }
+                        )
+                    }
+                }
+
+                // ── Best Months (Total Points) ─────────────────────────────────
+                StatsSection(title = "📆 Best Months (Total Points)", accentIndex = 10) {
+                    stats.topMonths.forEachIndexed { index, (monthLabel, points) ->
+                        StatDateValueRow(
+                            label = "${index + 1}. $monthLabel",
+                            value = formatLargeNumber(points),
+                            date = "${monthLabel}-01",
+                            onNavigateToDate = onNavigateToDate
                         )
                     }
                 }
@@ -613,16 +625,6 @@ fun AppStatsScreen(
                                 minYear -> RedValue
                                 else -> ValueColor
                             }
-                        )
-                    }
-                }
-
-                // ── Monthly Trends ────────────────────────────────────────────
-                StatsSection(title = "📆 Best Months (Total Points)", accentIndex = 10) {
-                    stats.topMonths.forEachIndexed { index, (monthLabel, points) ->
-                        StatRow(
-                            "${index + 1}. $monthLabel",
-                            formatLargeNumber(points)
                         )
                     }
                 }
@@ -1416,7 +1418,7 @@ private data class AppStats(
 
     // Day of week / month / year averages
     val avgPointsByDayOfWeek: List<Pair<String, Double>> = emptyList(),
-    val avgPointsByDayOfMonth: List<Pair<String, Double>> = emptyList(),
+    val avgHabitsByMonth: List<Pair<String, Double>> = emptyList(),
     val avgPointsByYear: List<Pair<String, Double>> = emptyList(),
 
     // Monthly
@@ -1968,8 +1970,8 @@ private fun computeAppStats(
 
     val dayOfWeekSums = mutableMapOf<DayOfWeek, Long>()
     val dayOfWeekCounts = mutableMapOf<DayOfWeek, Int>()
-    val dayOfMonthSums = mutableMapOf<Int, Long>()
-    val dayOfMonthCounts = mutableMapOf<Int, Int>()
+    val monthOfYearHabitSums = mutableMapOf<Int, Long>()
+    val monthOfYearDayCounts = mutableMapOf<Int, Int>()
     for ((dateStr, pts) in dailyTotals) {
         val ld = parseDate(dateStr) ?: continue
         if ((weekTotals[isoWeekKey(ld)] ?: 0L) > 0L) {
@@ -1978,9 +1980,10 @@ private fun computeAppStats(
             dayOfWeekCounts[dow] = (dayOfWeekCounts[dow] ?: 0) + 1
         }
         if ((monthTotalsForAvg[dateStr.substring(0, 7)] ?: 0L) > 0L) {
-            val dom = ld.dayOfMonth
-            dayOfMonthSums[dom] = (dayOfMonthSums[dom] ?: 0L) + pts
-            dayOfMonthCounts[dom] = (dayOfMonthCounts[dom] ?: 0) + 1
+            val moy = ld.monthValue
+            monthOfYearHabitSums[moy] = (monthOfYearHabitSums[moy] ?: 0L) +
+                (dailyHabitCounts[dateStr] ?: 0)
+            monthOfYearDayCounts[moy] = (monthOfYearDayCounts[moy] ?: 0) + 1
         }
     }
     val dayOfWeekOrder = listOf(
@@ -1992,10 +1995,14 @@ private fun computeAppStats(
         val count = dayOfWeekCounts[dow] ?: 1
         Pair(dow.name.lowercase().replaceFirstChar { it.uppercase() }, sum.toDouble() / count)
     }
-    val avgByDom = (1..31).map { dom ->
-        val sum = dayOfMonthSums[dom] ?: 0L
-        val count = dayOfMonthCounts[dom] ?: 1
-        Pair("Day $dom", sum.toDouble() / count)
+    val avgByDom = listOf(
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ).mapIndexed { i, monthName ->
+        val moy = i + 1
+        val sum = monthOfYearHabitSums[moy] ?: 0L
+        val count = monthOfYearDayCounts[moy] ?: 1
+        Pair(monthName, sum.toDouble() / count)
     }
 
     // Yearly averages: total points per year divided by the days of that year
@@ -2132,7 +2139,7 @@ private fun computeAppStats(
         topHabitsByAntiStreak = topByAntiStreak,
         topHabitsBySingleDayHigh = topBySingleDay,
         avgPointsByDayOfWeek = avgByDow,
-        avgPointsByDayOfMonth = avgByDom,
+        avgHabitsByMonth = avgByDom,
         avgPointsByYear = avgByYear,
         topMonths = topMonths,
         daysWithAtLeastOnePoint = daysWithPoints,
