@@ -529,6 +529,21 @@
             </intent-filter>
         </receiver>
 
+        <!--
+            AppStatsAlarmReceiver: fires the daily evening check for the
+            app-stats record notifications ("close to a new record" /
+            "new all-time record" notices — see AppStatsRecordEngine) and
+            re-schedules after a reboot. Missed alarms are covered by the
+            app-open catch-up in HabitViewModel.
+        -->
+        <receiver
+            android:name=".notify.AppStatsAlarmReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

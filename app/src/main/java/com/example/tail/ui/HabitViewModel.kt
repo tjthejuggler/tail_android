@@ -8208,6 +8208,18 @@ class HabitViewModel(
                 Log.w(TAG, "Scheduled-ask catch-up failed: ${e.message}")
             }
         }
+        // App-stats record catch-up: keep the daily evening alarm alive and,
+        // if today's 20:30 check never fired (phone off, process killed),
+        // run it now. checkAndPost is idempotent per day (near-record ids
+        // are per-day; broken records are gated by persisted episode flags).
+        viewModelScope.launch {
+            try {
+                com.example.tail.notify.AppStatsAlarmReceiver.schedule(context)
+                com.example.tail.notify.AppStatsRecordNotifier.checkAndPost(context)
+            } catch (e: Exception) {
+                Log.w(TAG, "App-stats record catch-up failed: ${e.message}")
+            }
+        }
     }
 
     /**
