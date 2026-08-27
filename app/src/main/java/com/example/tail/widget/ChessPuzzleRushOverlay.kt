@@ -2,11 +2,22 @@ package com.example.tail.widget
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.widget.EditText
 import android.widget.TextView
+import android.widget.Toast
+import com.example.tail.data.HabitsRepository
 import com.example.tail.data.PuzzleRushSessionRecord
+import com.example.tail.data.SettingsRepository
+import com.example.tail.ui.HabitIncrementBus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /**
  * Persistence for the OFFICIAL Puzzle Rush timer (the habit linked as
@@ -76,8 +87,8 @@ object ChessPuzzleRushStore {
 
 /**
  * ♟ Puzzle Rush — end-of-session report, rendered as a floating overlay
- * dialog by [FloatingBubbleService] (same mechanism as the readiness
- * wizard, so the chess app stays the focused app underneath).
+ * dialog (same mechanism as the readiness wizard, so the chess app stays
+ * the focused app underneath).
  *
  * Asks exactly what the v1 readiness test asked for its rush step —
  * puzzles solved + strikes — plus one follow-up, only when the run had
@@ -85,19 +96,32 @@ object ChessPuzzleRushStore {
  * answers (with the session's start/end times) are logged to
  * [ChessReadinessLogStore] and feed the Puzzle Rush section of the
  * Chess Stats screen.
+ *
+ * Two modes:
+ *  - **Timer** (default, shown by [FloatingBubbleService] when the rush
+ *    timer stops): the session's times come from [ChessPuzzleRushStore].
+ *  - **Manual** ([manual] = true, shown when the user increments the
+ *    linked rush habit by hand in the app): the dialog additionally asks
+ *    for the session length in minutes, so a run whose timer was never
+ *    started can be back-filled. The minutes are also added to the
+ *    habit's minutes slot for today (the tap already counted the
+ *    session itself).
  */
-class ChessPuzzleRushOverlay(service: Context) {
+class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = false) {
 
     private val context = service.applicationContext
     private val dialog = ChessOverlayDialog(context)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // ── Report state (kept when the dialog re-renders) ─────────────────────
     private var rushScoreText = ""
     private var rushStrikes = -1
     private var reviewedWrong: Boolean? = null
+    private var manualMinutesText = ""
 
     // Handles to input views of the currently shown step
     private var rushScoreField: EditText? = null
+    private var manualMinutesField: EditText? = null
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
 
@@ -115,9 +139,12 @@ class ChessPuzzleRushOverlay(service: Context) {
     // ── Step rendering ──────────────────────────────────────────────────────
 
     private fun render() {
-        val pending = ChessPuzzleRushStore.loadPending(context)
-        dialog.setContent("♟ Puzzle Rush", "Timer session — result") {
-            if (pending != null) {
+        val pending = if (manual) null else ChessPuzzleRushStore.loadPending(context)
+        dialog.setContent(
+            "♟ Puzzle Rush",
+            if (manual) "Manual entry — missed session" else "Timer session — result"
+        ) {
+            if (!manual && pending != null) {
                 hint(
                     "Session length " +
                         WidgetTimerStore.formatElapsed(pending.durationSec * 1000)
@@ -130,7 +157,8 @@ class ChessPuzzleRushOverlay(service: Context) {
                 // The review question only exists for runs with strikes.
                 val ready = rushScoreText.isNotBlank() &&
                     rushStrikes >= 0 &&
-                    (rushStrikes == 0 || reviewedWrong != null)
+                    (rushStrikes == 0 || reviewedWrong != null) &&
+                    (!manual || (manualMinutesText.toIntOrNull() ?: 0) > 0)
                 btn.isEnabled = ready
                 btn.alpha = if (ready) 1f else 0.5f
             }
@@ -144,9 +172,25 @@ class ChessPuzzleRushOverlay(service: Context) {
                     }
                 })
             }
+            if (manual) {
+                spacer(8)
+                manualMinutesField = numberField("Session length (minutes)", manualMinutesText, 3)
+                    .also { field ->
+                        field.addTextChangedListener(object : TextWatcher {
+                            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                            override fun afterTextChanged(s: Editable?) {
+                                manualMinutesText = s?.toString().orEmpty()
+                                updateSave()
+                            }
+                        })
+                    }
+            }
             spacer(8)
             body("Strikes (failures)", bold = true)
-            chipRow(listOf("0", "1", "2", "3"), rushStrikes) { rushStrikes = it; updateSave() }
+            // Re-render on strike change: the review question below only
+            // exists for runs with strikes, so the layout must be rebuilt.
+            chipRow(listOf("0", "1", "2", "3"), rushStrikes) { rushStrikes = it; render() }
             if (rushStrikes > 0) {
                 spacer(8)
                 body("Reviewed the puzzles you got wrong?", bold = true)
@@ -162,7 +206,7 @@ class ChessPuzzleRushOverlay(service: Context) {
             saveButton = primaryButton("Save result") { submit() }
             updateSave()
             textButton("Skip — don't record") {
-                ChessPuzzleRushStore.clearPending(context)
+                if (!manual) ChessPuzzleRushStore.clearPending(context)
                 dismiss()
             }
         }
@@ -171,10 +215,19 @@ class ChessPuzzleRushOverlay(service: Context) {
     // ── Submission ──────────────────────────────────────────────────────────
 
     private fun submit() {
-        val pending = ChessPuzzleRushStore.loadPending(context)
-            ?: run { dismiss(); return }
         val rushScore = rushScoreField?.text?.toString()?.toIntOrNull() ?: return
         val ath = ChessReadinessStore.lastRushAllTimeHigh(context)
+
+        val (startedAt, durationSec) = if (manual) {
+            val minutes = manualMinutesField?.text?.toString()?.toIntOrNull() ?: return
+            if (minutes <= 0) return
+            val endedAt = System.currentTimeMillis()
+            (endedAt - minutes * 60_000L) to minutes * 60L
+        } else {
+            val pending = ChessPuzzleRushStore.loadPending(context)
+                ?: run { dismiss(); return }
+            (pending.startedAt to pending.durationSec)
+        }
 
         // Permanent detailed telemetry log (Chess Stats screen source of
         // truth): score, strikes, review answer and the session's times.
@@ -182,8 +235,8 @@ class ChessPuzzleRushOverlay(service: Context) {
             context,
             PuzzleRushSessionRecord(
                 timestamp = System.currentTimeMillis(),
-                startedAt = pending.startedAt,
-                durationSec = pending.durationSec,
+                startedAt = startedAt,
+                durationSec = durationSec,
                 score = rushScore,
                 strikes = rushStrikes.coerceAtLeast(0),
                 // Null for strike-free runs — the question was never asked.
@@ -197,7 +250,38 @@ class ChessPuzzleRushOverlay(service: Context) {
         if (newAth != ath) {
             ChessReadinessStore.saveRushAllTimeHigh(context, newAth)
         }
-        ChessPuzzleRushStore.clearPending(context)
+        if (manual) {
+            writeManualMinutes((durationSec / 60).toInt())
+        } else {
+            ChessPuzzleRushStore.clearPending(context)
+        }
         dismiss()
+    }
+
+    /**
+     * Best-effort: adds the back-filled session's minutes to the linked
+     * rush habit's minutes slot for today (the manual tap already counted
+     * the session, so no second +1). Failures must never crash the
+     * overlay — the telemetry log above is already saved.
+     */
+    private fun writeManualMinutes(minutes: Int) {
+        ioScope.launch {
+            try {
+                val habit = ChessReadinessStore.linkedRushHabit(context).trim()
+                if (habit.isEmpty()) return@launch
+                val uriStr = SettingsRepository(context).settingsFlow.first().fileUri
+                if (uriStr.isEmpty()) {
+                    Toast.makeText(context, "No habits file — minutes not saved", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                HabitsRepository().adjustHabitMinutesSlot(
+                    Uri.parse(uriStr), context, habit, minutes
+                )
+                HabitIncrementBus.emit(habit)
+                HabitListWidgetProvider.refreshAll(context)
+            } catch (e: Exception) {
+                Log.w("ChessPuzzleRushOverlay", "manual minutes write failed", e)
+            }
+        }
     }
 }

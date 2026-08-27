@@ -1354,6 +1354,19 @@ fun HabitGridScreen(
                                         // Normal increment without roll forward — always
                                         // record a timestamp when incrementing for today.
                                         viewModel.incrementHabit(habit.name, 1, recordTimestamp = isToday)
+                                        // Manually incrementing the linked Puzzle Rush habit
+                                        // = back-filling a rush run the timer missed: open
+                                        // the same report overlay the bubble uses, in manual
+                                        // mode (extra minutes input).
+                                        val rushHabit = com.example.tail.widget.ChessReadinessStore
+                                            .linkedRushHabit(context).trim()
+                                        if (rushHabit.isNotEmpty() && habit.name == rushHabit) {
+                                            try {
+                                                com.example.tail.widget.ChessPuzzleRushOverlay(
+                                                    context, manual = true
+                                                ).show()
+                                            } catch (_: Exception) { /* overlay best-effort */ }
+                                        }
                                         // Show increment toast with edit-time option
                                         incrementToastVersion++
                                         incrementToastHabit = habit.name
