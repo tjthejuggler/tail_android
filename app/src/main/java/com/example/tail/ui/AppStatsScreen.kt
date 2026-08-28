@@ -453,6 +453,45 @@ fun AppStatsScreen(
                         onNavigateToDate = onNavigateToDate,
                         dateLabel = "(ending)"
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    StatDateValueRow(
+                        label = "Most total streak days",
+                        value = stats.highestTotalStreakDays.second.toString(),
+                        date = stats.highestTotalStreakDays.first,
+                        onNavigateToDate = onNavigateToDate
+                    )
+                    StatDateValueRow(
+                        label = "Most total anti-streak days",
+                        value = stats.highestTotalAntiStreakDays.second.toString(),
+                        date = stats.highestTotalAntiStreakDays.first,
+                        onNavigateToDate = onNavigateToDate
+                    )
+                    StatCountDateRow(
+                        label = "Most habits with streak",
+                        count = stats.highestHabitsWithStreak.second,
+                        dateStr = stats.highestHabitsWithStreak.first,
+                        onNavigateToDate = onNavigateToDate,
+                        onClickCount = {
+                            openPopup(
+                                "Habits With Streak on ${stats.highestHabitsWithStreak.first ?: "—"} (${stats.highestHabitsWithStreak.second})",
+                                stats.highestHabitsWithStreakList
+                            )
+                        }
+                    )
+                    StatCountDateRow(
+                        label = "Most habits with anti-streak",
+                        count = stats.highestHabitsWithAntiStreak.second,
+                        dateStr = stats.highestHabitsWithAntiStreak.first,
+                        onNavigateToDate = onNavigateToDate,
+                        onClickCount = {
+                            openPopup(
+                                "Habits With Anti-Streak on ${stats.highestHabitsWithAntiStreak.first ?: "—"} (${stats.highestHabitsWithAntiStreak.second})",
+                                stats.highestHabitsWithAntiStreakList
+                            )
+                        }
+                    )
                 }
 
                 // ── Daily Averages ────────────────────────────────────────────
@@ -1544,6 +1583,12 @@ private data class AppStats(
 
     // Highest points
     val highestPointsDay: Pair<String?, Int> = Pair(null, 0),
+    val highestTotalStreakDays: Pair<String?, Int> = Pair(null, 0),
+    val highestTotalAntiStreakDays: Pair<String?, Int> = Pair(null, 0),
+    val highestHabitsWithStreak: Pair<String?, Int> = Pair(null, 0),
+    val highestHabitsWithAntiStreak: Pair<String?, Int> = Pair(null, 0),
+    val highestHabitsWithStreakList: List<Pair<String, String>> = emptyList(),
+    val highestHabitsWithAntiStreakList: List<Pair<String, String>> = emptyList(),
     val highestPointsWeek: Pair<String?, Double> = Pair(null, 0.0),
     val highestPointsMonth: Pair<String?, Double> = Pair(null, 0.0),
     val highestPoints90Days: Pair<String?, Double> = Pair(null, 0.0),
@@ -2090,6 +2135,70 @@ private fun computeAppStats(
     val dailyStreakCounts = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateStreakCount[idx]) }
     val dailyAntiStreakCounts = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateAntiStreakCount[idx]) }
 
+    // ── All-time records for the streak aggregate categories ───────────────
+    // Best-ever value of each overview streak stat, with the date it occurred.
+    val bestStreakTotal = dailyStreakTotals.filter { it.second > 0 }.maxByOrNull { it.second }
+    val bestAntiStreakTotal = dailyAntiStreakTotals.filter { it.second > 0 }.maxByOrNull { it.second }
+    val bestStreakCount = dailyStreakCounts.filter { it.second > 0 }.maxByOrNull { it.second }
+    val bestAntiStreakCount = dailyAntiStreakCounts.filter { it.second > 0 }.maxByOrNull { it.second }
+
+    // Rebuild the per-habit streak/anti-streak lists for the two record dates
+    // so the counts can open a habit-list popup, mirroring the overview rows.
+    fun habitsOnRecordDate(
+        recordDate: String?,
+        anti: Boolean
+    ): List<Pair<String, String>> {
+        if (recordDate == null) return emptyList()
+        val result = mutableListOf<Pair<String, Int>>()
+        for ((habitName, entries) in db) {
+            if (isInternalValueKey(habitName)) continue
+            if (habitName in disabledHabits) continue
+            val habitFirstDate = run {
+                val primFirst = entries.keys.minOrNull()
+                if (habitName in timerMinutesPrimaryHabits || habitName in secondaryValueFallbackHabits) {
+                    val altKey = if (habitName in timerMinutesPrimaryHabits) {
+                        minutesKey(habitName)
+                    } else {
+                        com.example.tail.data.fallbackSlotKey(habitName, secondaryValueHabits, db)
+                    }
+                    val altFirst = db[altKey]?.keys?.minOrNull()
+                    listOfNotNull(primFirst, altFirst).minOrNull()
+                } else primFirst
+            }
+            if (habitFirstDate == null || recordDate < habitFirstDate) continue
+            var lastDoneDate: LocalDate? = null
+            var found = 0
+            for (dateStr in sortedDatesList) {
+                if (dateStr > recordDate) break
+                if (dateStr < habitFirstDate) continue
+                val currDate = parseDate(dateStr) ?: continue
+                val pts = effPts(habitName, entries[dateStr] ?: 0, dateStr)
+                if (pts > 0) {
+                    if (anti) {
+                        found = 0
+                    } else {
+                        found = if (lastDoneDate != null &&
+                            ChronoUnit.DAYS.between(lastDoneDate, currDate) == 1L
+                        ) found + 1 else 1
+                    }
+                    lastDoneDate = currDate
+                } else if (anti && lastDoneDate != null) {
+                    found = ChronoUnit.DAYS.between(lastDoneDate, currDate).toInt()
+                } else if (anti) {
+                    val firstDate = parseDate(habitFirstDate)
+                    if (firstDate != null) found = ChronoUnit.DAYS.between(firstDate, currDate).toInt()
+                } else {
+                    found = 0
+                }
+            }
+            if (found > 0) result.add(Pair(habitName, found))
+        }
+        return result.sortedByDescending { it.second }
+            .map { Pair(it.first, "${it.second} days") }
+    }
+    val highestStreakHabitsList = habitsOnRecordDate(bestStreakCount?.first, anti = false)
+    val highestAntiStreakHabitsList = habitsOnRecordDate(bestAntiStreakCount?.first, anti = true)
+
     // Habits excluded from the ranked lists (Garmin-linked and/or disabled,
     // per the stats settings popup). Only the top-10 lists and the diversity
     // ever/never-done lists are filtered; point totals and streak aggregates
@@ -2274,6 +2383,12 @@ private fun computeAppStats(
         dailyHabitsWithStreak = dailyStreakCounts,
         dailyHabitsWithAntiStreak = dailyAntiStreakCounts,
         highestPointsDay = highestPointsDay,
+        highestTotalStreakDays = Pair(bestStreakTotal?.first, bestStreakTotal?.second ?: 0),
+        highestTotalAntiStreakDays = Pair(bestAntiStreakTotal?.first, bestAntiStreakTotal?.second ?: 0),
+        highestHabitsWithStreak = Pair(bestStreakCount?.first, bestStreakCount?.second ?: 0),
+        highestHabitsWithAntiStreak = Pair(bestAntiStreakCount?.first, bestAntiStreakCount?.second ?: 0),
+        highestHabitsWithStreakList = highestStreakHabitsList,
+        highestHabitsWithAntiStreakList = highestAntiStreakHabitsList,
         highestPointsWeek = Pair(bestWeekEndDate, bestWeekAvg),
         highestPointsMonth = Pair(bestMonthEndDate, bestMonthAvg),
         highestPoints90Days = Pair(best90DayEndDate, best90DayAvg),
