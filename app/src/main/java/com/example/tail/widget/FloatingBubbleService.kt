@@ -178,8 +178,18 @@ class FloatingBubbleService : Service() {
     /** Percentile win already secured this run (run continues regardless). */
     private var survivalPctWon = false
 
-    /** True once the user dragged the banner away from the bubble anchor. */
-    private var survivalPanelDragged = false
+    /** Slot INSIDE the bubble's window where the survival banner is attached. */
+    private var survivalSlot: FrameLayout? = null
+
+    /**
+     * Cumulative survival time (every past run, including the one that just
+     * ended) — the free-play timer STARTS from this, so the displayed time is
+     * the user's TOTAL time in survival mode, not just the free-play portion.
+     */
+    private var survivalFreePlayBaseMs = 0L
+
+    /** Verdict popup shown when a survival run ends (pass / fail). */
+    private var survivalResultPopup: ChessOverlayDialog? = null
 
     // ── Habit picker menu (several habits share one trigger app) ──────────
     private var habitMenuView: LinearLayout? = null
@@ -364,6 +374,8 @@ class FloatingBubbleService : Service() {
         removeBubble()
         removeDismissZone()
         hideTimerChip()
+        survivalResultPopup?.dismiss()
+        survivalResultPopup = null
         hideSurvivalPanel()
         hideHabitPickerMenu()
         hideIncrementFlash()
@@ -379,8 +391,8 @@ class FloatingBubbleService : Service() {
         val layoutParamsType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
 
         bubbleParams = WindowManager.LayoutParams(
-            bubbleSize,
-            bubbleSize,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             layoutParamsType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
@@ -435,10 +447,29 @@ class FloatingBubbleService : Service() {
         }
 
         container.setOnTouchListener(BubbleTouchListener())
-        bubbleView = container
+
+        // The bubble window is a horizontal COMPOSITE: the round bubble plus
+        // an (initially hidden) slot to its right where the V3 survival
+        // banner (gate controls / free-play timer) attaches. One window →
+        // banner and bubble always move, snap and clamp together.
+        val slot = FrameLayout(this).apply { visibility = View.GONE }
+        survivalSlot = slot
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(container, LinearLayout.LayoutParams(bubbleSize, bubbleSize))
+            addView(
+                slot,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+        bubbleView = root
 
         try {
-            windowManager.addView(container, bubbleParams)
+            windowManager.addView(root, bubbleParams)
         } catch (e: Exception) {
             // Permission not granted or other error — stop the service
             stopSelf()
@@ -597,8 +628,10 @@ class FloatingBubbleService : Service() {
                         bubbleParams.x = initialX + dx.toInt()
                         bubbleParams.y = initialY + dy.toInt()
 
-                        // Clamp to screen bounds
-                        val maxX = Resources.getSystem().displayMetrics.widthPixels - bubbleSize
+                        // Clamp to screen bounds (window = bubble + any
+                        // attached survival banner)
+                        val maxX = Resources.getSystem().displayMetrics.widthPixels -
+                            bubbleWindowWidth()
                         val maxY = Resources.getSystem().displayMetrics.heightPixels - bubbleSize
                         bubbleParams.x = bubbleParams.x.coerceIn(0, maxX)
                         bubbleParams.y = bubbleParams.y.coerceIn(0, maxY)
@@ -703,7 +736,7 @@ class FloatingBubbleService : Service() {
             val targetX = if (bubbleParams.x + bubbleSize / 2 < screenWidth / 2) {
                 margin
             } else {
-                screenWidth - bubbleSize - margin
+                screenWidth - bubbleWindowWidth() - margin
             }
 
             val startX = bubbleParams.x
@@ -1000,7 +1033,11 @@ class FloatingBubbleService : Service() {
         override fun run() {
             if (survivalFreePlay) {
                 val now = android.os.SystemClock.elapsedRealtime()
-                survivalStopwatchText?.text = formatSurvivalStopwatch(now - survivalFreePlayStartMs)
+                // Free-play timer = cumulative survival time (all past runs)
+                // + the free-play elapsed so far.
+                survivalStopwatchText?.text = formatSurvivalStopwatch(
+                    survivalFreePlayBaseMs + (now - survivalFreePlayStartMs)
+                )
                 handler.postDelayed(this, 100)
                 return
             }
@@ -1043,7 +1080,6 @@ class FloatingBubbleService : Service() {
         hideSurvivalPanel()
         survivalArmed = armed
         survivalRunning = !armed
-        survivalPanelDragged = false
 
         val density = resources.displayMetrics.density
         fun Int.dp(): Int = (this * density).toInt()
@@ -1169,32 +1205,13 @@ class FloatingBubbleService : Service() {
             )
         }
 
-        // The whole banner is draggable (touch on any non-button area) so the
-        // user can park it wherever it does not cover the board.
-        panel.setOnTouchListener(SurvivalBannerDragListener())
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-        }
-
         survivalPanelView = panel
-        try {
-            windowManager.addView(panel, params)
-            panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-            positionSurvivalPanel()
-            if (survivalRunning) {
-                handler.removeCallbacks(survivalTickRunnable)
-                handler.postDelayed(survivalTickRunnable, 100)
-            }
-        } catch (e: Exception) {
-            survivalPanelView = null
+        // ATTACHED to the bubble's own window (right of it) — not a separate
+        // floating window, so it can never drift apart from the bubble.
+        attachSurvivalBanner(panel)
+        if (survivalRunning) {
+            handler.removeCallbacks(survivalTickRunnable)
+            handler.postDelayed(survivalTickRunnable, 100)
         }
     }
 
@@ -1292,33 +1309,54 @@ class FloatingBubbleService : Service() {
             survivalDurationMs = elapsed,
             reflex = survivalReflex
         )
-        // With a linked survival habit the banner does NOT die with the
-        // gate: it switches to a plain increasing free-play timer so the
-        // user can keep drilling and earn habit minutes for the extra time
-        // (the v3 portion was already credited by the recorder above).
-        val habit = ChessReadinessV3Store.linkedSurvivalHabit(this)
-        if (verdict != ChessReadinessV3Engine.Verdict.FAIL_REFLEX && habit != null) {
-            showSurvivalFreePlayPanel()
-            val msg = when (verdict) {
+        // Verdict POPUP: tells the user the outcome and — unless the run put
+        // them in RED (kicked out of chess entirely) — offers continuing the
+        // survival drill as free play from the attached banner.
+        val red = verdict == ChessReadinessV3Engine.Verdict.FAIL_TIMEOUT ||
+            verdict == ChessReadinessV3Engine.Verdict.FAIL_REFLEX
+        hideSurvivalPanel()
+        val popup = ChessOverlayDialog(this)
+        survivalResultPopup = popup
+        popup.show()
+        popup.setContent("♟ Survival Gate", "Run complete") {
+            when (verdict) {
                 ChessReadinessV3Engine.Verdict.PASS ->
-                    "♟ SURVIVAL GATE PASSED — rated play unlocked ($survivalPassed/$survivalTarget)"
+                    stateLabel("GATE PASSED", "#66BB6A")
                 ChessReadinessV3Engine.Verdict.FAIL_STRIKE ->
-                    "♟ GATE FAILED — strike · rated play locked · keep drilling for $habit"
+                    stateLabel("GATE FAILED — STRIKE", "#F5B040")
                 else ->
-                    "♟ GATE FAILED — 5-min cap · rated play locked · keep drilling for $habit"
+                    stateLabel("GATE FAILED — RED", "#EF4444")
             }
-            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-        } else {
-            hideSurvivalPanel()
-            val msg = when (verdict) {
-                ChessReadinessV3Engine.Verdict.PASS ->
-                    "♟ SURVIVAL GATE PASSED — rated play unlocked ($survivalPassed/$survivalTarget)"
-                ChessReadinessV3Engine.Verdict.FAIL_STRIKE ->
-                    "♟ GATE FAILED — strike ($survivalPassed/$survivalTarget) · rated play locked"
+            spacer(8)
+            keyValue("Puzzles passed", "$survivalPassed / $survivalTarget")
+            keyValue("Run time", formatSurvivalClock(elapsed))
+            spacer(6)
+            when {
+                verdict == ChessReadinessV3Engine.Verdict.PASS ->
+                    body("Rated play unlocked. You can also keep drilling survival puzzles as free play — the banner timer keeps counting your TOTAL survival time.")
+                !red ->
+                    body("Rated play locked (yellow). You can still continue the survival drill as free play — the banner timer keeps counting your TOTAL survival time.")
                 else ->
-                    "♟ GATE FAILED — 5-min cap ($survivalPassed/$survivalTarget) · rated play locked"
+                    body("Red mode — chess is locked entirely. Leave chess and rest; the gate can be re-tested after the rest period.", color = 0xFFFFAAAA.toInt())
             }
-            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            if (!red) {
+                primaryButton("▶  Continue survival (free play)") {
+                    survivalResultPopup = null
+                    popup.dismiss()
+                    showSurvivalFreePlayPanel()
+                }
+                textButton("Done — close banner") {
+                    survivalResultPopup = null
+                    popup.dismiss()
+                    hideSurvivalPanel()
+                }
+            } else {
+                primaryButton("Close", danger = true) {
+                    survivalResultPopup = null
+                    popup.dismiss()
+                    hideSurvivalPanel()
+                }
+            }
         }
     }
 
@@ -1331,6 +1369,11 @@ class FloatingBubbleService : Service() {
         hideSurvivalPanel()
         survivalFreePlay = true
         survivalFreePlayStartMs = android.os.SystemClock.elapsedRealtime()
+        // The free-play timer starts from the CUMULATIVE survival time (all
+        // past runs — the just-finished one is already recorded) so it shows
+        // the user's total time in survival mode from the moment it appears.
+        survivalFreePlayBaseMs = ChessReadinessV3Store.loadResults(this)
+            .sumOf { it.survivalDurationMs }
 
         val density = resources.displayMetrics.density
         fun Int.dp(): Int = (this * density).toInt()
@@ -1352,7 +1395,7 @@ class FloatingBubbleService : Service() {
         }
 
         val label = TextView(this).apply {
-            text = "♟ SURVIVAL\nfree play"
+            text = "♟ SURVIVAL\nfree play · total"
             setTextColor(0xFF66CCFF.toInt())
             textSize = 11f
             setTypeface(null, Typeface.BOLD)
@@ -1361,7 +1404,7 @@ class FloatingBubbleService : Service() {
         panel.addView(label, bannerMargin())
 
         survivalStopwatchText = TextView(this).apply {
-            text = "00:00.0"
+            text = formatSurvivalStopwatch(survivalFreePlayBaseMs)
             setTextColor(Color.WHITE)
             textSize = 22f
             setTypeface(null, Typeface.BOLD)
@@ -1388,28 +1431,12 @@ class FloatingBubbleService : Service() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         )
-        panel.setOnTouchListener(SurvivalBannerDragListener())
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-        }
-
         survivalPanelView = panel
-        try {
-            windowManager.addView(panel, params)
-            positionSurvivalPanel()
-            handler.removeCallbacks(survivalTickRunnable)
-            handler.postDelayed(survivalTickRunnable, 100)
-        } catch (e: Exception) {
-            survivalPanelView = null
-        }
+        // ATTACHED to the bubble's own window (right of it) — same composite
+        // as the gate banner, never a separate floating window.
+        attachSurvivalBanner(panel)
+        handler.removeCallbacks(survivalTickRunnable)
+        handler.postDelayed(survivalTickRunnable, 100)
     }
 
     /** STOP & SAVE: credits the free-play minutes to the linked habit. */
@@ -1432,78 +1459,69 @@ class FloatingBubbleService : Service() {
         survivalRunning = false
         survivalArmed = false
         survivalFreePlay = false
-        survivalPanelView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (e: Exception) { /* already removed */ }
-        }
         survivalPanelView = null
+        // The banner lives INSIDE the bubble window — detaching = clearing
+        // the slot, then re-clamping the (now narrow) window on screen.
+        survivalSlot?.apply {
+            removeAllViews()
+            visibility = View.GONE
+        }
+        clampBubbleOnScreen()
         survivalCounterText = null
         survivalStopwatchText = null
         survivalTotalText = null
         survivalPctText = null
     }
 
+    /** Current on-screen width of the bubble window (bubble + banner). */
+    private fun bubbleWindowWidth(): Int =
+        bubbleView?.takeIf { it.measuredWidth > 0 }?.measuredWidth ?: bubbleSize
+
     /**
-     * Anchors the survival panel to the RIGHT of the bubble (vertically
-     * centered on it) — a long sideways banner that stays clear of the board
-     * underneath. Once the user drags the banner somewhere it stops
-     * following the bubble until the panel is rebuilt.
+     * Attaches the survival banner INSIDE the bubble's window, in the slot to
+     * the right of the round bubble — one composite window, so the banner is
+     * glued to the bubble (drag / snap / clamp all move them together).
      */
-    private fun positionSurvivalPanel() {
-        val panel = survivalPanelView ?: return
-        if (survivalPanelDragged) return
-        val params = panel.layoutParams as? WindowManager.LayoutParams ?: return
-        val gap = 8.dp(resources)
-        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-        params.x = bubbleParams.x + bubbleSize + gap
-        params.y = bubbleParams.y + (bubbleSize - panel.measuredHeight) / 2
+    private fun attachSurvivalBanner(view: View) {
+        val slot = survivalSlot ?: return
+        slot.removeAllViews()
+        slot.addView(
+            view,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        slot.visibility = View.VISIBLE
+        clampBubbleOnScreen()
+    }
+
+    /**
+     * Keeps the whole composite window (bubble + attached banner) on screen —
+     * called whenever the banner is attached/detached so a wide banner never
+     * pushes content off the right edge.
+     */
+    private fun clampBubbleOnScreen() {
+        val root = bubbleView ?: return
+        root.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val width = root.measuredWidth.coerceAtLeast(bubbleSize)
+        val height = root.measuredHeight.coerceAtLeast(bubbleSize)
+        val maxX = (Resources.getSystem().displayMetrics.widthPixels - width).coerceAtLeast(0)
+        val maxY = (Resources.getSystem().displayMetrics.heightPixels - height).coerceAtLeast(0)
+        bubbleParams.x = bubbleParams.x.coerceIn(0, maxX)
+        bubbleParams.y = bubbleParams.y.coerceIn(0, maxY)
         try {
-            windowManager.updateViewLayout(panel, params)
+            windowManager.updateViewLayout(root, bubbleParams)
         } catch (e: Exception) { /* view removed */ }
     }
 
     /**
-     * Drag handling for the survival banner: moving a finger on any
-     * non-button part of the banner moves the whole banner (its own
-     * WindowManager position), independent of the bubble.
+     * Legacy anchor call from the drag / snap paths — the banner is now part
+     * of the bubble window, so "positioning" it just means re-clamping the
+     * composite window after the bubble moved.
      */
-    private inner class SurvivalBannerDragListener : View.OnTouchListener {
-        private var downX = 0f
-        private var downY = 0f
-        private var startParamsX = 0
-        private var startParamsY = 0
-        private var dragging = false
-
-        override fun onTouch(v: View, event: MotionEvent): Boolean {
-            val params = v.layoutParams as? WindowManager.LayoutParams
-                ?: return false
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = event.rawX
-                    downY = event.rawY
-                    startParamsX = params.x
-                    startParamsY = params.y
-                    dragging = false
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - downX
-                    val dy = event.rawY - downY
-                    if (!dragging && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
-                        dragging = true
-                        survivalPanelDragged = true
-                    }
-                    if (dragging) {
-                        params.x = startParamsX + dx.toInt()
-                        params.y = startParamsY + dy.toInt()
-                        try {
-                            windowManager.updateViewLayout(v, params)
-                        } catch (e: Exception) { /* view removed */ }
-                    }
-                }
-            }
-            return dragging
-        }
+    private fun positionSurvivalPanel() {
+        clampBubbleOnScreen()
     }
 
     // ──────────────────────────────────────────────────────────────────────
