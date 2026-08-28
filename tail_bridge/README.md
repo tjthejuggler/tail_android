@@ -79,7 +79,12 @@ The bridge serves a status dashboard on the PC — open
   (`~/.config/tail_bridge/bridge_history.json`): config pushes, queued
   widget sessions/taps, phone acks, live Stockfish analyses, server starts.
 * **Sources** — recent movie watches, the latest Garmin metrics, and chess
-  analysis history from the SQLite registry.
+  analysis history from the SQLite registry. The Garmin card also shows the
+  current connection status (last fetch, last cache sync, rate-limit
+  cooldown, OAuth token health, whether today's data is present, live fetch
+  state) and has a **⟳ Sync today now** button that force-runs
+  `garmin_proxy/fetch_data.py` in the background (token-based — it never
+  logs in) to refresh the cache the bridge serves.
 
 The page polls one aggregated endpoint, `GET /api/v1/dashboard`, every 5 s —
 no token needed: the backend authorizes the dashboard itself and serves it
@@ -87,8 +92,8 @@ only to private-network clients (loopback / RFC1918 LAN / Tailscale CGNAT),
 never to arbitrary public addresses. Long sections scroll in place so the
 page stays compact.
 
-The one thing the dashboard *can* change is PC-widget events, via the popup
-editor (the replacement for the bubble widget's old right-click "Today's
+The dashboard controls are PC-widget events (via the popup
+editor — the replacement for the bubble widget's old right-click "Today's
 history" dialog, which has been removed):
 
 * **pending event** → edited/deleted **in place** (the phone never applied
@@ -97,6 +102,12 @@ history" dialog, which has been removed):
   **correction** is queued carrying `ref_id` + `orig` (the values the phone
   did apply), which the phone inverts before applying the fix — the exact
   same contract as `pc_widget_sync.append_correction_event`.
+
+* **Garmin sync** — the ⟳ button POSTs to `/api/v1/dashboard/garmin_fetch`,
+  which spawns `fetch_data.py --days 1 --force` in a background thread using
+  the garmin_proxy venv; the outcome (ok/error + message tail) is recorded
+  in `garmin_proxy/fetch_status.json` and shown in the Garmin status rows on
+  the next 5 s poll.
 
 Everything else on the page is informational only.
 
@@ -111,6 +122,7 @@ All endpoints require the `X-App-Auth` header (except `/health`).
 | GET | `/api/v1/dashboard` | Aggregated snapshot incl. `pc_widget_history` (private-network clients only, no token) |
 | POST | `/api/v1/dashboard/widget_edit` | Edit a widget event — in place if pending, else queue a `session_edit` correction (no token, private network only) |
 | POST | `/api/v1/dashboard/widget_delete` | Delete a widget event — drop if pending, else queue a `session_delete` correction (no token, private network only) |
+| POST | `/api/v1/dashboard/garmin_fetch` | Force a Garmin fetch/sync — runs `garmin_proxy/fetch_data.py` in the background and refreshes the cache (no token, private network only) |
 | GET | `/api/v1/sources` | List registered sources |
 | GET | `/api/v1/movies/latest` | Most recently watched movie/series |
 | GET | `/api/v1/movies/recent?limit=10` | N most recent movies |

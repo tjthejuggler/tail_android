@@ -146,8 +146,15 @@
   .hist .frow .txt { overflow-wrap: anywhere; }
   .act-ico { flex: none; width: 20px; text-align: center; }
 
-  /* garmin metrics */
+  /* garmin metrics + status rows */
   .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 8px; }
+  #garminStatus .frow { font-size: 12px; }
+  #garminStatus .k { color: var(--muted); flex: none; width: 108px; }
+  #garminStatus .v { font-family: var(--mono); font-size: 11.5px;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #garminSyncBtn { border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 650;
+                   font-size: 12.5px; }
+  #garminSyncBtn:disabled { opacity: .55; cursor: wait; }
   .metric { background: var(--card2); border: 1px solid var(--border); border-radius: 9px;
             padding: 7px 9px; }
   .metric .mk { color: var(--muted); font-size: 10.5px; text-transform: uppercase;
@@ -295,6 +302,11 @@
       <h2>⌚ Garmin · latest day</h2>
       <div class="section-note" style="margin:0 0 8px" id="garminDate"></div>
       <div class="metrics" id="garminMetrics"></div>
+      <div class="feed" id="garminStatus" style="margin-top:10px"></div>
+      <div class="mbtns" style="margin-top:10px">
+        <button id="garminSyncBtn" class="primary">⟳ Sync today now</button>
+        <span id="garminSyncMsg" style="color:var(--amber);font-size:12px"></span>
+      </div>
       <div class="section-note" id="garminHealth"></div>
     </div>
     <div class="card">
@@ -311,7 +323,7 @@
   </div>
 
   <footer>
-    Informational view · the only controls are the ✎ widget-event editors ·
+    Informational view · controls: ✎ widget-event editors + ⟳ Garmin sync ·
     snapshot endpoint <span class="mono">GET /api/v1/dashboard</span> · auto-refreshes every 5 s
   </footer>
 </main>
@@ -672,7 +684,7 @@ function renderActivity() {
 
 const ACTION_ICONS = {
   server_start: "🚀", config_push: "📋", event_queued: "⏱",
-  events_acked: "✅", chess_analyzed: "♟",
+  events_acked: "✅", chess_analyzed: "♟", garmin_fetch: "⌚",
 };
 
 function renderHistory() {
@@ -719,30 +731,78 @@ function renderMovies() {
 
 const GARMIN_METRICS = [
   ["vo2_max", "VO₂ max", (v) => v],
+  ["fitness_age", "Fitness age", (v) => (v / 100).toFixed(1) + " <small>yrs</small>"],
   ["resting_hr", "Rest HR", (v) => v + " <small>bpm</small>"],
+  ["min_hr", "Min HR", (v) => v + " <small>bpm</small>"],
+  ["max_hr", "Max HR", (v) => v + " <small>bpm</small>"],
   ["hrv_last_night", "HRV", (v) => v + " <small>ms</small>"],
+  ["hrv_weekly_avg", "HRV 7d", (v) => v + " <small>ms</small>"],
   ["sleep_score", "Sleep", (v) => v],
+  ["sleep_duration_minutes", "Slept", (v) => Math.floor(v / 60) + "h" + String(v % 60).padStart(2, "0")],
   ["steps", "Steps", (v) => Number(v).toLocaleString()],
   ["stress_score", "Stress", (v) => v],
   ["calories", "Energy", (v) => Number(v).toLocaleString() + " <small>kcal</small>"],
   ["active_minutes", "Active", (v) => v + " <small>min</small>"],
+  ["run_minutes", "🏃 Run", (v) => v + " <small>min</small>"],
+  ["bike_minutes", "🚴 Bike", (v) => v + " <small>min</small>"],
+  ["swim_minutes", "🏊 Swim", (v) => v + " <small>min</small>"],
   ["distance_meters", "Distance", (v) => (v / 1000).toFixed(1) + " <small>km</small>"],
+  ["altitude_ascent_meters", "Ascent", (v) => v + " <small>m</small>"],
   ["floors_climbed", "Floors", (v) => v],
 ];
 
+function garminStatusRow(k, v, title) {
+  return `<div class="frow"><span class="k">${k}</span>` +
+    `<span class="v" title="${esc(title ?? "")}">${v}</span></div>`;
+}
+
 function renderGarmin() {
   const src = sourceByName("garmin");
-  if (!src) { $("garminMetrics").innerHTML = ""; return; }
-  const latest = src.latest;
+  if (!src) { $("garminMetrics").innerHTML = ""; $("garminStatus").innerHTML = ""; return; }
+  const h = src.health || {}, latest = src.latest;
+
   $("garminHealth").textContent =
-    `source health: ${src.health?.status ?? "?"}` +
-    (src.health?.total_days != null ? ` · ${src.health.total_days} days cached` : "");
+    `source health: ${h.status ?? "?"}` +
+    (h.total_days != null ? ` · ${h.total_days} days cached` : "") +
+    (h.cache_size_kb != null ? ` · cache ${h.cache_size_kb} kB` : "");
+
+  // ── connection status rows ──
+  const rows = [];
+  const fs = h.fetch_status || {};
+  const fetchState = fs.state === "running"
+    ? '<span class="chip warn">● fetching…</span>'
+    : fs.state === "ok" ? '<span class="chip phone">✓ ok</span>'
+    : fs.state === "error" ? `<span class="chip warn" title="${esc(fs.message || "")}">✗ error</span>`
+    : fs.state === "stale" ? '<span class="chip warn">? stale</span>' : "—";
+  rows.push(garminStatusRow("Fetch state", fetchState +
+    (fs.finished_at ? ` <span class="dim">${ago(fs.finished_at)}</span>` : ""),
+    fs.message || ""));
+  rows.push(garminStatusRow("Last fetch", h.last_fetch ? ago(h.last_fetch) : "never",
+    h.last_fetch || ""));
+  rows.push(garminStatusRow("Last sync", h.last_updated ? ago(h.last_updated) : "never",
+    h.last_updated || ""));
+  rows.push(garminStatusRow("Rate limit", h.rate_limited
+    ? `<span class="chip warn">cooldown ${Math.ceil((h.next_fetch_in_sec ?? 0) / 60)}m</span>`
+    : '<span class="chip phone">clear</span>'));
+  rows.push(garminStatusRow("Tokens", h.token_store_exists
+    ? '<span class="chip phone">✓ saved</span>'
+    : '<span class="chip warn">missing — run auth_bridge.py</span>'));
+  rows.push(garminStatusRow("Today", h.latest_is_today
+    ? '<span class="chip phone">✓ data present</span>'
+    : `<span class="chip warn">latest ${esc(h.latest_date || "none")}</span>`));
+  $("garminStatus").innerHTML = rows.join("");
+
+  const btn = $("garminSyncBtn");
+  btn.disabled = fs.state === "running";
+  btn.textContent = fs.state === "running" ? "⟳ Fetching…" : "⟳ Sync today now";
+
   if (!latest) {
     $("garminDate").textContent = "No Garmin data cached.";
     $("garminMetrics").innerHTML = "";
     return;
   }
   $("garminDate").textContent = "📅 " + (latest.date || "?") +
+    (latest.date === h.today ? " (today)" : "") +
     "  ·  " + (src.recent || []).length + " recent days available";
   $("garminMetrics").innerHTML = GARMIN_METRICS
     .filter(([k]) => latest[k] != null)
@@ -750,6 +810,29 @@ function renderGarmin() {
       `<div class="metric"><div class="mk">${label}</div>
        <div class="mv">${fmt(latest[k])}</div></div>`).join("");
 }
+
+/* ⟳ force-fetch control — runs fetch_data.py on the PC and refreshes the
+   cache the bridge serves; outcome shows up in the status rows above. */
+$("garminSyncBtn").addEventListener("click", async () => {
+  const btn = $("garminSyncBtn"), msg = $("garminSyncMsg");
+  btn.disabled = true;
+  msg.textContent = "starting…";
+  try {
+    const res = await fetch("/api/v1/dashboard/garmin_fetch", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({days: 1, force: true}),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) { msg.textContent = out.detail || ("failed (HTTP " + res.status + ")"); return; }
+    msg.textContent = out.message || "fetch started";
+    refresh();
+  } catch {
+    msg.textContent = "failed — bridge unreachable";
+  } finally {
+    setTimeout(() => { btn.disabled = false; }, 2000);
+  }
+});
 
 function renderChess() {
   const ch = snapshot.chess;

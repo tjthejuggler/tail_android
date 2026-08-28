@@ -396,6 +396,30 @@ def install(app: FastAPI,
     #     is queued carrying ref_id + `orig` (the values the phone did
     #     apply), which the phone inverts before applying the fix.
 
+    @app.post("/api/v1/dashboard/garmin_fetch", tags=["dashboard"])
+    def dashboard_garmin_fetch(request: Request, payload: Dict[str, Any]):
+        """Force a Garmin fetch/sync of recent data from the dashboard.
+
+        Runs garmin_proxy/fetch_data.py in the background (token-based,
+        never logs in) and refreshes garmin_cache.json — the same cache
+        the bridge serves to the phone. Outcome lands in the Garmin
+        source's health() on the next snapshot poll.
+        """
+        _require_private(request)
+        source = get_sources().get("garmin")
+        if source is None or not hasattr(source, "trigger_fetch"):
+            raise HTTPException(status_code=404, detail="garmin source not registered")
+        try:
+            days = max(1, min(30, int(payload.get("days") or 1)))
+        except (TypeError, ValueError):
+            days = 1
+        force = bool(payload.get("force", True))
+        result = source.trigger_fetch(days=days, force=force)
+        note("dashboard", "garmin_fetch",
+             f"Garmin fetch triggered from dashboard ({days} day(s), "
+             f"force={force}): {result.get('status')}")
+        return result
+
     @app.post("/api/v1/dashboard/widget_edit", tags=["dashboard"])
     def dashboard_widget_edit(request: Request, payload: Dict[str, Any]):
         """Edit one PC-widget event (queue or history) from the dashboard."""
