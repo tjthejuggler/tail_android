@@ -38,6 +38,12 @@ class ChessPvtView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
 
+    /**
+     * Run length (ms). Defaults to the v2 3-minute PVT-B; the v3 readiness
+     * test sets 2 minutes. Must be set BEFORE [startRun].
+     */
+    var durationMs: Long = ChessReadinessV2Engine.PVT_DURATION_MS
+
     /** Callback for every raw response (null RT = false start). */
     var onSample: ((ChessReadinessV2Engine.PvtSample) -> Unit)? = null
 
@@ -131,7 +137,7 @@ class ChessPvtView @JvmOverloads constructor(
     }
 
     private fun remainingMs(): Long =
-        ChessReadinessV2Engine.PVT_DURATION_MS - (SystemClock.elapsedRealtime() - runStartMs)
+        durationMs - (SystemClock.elapsedRealtime() - runStartMs)
 
     /** Per-second progress: finishes the run when the 3 minutes elapse. */
     private fun tickSecond() {

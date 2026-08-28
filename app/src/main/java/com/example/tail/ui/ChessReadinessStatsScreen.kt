@@ -243,6 +243,7 @@ fun ChessReadinessStatsScreen(
     // Currently ACTIVE engine versions — drive the default expansion of the
     // version-owned stats sections (active system expanded, other collapsed).
     var pregameIsV2 by remember { mutableStateOf(ChessReadinessV2Store.isV2(context)) }
+    var pregameIsV3 by remember { mutableStateOf(ChessReadinessV2Store.isV3(context)) }
     var phase2IsV2 by remember { mutableStateOf(ChessPhase2V2Store.isV2(context)) }
     var showHourlyV2 by remember { mutableStateOf(false) }
 
@@ -353,6 +354,7 @@ fun ChessReadinessStatsScreen(
                     )
                 }
             pregameIsV2 = ChessReadinessV2Store.isV2(context)
+            pregameIsV3 = ChessReadinessV2Store.isV3(context)
             phase2IsV2 = ChessPhase2V2Store.isV2(context)
             loaded = true
         }
@@ -391,9 +393,17 @@ fun ChessReadinessStatsScreen(
     val allSystemChanges = remember(versionSwitchMarkers) {
         (ChessReadinessSystemChanges.ALL + versionSwitchMarkers).sortedBy { it.timestampMs }
     }
-    // Sections of the v1 readiness system collapse away while the v2
+    // Sections of the v1 readiness system collapse away while the v2/v3
     // pre-game engine is the active one (and vice versa).
-    val v1SectionsExpanded = !pregameIsV2
+    val v1SectionsExpanded = !pregameIsV2 && !pregameIsV3
+
+    // V3 (reflex + survival gate) telemetry.
+    val v3Results = remember(resumeCount) {
+        com.example.tail.widget.ChessReadinessV3Store.loadResults(context)
+    }
+    val v3Events = remember(resumeCount) {
+        com.example.tail.widget.ChessReadinessV3Store.loadEvents(context)
+    }
 
     // Reload when the screen resumes — e.g. when returning after the
     // chess.com full-history backfill finished while this screen was open.
@@ -1177,6 +1187,15 @@ fun ChessReadinessStatsScreen(
                         }
                     }
                 }
+
+                // ── V3 system: reflex + survival pre-game gate ───────────
+                // Dedicated section for the v3 chess-readiness system
+                // (renders nothing until the first v3 record exists).
+                V3PregameSection(
+                    results = v3Results,
+                    events = v3Events,
+                    startExpanded = pregameIsV3
+                )
 
                 // ── V2 systems: pre-game gate + post-game audit ──────────
                 // Dedicated sections for the two v2 chess-readiness systems

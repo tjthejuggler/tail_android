@@ -5435,21 +5435,60 @@ class HabitViewModel(
 
     /**
      * Switches the chess readiness engine between "v1" (the original
-     * diagnostic) and "v2" (the neurobiological gate). Persisted to DataStore
-     * and mirrored into the synchronous v2 prefs store so the floating bubble
-     * service can branch without reading DataStore on the window-manager path.
+     * diagnostic), "v2" (the neurobiological gate) and "v3" (the reflex +
+     * puzzle rush survival gate). Persisted to DataStore and mirrored into
+     * the synchronous v2 prefs store so the floating bubble service can
+     * branch without reading DataStore on the window-manager path.
      */
     fun setChessReadinessVersion(version: String) {
         viewModelScope.launch {
-            val normalized =
-                if (version == com.example.tail.widget.ChessReadinessV2Store.VERSION_V2) {
+            val normalized = when (version) {
+                com.example.tail.widget.ChessReadinessV2Store.VERSION_V2 ->
                     com.example.tail.widget.ChessReadinessV2Store.VERSION_V2
-                } else {
-                    com.example.tail.widget.ChessReadinessV2Store.VERSION_V1
-                }
+                com.example.tail.widget.ChessReadinessV2Store.VERSION_V3 ->
+                    com.example.tail.widget.ChessReadinessV2Store.VERSION_V3
+                else -> com.example.tail.widget.ChessReadinessV2Store.VERSION_V1
+            }
             settingsRepo.saveChessReadinessVersion(normalized)
             _settings.value = _settings.value.copy(chessReadinessVersion = normalized)
             com.example.tail.widget.ChessReadinessV2Store.saveReadinessVersion(context, normalized)
+        }
+    }
+
+    /** Status line for the survival-PB Chess.com sync button (settings UI). */
+    private val _survivalPbSyncStatus = kotlinx.coroutines.flow.MutableStateFlow("")
+    val survivalPbSyncStatus: kotlinx.coroutines.flow.StateFlow<String> = _survivalPbSyncStatus
+
+    /**
+     * Syncs the Puzzle Rush Survival all-time PB from the Chess.com API
+     * (`puzzle_rush.best.score`) using the configured Chess.com username.
+     * The API cache can lag up to 12 h, so the settings view also offers a
+     * manual override field.
+     */
+    fun syncSurvivalPbFromChessCom() {
+        viewModelScope.launch {
+            _survivalPbSyncStatus.value = "Syncing from Chess.com…"
+            try {
+                val s = settingsRepo.settingsFlow.first()
+                val username = s.chessComUsername.trim()
+                if (username.isEmpty()) {
+                    _survivalPbSyncStatus.value =
+                        "⚠ No Chess.com username configured (Chess.com section above)"
+                    return@launch
+                }
+                val stats = chessComRepo.fetchPuzzleStats(username)
+                val best = stats.puzzleRushBestScore
+                if (best <= 0) {
+                    _survivalPbSyncStatus.value = "⚠ Chess.com reports no puzzle rush best score"
+                    return@launch
+                }
+                com.example.tail.widget.ChessReadinessV3Store
+                    .saveSurvivalPbFromChessCom(context, best)
+                _survivalPbSyncStatus.value = "✅ Synced PB: $best (target = " +
+                    com.example.tail.widget.ChessReadinessV3Engine.targetScore(best) + ")"
+            } catch (e: Exception) {
+                _survivalPbSyncStatus.value = "⚠ Sync failed: ${e.message ?: "network error"}"
+            }
         }
     }
 

@@ -2450,6 +2450,7 @@ private fun ChessReadinessSettingsSection(
     var showAppPicker by remember { mutableStateOf(false) }
     var showPuzzleHabitPicker by remember { mutableStateOf(false) }
     var showRushHabitPicker by remember { mutableStateOf(false) }
+    var showSurvivalHabitPicker by remember { mutableStateOf(false) }
     var rushHighText by remember {
         mutableStateOf(
             ChessReadinessStore.lastRushAllTimeHigh(context)
@@ -2508,21 +2509,28 @@ private fun ChessReadinessSettingsSection(
 
         // Associated app picker (only when enabled)
         if (enabled) {
-            // Readiness engine version selector (original v1 / neurobiological v2)
+            // Readiness engine version selector (v1 / v2 / v3)
             Spacer(modifier = Modifier.height(12.dp))
             Text("Readiness Test Version", fontSize = 14.sp)
             Text(
                 "v1 — the original sleep / clarity / puzzles / rush diagnostic.\n" +
                     "v2 — neurobiological gate: Garmin HRV & resting-HR Z-scores, " +
                     "a 3-minute vigilance test (PVT-B) and cognitive load balancing " +
-                    "(ACWR). Both versions share the same history, Chess Guard " +
+                    "(ACWR).\n" +
+                    "v3 — reflex + survival gate: a 2-minute reflex test (PVT-B) " +
+                    "followed by a Puzzle Rush Survival session — solve real " +
+                    "puzzles in the chess app and tap PASS per solve; one strike " +
+                    "or the 5-minute cap fails the gate. The target is 60% of " +
+                    "your survival PB (Chess.com sync or manual entry below). " +
+                    "All versions share the same history, Chess Guard " +
                     "enforcement and game-audit rules.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             listOf(
                 "v1" to "v1 — Original diagnostic",
-                "v2" to "v2 — Neurobiological gate"
+                "v2" to "v2 — Neurobiological gate",
+                "v3" to "v3 — Reflex + Puzzle Rush Survival"
             ).forEach { (value, label) ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2837,6 +2845,82 @@ private fun ChessReadinessSettingsSection(
                 )
             }
 
+            // Puzzle Rush Survival — all-time PB (v3 readiness target).
+            // Chess.com API sync + manual override (the API cache can lag
+            // up to 12 h, so both paths exist).
+            if (settings.chessReadinessVersion == "v3") {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Puzzle Rush Survival — All-Time PB", fontSize = 14.sp)
+                Text(
+                    "The v3 survival gate asks you to solve round(PB × 0.60) " +
+                        "puzzles with zero strikes inside 5 minutes. Sync the PB " +
+                        "from Chess.com (puzzle_rush.best.score — its cache can " +
+                        "lag up to 12 h) or enter it manually; a manual value " +
+                        "overrides the sync until beaten.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                var survivalPbText by remember {
+                    mutableStateOf(
+                        com.example.tail.widget.ChessReadinessV3Store.survivalPb(context)
+                            .takeIf { it > 0 }?.toString() ?: ""
+                    )
+                }
+                var survivalPbSaved by remember { mutableStateOf(false) }
+                val survivalSyncStatus by viewModel.survivalPbSyncStatus.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = survivalPbText,
+                        onValueChange = {
+                            survivalPbText = it.filter { c -> c.isDigit() }.take(4)
+                            survivalPbSaved = false
+                        },
+                        label = { Text("Survival PB (puzzle rush best)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            com.example.tail.widget.ChessReadinessV3Store.saveSurvivalPbManual(
+                                context, survivalPbText.toIntOrNull() ?: 0
+                            )
+                            survivalPbSaved = true
+                        },
+                        enabled = survivalPbText.isNotBlank()
+                    ) {
+                        Text(if (survivalPbSaved) "✓ Saved" else "Save", fontSize = 12.sp)
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = { viewModel.syncSurvivalPbFromChessCom() }) {
+                        Text("↻ Sync from Chess.com", fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    val storedPb = survivalPbText.toIntOrNull() ?: 0
+                    val effPb = if (storedPb > 0) storedPb
+                        else com.example.tail.widget.ChessReadinessV3Store.survivalPb(context)
+                    Text(
+                        "Target: ${com.example.tail.widget.ChessReadinessV3Engine.targetScore(effPb)} puzzles",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (survivalSyncStatus.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = survivalSyncStatus,
+                        fontSize = 11.sp,
+                        color = if (survivalSyncStatus.startsWith("✅"))
+                            MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
             // Linked habits — puzzle/rush activity in the readiness test
             // also credits these habits (minutes + 1 session each).
             Spacer(modifier = Modifier.height(12.dp))
@@ -2865,6 +2949,15 @@ private fun ChessReadinessSettingsSection(
                 habit = ChessReadinessStore.linkedRushHabit(context),
                 onPick = { showRushHabitPicker = true }
             )
+            if (settings.chessReadinessVersion == "v3") {
+                Spacer(modifier = Modifier.height(4.dp))
+                HabitLinkRow(
+                    label = "Puzzle Rush Survival habit",
+                    habit = com.example.tail.widget.ChessReadinessV3Store
+                        .linkedSurvivalHabit(context),
+                    onPick = { showSurvivalHabitPicker = true }
+                )
+            }
         }
     }
 
@@ -2900,6 +2993,19 @@ private fun ChessReadinessSettingsSection(
                 showRushHabitPicker = false
             },
             onDismiss = { showRushHabitPicker = false }
+        )
+    }
+
+    if (showSurvivalHabitPicker) {
+        HabitPickerDialog(
+            title = "Puzzle Rush Survival habit",
+            habits = viewModel.getAllHabitNames(),
+            onPick = {
+                com.example.tail.widget.ChessReadinessV3Store
+                    .saveLinkedSurvivalHabit(context, it)
+                showSurvivalHabitPicker = false
+            },
+            onDismiss = { showSurvivalHabitPicker = false }
         )
     }
 }

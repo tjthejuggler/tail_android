@@ -1094,6 +1094,7 @@ class FloatingBubbleService : Service() {
     // closing a dialog hands focus straight back to it.
     private var chessReadinessOverlay: ChessReadinessOverlay? = null
     private var chessReadinessV2Overlay: ChessReadinessV2Overlay? = null
+    private var chessReadinessV3Overlay: ChessReadinessV3Overlay? = null
     private var chessStatusOverlay: ChessStatusOverlay? = null
     private var chessPuzzleRushOverlay: ChessPuzzleRushOverlay? = null
 
@@ -1111,10 +1112,15 @@ class FloatingBubbleService : Service() {
             chessReadinessOverlay = null
             chessReadinessV2Overlay?.dismiss()
             chessReadinessV2Overlay = null
-            if (ChessReadinessV2Store.isV2(this)) {
-                chessReadinessV2Overlay = ChessReadinessV2Overlay(this).also { it.show() }
-            } else {
-                chessReadinessOverlay = ChessReadinessOverlay(this).also { it.show() }
+            chessReadinessV3Overlay?.dismiss()
+            chessReadinessV3Overlay = null
+            when {
+                ChessReadinessV2Store.isV3(this) ->
+                    chessReadinessV3Overlay = ChessReadinessV3Overlay(this).also { it.show() }
+                ChessReadinessV2Store.isV2(this) ->
+                    chessReadinessV2Overlay = ChessReadinessV2Overlay(this).also { it.show() }
+                else ->
+                    chessReadinessOverlay = ChessReadinessOverlay(this).also { it.show() }
             }
         } catch (e: Exception) { /* never crash the bubble */ }
     }
@@ -1126,6 +1132,8 @@ class FloatingBubbleService : Service() {
             chessReadinessOverlay = null
             chessReadinessV2Overlay?.dismiss()
             chessReadinessV2Overlay = null
+            chessReadinessV3Overlay?.dismiss()
+            chessReadinessV3Overlay = null
             chessStatusOverlay?.dismiss()
             chessStatusOverlay = ChessStatusOverlay(this).also { it.show() }
         } catch (e: Exception) { /* never crash the bubble */ }
@@ -1138,6 +1146,8 @@ class FloatingBubbleService : Service() {
             chessReadinessOverlay = null
             chessReadinessV2Overlay?.dismiss()
             chessReadinessV2Overlay = null
+            chessReadinessV3Overlay?.dismiss()
+            chessReadinessV3Overlay = null
             chessStatusOverlay?.dismiss()
             chessStatusOverlay = null
             chessPuzzleRushOverlay?.dismiss()
@@ -1149,10 +1159,12 @@ class FloatingBubbleService : Service() {
     private fun dismissChessOverlays() {
         try { chessReadinessOverlay?.dismiss() } catch (_: Exception) {}
         try { chessReadinessV2Overlay?.dismiss() } catch (_: Exception) {}
+        try { chessReadinessV3Overlay?.dismiss() } catch (_: Exception) {}
         try { chessStatusOverlay?.dismiss() } catch (_: Exception) {}
         try { chessPuzzleRushOverlay?.dismiss() } catch (_: Exception) {}
         chessReadinessOverlay = null
         chessReadinessV2Overlay = null
+        chessReadinessV3Overlay = null
         chessStatusOverlay = null
         chessPuzzleRushOverlay = null
     }

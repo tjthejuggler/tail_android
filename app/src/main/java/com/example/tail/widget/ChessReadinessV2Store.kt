@@ -44,17 +44,20 @@ object ChessReadinessV2Store {
     /** Which readiness engine the chess flow uses. */
     const val VERSION_V1 = "v1"
     const val VERSION_V2 = "v2"
+    const val VERSION_V3 = "v3"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     // ── Version mirror ─────────────────────────────────────────────────────
 
-    /** "v1" (default — the original system) or "v2". */
+    /** "v1" (default — the original system), "v2" or "v3". */
     fun readinessVersion(context: Context): String =
         prefs(context).getString(KEY_VERSION, VERSION_V1) ?: VERSION_V1
 
     fun isV2(context: Context): Boolean = readinessVersion(context) == VERSION_V2
+
+    fun isV3(context: Context): Boolean = readinessVersion(context) == VERSION_V3
 
     /**
      * Mirrored from DataStore by the settings view-model on every change.
@@ -62,7 +65,11 @@ object ChessReadinessV2Store {
      * rating chart can mark which engine was active when.
      */
     fun saveReadinessVersion(context: Context, version: String) {
-        val target = if (version == VERSION_V2) VERSION_V2 else VERSION_V1
+        val target = when (version) {
+            VERSION_V2 -> VERSION_V2
+            VERSION_V3 -> VERSION_V3
+            else -> VERSION_V1
+        }
         val previous = readinessVersion(context)
         prefs(context).edit()
             .putString(KEY_VERSION, target)

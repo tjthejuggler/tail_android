@@ -1791,10 +1791,14 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_CHESS_READINESS_APP] = packageName }
     }
 
-    /** Saves which readiness engine the chess flow uses ("v1" or "v2"). */
+    /** Saves which readiness engine the chess flow uses ("v1"/"v2"/"v3"). */
     suspend fun saveChessReadinessVersion(version: String) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_CHESS_READINESS_VERSION] = if (version == "v2") "v2" else "v1"
+            prefs[KEY_CHESS_READINESS_VERSION] = when (version) {
+                "v2" -> "v2"
+                "v3" -> "v3"
+                else -> "v1"
+            }
         }
     }
 
