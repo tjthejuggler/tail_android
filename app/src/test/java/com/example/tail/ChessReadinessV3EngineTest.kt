@@ -5,6 +5,7 @@ import com.example.tail.widget.ChessReadinessV2Engine
 import com.example.tail.widget.ChessReadinessV3Engine
 import com.example.tail.widget.ChessReadinessV3Engine.Verdict
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -98,12 +99,18 @@ class ChessReadinessV3EngineTest {
     // ── Verdict → shared v1 system mapping ─────────────────────────────────
 
     @Test
-    fun `pass maps to green and failures to red`() {
+    fun `pass maps to green, strike to yellow, systemic failures to red`() {
         assertEquals(
             ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name,
             ChessReadinessV3Engine.stateNameFor(Verdict.PASS)
         )
-        for (v in listOf(Verdict.FAIL_REFLEX, Verdict.FAIL_STRIKE, Verdict.FAIL_TIMEOUT)) {
+        // A single-strike near-miss is YELLOW: casual play continues, only
+        // rated play is locked.
+        assertEquals(
+            ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name,
+            ChessReadinessV3Engine.stateNameFor(Verdict.FAIL_STRIKE)
+        )
+        for (v in listOf(Verdict.FAIL_REFLEX, Verdict.FAIL_TIMEOUT)) {
             assertEquals(
                 ChessReadinessEngine.ReadinessState.RED_LIGHT.name,
                 ChessReadinessV3Engine.stateNameFor(v)
@@ -114,14 +121,56 @@ class ChessReadinessV3EngineTest {
     @Test
     fun `synthetic ccrs feeds the shared rest ladder`() {
         assertEquals(85, ChessReadinessV3Engine.syntheticCcrs(Verdict.PASS))
-        // Reflex failure is the harshest, strike the canonical gate failure,
-        // timeout slightly softer — all below the 120-minute bar (< 40).
-        assertTrue(ChessReadinessV3Engine.syntheticCcrs(Verdict.FAIL_STRIKE) < 40)
+        // Strike is a YELLOW near-miss: 65 keeps it in the standard
+        // cool-down band, NOT the severe (< 40 → 120 min) rest ladder.
+        assertEquals(65, ChessReadinessV3Engine.syntheticCcrs(Verdict.FAIL_STRIKE))
         // Timeout sits at the 60-minute rung (40–59) of the shared ladder.
         assertEquals(40, ChessReadinessV3Engine.syntheticCcrs(Verdict.FAIL_TIMEOUT))
-        assertTrue(
-            ChessReadinessV3Engine.syntheticCcrs(Verdict.FAIL_REFLEX) <
-                ChessReadinessV3Engine.syntheticCcrs(Verdict.FAIL_STRIKE)
-        )
+        // Reflex failure is the harshest (120-min severe rung).
+        assertEquals(20, ChessReadinessV3Engine.syntheticCcrs(Verdict.FAIL_REFLEX))
     }
 }
+
+    // ── Dual win: 70th-percentile personal target ─────────────────────────
+
+    @Test
+    fun `percentile target is null below the minimum sample count`() {
+        assertNull(ChessReadinessV3Engine.percentileTarget((1..7).toList()))
+    }
+
+    @Test
+    fun `percentile target activates at 8 samples`() {
+        // 8 samples 1..8 → 70th percentile (nearest-rank, ceil(0.7*8)=6) = 6
+        assertEquals(6, ChessReadinessV3Engine.percentileTarget((1..8).toList()))
+    }
+
+    @Test
+    fun `percentile target uses only the last 30 results`() {
+        val old = List(50) { 100 + it }   // huge stale values, must be ignored
+        val recent = List(30) { 10 }      // 70th pct of 30×10 = 10
+        assertEquals(10, ChessReadinessV3Engine.percentileTarget(old + recent))
+    }
+
+    @Test
+    fun `percentile reached only at or above the target`() {
+        val t = ChessReadinessV3Engine.percentileTarget((1..10).toList())
+        assertEquals(7, t)
+        assertFalse(ChessReadinessV3Engine.percentileReached(6, t))
+        assertTrue(ChessReadinessV3Engine.percentileReached(7, t))
+    }
+
+    @Test
+    fun `percentile reached is false when target is null`() {
+        assertFalse(ChessReadinessV3Engine.percentileReached(50, null))
+    }
+
+    @Test
+    fun `percentile win never terminates the run - absolute target still required`() {
+        val pct = ChessReadinessV3Engine.percentileTarget(List(10) { 10 }) // 10
+        val absolute = ChessReadinessV3Engine.targetScore(pb = 25)          // 15
+        // At 10 solved: percentile secured but onPass(9, 15) is still false
+        assertTrue(ChessReadinessV3Engine.percentileReached(10, pct))
+        assertFalse(ChessReadinessV3Engine.onPass(9, absolute))
+        // Only the absolute target terminates
+        assertTrue(ChessReadinessV3Engine.onPass(14, absolute))
+    }

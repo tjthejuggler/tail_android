@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.widget.ChessReadinessV3Engine
 import com.example.tail.widget.ChessReadinessV3Store
 import java.time.Instant
 import java.time.ZoneId
@@ -156,6 +157,28 @@ fun V3PregameSection(
                     "%.1f".format(survivalRuns.map { it.target.toDouble() }.average()),
                     DimColor
                 )
+                V3StatRow(
+                    "Puzzles solved (total)",
+                    "${survivalRuns.sumOf { it.puzzlesPassed }}"
+                )
+                val totalSurvivalMs = survivalRuns.sumOf { it.survivalDurationMs }
+                if (totalSurvivalMs > 0) {
+                    V3StatRow(
+                        "Survival time (total)",
+                        "%.1f min".format(totalSurvivalMs / 60000.0)
+                    )
+                }
+                // Current dual-win percentile bar (same engine the live
+                // banner uses — last 30 runs, active from 8 runs).
+                ChessReadinessV3Engine.percentileTarget(
+                    results.map { it.puzzlesPassed }
+                )?.let { pct ->
+                    V3StatRow(
+                        "P70 personal win bar",
+                        "$pct puzzles",
+                        GoldValue
+                    )
+                }
                 val passDurations = results.filter { it.verdict == "PASS" }
                     .filter { it.survivalDurationMs > 0 }
                 passDurations.takeIf { it.isNotEmpty() }?.let {

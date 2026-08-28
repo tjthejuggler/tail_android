@@ -37,7 +37,10 @@ import kotlin.math.roundToInt
  *  Guard enforcement, the color system and the Phase-2 audit pipeline
  *  keep working unchanged):
  *      PASS         → GREEN_LIGHT  (rated play unlocked)
- *      FAIL_STRIKE / FAIL_TIMEOUT → RED_LIGHT (rated play locked out)
+ *      FAIL_STRIKE  → YELLOW_LIGHT (near-miss: casual play allowed,
+ *                      rated locked — a single wrong puzzle is a bad
+ *                      day at the board, not a systemic red flag)
+ *      FAIL_TIMEOUT → RED_LIGHT (rated play locked out)
  *      FAIL_REFLEX  → RED_LIGHT (total rest lockout — worst ccrs)
  *
  * Pure Kotlin (java.time only) — no Android dependencies, unit-testable.
@@ -88,6 +91,23 @@ object ChessReadinessV3Engine {
     /** target = round(PB × this ratio). */
     const val TARGET_RATIO = 0.60
 
+    /**
+     * DUAL WIN CONDITION — percentile win. Reaching the 70th percentile of
+     * the user's own past survival performance ALSO wins the gate, while the
+     * 60%-of-PB absolute target stays the fallback/absolute bar. The run
+     * always continues up to the absolute target even after the percentile
+     * win is secured (the percentile threshold never terminates the run).
+     */
+    const val PERCENTILE_WIN = 70
+
+    /**
+     * Past-run window for the percentile computation — mirrors the v2 reflex
+     * speed baseline (SPEED_BASELINE_WINDOW / MIN_SPEED_BASELINE_SAMPLES):
+     * last 30 results, active only once at least 8 exist.
+     */
+    const val PERCENTILE_WINDOW = 30
+    const val MIN_PERCENTILE_SAMPLES = 8
+
     /** Fallback PB when nothing is configured yet (keeps the gate usable). */
     const val DEFAULT_PB = 25
 
@@ -126,6 +146,25 @@ object ChessReadinessV3Engine {
     fun onPass(puzzlesPassed: Int, target: Int): Boolean =
         puzzlesPassed + 1 >= target
 
+    /**
+     * 70th-percentile (nearest-rank, rounded up) of past runs' solved-puzzle
+     * counts. Null until [MIN_PERCENTILE_SAMPLES] past results exist — with
+     * less history the percentile win is simply inactive and only the
+     * absolute 60%-of-PB target applies. Windowed to the last
+     * [PERCENTILE_WINDOW] results, like the v2 reflex speed baseline.
+     */
+    fun percentileTarget(pastPuzzlesPassed: List<Int>): Int? {
+        if (pastPuzzlesPassed.size < MIN_PERCENTILE_SAMPLES) return null
+        val window = pastPuzzlesPassed.takeLast(PERCENTILE_WINDOW).sorted()
+        val rank = kotlin.math.ceil(PERCENTILE_WIN / 100.0 * window.size).toInt()
+            .coerceIn(1, window.size)
+        return window[rank - 1].coerceAtLeast(1)
+    }
+
+    /** Whether the percentile win threshold has been reached this run. */
+    fun percentileReached(puzzlesPassed: Int, pctTarget: Int?): Boolean =
+        pctTarget != null && puzzlesPassed >= pctTarget
+
     /** Whether the global cap has been exceeded at [elapsedMs]. */
     fun timedOut(elapsedMs: Long): Boolean = elapsedMs >= SURVIVAL_CAP_MS
 
@@ -134,22 +173,23 @@ object ChessReadinessV3Engine {
     /** v1-compatible traffic-light state name (what Chess Guard reads). */
     fun stateNameFor(verdict: Verdict): String = when (verdict) {
         Verdict.PASS -> ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name
-        // A failed gate locks rated play; the reflex failure is the total
-        // rest lockout — both map to RED in the shared color system.
+        // A single strike is a near-miss → YELLOW (casual play continues,
+        // rated locked). Timeout and reflex failure are systemic → RED.
+        Verdict.FAIL_STRIKE -> ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name
         Verdict.FAIL_REFLEX,
-        Verdict.FAIL_STRIKE,
         Verdict.FAIL_TIMEOUT -> ChessReadinessEngine.ReadinessState.RED_LIGHT.name
     }
 
     /**
      * Synthetic CCRS for the SHARED history record (drives the rest-period
      * ladder for failed tests: < 40 → 120 min, 40–59 → 60 min). The reflex
-     * failure is the most severe (total rest), strike the canonical gate
-     * failure, timeout slightly softer (sluggishness, not a wrong move).
+     * failure is the most severe (total rest). A strike is a YELLOW
+     * near-miss — its 65 keeps it in the standard 60-min cool-down band
+     * (same as a passed session) instead of the 120-min severe rest ladder.
      */
     fun syntheticCcrs(verdict: Verdict): Int = when (verdict) {
         Verdict.PASS -> 85
-        Verdict.FAIL_STRIKE -> 30
+        Verdict.FAIL_STRIKE -> 65
         Verdict.FAIL_TIMEOUT -> 40
         Verdict.FAIL_REFLEX -> 20
     }

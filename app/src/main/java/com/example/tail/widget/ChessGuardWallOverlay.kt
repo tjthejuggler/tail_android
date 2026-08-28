@@ -1,6 +1,7 @@
 package com.example.tail.widget
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -175,7 +176,21 @@ object ChessGuardWallOverlay {
         }
         val close = Button(context).apply {
             text = "Close"
-            setOnClickListener { dismiss() }
+            setOnClickListener {
+                // Closing the red wall must also LEAVE chess.com — it is
+                // still in the foreground underneath, fully visible the
+                // moment the wall drops. Go to the home screen so the
+                // blocked session actually ends.
+                try {
+                    context.startActivity(
+                        Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                    )
+                } catch (_: Exception) { /* best-effort */ }
+                dismiss()
+            }
         }
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL

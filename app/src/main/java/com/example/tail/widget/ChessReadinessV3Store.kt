@@ -161,6 +161,60 @@ object ChessReadinessV3Store {
         }
     }
 
+    // ── Pending (armed) survival session ────────────────────────────────────
+
+    /**
+     * A survival gate that passed the reflex step and is ARMED: the overlay
+     * parked it and the floating bubble shows the START panel. Persisted so
+     * the panel survives the bubble service being killed.
+     */
+    data class PendingSurvival(
+        val sessionStartedAt: Long,
+        val target: Int,
+        val reflexLapses: Int,
+        val reflexFalseStarts: Int,
+        val reflexMeanRtMs: Double?
+    )
+
+    /** An armed-but-unstarted survival session expires after this long. */
+    const val PENDING_TIMEOUT_MS = 15L * 60 * 1000
+
+    fun savePendingSurvival(context: Context, pending: PendingSurvival) {
+        prefs(context).edit().putString("pending_survival", JSONObject().apply {
+            put("sessionStartedAt", pending.sessionStartedAt)
+            put("target", pending.target)
+            put("lapses", pending.reflexLapses)
+            put("falseStarts", pending.reflexFalseStarts)
+            if (pending.reflexMeanRtMs != null) put("meanRtMs", pending.reflexMeanRtMs)
+            put("armedAt", System.currentTimeMillis())
+        }.toString()).apply()
+    }
+
+    fun loadPendingSurvival(context: Context): PendingSurvival? {
+        val raw = prefs(context).getString("pending_survival", null) ?: return null
+        return try {
+            val o = JSONObject(raw)
+            if (System.currentTimeMillis() - o.getLong("armedAt") > PENDING_TIMEOUT_MS) {
+                clearPendingSurvival(context)
+                return null
+            }
+            PendingSurvival(
+                sessionStartedAt = o.getLong("sessionStartedAt"),
+                target = o.optInt("target", 0),
+                reflexLapses = o.optInt("lapses", 0),
+                reflexFalseStarts = o.optInt("falseStarts", 0),
+                reflexMeanRtMs = if (o.has("meanRtMs") && !o.isNull("meanRtMs"))
+                    o.optDouble("meanRtMs") else null
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun clearPendingSurvival(context: Context) {
+        prefs(context).edit().remove("pending_survival").apply()
+    }
+
     // ── Per-puzzle survival telemetry ──────────────────────────────────────
 
     /**
@@ -206,6 +260,57 @@ object ChessReadinessV3Store {
             }
         } catch (_: Exception) {
             emptyList()
+        }
+    }
+}
+
+/**
+ * Records a finished v3 run into every store the shared enforcement system
+ * reads: the SHARED v1 history (GREEN/RED + synthetic ccrs → Chess Guard,
+ * colors, Phase-2 audits, rest ladder), the v3 telemetry log, and the
+ * linked survival-habit credit. Used by both the overlay (reflex fails)
+ * and the floating-bubble survival panel (gate runs).
+ */
+object ChessReadinessV3Recorder {
+    fun record(
+        context: Context,
+        sessionStartedAt: Long,
+        verdict: ChessReadinessV3Engine.Verdict,
+        target: Int,
+        puzzlesPassed: Int,
+        survivalDurationMs: Long,
+        reflex: ChessReadinessV3Engine.ReflexSummary?
+    ) {
+        val now = System.currentTimeMillis()
+        val stateName = ChessReadinessV3Engine.stateNameFor(verdict)
+        val ccrs = ChessReadinessV3Engine.syntheticCcrs(verdict)
+        ChessReadinessStore.appendTest(
+            context,
+            ChessReadinessEngine.ReadinessTest(timestamp = now, ccrs = ccrs, state = stateName)
+        )
+        ChessReadinessV3Store.appendResult(
+            context,
+            ChessReadinessV3Store.V3ResultRecord(
+                timestamp = now,
+                sessionStartedAt = sessionStartedAt,
+                verdict = verdict.name,
+                stateName = stateName,
+                ccrs = ccrs,
+                target = target,
+                puzzlesPassed = puzzlesPassed,
+                survivalDurationMs = survivalDurationMs,
+                reflexLapses = reflex?.lapses ?: 0,
+                reflexFalseStarts = reflex?.falseStarts ?: 0,
+                reflexMeanRtMs = reflex?.meanRtMs
+            )
+        )
+        if (survivalDurationMs > 0) {
+            ChessHabitCredit.grant(
+                context,
+                ChessReadinessV3Store.linkedSurvivalHabit(context),
+                kotlin.math.round(survivalDurationMs / 60000.0).toInt().coerceAtLeast(1),
+                1
+            )
         }
     }
 }

@@ -149,6 +149,38 @@ class FloatingBubbleService : Service() {
     // ── Timer chip overlay (live elapsed time above the bubble) ───────────
     private var timerChipView: TextView? = null
 
+    // ── V3 survival gate panel (side banner next to the bubble) ──────────
+    private var survivalPanelView: LinearLayout? = null
+    private var survivalArmed = false        // armed = waiting for ▶ START
+    private var survivalRunning = false
+    private var survivalSessionStartedAt = 0L
+    private var survivalTarget = 0
+    private var survivalPassed = 0
+    private var survivalRunStartMs = 0L      // elapsedRealtime when ▶ was tapped
+    private var survivalPuzzleStartMs = 0L
+    private var survivalReflex: ChessReadinessV3Engine.ReflexSummary? = null
+
+    /**
+     * Free-play mode: after the official v3 gate ends, a linked survival
+     * habit keeps the banner alive as a plain increasing timer so the user
+     * can keep drilling and earn habit minutes for the extra time.
+     */
+    private var survivalFreePlay = false
+    private var survivalFreePlayStartMs = 0L
+    private var survivalCounterText: TextView? = null
+    private var survivalStopwatchText: TextView? = null
+    private var survivalTotalText: TextView? = null
+    private var survivalPctText: TextView? = null
+
+    /** 70th-percentile personal target (null until 8 past runs exist). */
+    private var survivalPctTarget: Int? = null
+
+    /** Percentile win already secured this run (run continues regardless). */
+    private var survivalPctWon = false
+
+    /** True once the user dragged the banner away from the bubble anchor. */
+    private var survivalPanelDragged = false
+
     // ── Habit picker menu (several habits share one trigger app) ──────────
     private var habitMenuView: LinearLayout? = null
 
@@ -332,6 +364,7 @@ class FloatingBubbleService : Service() {
         removeBubble()
         removeDismissZone()
         hideTimerChip()
+        hideSurvivalPanel()
         hideHabitPickerMenu()
         hideIncrementFlash()
         handler.removeCallbacks(pcEventPollRunnable)
@@ -419,6 +452,10 @@ class FloatingBubbleService : Service() {
             setBubbleRunningVisuals(running = true)
             showTimerChip()
         }
+
+        // Restore an armed (or running) V3 survival panel after the bubble
+        // service was recreated while the gate was in progress.
+        maybeRestoreSurvivalPanel()
     }
 
     private fun createCircularBackground(): android.graphics.drawable.GradientDrawable {
@@ -572,6 +609,7 @@ class FloatingBubbleService : Service() {
 
                         // Keep the timer chip glued above the bubble
                         positionTimerChip()
+                        positionSurvivalPanel()
 
                         // Highlight dismiss zone when bubble is near it
                         updateDismissZoneHighlight()
@@ -689,6 +727,7 @@ class FloatingBubbleService : Service() {
                     try {
                         windowManager.updateViewLayout(bubbleView, bubbleParams)
                         positionTimerChip()
+                        positionSurvivalPanel()
                     } catch (e: Exception) { return }
 
                     if (progress < 1f) {
@@ -919,6 +958,555 @@ class FloatingBubbleService : Service() {
     }
 
     // ──────────────────────────────────────────────────────────────────────
+    //  V3 survival gate panel (Puzzle Rush Survival control under the bubble)
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * Restores the survival panel after a service restart: an ARMED session
+     * re-shows the ▶ START panel (the pending record survives in the v3
+     * store). A RUNNING run cannot be restored mid-flight (the run timing
+     * is monotonic and the run must be contiguous) — it is treated as
+     * armed-again from zero.
+     */
+    private fun maybeRestoreSurvivalPanel() {
+        val pending = ChessReadinessV3Store.loadPendingSurvival(this) ?: return
+        survivalSessionStartedAt = pending.sessionStartedAt
+        survivalTarget = pending.target
+        survivalReflex = ChessReadinessV3Engine.ReflexSummary(
+            lapses = pending.reflexLapses,
+            falseStarts = pending.reflexFalseStarts,
+            meanRtMs = pending.reflexMeanRtMs,
+            passed = true
+        )
+        showSurvivalPanel(armed = true)
+    }
+
+    /** Called by the v3 overlay's hand-off: shows the ▶ START panel. */
+    fun armSurvivalPanel() {
+        val pending = ChessReadinessV3Store.loadPendingSurvival(this) ?: return
+        survivalSessionStartedAt = pending.sessionStartedAt
+        survivalTarget = pending.target
+        survivalReflex = ChessReadinessV3Engine.ReflexSummary(
+            lapses = pending.reflexLapses,
+            falseStarts = pending.reflexFalseStarts,
+            meanRtMs = pending.reflexMeanRtMs,
+            passed = true
+        )
+        showSurvivalPanel(armed = true)
+    }
+
+    /** Live tick: per-puzzle stopwatch + total timer + 5-minute cap check. */
+    private val survivalTickRunnable = object : Runnable {
+        override fun run() {
+            if (survivalFreePlay) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                survivalStopwatchText?.text = formatSurvivalStopwatch(now - survivalFreePlayStartMs)
+                handler.postDelayed(this, 100)
+                return
+            }
+            if (!survivalRunning) return
+            val now = android.os.SystemClock.elapsedRealtime()
+            val total = now - survivalRunStartMs
+            survivalStopwatchText?.text = formatSurvivalStopwatch(now - survivalPuzzleStartMs)
+            survivalTotalText?.text = formatSurvivalClock(total) + " / 5:00"
+            if (ChessReadinessV3Engine.timedOut(total)) {
+                finishSurvivalRun(ChessReadinessV3Engine.Verdict.FAIL_TIMEOUT)
+            } else {
+                handler.postDelayed(this, 100)
+            }
+        }
+    }
+
+    private fun formatSurvivalClock(ms: Long): String {
+        val s = (ms / 1000).toInt().coerceAtLeast(0)
+        return "%d:%02d".format(s / 60, s % 60)
+    }
+
+    private fun formatSurvivalStopwatch(ms: Long): String {
+        val clamped = ms.coerceAtLeast(0L)
+        val s = clamped / 1000
+        val tenth = (clamped % 1000) / 100
+        return "%02d:%02d.%d".format(s / 60, s % 60, tenth)
+    }
+
+    /**
+     * Shows the survival panel next to the bubble.
+     *  - armed: small vertical card with "SURVIVAL GATE — N puzzles" + one
+     *    ▶ START button (the user navigates to the chess.com survival drill
+     *    first, then taps ▶);
+     *  - running: a LONG HORIZONTAL BANNER to the right of the bubble —
+     *    counter, percentile indicator, stopwatch, total timer and the
+     *    ✓ PASS / ✕ FAIL buttons all in one row, so it can be dragged
+     *    somewhere that does not cover the board.
+     */
+    private fun showSurvivalPanel(armed: Boolean) {
+        hideSurvivalPanel()
+        survivalArmed = armed
+        survivalRunning = !armed
+        survivalPanelDragged = false
+
+        val density = resources.displayMetrics.density
+        fun Int.dp(): Int = (this * density).toInt()
+
+        val panel = LinearLayout(this).apply {
+            orientation = if (armed) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(0xEE161616.toInt())
+                cornerRadius = 12f * density
+                setStroke(1, 0xFF334455.toInt())
+            }
+            setPadding(10.dp(), 8.dp(), 10.dp(), 8.dp())
+        }
+
+        fun panelButton(label: String, bg: Int, fg: Int, onClick: () -> Unit) =
+            TextView(this).apply {
+                text = label
+                gravity = Gravity.CENTER
+                textSize = 14f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(fg)
+                setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+                background = GradientDrawable().apply {
+                    setColor(bg)
+                    cornerRadius = 10f * density
+                }
+                setOnClickListener { onClick() }
+            }
+
+        if (armed) {
+            panel.addView(TextView(this).apply {
+                text = "♟ SURVIVAL GATE"
+                setTextColor(0xFF66CCFF.toInt())
+                textSize = 12f
+                setTypeface(null, Typeface.BOLD)
+                gravity = Gravity.CENTER
+            })
+            panel.addView(TextView(this).apply {
+                text = "Target: $survivalTarget puzzles · 0 strikes · 5:00 cap"
+                setTextColor(Color.WHITE)
+                textSize = 11f
+                gravity = Gravity.CENTER
+                setPadding(0, 2.dp(), 0, 4.dp())
+            })
+            panel.addView(
+                panelButton("▶  START SURVIVAL", 0xFF1E5631.toInt(), 0xFF88FF88.toInt()) {
+                    startSurvivalRun()
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+            panel.addView(TextView(this).apply {
+                text = "Open the chess.com survival drill, then tap START"
+                setTextColor(0xFF999999.toInt())
+                textSize = 10f
+                gravity = Gravity.CENTER
+                setPadding(0, 4.dp(), 0, 0)
+            })
+        } else {
+            fun bannerMargin(): LinearLayout.LayoutParams =
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginStart = 8.dp(); marginEnd = 8.dp() }
+
+            val infoBlock = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+            }
+            survivalCounterText = TextView(this).apply {
+                text = "%02d / %d".format(survivalPassed + 1, survivalTarget)
+                setTextColor(0xFF66CCFF.toInt())
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                gravity = Gravity.CENTER
+            }
+            survivalPctText = TextView(this).apply {
+                text = pctBannerLabel()
+                setTextColor(if (survivalPctWon) 0xFF88FF88.toInt() else 0xFFAAAAAA.toInt())
+                textSize = 10f
+                gravity = Gravity.CENTER
+            }
+            survivalTotalText = TextView(this).apply {
+                text = "0:00 / 5:00"
+                setTextColor(0xFF999999.toInt())
+                textSize = 10f
+                gravity = Gravity.CENTER
+            }
+            infoBlock.addView(survivalCounterText)
+            infoBlock.addView(survivalPctText)
+            infoBlock.addView(survivalTotalText)
+            panel.addView(infoBlock, bannerMargin())
+
+            survivalStopwatchText = TextView(this).apply {
+                text = "00:00.0"
+                setTextColor(Color.WHITE)
+                textSize = 22f
+                setTypeface(null, Typeface.BOLD)
+                gravity = Gravity.CENTER
+            }
+            panel.addView(survivalStopwatchText, bannerMargin())
+
+            panel.addView(
+                panelButton("✓ PASS", 0xFF1E5631.toInt(), 0xFF88FF88.toInt()) {
+                    onSurvivalPass()
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = 6.dp() }
+            )
+            panel.addView(
+                panelButton("✕ FAIL", 0xFF7F1D1D.toInt(), 0xFFEF9A9A.toInt()) {
+                    onSurvivalFail()
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+
+        // The whole banner is draggable (touch on any non-button area) so the
+        // user can park it wherever it does not cover the board.
+        panel.setOnTouchListener(SurvivalBannerDragListener())
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+
+        survivalPanelView = panel
+        try {
+            windowManager.addView(panel, params)
+            panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+            positionSurvivalPanel()
+            if (survivalRunning) {
+                handler.removeCallbacks(survivalTickRunnable)
+                handler.postDelayed(survivalTickRunnable, 100)
+            }
+        } catch (e: Exception) {
+            survivalPanelView = null
+        }
+    }
+
+    /** Percentile indicator label for the running banner. */
+    private fun pctBannerLabel(): String {
+        val t = survivalPctTarget
+        return when {
+            survivalPctWon -> "P70 ✓ secured"
+            t != null -> "P70 win at $t"
+            else -> "P70 needs history"
+        }
+    }
+
+    /** ▶ tapped: the drill begins — timers start, PASS/FAIL go live. */
+    private fun startSurvivalRun() {
+        survivalRunStartMs = android.os.SystemClock.elapsedRealtime()
+        survivalPuzzleStartMs = survivalRunStartMs
+        survivalPassed = 0
+        survivalPctWon = false
+        survivalPctTarget = ChessReadinessV3Engine.percentileTarget(
+            ChessReadinessV3Store.loadResults(this).map { it.puzzlesPassed }
+        )
+        showSurvivalPanel(armed = false)
+    }
+
+    private fun onSurvivalPass() {
+        if (!survivalRunning) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val duration = (now - survivalPuzzleStartMs).coerceAtLeast(0L)
+        ChessReadinessV3Store.appendEvent(
+            this,
+            ChessReadinessV3Store.SurvivalEventRecord(
+                sessionId = survivalSessionStartedAt,
+                puzzleIndex = survivalPassed + 1,
+                puzzleDurationMs = duration,
+                timestamp = System.currentTimeMillis(),
+                verdict = ChessReadinessV3Engine.Verdict.PASS.name
+            )
+        )
+        val passed = survivalPassed
+        survivalPassed = passed + 1
+        if (ChessReadinessV3Engine.onPass(passed, survivalTarget)) {
+            finishSurvivalRun(ChessReadinessV3Engine.Verdict.PASS)
+        } else {
+            // Percentile win: secured but NOT terminal — the run continues
+            // up to the absolute 60%-of-PB target.
+            if (!survivalPctWon &&
+                ChessReadinessV3Engine.percentileReached(survivalPassed, survivalPctTarget)
+            ) {
+                survivalPctWon = true
+                survivalPctText?.apply {
+                    text = pctBannerLabel()
+                    setTextColor(0xFF88FF88.toInt())
+                }
+                Toast.makeText(
+                    this,
+                    "♟ 70th-percentile win secured — continue to the absolute target ($survivalTarget)",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            survivalCounterText?.text = "%02d / %d".format(survivalPassed + 1, survivalTarget)
+            survivalPuzzleStartMs = now
+        }
+    }
+
+    private fun onSurvivalFail() {
+        if (!survivalRunning) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        ChessReadinessV3Store.appendEvent(
+            this,
+            ChessReadinessV3Store.SurvivalEventRecord(
+                sessionId = survivalSessionStartedAt,
+                puzzleIndex = survivalPassed + 1,
+                puzzleDurationMs = (now - survivalPuzzleStartMs).coerceAtLeast(0L),
+                timestamp = System.currentTimeMillis(),
+                verdict = ChessReadinessV3Engine.Verdict.FAIL_STRIKE.name
+            )
+        )
+        finishSurvivalRun(ChessReadinessV3Engine.Verdict.FAIL_STRIKE)
+    }
+
+    private fun finishSurvivalRun(verdict: ChessReadinessV3Engine.Verdict) {
+        handler.removeCallbacks(survivalTickRunnable)
+        val elapsed = if (survivalRunStartMs > 0)
+            android.os.SystemClock.elapsedRealtime() - survivalRunStartMs else 0L
+        survivalRunning = false
+        survivalArmed = false
+        ChessReadinessV3Store.clearPendingSurvival(this)
+        ChessReadinessV3Recorder.record(
+            context = this,
+            sessionStartedAt = survivalSessionStartedAt,
+            verdict = verdict,
+            target = survivalTarget,
+            puzzlesPassed = survivalPassed,
+            survivalDurationMs = elapsed,
+            reflex = survivalReflex
+        )
+        // With a linked survival habit the banner does NOT die with the
+        // gate: it switches to a plain increasing free-play timer so the
+        // user can keep drilling and earn habit minutes for the extra time
+        // (the v3 portion was already credited by the recorder above).
+        val habit = ChessReadinessV3Store.linkedSurvivalHabit(this)
+        if (verdict != ChessReadinessV3Engine.Verdict.FAIL_REFLEX && habit != null) {
+            showSurvivalFreePlayPanel()
+            val msg = when (verdict) {
+                ChessReadinessV3Engine.Verdict.PASS ->
+                    "♟ SURVIVAL GATE PASSED — rated play unlocked ($survivalPassed/$survivalTarget)"
+                ChessReadinessV3Engine.Verdict.FAIL_STRIKE ->
+                    "♟ GATE FAILED — strike · rated play locked · keep drilling for $habit"
+                else ->
+                    "♟ GATE FAILED — 5-min cap · rated play locked · keep drilling for $habit"
+            }
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        } else {
+            hideSurvivalPanel()
+            val msg = when (verdict) {
+                ChessReadinessV3Engine.Verdict.PASS ->
+                    "♟ SURVIVAL GATE PASSED — rated play unlocked ($survivalPassed/$survivalTarget)"
+                ChessReadinessV3Engine.Verdict.FAIL_STRIKE ->
+                    "♟ GATE FAILED — strike ($survivalPassed/$survivalTarget) · rated play locked"
+                else ->
+                    "♟ GATE FAILED — 5-min cap ($survivalPassed/$survivalTarget) · rated play locked"
+            }
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Post-gate free play: the same draggable side banner, reduced to a
+     * label + an ever-increasing timer + a STOP & SAVE button. No targets,
+     * no strikes, no cap — pure habit-credit drilling time.
+     */
+    private fun showSurvivalFreePlayPanel() {
+        hideSurvivalPanel()
+        survivalFreePlay = true
+        survivalFreePlayStartMs = android.os.SystemClock.elapsedRealtime()
+
+        val density = resources.displayMetrics.density
+        fun Int.dp(): Int = (this * density).toInt()
+        fun bannerMargin(): LinearLayout.LayoutParams =
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = 8.dp(); marginEnd = 8.dp() }
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(0xEE161616.toInt())
+                cornerRadius = 12f * density
+                setStroke(1, 0xFF334455.toInt())
+            }
+            setPadding(10.dp(), 8.dp(), 10.dp(), 8.dp())
+        }
+
+        val label = TextView(this).apply {
+            text = "♟ SURVIVAL\nfree play"
+            setTextColor(0xFF66CCFF.toInt())
+            textSize = 11f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+        }
+        panel.addView(label, bannerMargin())
+
+        survivalStopwatchText = TextView(this).apply {
+            text = "00:00.0"
+            setTextColor(Color.WHITE)
+            textSize = 22f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+        }
+        panel.addView(survivalStopwatchText, bannerMargin())
+
+        panel.addView(
+            TextView(this).apply {
+                text = "■ STOP & SAVE"
+                gravity = Gravity.CENTER
+                textSize = 13f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(0xFFEF9A9A.toInt())
+                setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+                background = GradientDrawable().apply {
+                    setColor(0xFF7F1D1D.toInt())
+                    cornerRadius = 10f * density
+                }
+                setOnClickListener { stopSurvivalFreePlay() }
+            },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        panel.setOnTouchListener(SurvivalBannerDragListener())
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+
+        survivalPanelView = panel
+        try {
+            windowManager.addView(panel, params)
+            positionSurvivalPanel()
+            handler.removeCallbacks(survivalTickRunnable)
+            handler.postDelayed(survivalTickRunnable, 100)
+        } catch (e: Exception) {
+            survivalPanelView = null
+        }
+    }
+
+    /** STOP & SAVE: credits the free-play minutes to the linked habit. */
+    private fun stopSurvivalFreePlay() {
+        if (!survivalFreePlay) return
+        val elapsed = android.os.SystemClock.elapsedRealtime() - survivalFreePlayStartMs
+        val habit = ChessReadinessV3Store.linkedSurvivalHabit(this)
+        survivalFreePlay = false
+        hideSurvivalPanel()
+        if (habit != null && elapsed > 0) {
+            val minutes = kotlin.math.round(elapsed / 60000.0).toInt().coerceAtLeast(1)
+            ChessHabitCredit.grant(this, habit, minutes, 1)
+            Toast.makeText(this, "♟ +$minutes min → $habit", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Removes the survival panel (and stops its tick loop). */
+    private fun hideSurvivalPanel() {
+        handler.removeCallbacks(survivalTickRunnable)
+        survivalRunning = false
+        survivalArmed = false
+        survivalFreePlay = false
+        survivalPanelView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) { /* already removed */ }
+        }
+        survivalPanelView = null
+        survivalCounterText = null
+        survivalStopwatchText = null
+        survivalTotalText = null
+        survivalPctText = null
+    }
+
+    /**
+     * Anchors the survival panel to the RIGHT of the bubble (vertically
+     * centered on it) — a long sideways banner that stays clear of the board
+     * underneath. Once the user drags the banner somewhere it stops
+     * following the bubble until the panel is rebuilt.
+     */
+    private fun positionSurvivalPanel() {
+        val panel = survivalPanelView ?: return
+        if (survivalPanelDragged) return
+        val params = panel.layoutParams as? WindowManager.LayoutParams ?: return
+        val gap = 8.dp(resources)
+        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        params.x = bubbleParams.x + bubbleSize + gap
+        params.y = bubbleParams.y + (bubbleSize - panel.measuredHeight) / 2
+        try {
+            windowManager.updateViewLayout(panel, params)
+        } catch (e: Exception) { /* view removed */ }
+    }
+
+    /**
+     * Drag handling for the survival banner: moving a finger on any
+     * non-button part of the banner moves the whole banner (its own
+     * WindowManager position), independent of the bubble.
+     */
+    private inner class SurvivalBannerDragListener : View.OnTouchListener {
+        private var downX = 0f
+        private var downY = 0f
+        private var startParamsX = 0
+        private var startParamsY = 0
+        private var dragging = false
+
+        override fun onTouch(v: View, event: MotionEvent): Boolean {
+            val params = v.layoutParams as? WindowManager.LayoutParams
+                ?: return false
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    downY = event.rawY
+                    startParamsX = params.x
+                    startParamsY = params.y
+                    dragging = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downX
+                    val dy = event.rawY - downY
+                    if (!dragging && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+                        dragging = true
+                        survivalPanelDragged = true
+                    }
+                    if (dragging) {
+                        params.x = startParamsX + dx.toInt()
+                        params.y = startParamsY + dy.toInt()
+                        try {
+                            windowManager.updateViewLayout(v, params)
+                        } catch (e: Exception) { /* view removed */ }
+                    }
+                }
+            }
+            return dragging
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
     //  Habit picker menu (several habits share one trigger app)
     // ──────────────────────────────────────────────────────────────────────
 
@@ -1116,7 +1704,9 @@ class FloatingBubbleService : Service() {
             chessReadinessV3Overlay = null
             when {
                 ChessReadinessV2Store.isV3(this) ->
-                    chessReadinessV3Overlay = ChessReadinessV3Overlay(this).also { it.show() }
+                    chessReadinessV3Overlay = ChessReadinessV3Overlay(this) {
+                        armSurvivalPanel()
+                    }.also { it.show() }
                 ChessReadinessV2Store.isV2(this) ->
                     chessReadinessV2Overlay = ChessReadinessV2Overlay(this).also { it.show() }
                 else ->
