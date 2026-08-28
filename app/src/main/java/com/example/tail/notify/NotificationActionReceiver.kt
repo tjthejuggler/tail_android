@@ -54,9 +54,18 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 val ask = store.get(askId)
                 HabitNotifier.cancelAsk(appContext, askId)
                 if (ask != null) {
-                    HabitAsks.applyAnswer(appContext, ask, answer)
-                    store.remove(askId)
-                    Log.i(TAG, "Ask '$askId' answered ${if (answer) "YES" else "NO"} from system notification")
+                    val resolved = HabitAsks.applyAnswer(appContext, ask, answer)
+                    if (resolved) {
+                        store.remove(askId)
+                        Log.i(TAG, "Ask '$askId' answered ${if (answer) "YES" else "NO"} from system notification")
+                    } else {
+                        // The effect (text log / increment) failed even after
+                        // retries — keep the ask and re-post the notification
+                        // so the user can answer it again instead of the
+                        // answer being silently lost.
+                        HabitNotifier.postAsk(appContext, ask)
+                        Log.w(TAG, "Ask '$askId' answer FAILED — ask kept for retry")
+                    }
                 } else {
                     Log.i(TAG, "Ask '$askId' already answered elsewhere — nothing to do")
                 }
