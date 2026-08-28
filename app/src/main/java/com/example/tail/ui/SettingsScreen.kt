@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wallpaper
@@ -362,6 +363,18 @@ fun SettingsScreen(
                     VoiceTriggerSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     VoiceNoteSettingsSection(viewModel = viewModel, settings = settings)
+                }
+            }
+
+            // ── Notifications ───────────────────────────────────────────────────
+            item {
+                SettingsCategory(
+                    title = "Notifications",
+                    summary = "App stats records · habit asks",
+                    icon = Icons.Filled.Notifications,
+                    accent = BorderGreen
+                ) {
+                    NotificationsSettingsSection(viewModel = viewModel, settings = settings)
                 }
             }
 
@@ -2008,6 +2021,38 @@ private fun overlayFontLabel(family: String): String =
  * resizes it (width + font scale together) — this section covers the master
  * switch, background opacity and a position/size reset.
  */
+/**
+ * Notifications settings section — master switch for the app-stats record
+ * notifications ("close to a new record" / "record broken" notices and the
+ * 🏆 Record News feed in the App Stats screen). Habit confirmation asks are
+ * unaffected.
+ */
+@Composable
+private fun NotificationsSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("📊 App stats records", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(
+                text = "Notify when an all-time app record is close to breaking " +
+                    "or just broken (averages, best day, streak totals…). " +
+                    "Also feeds the 🏆 Record News popup in App Stats.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = settings.appStatsRecordNotificationsEnabled,
+            onCheckedChange = { viewModel.setAppStatsRecordNotificationsEnabled(it) }
+        )
+    }
+}
+
 @Composable
 private fun StatsOverlaySettingsSection(
     viewModel: HabitViewModel,

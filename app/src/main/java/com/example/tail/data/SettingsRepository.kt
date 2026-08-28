@@ -24,6 +24,9 @@ private val KEY_SCREENS_RELAY_FILE_URI = stringPreferencesKey("screens_relay_fil
 private val KEY_PC_WIDGET_HABITS = stringSetPreferencesKey("pc_widget_habits")
 // In-app stats overlay (StatsOverlayService) master switch
 private val KEY_STATS_OVERLAY_ENABLED = booleanPreferencesKey("stats_overlay_enabled")
+
+// App-stats record notifications master switch
+private val KEY_APP_STATS_RECORD_NOTIFS = booleanPreferencesKey("app_stats_record_notifications_enabled")
 private val KEY_CUSTOM_INPUT = stringSetPreferencesKey("custom_input_habits")
 private val KEY_HABIT_ORDER = stringPreferencesKey("habit_order")
 private val KEY_HABIT_SCREENS = stringPreferencesKey("habit_screens")
@@ -922,6 +925,7 @@ class SettingsRepository(private val context: Context) {
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
             pcWidgetHabits = prefs[KEY_PC_WIDGET_HABITS] ?: emptySet(),
             statsOverlayEnabled = prefs[KEY_STATS_OVERLAY_ENABLED] ?: false,
+            appStatsRecordNotificationsEnabled = prefs[KEY_APP_STATS_RECORD_NOTIFS] ?: true,
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
             habitScreens = screens,
@@ -1081,6 +1085,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveStatsOverlayEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[KEY_STATS_OVERLAY_ENABLED] = enabled
+        }
+    }
+
+    /** Saves the master switch for the app-stats record notifications. */
+    suspend fun saveAppStatsRecordNotificationsEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_APP_STATS_RECORD_NOTIFS] = enabled
         }
     }
 

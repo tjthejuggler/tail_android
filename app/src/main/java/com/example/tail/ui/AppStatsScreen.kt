@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Button
@@ -48,7 +49,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.platform.LocalContext
 import com.example.tail.data.HabitsDatabase
+import com.example.tail.notify.AppStatsNewsStore
 import com.example.tail.data.applyDivider
 import com.example.tail.data.invertedBinaryPointsForDate
 import com.example.tail.data.isInternalValueKey
@@ -112,6 +115,11 @@ fun AppStatsScreen(
     var excludeGarminFromLists by rememberSaveable { mutableStateOf(true) }
     var excludeDisabledFromLists by rememberSaveable { mutableStateOf(true) }
     var showListSettings by remember { mutableStateOf(false) }
+    // App-stats record news (🏆 top-bar icon): near-record / record-broken
+    // events from the record notification engine. Loaded fresh each time
+    // the popup opens; entries are not dismissable, they age out on their own.
+    var showRecordNews by remember { mutableStateOf(false) }
+    var recordNews by remember { mutableStateOf<List<AppStatsNewsStore.Entry>>(emptyList()) }
     val noPointsHabits = settings.noPointsHabits
     val secondaryValueHabits = settings.secondaryValueHabits
     val secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits
@@ -248,6 +256,33 @@ fun AppStatsScreen(
                     }
                 },
                 actions = {
+                    val context = LocalContext.current
+                    // Recomputed when the popup toggles so the badge count
+                    // catches entries added while the screen was open.
+                    val newsCount = remember(showRecordNews) {
+                        AppStatsNewsStore.load(context).size
+                    }
+                    IconButton(onClick = {
+                        recordNews = AppStatsNewsStore.load(context)
+                        showRecordNews = true
+                    }) {
+                        Box {
+                            Icon(
+                                Icons.Default.EmojiEvents,
+                                contentDescription = "Record news",
+                                tint = if (newsCount > 0) GoldValue else DimColor
+                            )
+                            if (newsCount > 0) {
+                                Text(
+                                    text = newsCount.toString(),
+                                    color = Color(0xFFFF4444),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.align(Alignment.TopEnd)
+                                )
+                            }
+                        }
+                    }
                     IconButton(onClick = { showListSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "Stats list settings")
                     }
@@ -749,6 +784,14 @@ fun AppStatsScreen(
         }
     }
 
+    // ── App-stats record news popup ────────────────────────────────────────────
+    if (showRecordNews) {
+        RecordNewsPopup(
+            entries = recordNews,
+            onDismiss = { showRecordNews = false }
+        )
+    }
+
     // ── Stats list settings popup ──────────────────────────────────────────────
     if (showListSettings) {
         Dialog(onDismissRequest = { showListSettings = false }) {
@@ -839,6 +882,95 @@ fun AppStatsScreen(
             },
             onValueClick = graphInfo.onValueClick
         )
+    }
+}
+
+// ── App-stats record news popup ───────────────────────────────────────────────
+
+/**
+ * Popup listing the recent app-stats record events (near-records and broken
+ * records, newest first). Entries are informational only — they are NOT
+ * dismissable and simply age out of the feed after
+ * [AppStatsNewsStore.RETENTION_DAYS] days.
+ */
+@Composable
+private fun RecordNewsPopup(
+    entries: List<AppStatsNewsStore.Entry>,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(Color(0xFF1A1A2E), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "🏆 Record News",
+                color = SectionTitleColor,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Records close to breaking or just broken — from the last " +
+                    "${AppStatsNewsStore.RETENTION_DAYS} days.",
+                color = DimColor,
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider(color = DividerColor)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (entries.isEmpty()) {
+                Text(
+                    text = "Nothing new — no records are within reach right now.",
+                    color = LabelColor,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    items(entries, key = { it.id }) { e ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = e.title,
+                                color = if (e.verdict == com.example.tail.notify.AppStatsRecordEngine.Verdict.BROKEN)
+                                    GreenValue else DateLinkColor,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = e.message,
+                                color = LabelColor,
+                                fontSize = 12.sp
+                            )
+                            Text(
+                                text = e.day,
+                                color = DimColor,
+                                fontSize = 10.sp
+                            )
+                        }
+                        HorizontalDivider(color = DividerColor)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A4A))
+                ) {
+                    Text("Close", color = LabelColor)
+                }
+            }
+        }
     }
 }
 

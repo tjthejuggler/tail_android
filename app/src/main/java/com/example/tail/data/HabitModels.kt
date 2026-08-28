@@ -838,6 +838,14 @@ data class AppSettings(
      * separately by the service itself in SharedPreferences.
      */
     val statsOverlayEnabled: Boolean = false,
+
+    /**
+     * Master switch for the app-stats record notifications ("close to a
+     * new record" / "record broken" notices + the Record News feed in the
+     * App Stats screen's 🏆 popup). When false, no record checks run and no
+     * notifications are posted.
+     */
+    val appStatsRecordNotificationsEnabled: Boolean = true,
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
     /** Custom display order for habits (legacy flat list, used when screens is empty). */
     val habitOrder: List<String> = emptyList(),

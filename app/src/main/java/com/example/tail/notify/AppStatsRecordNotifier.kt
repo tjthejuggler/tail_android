@@ -44,13 +44,30 @@ object AppStatsRecordNotifier {
     const val MAX_POSTS_PER_CHECK = 3
 
     /**
+     * How long a near-record / record-broken NOTIFICATION is suppressed
+     * after an essentially identical one was sent (same metric, same
+     * verdict, same record value). Keeps the checks — which run on every
+     * app open — from flooding the shade with slightly-updated variants of
+     * the same message. The Record News feed in App Stats is unaffected.
+     */
+    const val SAME_NEWS_COOLDOWN_MS = 72 * 60 * 60 * 1000L
+
+    /**
      * Runs one full check. Safe to call repeatedly (app open, daily alarm):
      * near-record ids are per-day (NotificationStore dedups) and broken
      * records are gated by the persisted episode flags.
      */
     suspend fun checkAndPost(appContext: Context) = withContext(Dispatchers.IO) {
         try {
+            // Feed-version migration: after a series-builder fix, wipe the
+            // stale feed AND the episode flags so wrong numbers vanish and
+            // records re-evaluate cleanly.
+            if (AppStatsNewsStore.migrateIfNeeded(appContext)) {
+                appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().remove(KEY_EPISODES).apply()
+            }
             val settings = SettingsRepository(appContext).settingsFlow.first()
+            if (!settings.appStatsRecordNotificationsEnabled) return@withContext
             if (settings.fileUri.isEmpty()) return@withContext
             val db = HabitsRepository()
                 .loadDatabase(android.net.Uri.parse(settings.fileUri), appContext)
@@ -62,9 +79,37 @@ object AppStatsRecordNotifier {
             val result = AppStatsRecordEngine.evaluate(series, today, states)
             saveStates(appContext, result.updatedStates)
 
+            // Every evaluation goes into the persistent App Stats news feed
+            // (visible in the App Stats screen, ages out after a week)…
+            val now = System.currentTimeMillis()
+            AppStatsNewsStore.add(
+                appContext,
+                result.evaluations.map { ev ->
+                    AppStatsNewsStore.Entry(
+                        id = "appstats:${ev.verdict.name.lowercase()}:${ev.metric}:$today",
+                        verdict = ev.verdict,
+                        metric = ev.metric,
+                        title = ev.title,
+                        message = ev.message,
+                        day = today,
+                        createdAtMillis = now
+                    )
+                }
+            )
+            // …but only the top few become system notifications, and only
+            // when not a near-duplicate of one sent very recently.
+            val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val nowMs = System.currentTimeMillis()
             var posted = 0
             for (ev in result.evaluations) {
                 if (posted >= MAX_POSTS_PER_CHECK) break
+                val lastRaw = prefs.getString("last_sent_${ev.metric}", null)
+                val lastParts = lastRaw?.split("")
+                val isRepeat = lastParts != null && lastParts.size == 3 &&
+                    lastParts[0] == ev.verdict.name &&
+                    lastParts[1] == ev.recordValue.toString() &&
+                    nowMs - (lastParts[2].toLongOrNull() ?: 0L) < SAME_NEWS_COOLDOWN_MS
+                if (isRepeat) continue
                 val prefix = if (ev.verdict == AppStatsRecordEngine.Verdict.BROKEN) "rec" else "near"
                 HabitAsks.postInfo(
                     appContext = appContext,
@@ -73,6 +118,10 @@ object AppStatsRecordNotifier {
                     message = ev.message,
                     habitLabel = "App Stats"
                 )
+                prefs.edit().putString(
+                    "last_sent_${ev.metric}",
+                    "${ev.verdict.name} ${ev.recordValue} $nowMs"
+                ).apply()
                 posted++
             }
             if (posted > 0) {
@@ -126,37 +175,42 @@ object AppStatsRecordNotifier {
         val dateIdx = sortedDates.withIndex().associate { (i, d) -> d to i }
         for (habitName in pointHabits) {
             val entries = db[habitName] ?: emptyMap()
+            // Inverted-binary habits are handled exclusively in the dedicated
+            // pass below — counting their explicit entries here too would
+            // double-count days logged with a raw 0.
+            if (habitName in settings.invertedBinaryHabits) {
+                val firstData = entries.filterValues { it != 0 }.keys.minOrNull()
+                    ?: sortedDates.first()
+                for ((idx, dateStr) in sortedDates.withIndex()) {
+                    if (dateStr < firstData) continue
+                    val pts = effPts(habitName, entries[dateStr] ?: 0, dateStr)
+                    if (pts > 0) {
+                        totals[idx] += pts
+                        counts[idx]++
+                    }
+                }
+                continue
+            }
             for ((dateStr, raw) in entries) {
                 val idx = dateIdx[dateStr] ?: continue
                 val pts = effPts(habitName, raw, dateStr)
                 totals[idx] += pts
                 if (pts > 0) counts[idx]++
             }
-            // Inverted-binary habits earn points on days with NO entry —
-            // walk every date from the habit's first data day.
-            if (habitName in settings.invertedBinaryHabits) {
-                val firstData = entries.filterValues { it != 0 }.keys.minOrNull()
-                    ?: sortedDates.first()
-                for ((idx, dateStr) in sortedDates.withIndex()) {
-                    if (dateStr < firstData) continue
-                    val pts = effPts(habitName, 0, dateStr)
-                    if (pts > 0) {
-                        totals[idx] += pts
-                        counts[idx]++
-                    }
-                }
-            }
         }
 
         // Per-habit streak / anti-streak per date (enabled habits only, from
         // each habit's first entry date — same as the App Stats graphs).
+        // NOTE: like the App Stats screen's streak aggregates, this INCLUDES
+        // no-points habits (they can still carry streaks) — only internal
+        // value-slot keys and disabled habits are skipped.
         val streakSums = IntArray(sortedDates.size)
         val antiStreakSums = IntArray(sortedDates.size)
         val streakCounts = IntArray(sortedDates.size)
         val antiStreakCounts = IntArray(sortedDates.size)
         val parsedDates = sortedDates.map { runCatching { LocalDate.parse(it) }.getOrNull() }
 
-        for (habitName in pointHabits) {
+        for (habitName in db.keys.filter { !isInternalValueKey(it) }) {
             if (habitName in settings.disabledHabits) continue
             val entries = db[habitName] ?: emptyMap()
             val habitFirstDate = entries.keys.minOrNull() ?: continue

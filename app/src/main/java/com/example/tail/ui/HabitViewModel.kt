@@ -5407,6 +5407,17 @@ class HabitViewModel(
     }
 
     /**
+     * Enables or disables the app-stats record notifications ("close to a
+     * new record" / "record broken" notices and the Record News feed).
+     */
+    fun setAppStatsRecordNotificationsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepo.saveAppStatsRecordNotificationsEnabled(enabled)
+            _settings.value = _settings.value.copy(appStatsRecordNotificationsEnabled = enabled)
+        }
+    }
+
+    /**
      * Sets the app associated with Chess Readiness. The floating bubble will
      * appear over this app and its popup menu gains a "Chess Readiness"
      * option. Only meaningful while the feature is enabled.
