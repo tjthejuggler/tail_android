@@ -843,10 +843,22 @@ function renderChess() {
     return;
   }
   const st = ch.status || {};
+  const lastAt = st.last_analyzed_at
+    ? new Date(st.last_analyzed_at * 1000).toLocaleString() : "never";
+  const fails = st.recent_failures || [];
+  const failHtml = fails.length
+    ? `<div style="margin-top:6px;color:#eab308;font-size:12px">⚠ last ${fails.length} failure(s): ` +
+      fails.slice(-3).map((f) => `${esc(f.at)} — ${esc(f.reason)}`).join("<br>") +
+      "</div>"
+    : "";
   $("chessStatus").innerHTML =
     `<span class="chip ${st.busy_live ? "warn" : "phone"}">${st.busy_live ? "● analysing" : "● idle"}</span>` +
-    ` <span class="dim">${st.analyzed ?? 0} games analysed · depth-cached · engine
-     <span class="mono">${esc(st.stockfish || "?")}</span></span>`;
+    (st.stockfish_ok === false
+      ? ' <span class="chip warn">engine binary missing!</span>' : "") +
+    ` <span class="dim">${st.analyzed ?? 0} games analysed · last ${esc(lastAt)} · engine
+     <span class="mono">${esc(st.stockfish || "?")}</span>
+     ${st.stockfish_ok === false ? "" : "· <span class='chip phone'>ok</span>"}</span>` +
+    failHtml;
   const rows = ch.recent || [];
   $("chessEmpty").style.display = rows.length ? "none" : "block";
   $("chessBody").innerHTML = rows.map((g) => `

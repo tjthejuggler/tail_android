@@ -26,6 +26,16 @@ object ChessAnalysisFetcher {
 
     private val client = BridgeClient()
 
+    /**
+     * Human-readable reason for the LAST fetch failure (diagnostics for
+     * the retry UI and logs); null after a success. Distinguishes "no
+     * bridge configured" / "connection failed" / "service error" so the
+     * user knows WHAT to fix.
+     */
+    @Volatile
+    var lastError: String? = null
+        private set
+
     /** Live games analyze shallower than the idle backlog (speed over depth). */
     const val LIVE_DEPTH = 12
 
@@ -66,50 +76,79 @@ object ChessAnalysisFetcher {
         username: String,
         isWhite: Boolean
     ): Analysis? {
-        if (credentials == null) return null
-        if (credentials.url.isBlank() || credentials.token.isBlank()) return null
-        if (pgn.isBlank()) return null
-        return try {
-            val body = JSONObject().apply {
-                put("game_id", gameId.toString())
-                put("pgn", pgn)
-                put("username", username)
-                put("depth", LIVE_DEPTH)
-            }
-            val resp = client.post(
-                bridgeUrl = credentials.url,
-                token = credentials.token,
-                path = "chess_analysis/analyze",
-                body = body,
-                readTimeoutMs = READ_TIMEOUT_MS
-            ) ?: return null
-            if (resp.has("error")) {
-                Log.w(TAG, "Analysis service error: ${resp.optString("error")}")
-                return null
-            }
-            val side = resp.optJSONObject(if (isWhite) "white" else "black")
-                ?: return null
-            Analysis(
-                gameId = resp.optString("game_id").takeIf { it.isNotBlank() },
-                cached = resp.optBoolean("cached", false),
-                userStats = SideStats(
-                    acpl = if (side.isNull("acpl")) null else side.optDouble("acpl"),
-                    blunders = if (side.isNull("blunders")) null
-                        else side.optInt("blunders"),
-                    unforcedBlunders = if (side.isNull("unforced_blunders")) null
-                        else side.optInt("unforced_blunders"),
-                    mistakes = if (side.isNull("mistakes")) null
-                        else side.optInt("mistakes"),
-                    inaccuracies = if (side.isNull("inaccuracies")) null
-                        else side.optInt("inaccuracies"),
-                    moves = if (side.isNull("moves")) null
-                        else side.optInt("moves")
-                )
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Analysis fetch failed (falling back): ${e.message}")
-            null
+        if (credentials == null) { lastError = "No bridge configured"; return null }
+        if (credentials.url.isBlank() || credentials.token.isBlank()) {
+            lastError = "Bridge URL/token blank"
+            return null
         }
+        if (pgn.isBlank()) { lastError = "Empty PGN"; return null }
+        val body = JSONObject().apply {
+            put("game_id", gameId.toString())
+            put("pgn", pgn)
+            put("username", username)
+            put("depth", LIVE_DEPTH)
+        }
+        // One automatic retry — a transient Wi-Fi/LAN blip or the PC
+        // waking from suspend should not cost the audit its engine data.
+        var resp: JSONObject? = null
+        var lastException: Exception? = null
+        for (attempt in 1..2) {
+            try {
+                resp = client.post(
+                    bridgeUrl = credentials.url,
+                    token = credentials.token,
+                    path = "chess_analysis/analyze",
+                    body = body,
+                    readTimeoutMs = READ_TIMEOUT_MS
+                )
+                lastException = null
+            } catch (e: Exception) {
+                lastException = e
+            }
+            if (resp != null) break
+            if (attempt == 1) {
+                Log.w(TAG, "Analysis attempt 1 failed, retrying once…")
+                try { kotlinx.coroutines.delay(1_500) } catch (_: Exception) {}
+            }
+        }
+        lastException?.let {
+            lastError = "Connection failed: ${it.message ?: it.javaClass.simpleName}"
+            Log.w(TAG, "Analysis fetch failed (falling back): $lastError")
+            return null
+        }
+        if (resp == null) {
+            lastError = "Bridge unreachable (HTTP error) at ${credentials.url}"
+            Log.w(TAG, "Analysis fetch failed (falling back): $lastError")
+            return null
+        }
+        if (resp.has("error")) {
+            lastError = "Analysis service error: ${resp.optString("error")}"
+            Log.w(TAG, lastError!!)
+            return null
+        }
+        val side = resp.optJSONObject(if (isWhite) "white" else "black")
+        if (side == null) {
+            lastError = "Unexpected response (no side stats)"
+            return null
+        }
+        lastError = null
+        return Analysis(
+            gameId = resp.optString("game_id").takeIf { it.isNotBlank() },
+            cached = resp.optBoolean("cached", false),
+            userStats = SideStats(
+                acpl = if (side.isNull("acpl")) null else side.optDouble("acpl"),
+                blunders = if (side.isNull("blunders")) null
+                    else side.optInt("blunders"),
+                unforcedBlunders = if (side.isNull("unforced_blunders")) null
+                    else side.optInt("unforced_blunders"),
+                mistakes = if (side.isNull("mistakes")) null
+                    else side.optInt("mistakes"),
+                inaccuracies = if (side.isNull("inaccuracies")) null
+                    else side.optInt("inaccuracies"),
+                moves = if (side.isNull("moves")) null
+                    else side.optInt("moves")
+            )
+        )
     }
 
     /**

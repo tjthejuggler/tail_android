@@ -521,8 +521,10 @@ def chess_analysis_analyze(payload: Dict[str, Any], api_key: str = Security(veri
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except FileNotFoundError:
+        service.note_failure("stockfish binary not found")
         raise HTTPException(status_code=503, detail="stockfish binary not found")
     except Exception as exc:
+        service.note_failure(f"analysis failed: {exc}")
         raise HTTPException(status_code=500, detail=f"analysis failed: {exc}")
     if not result.get("cached"):
         dashboard.note("phone", "chess_analyzed",

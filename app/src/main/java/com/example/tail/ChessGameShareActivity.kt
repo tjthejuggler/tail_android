@@ -40,12 +40,14 @@ import com.example.tail.data.ChessComService
 import com.example.tail.data.SettingsRepository
 import com.example.tail.ui.theme.TailTheme
 import com.example.tail.widget.ChessAnalysisFetcher
+import com.example.tail.data.ChessComGameDetail
 import com.example.tail.widget.ChessDeferredGameReconciler
 import com.example.tail.widget.ChessGameAuditMapper
 import com.example.tail.widget.ChessPendingGameStore
 import com.example.tail.widget.ChessPhase2Engine
 import com.example.tail.widget.ChessPhase2Store
 import com.example.tail.widget.ChessPhase2V2Engine
+import com.example.tail.widget.ChessPhase2V2Store
 import com.example.tail.widget.ChessPhase2V3Engine
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
@@ -102,6 +104,9 @@ class ChessGameShareActivity : ComponentActivity() {
     /** The raw shared text (kept for the player names around " vs "). */
     private var sharedText: String? = null
 
+    /** The fetched game of the last v3 audit — kept for the engine retry. */
+    private var auditedGame: ChessComGameDetail? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -156,6 +161,10 @@ class ChessGameShareActivity : ComponentActivity() {
                         state = Ui.Working("Fetching game from chess.com…")
                         lifecycleScope.launch { runAudit { state = it } }
                     },
+                    onRetryEngine = {
+                        state = Ui.Working("Fetching Stockfish analysis from the bridge…")
+                        lifecycleScope.launch { retryEngineAnalysis { state = it } }
+                    },
                     onDone = { finish() },
                     onLeaveChess = { leaveChessAndFinish() }
                 )
@@ -193,15 +202,21 @@ class ChessGameShareActivity : ComponentActivity() {
             return
         }
 
-        ChessPhase2Store.findAuditByGameId(this, gameId)?.let { previous ->
-            emit(
-                Ui.Message(
-                    title = "Already audited",
-                    message = "This game was already reported — verdict: " +
-                        "${previous.outputState.replace('_', ' ').lowercase()}."
+        // Re-share of an already-audited game: the v3 engine RE-RUNS the
+        // audit below (showing the full result screen again, and picking
+        // up desktop Stockfish analysis if the bridge is reachable now);
+        // v1/v2 keep the simple "already reported" notice.
+        if (!ChessPhase2V2Store.isV3(this)) {
+            ChessPhase2Store.findAuditByGameId(this, gameId)?.let { previous ->
+                emit(
+                    Ui.Message(
+                        title = "Already audited",
+                        message = "This game was already reported — verdict: " +
+                            "${previous.outputState.replace('_', ' ').lowercase()}."
+                    )
                 )
-            )
-            return
+                return
+            }
         }
 
         emit(Ui.Working("Fetching game from chess.com…"))
@@ -256,16 +271,40 @@ class ChessGameShareActivity : ComponentActivity() {
             is ChessDeferredGameReconciler.GameOutcome.AuditedV2 ->
                 emit(Ui.AuditedV2(outcome.result))
 
-            is ChessDeferredGameReconciler.GameOutcome.AuditedV3 ->
+            is ChessDeferredGameReconciler.GameOutcome.AuditedV3 -> {
+                auditedGame = game
                 emit(Ui.AuditedV3(outcome.result))
+            }
 
-            is ChessDeferredGameReconciler.GameOutcome.AlreadyAudited -> emit(
-                Ui.Message(
-                    title = "Already audited",
-                    message = "This game was already reported — verdict: " +
-                        "${outcome.previous.outputState.replace('_', ' ').lowercase()}."
-                )
-            )
+            is ChessDeferredGameReconciler.GameOutcome.AlreadyAudited -> {
+                if (ChessPhase2V2Store.isV3(this)) {
+                    // Re-share: re-run the v3 audit (fresh engine analysis
+                    // when the bridge is now up) and show the result screen.
+                    auditedGame = game
+                    val reaudited = ChessDeferredGameReconciler.reauditV3(
+                        this, username, game, bridge
+                    )
+                    if (reaudited != null) {
+                        emit(Ui.AuditedV3(reaudited))
+                    } else {
+                        emit(
+                            Ui.Message(
+                                title = "Already audited",
+                                message = "This game was already reported — verdict: " +
+                                    "${outcome.previous.outputState.replace('_', ' ').lowercase()}."
+                            )
+                        )
+                    }
+                } else {
+                    emit(
+                        Ui.Message(
+                            title = "Already audited",
+                            message = "This game was already reported — verdict: " +
+                                "${outcome.previous.outputState.replace('_', ' ').lowercase()}."
+                        )
+                    )
+                }
+            }
 
             is ChessDeferredGameReconciler.GameOutcome.NotAuditable -> emit(
                 Ui.Message(title = "Not auditable", message = outcome.reason)
@@ -290,6 +329,63 @@ class ChessGameShareActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Engine-retry path for a v3 result that ran without desktop Stockfish
+     * (bridge was unreachable): re-fetches the analysis and re-evaluates,
+     * updating the recorded verdict in place. Falls back to a diagnostic
+     * message (with the fetcher's failure reason) when still unreachable.
+     */
+    private suspend fun retryEngineAnalysis(emit: (Ui) -> Unit) {
+        val game = auditedGame
+        if (game == null) {
+            emit(
+                Ui.Message(
+                    title = "Retry unavailable",
+                    message = "The game details are no longer available — share the " +
+                        "game link again to re-run the audit."
+                )
+            )
+            return
+        }
+        val settings = settingsRepo.settingsFlow.first()
+        val username = settings.chessComUsername.trim()
+        val bridge = com.example.tail.data.bridgeConnectionFrom(
+            settings.garminProxyUrl, settings.garminAppToken
+        )?.let { (url, token) ->
+            ChessAnalysisFetcher.BridgeCredentials(url = url, token = token)
+        }
+        val reaudited = ChessDeferredGameReconciler.reauditV3(
+            this, username, game, bridge
+        )
+        if (reaudited != null) {
+            if (reaudited.engineBacked) {
+                emit(Ui.AuditedV3(reaudited))
+            } else {
+                emit(
+                    Ui.Message(
+                        title = "Bridge still unreachable",
+                        message = "The Stockfish analysis could not be fetched " +
+                            "(${ChessAnalysisFetcher.lastError ?: "unknown error"}).\n\n" +
+                            "Check that the PC is on and the tail-bridge service is " +
+                            "running, then retry. You can also verify the pipeline in " +
+                            "Tail → Settings → Chess → Test Pipeline.",
+                        retry = true
+                    )
+                )
+                // Keep the game so the Retry button on this message works —
+                // route it back through the engine retry, not the full audit.
+            }
+        } else {
+            emit(
+                Ui.Message(
+                    title = "Retry unavailable",
+                    message = "The game could no longer be re-audited — share the " +
+                        "game link again."
+                )
+            )
+        }
+    }
+
     /** Red verdict: exit to the home screen (closes the chess session). */
     private fun leaveChessAndFinish() {
         try {
@@ -309,6 +405,7 @@ class ChessGameShareActivity : ComponentActivity() {
     private fun AuditDialog(
         state: Ui,
         onRetry: () -> Unit,
+        onRetryEngine: () -> Unit,
         onDone: () -> Unit,
         onLeaveChess: () -> Unit
     ) {
@@ -367,7 +464,8 @@ class ChessGameShareActivity : ComponentActivity() {
 
                     is Ui.Audited -> ResultContent(state.result, onDone, onLeaveChess)
                     is Ui.AuditedV2 -> ResultContentV2(state.result, onDone, onLeaveChess)
-                    is Ui.AuditedV3 -> ResultContentV3(state.result, onDone, onLeaveChess)
+                    is Ui.AuditedV3 ->
+                        ResultContentV3(state.result, onDone, onLeaveChess, onRetryEngine)
                 }
             }
         }
@@ -590,7 +688,8 @@ class ChessGameShareActivity : ComponentActivity() {
     private fun ResultContentV3(
         r: ChessPhase2V3Engine.AuditResultV3,
         onDone: () -> Unit,
-        onLeaveChess: () -> Unit
+        onLeaveChess: () -> Unit,
+        onRetryEngine: () -> Unit
     ) {
         val color = Color(android.graphics.Color.parseColor(r.outputState.colorHex))
         Column(
@@ -654,6 +753,12 @@ class ChessGameShareActivity : ComponentActivity() {
                     fontSize = 11.sp,
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
+                // The bridge may just have been asleep — offer an in-place
+                // engine retry that re-audits with fresh Stockfish data.
+                TextButton(
+                    onClick = onRetryEngine,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) { Text("Retry engine analysis", color = Color(0xFFFFAA00)) }
             }
             if (r.circadianAdjusted) {
                 Text(

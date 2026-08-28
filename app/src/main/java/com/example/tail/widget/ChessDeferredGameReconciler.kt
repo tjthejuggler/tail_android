@@ -413,33 +413,6 @@ object ChessDeferredGameReconciler {
             return GameOutcome.Unauthorized(playedAt = gameEndMs, stateAtPlay = stateAtPlay)
         }
 
-        val tc = ready.input.timeControl
-        val accBaseline = ChessPhase2V2Engine.baselineOf(
-            ChessPhase2V2Store.accuracyHistory(context, tc),
-            ChessPhase2V2Engine.SD_FLOOR_ACCURACY
-        )
-        val moveBaseline = ChessPhase2V2Engine.baselineOf(
-            ChessPhase2V2Store.moveTimeHistory(context, tc),
-            ChessPhase2V2Engine.SD_FLOOR_MOVE_SEC
-        )
-        val sessionGames = ChessPhase2V2Store.currentSessionGames(context, gameEndMs)
-            .mapNotNull { g ->
-                val res = ChessPhase2Engine.GameResult.entries
-                    .firstOrNull { it.name == g.result } ?: return@mapNotNull null
-                ChessPhase2V3Engine.SessionGameV3(
-                    timestamp = g.timestamp,
-                    result = res,
-                    outputState = g.outputState,
-                    expectedScore = g.expectedScore,
-                    strain = g.strain
-                )
-            }
-        val acwr = try {
-            ChessPhase2V2Store.acwrInput(
-                ChessReadinessLogStore.loadGames(context), gameEndMs
-            )
-        } catch (_: Exception) { null }
-
         // Desktop Stockfish analysis through the bridge — null when away
         // from the PC / service down (fallback contract, see the fetcher).
         val isWhite = game.whiteUsername.trim().lowercase() ==
@@ -452,47 +425,9 @@ object ChessDeferredGameReconciler {
             isWhite = isWhite
         )
 
-        // CCRS of the latest readiness test at/before game end — drives the
-        // fatigue scaling, the strain buffer and one-dip forgiveness.
-        val ccrs = tests
-            .filter { it.timestamp <= gameEndMs }
-            .maxByOrNull { it.timestamp }?.ccrs
-
-        // ΔE history from the shared audit log (the same source v1's
-        // personal percentile floors use).
-        val deltaEHistory = ChessPhase2Store.loadAudits(context)
-            .filter { it.timestamp <= gameEndMs }
-            .map { ChessPhase2Engine.DeltaERecord(it.timestamp, it.deltaE) }
-
+        val tc = ready.input.timeControl
+        val result = evaluateV3(context, username, game, gameEndMs, ready, analysis)
         val expectedScore = ready.input.result.score - ready.deltaE
-
-        val result = ChessPhase2V3Engine.evaluate(
-            input = ChessPhase2V3Engine.GameInputV3(
-                timeControl = tc,
-                result = ready.input.result,
-                accuracy = ready.input.accuracy,
-                avgMoveSec = ready.input.avgMoveSec,
-                sessionElapsedMins = ready.input.sessionElapsedMins,
-                localHour = localHour,
-                shortGame = ready.input.shortGame,
-                expectedScore = expectedScore,
-                deltaE = ready.deltaE,
-                unforcedBlunders = analysis?.userStats?.unforcedBlunders,
-                blunderCount = analysis?.userStats?.blunders,
-                mistakeCount = analysis?.userStats?.mistakes,
-                inaccuracyCount = analysis?.userStats?.inaccuracies,
-                analysisAcpl = analysis?.userStats?.acpl,
-                analysisMoves = analysis?.userStats?.moves,
-                accuracyHistory = ChessPhase2V2Store.accuracyHistory(context, tc),
-                readinessCcrs = ccrs
-            ),
-            sessionGames = sessionGames,
-            accBaseline = accBaseline,
-            moveBaseline = moveBaseline,
-            acwr = acwr,
-            deltaEHistory = deltaEHistory,
-            now = gameEndMs
-        )
 
         // Personal baselines grow from every game with KNOWN telemetry.
         ChessPhase2V2Store.appendTelemetry(
@@ -538,6 +473,154 @@ object ChessDeferredGameReconciler {
             )
         )
         return GameOutcome.AuditedV3(result)
+    }
+
+    /**
+     * Pure v3 evaluation (no persistence) — shared by the first-run audit
+     * and the re-share / engine-retry paths so both see identical logic.
+     * History inputs are cut at STRICTLY before [gameEndMs] so a re-run
+     * (where this game's own audit is already on file) matches the
+     * first-run semantics exactly.
+     */
+    private fun evaluateV3(
+        context: Context,
+        username: String,
+        game: ChessComGameDetail,
+        gameEndMs: Long,
+        ready: ChessPhase2V2Engine.MappingV2.Ready,
+        analysis: ChessAnalysisFetcher.Analysis?
+    ): ChessPhase2V3Engine.AuditResultV3 {
+        val localHour = java.time.Instant.ofEpochMilli(gameEndMs)
+            .atZone(java.time.ZoneId.systemDefault()).hour
+        val tc = ready.input.timeControl
+        val accBaseline = ChessPhase2V2Engine.baselineOf(
+            ChessPhase2V2Store.accuracyHistory(context, tc),
+            ChessPhase2V2Engine.SD_FLOOR_ACCURACY
+        )
+        val moveBaseline = ChessPhase2V2Engine.baselineOf(
+            ChessPhase2V2Store.moveTimeHistory(context, tc),
+            ChessPhase2V2Engine.SD_FLOOR_MOVE_SEC
+        )
+        val sessionGames = ChessPhase2V2Store.currentSessionGames(context, gameEndMs)
+            .filter { it.timestamp < gameEndMs }
+            .mapNotNull { g ->
+                val res = ChessPhase2Engine.GameResult.entries
+                    .firstOrNull { it.name == g.result } ?: return@mapNotNull null
+                ChessPhase2V3Engine.SessionGameV3(
+                    timestamp = g.timestamp,
+                    result = res,
+                    outputState = g.outputState,
+                    expectedScore = g.expectedScore,
+                    strain = g.strain
+                )
+            }
+        val acwr = try {
+            ChessPhase2V2Store.acwrInput(
+                ChessReadinessLogStore.loadGames(context), gameEndMs
+            )
+        } catch (_: Exception) { null }
+
+        // CCRS of the latest readiness test at/before game end — drives the
+        // fatigue scaling, the strain buffer and one-dip forgiveness.
+        val ccrs = ChessReadinessStore.loadHistory(context)
+            .filter { it.timestamp <= gameEndMs }
+            .maxByOrNull { it.timestamp }?.ccrs
+
+        // ΔE history from the shared audit log (the same source v1's
+        // personal percentile floors use).
+        val deltaEHistory = ChessPhase2Store.loadAudits(context)
+            .filter { it.timestamp < gameEndMs }
+            .map { ChessPhase2Engine.DeltaERecord(it.timestamp, it.deltaE) }
+
+        val expectedScore = ready.input.result.score - ready.deltaE
+
+        return ChessPhase2V3Engine.evaluate(
+            input = ChessPhase2V3Engine.GameInputV3(
+                timeControl = tc,
+                result = ready.input.result,
+                accuracy = ready.input.accuracy,
+                avgMoveSec = ready.input.avgMoveSec,
+                sessionElapsedMins = ready.input.sessionElapsedMins,
+                localHour = localHour,
+                shortGame = ready.input.shortGame,
+                expectedScore = expectedScore,
+                deltaE = ready.deltaE,
+                unforcedBlunders = analysis?.userStats?.unforcedBlunders,
+                blunderCount = analysis?.userStats?.blunders,
+                mistakeCount = analysis?.userStats?.mistakes,
+                inaccuracyCount = analysis?.userStats?.inaccuracies,
+                analysisAcpl = analysis?.userStats?.acpl,
+                analysisMoves = analysis?.userStats?.moves,
+                accuracyHistory = ChessPhase2V2Store.accuracyHistory(context, tc),
+                readinessCcrs = ccrs
+            ),
+            sessionGames = sessionGames,
+            accBaseline = accBaseline,
+            moveBaseline = moveBaseline,
+            acwr = acwr,
+            deltaEHistory = deltaEHistory,
+            now = gameEndMs
+        )
+    }
+
+    /**
+     * RE-SHARE / ENGINE-RETRY path: re-runs the v3 audit for an
+     * ALREADY-recorded game — fetching fresh desktop Stockfish analysis
+     * when the bridge is now reachable — and UPDATES the recorded verdict
+     * and ledger row in place. Never appends duplicate history or
+     * telemetry. Returns the (possibly engine-backed) result, or null when
+     * the game is no longer auditable.
+     */
+    suspend fun reauditV3(
+        context: Context,
+        username: String,
+        game: ChessComGameDetail,
+        bridge: ChessAnalysisFetcher.BridgeCredentials? = null
+    ): ChessPhase2V3Engine.AuditResultV3? {
+        val gameEndMs = game.endTime * 1000L
+        val localHour = java.time.Instant.ofEpochMilli(gameEndMs)
+            .atZone(java.time.ZoneId.systemDefault()).hour
+        val ready = when (
+            val m = ChessPhase2V2Engine.inputFrom(
+                game = game,
+                username = username,
+                sessionMinutesBefore = ChessPhase2Store.sessionMinutesUsed(context, gameEndMs),
+                localHour = localHour
+            )
+        ) {
+            is ChessPhase2V2Engine.MappingV2.NotAuditable -> return null
+            is ChessPhase2V2Engine.MappingV2.Ready -> m
+        }
+
+        val isWhite = game.whiteUsername.trim().lowercase() ==
+            username.trim().lowercase()
+        val analysis = ChessAnalysisFetcher.fetch(
+            credentials = bridge,
+            gameId = game.gameId,
+            pgn = game.pgn,
+            username = username,
+            isWhite = isWhite
+        )
+        val result = evaluateV3(context, username, game, gameEndMs, ready, analysis)
+
+        // In-place verdict update — Chess Guard / authorization consumers
+        // read these stores, so a revised verdict must replace, not append.
+        ChessPhase2Store.updateAuditForGame(context, game.gameId) { old ->
+            old.copy(
+                outputState = result.outputState.name,
+                strain = when (result.outputState) {
+                    ChessPhase2Engine.OutputState.TERMINATE_SESSION ->
+                        ChessPhase2Engine.STRAIN_TERMINATE_BASE
+                    ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS ->
+                        ChessPhase2Engine.SEVERE_STRAIN
+                    else -> 0.0
+                }
+            )
+        }
+        ChessPhase2V2Store.updateRecentGameAt(context, gameEndMs) {
+            it.copy(outputState = result.outputState.name, strain = result.strain)
+        }
+        return result
     }
 
     /**

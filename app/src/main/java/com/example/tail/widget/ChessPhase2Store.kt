@@ -165,6 +165,38 @@ object ChessPhase2Store {
     fun findAuditByGameId(context: Context, gameId: Long): Phase2Audit? =
         loadAudits(context).lastOrNull { it.gameId == gameId.toString() }
 
+    /**
+     * Replaces every audit of [gameId] using [update] — used by the v3
+     * re-share / engine-retry path to revise a recorded verdict in place
+     * instead of appending a duplicate.
+     */
+    fun updateAuditForGame(
+        context: Context,
+        gameId: Long,
+        update: (Phase2Audit) -> Phase2Audit
+    ) {
+        val id = gameId.toString()
+        val history = loadAudits(context).map {
+            if (it.gameId == id) update(it) else it
+        }
+        val arr = JSONArray()
+        history.forEach {
+            arr.put(JSONObject().apply {
+                put("timestamp", it.timestamp)
+                put("timeControl", it.timeControl)
+                put("outputState", it.outputState)
+                put("deltaE", it.deltaE)
+                put("caps2Accuracy", it.caps2Accuracy)
+                put("accuracyCounted", it.accuracyCounted)
+                put("gameId", it.gameId)
+                put("estimatedMinutes", it.estimatedMinutes)
+                put("strain", it.strain)
+            })
+        }
+        prefs(context).edit().putString(KEY_AUDITS, arr.toString()).apply()
+        ChessGuardNotifier.notifyStateChange(context)
+    }
+
     // ── Session derivation ─────────────────────────────────────────────────
 
     /**

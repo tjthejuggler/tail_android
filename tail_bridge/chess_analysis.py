@@ -546,6 +546,7 @@ class ChessAnalysisService:
         self._game_locks_guard = threading.Lock()
         self._last_live_ms = 0.0
         self._live_in_flight = 0
+        self._recent_failures: list[dict] = []
         self._state_lock = threading.Lock()
 
     # -- registry -----------------------------------------------------------
@@ -640,22 +641,39 @@ class ChessAnalysisService:
 
     def status(self) -> dict:
         with self._db_lock:
-            analyzed = self._conn.execute(
-                "SELECT COUNT(*) FROM analyses"
-            ).fetchone()[0]
+            row = self._conn.execute(
+                "SELECT COUNT(*), MAX(analyzed_at) FROM analyses"
+            ).fetchone()
+            analyzed, last_analyzed_at = row[0], row[1]
         with self._state_lock:
             busy = self._live_in_flight > 0
             last_live_age = (
                 (time.time() * 1000.0 - self._last_live_ms) / 1000.0
                 if self._last_live_ms else None
             )
+            failures = list(self._recent_failures)
+        engine_ok = os.path.isfile(self.engine_path) and os.access(
+            self.engine_path, os.X_OK
+        )
         return {
             "analyzed": analyzed,
             "backlog_pending": 0,  # on-demand only; the phone drives what it needs
             "busy_live": busy,
             "last_live_age_sec": last_live_age,
             "stockfish": self.engine_path,
+            "stockfish_ok": engine_ok,
+            "db_path": DB_PATH,
+            "last_analyzed_at": last_analyzed_at,
+            "recent_failures": failures,
         }
+
+    def note_failure(self, reason: str):
+        """Records an analysis failure for the dashboard diagnostics ring."""
+        with self._state_lock:
+            self._recent_failures.append(
+                {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "reason": reason[:200]}
+            )
+            del self._recent_failures[:-20]  # keep the last 20
 
     def recent(self, limit: int = 10) -> list:
         """Newest-first analysis history for the dashboard (compact rows)."""

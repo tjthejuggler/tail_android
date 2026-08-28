@@ -234,6 +234,34 @@ object ChessPhase2V2Store {
     }
 
     /**
+     * Replaces the ledger row stamped at [timestamp] using [update] — the
+     * v3 re-share / engine-retry path revises the recorded verdict in
+     * place instead of appending a duplicate.
+     */
+    fun updateRecentGameAt(
+        context: Context,
+        timestamp: Long,
+        update: (RatedGameRecord) -> RatedGameRecord
+    ) {
+        val history = loadRecentGames(context).map {
+            if (it.timestamp == timestamp) update(it) else it
+        }
+        val arr = JSONArray()
+        history.forEach {
+            arr.put(JSONObject().apply {
+                put("timestamp", it.timestamp)
+                put("result", it.result)
+                put("timeControl", it.timeControl)
+                put("outputState", it.outputState)
+                put("estimatedMinutes", it.estimatedMinutes)
+                put("expectedScore", it.expectedScore ?: JSONObject.NULL)
+                put("strain", it.strain)
+            })
+        }
+        prefs(context).edit().putString(KEY_RECENT_GAMES, arr.toString()).apply()
+    }
+
+    /**
      * The ledger games belonging to the CURRENT session at [now]: everything
      * after the last TERMINATE verdict, chained by inter-game gaps no larger
      * than [ChessPhase2Store.SESSION_GAP_MS] (same derivation v1 uses).

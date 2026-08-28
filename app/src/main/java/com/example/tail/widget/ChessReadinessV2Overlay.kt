@@ -494,6 +494,9 @@ class ChessReadinessV2Overlay(service: android.content.Context) {
             }
             g.pvt?.let {
                 body("Vigilance (PVT-B)", bold = true, size = 12)
+                pvtSummary?.meanRtMs?.let { mean ->
+                    keyValue("Mean reaction time", String.format("%.0f ms", mean))
+                }
                 it.reasons.forEach { r -> bullet("· $r", 0xFFCCCCCC.toInt()) }
             }
             if (g.pvtSkipped) {
