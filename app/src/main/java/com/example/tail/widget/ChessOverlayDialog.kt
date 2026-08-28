@@ -133,6 +133,10 @@ class ChessOverlayDialog(private val context: Context) {
             windowManager.addView(container, params)
             root = container
         } catch (e: Exception) {
+            // NOT silent anymore: callers (e.g. the v3 survival verdict
+            // popup) now detect this via isShowing() and fall back to a
+            // Toast + free-play banner, but the reason must reach logcat.
+            android.util.Log.e("ChessOverlayDialog", "window addView failed", e)
             root = null
             cardColumn = null
         }

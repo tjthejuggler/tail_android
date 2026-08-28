@@ -1375,6 +1375,12 @@ class FloatingBubbleService : Service() {
         val red = verdict == ChessReadinessV3Engine.Verdict.FAIL_TIMEOUT ||
             verdict == ChessReadinessV3Engine.Verdict.FAIL_REFLEX
         hideSurvivalPanel()
+        // The verdict popup is the ONLY route to the free-play timer, so a
+        // silent window-add failure would end the run with no feedback at
+        // all (the pass is already recorded at this point). runCatching +
+        // the isShowing() check detect that; the fallback below still tells
+        // the user the outcome and starts the free-play banner directly.
+        val popupShown = runCatching {
         val popup = ChessOverlayDialog(this)
         survivalResultPopup = popup
         popup.show()
@@ -1453,6 +1459,19 @@ class FloatingBubbleService : Service() {
                     hideSurvivalPanel()
                 }
             }
+        }
+        }.isSuccess && survivalResultPopup?.isShowing() == true
+        if (!popupShown) {
+            survivalResultPopup = null
+            val label = when (verdict) {
+                ChessReadinessV3Engine.Verdict.PASS ->
+                    "GATE PASSED ✓ — rated play unlocked"
+                ChessReadinessV3Engine.Verdict.FAIL_STRIKE ->
+                    "GATE FAILED — STRIKE (yellow)"
+                else -> "GATE FAILED — RED (rest required)"
+            }
+            Toast.makeText(this, "♟ Survival Gate: $label", Toast.LENGTH_LONG).show()
+            if (!red) showSurvivalFreePlayPanel()
         }
     }
 
