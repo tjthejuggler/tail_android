@@ -62,6 +62,10 @@ object ChessGuardReactions {
     @Volatile
     private var yellowWarnedThisStint = false
 
+    /** True once the "readiness test required" notice fired for the CURRENT stint. */
+    @Volatile
+    private var testRequiredWarnedThisStint = false
+
     /** Last time a BLOCK reaction fired (0 = never). */
     @Volatile
     private var lastBlockReactAt = 0L
@@ -83,13 +87,19 @@ object ChessGuardReactions {
             chessInForeground = true
             reactToEntry(context, isNewEntry = !wasForeground, kick = kick)
         } else if (chessInForeground) {
-            // The stint ended: re-arm the YELLOW warning for the next
-            // entry and take any lingering warning overlay down (the
-            // user may have left via gesture without tapping "Got it").
+            // The stint ended: re-arm the warnings for the next entry and
+            // take any lingering overlays down (the user may have left via
+            // gesture without tapping "Got it").
             chessInForeground = false
             yellowWarnedThisStint = false
+            testRequiredWarnedThisStint = false
             try {
                 ChessGuardWallOverlay.dismissWarning()
+            } catch (_: Exception) {
+                // Window already gone — nothing to clean up.
+            }
+            try {
+                ChessGuardWallOverlay.dismissTestRequiredWarning()
             } catch (_: Exception) {
                 // Window already gone — nothing to clean up.
             }
@@ -128,6 +138,19 @@ object ChessGuardReactions {
                         ChessGuardWallOverlay.showWarning(context)
                     } catch (e: Exception) {
                         Log.w(TAG, "Yellow warning overlay failed: ${e.message}")
+                    }
+                }
+                // TRUST WINDOW: no valid authorization while a new test IS
+                // possible — the app must open (the test lives inside it),
+                // but every entry gets the full-screen "take the readiness
+                // test before anything else" notice — once per stint.
+                if (decision.reason == Reason.TEST_AVAILABLE && !testRequiredWarnedThisStint) {
+                    testRequiredWarnedThisStint = true
+                    Log.d(TAG, "Chess app entered without authorization — test-required notice")
+                    try {
+                        ChessGuardWallOverlay.showTestRequiredWarning(context)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Test-required overlay failed: ${e.message}")
                     }
                 }
             }

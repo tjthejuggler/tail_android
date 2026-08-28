@@ -292,6 +292,23 @@ object ChessPhase2Store {
     }
 
     /**
+     * Milliseconds remaining in the current rated-play authorization window
+     * (last GREEN test + [ChessReadinessEngine.SESSION_VALIDITY_MS] − now).
+     * 0 when rated play is NOT currently authorized. Used by the post-game
+     * audit result screens to always tell the user how much authorized
+     * playtime is left.
+     */
+    fun ratedPlayMsRemaining(
+        context: Context,
+        now: Long = System.currentTimeMillis()
+    ): Long {
+        val last = ChessReadinessStore.lastTest(context) ?: return 0L
+        if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return 0L
+        return (last.timestamp + ChessReadinessEngine.SESSION_VALIDITY_MS - now)
+            .coerceAtLeast(0L)
+    }
+
+    /**
      * Estimated base-clock minutes already audited in the CURRENT session —
      * the running tally the 60-minute capacity ceiling is checked against.
      */

@@ -61,6 +61,9 @@ object ChessGuardWallOverlay {
     private var warningContext: Context? = null
     private var warningCountdownView: TextView? = null
 
+    private var testRequiredWm: WindowManager? = null
+    private var testRequiredView: LinearLayout? = null
+
     private val tick = object : Runnable {
         override fun run() {
             val context = appContext
@@ -339,6 +342,109 @@ object ChessGuardWallOverlay {
         } catch (_: Exception) {
             false
         }
+    }
+
+    /**
+     * Full-screen "readiness test required" notice — the trust-window
+     * sibling of the YELLOW warning. Shown when the chess app is opened
+     * with NO valid authorization while a new readiness test IS possible:
+     * the app opens (the test lives inside it), but the user is told up
+     * front that the readiness test must come BEFORE anything else. A
+     * rated game played in this state still triggers the 24-hour
+     * [ChessEnforcementPolicy.PENALTY_DURATION_MS] lockout. Dismissable
+     * ("Take the test" button).
+     */
+    fun showTestRequiredWarning(context: Context): Boolean {
+        if (!Settings.canDrawOverlays(context)) return false
+        if (testRequiredView != null) return true // already up
+
+        val density = context.resources.displayMetrics.density
+        val pad = (density * 24).toInt()
+
+        val title = TextView(context).apply {
+            text = "♟ READINESS TEST REQUIRED"
+            textSize = 26f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#F97316"))
+            gravity = Gravity.CENTER
+        }
+        val message = TextView(context).apply {
+            text =
+                "You have no valid chess readiness authorization right " +
+                    "now — your last test is missing, failed or too old.\n\n" +
+                    "A new readiness test is available NOW. Take it from " +
+                    "the Tail bubble BEFORE doing anything else in this " +
+                    "app.\n\n" +
+                    "If a rated game is detected without authorization, " +
+                    "Chess Guard locks the ENTIRE app for 24 HOURS."
+            textSize = 16f
+            setTextColor(Color.parseColor("#E5E7EB"))
+            gravity = Gravity.CENTER
+            setPadding(0, pad, 0, 0)
+        }
+        val gotIt = Button(context).apply {
+            text = "Got it — test first"
+            setOnClickListener { dismissTestRequiredWarning() }
+        }
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#F1170E08"))
+            setPadding(pad, pad, pad, pad)
+            addView(
+                title,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                message,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                gotIt,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = pad; gravity = Gravity.CENTER_HORIZONTAL }
+            )
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+
+        val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        return try {
+            windowManager.addView(root, params)
+            testRequiredWm = windowManager
+            testRequiredView = root
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Removes the "readiness test required" notice (button or stint end). */
+    fun dismissTestRequiredWarning() {
+        val view = testRequiredView
+        testRequiredView = null
+        if (view != null) {
+            try {
+                testRequiredWm?.removeView(view)
+            } catch (_: Exception) {
+                // Window already gone — nothing to clean up.
+            }
+        }
+        testRequiredWm = null
     }
 
     /** Removes the YELLOW warning (Got it button or service gone). */

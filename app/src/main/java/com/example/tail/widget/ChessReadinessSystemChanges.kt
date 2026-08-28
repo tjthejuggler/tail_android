@@ -41,6 +41,18 @@ object ChessReadinessSystemChanges {
      */
     val ALL: List<ReadinessSystemChange> = listOf(
         ReadinessSystemChange(
+            at("2026-08-28T06:15:00Z"),
+            "Audit results show time left · test-required entry notice",
+            "Two UX reinforcements. (1) Every post-game audit result screen (v1/v2/v3) " +
+                "now always shows how much authorized rated-play time remains in the " +
+                "current GREEN window — or an explicit reminder that rated play is NOT " +
+                "authorized. (2) Opening the chess app with no valid authorization while " +
+                "a new readiness test IS possible (the trust window) now shows a " +
+                "full-screen orange notice, once per app stint, telling the user to take " +
+                "the readiness test before anything else — mirroring the YELLOW " +
+                "casual-play warning."
+        ),
+        ReadinessSystemChange(
             at("2026-08-18T16:38:00Z"),
             "Readiness v3.0 — adaptive percentile gate",
             "The fixed 85/70 pass bar was replaced by thresholds derived from your own " +

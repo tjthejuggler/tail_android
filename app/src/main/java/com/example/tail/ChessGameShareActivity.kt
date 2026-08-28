@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -537,6 +538,7 @@ class ChessGameShareActivity : ComponentActivity() {
                 Bullet("✗ $it", Color(0xFFEF4444))
             }
 
+            AuthorizedTimeLeftLine()
             Spacer(modifier = Modifier.height(16.dp))
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 when (r.outputState) {
@@ -648,6 +650,7 @@ class ChessGameShareActivity : ComponentActivity() {
                 Bullet("✗ $it", Color(0xFFEF4444))
             }
 
+            AuthorizedTimeLeftLine()
             Spacer(modifier = Modifier.height(16.dp))
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 when (r.outputState) {
@@ -780,6 +783,7 @@ class ChessGameShareActivity : ComponentActivity() {
                 Bullet("✗ $it", Color(0xFFEF4444))
             }
 
+            AuthorizedTimeLeftLine()
             Spacer(modifier = Modifier.height(16.dp))
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 when (r.outputState) {
@@ -809,6 +813,37 @@ class ChessGameShareActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Always-present "how much authorized playtime is left" line, shared by
+     * every audit result screen (v1 / v2 / v3): minutes remaining in the
+     * current GREEN authorization window, or an explicit "not authorized"
+     * reminder to take a readiness test.
+     */
+    @Composable
+    private fun AuthorizedTimeLeftLine() {
+        val context = LocalContext.current
+        val msLeft = remember {
+            ChessPhase2Store.ratedPlayMsRemaining(context)
+        }
+        val line = if (msLeft > 0L) {
+            val totalMin = ((msLeft + 59999L) / 60000L).toInt().coerceAtLeast(1)
+            val h = totalMin / 60
+            val m = totalMin % 60
+            val wait = if (h > 0) "$h h $m min" else "$m min"
+            "⏱ Rated play authorized for $wait more (this session's window)"
+        } else {
+            "⏱ Rated play NOT authorized — take the ♟ Chess Readiness test to earn a new window"
+        }
+        Text(
+            text = line,
+            color = if (msLeft > 0L) Color(0xFF66BB6A) else Color(0xFFEAB308),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
     }
 
     @Composable
