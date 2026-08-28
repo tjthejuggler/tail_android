@@ -63,6 +63,11 @@ class HabitIncrementConfirmActivity : Activity() {
 
         setContentView(R.layout.activity_habit_increment_confirm)
 
+        // Tiny distinctive haptic on habit increments (skipped for notes)
+        if (!intent.getBooleanExtra(EXTRA_IS_NOTE, false)) {
+            HabitHaptics.confirmIncrement(this)
+        }
+
         val msg = intent.getStringExtra(EXTRA_CONFIRM_MSG) ?: ""
         val noteBody = intent.getStringExtra(EXTRA_NOTE_BODY)
         val isNote = intent.getBooleanExtra(EXTRA_IS_NOTE, false)
