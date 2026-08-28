@@ -99,7 +99,11 @@ object AppStatsRecordNotifier {
             for (ev in result.evaluations) {
                 if (posted >= MAX_POSTS_PER_CHECK) break
                 val lastRaw = prefs.getString("last_sent_${ev.metric}", null)
-                val lastParts = lastRaw?.split("")
+                // NOTE: the marker is written space-separated ("VERDICT value millis day");
+                // it was previously parsed with a \u0001 delimiter that never
+                // matched, so the once-per-day-per-metric gate never suppressed
+                // anything and NEAR notices re-posted on every check.
+                val lastParts = lastRaw?.split(" ")
                 val lastDay = lastParts?.getOrNull(3)
                 val lastValue = lastParts?.getOrNull(1)?.toIntOrNull() ?: Int.MIN_VALUE
                 val alreadyNotifiedToday = lastDay == todayKey

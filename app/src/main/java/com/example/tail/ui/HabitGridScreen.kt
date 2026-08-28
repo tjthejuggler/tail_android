@@ -329,7 +329,8 @@ fun HabitGridScreen(
     viewModel: HabitViewModel,
     adviceViewModel: AdviceViewModel,
     onNavigateToSettings: () -> Unit,
-    onNavigateToMap: () -> Unit = {}
+    onNavigateToMap: () -> Unit = {},
+    onNavigateToAppStats: () -> Unit = {}
 ) {
     val habits by viewModel.habits.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -2885,7 +2886,11 @@ fun HabitGridScreen(
         NotificationsDialog(
             notifications = notifications,
             onAnswer = { ask, yes -> viewModel.answerNotification(ask, yes) },
-            onDismiss = { showNotificationsDialog = false }
+            onDismiss = { showNotificationsDialog = false },
+            onOpenAppStats = {
+                showNotificationsDialog = false
+                onNavigateToAppStats()
+            }
         )
     }
 }

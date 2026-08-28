@@ -273,7 +273,10 @@ private fun TailApp(
                     viewModel = viewModel,
                     adviceViewModel = adviceViewModel,
                     onNavigateToSettings = { navController.navigate(ROUTE_SETTINGS) },
-                    onNavigateToMap = { navController.navigate(ROUTE_MAP) }
+                    onNavigateToMap = { navController.navigate(ROUTE_MAP) },
+                    onNavigateToAppStats = {
+                        navController.navigate(MainActivity.ROUTE_APP_STATS)
+                    }
                 )
             }
             composable(ROUTE_MAP) {

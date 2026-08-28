@@ -45,7 +45,9 @@ private val ASK_TIME_FMT = DateTimeFormatter.ofPattern("MMM d · HH:mm")
 fun NotificationsDialog(
     notifications: List<HabitNotification>,
     onAnswer: (HabitNotification, Boolean) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Opens the App Stats screen; used by the app-stats record notices. */
+    onOpenAppStats: () -> Unit = {}
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -88,7 +90,11 @@ fun NotificationsDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     notifications.forEach { ask ->
-                        NotificationAskRow(ask = ask, onAnswer = onAnswer)
+                        NotificationAskRow(
+                            ask = ask,
+                            onAnswer = onAnswer,
+                            onOpenAppStats = onOpenAppStats
+                        )
                     }
                 }
             }
@@ -108,7 +114,8 @@ fun NotificationsDialog(
 @Composable
 private fun NotificationAskRow(
     ask: HabitNotification,
-    onAnswer: (HabitNotification, Boolean) -> Unit
+    onAnswer: (HabitNotification, Boolean) -> Unit,
+    onOpenAppStats: () -> Unit = {}
 ) {
     val emoji = when (ask.type) {
         HabitNotification.TYPE_MOVIE -> "🎬"
@@ -181,11 +188,24 @@ private fun NotificationAskRow(
                 }
             }
             Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = ask.habitName,
-                color = Color(0xFF666666),
-                fontSize = 10.sp
-            )
+            if (ask.id.startsWith("appstats:")) {
+                // App-stats record notice — the label doubles as a link to
+                // the App Stats screen (same deep link as the system
+                // notification's tap action).
+                Text(
+                    text = "${ask.habitName} ›",
+                    color = Color(0xFF66CCFF),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable { onOpenAppStats() }
+                )
+            } else {
+                Text(
+                    text = ask.habitName,
+                    color = Color(0xFF666666),
+                    fontSize = 10.sp
+                )
+            }
         }
     }
 }
