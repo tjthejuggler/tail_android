@@ -54,6 +54,11 @@ object HabitNotifier {
             ask.id.hashCode(),
             Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                // App-stats record notices deep-link straight to the App
+                // Stats screen (their "App Stats" label is the link target).
+                if (ask.id.startsWith("appstats:")) {
+                    putExtra(MainActivity.EXTRA_OPEN_ROUTE, MainActivity.ROUTE_APP_STATS)
+                }
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

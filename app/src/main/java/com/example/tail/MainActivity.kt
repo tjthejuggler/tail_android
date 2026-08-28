@@ -44,7 +44,6 @@ import kotlinx.coroutines.launch
 
 private const val ROUTE_GRID = "grid"
 private const val ROUTE_SETTINGS = "settings"
-private const val ROUTE_APP_STATS = "app_stats"
 private const val ROUTE_MAP = "map"
 private const val ROUTE_MAP_STATS = "map_stats"
 
@@ -56,6 +55,9 @@ class MainActivity : ComponentActivity() {
 
         /** Chess Readiness stats screen — deep-linked from the floating bubble menu. */
         const val ROUTE_CHESS_READINESS_STATS = "chess_readiness_stats"
+
+        /** App Stats screen — deep-linked from the app-stats record notifications. */
+        const val ROUTE_APP_STATS = "app_stats"
 
         /** Quick Capture History — deep-linked from the review notification. */
         const val ROUTE_QUICK_CAPTURE_HISTORY = "quick_capture_history"
@@ -296,13 +298,15 @@ private fun TailApp(
                     autoBackupManager = autoBackupManager,
                     gdriveManager = gdriveManager,
                     onNavigateBack = { navController.popBackStack() },
-                    onNavigateToAppStats = { navController.navigate(ROUTE_APP_STATS) },
+                    onNavigateToAppStats = {
+                        navController.navigate(MainActivity.ROUTE_APP_STATS)
+                    },
                     onNavigateToChessReadinessStats = {
                         navController.navigate(MainActivity.ROUTE_CHESS_READINESS_STATS)
                     }
                 )
             }
-            composable(ROUTE_APP_STATS) {
+            composable(MainActivity.ROUTE_APP_STATS) {
                 AppStatsScreen(
                     viewModel = viewModel,
                     onNavigateBack = { navController.popBackStack() },
@@ -315,7 +319,8 @@ private fun TailApp(
             }
             composable(MainActivity.ROUTE_CHESS_READINESS_STATS) {
                 ChessReadinessStatsScreen(
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
+                    loadingMetrics = viewModel.loadingMetrics.value
                 )
             }
             composable(MainActivity.ROUTE_QUICK_CAPTURE_HISTORY) {

@@ -187,7 +187,8 @@ private enum class VariantOption(val label: String, val key: String?) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChessReadinessStatsScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    loadingMetrics: LoadingMetrics = LoadingMetrics(0.0, 0.0, 0)
 ) {
     val context = LocalContext.current
 
@@ -452,13 +453,20 @@ fun ChessReadinessStatsScreen(
                 .padding(horizontal = 16.dp)
         ) {
             if (!loaded) {
-                Spacer(modifier = Modifier.height(48.dp))
-                Text(
-                    "Loading readiness log…",
-                    color = DimColor,
-                    fontSize = 14.sp,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                )
+                // The shared color-based loading animation ("The Orrery")
+                // instead of a stalling blank screen while the log loads.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(320.dp)
+                ) {
+                    HabitLoadingSpinner(
+                        monthlyAverage = loadingMetrics.monthlyAverage,
+                        weeklyAverage = loadingMetrics.weeklyAverage,
+                        todayPoints = loadingMetrics.todayPoints,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
             } else if (tests.isEmpty() && games.isEmpty()) {
                 Spacer(modifier = Modifier.height(32.dp))
                 StatsSection(title = "♟ Chess Readiness") {

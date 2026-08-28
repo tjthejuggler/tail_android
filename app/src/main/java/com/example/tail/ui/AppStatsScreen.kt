@@ -34,6 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,6 +62,8 @@ import com.example.tail.data.minutesKey
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.expandEntriesToCalendarDaysPublic
 import com.example.tail.data.parseDate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -126,14 +129,39 @@ fun AppStatsScreen(
     val timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary
     val invertedBinaryHabits = settings.invertedBinaryHabits
 
-    // Compute all stats from the cached database
+    // Compute all stats from the cached database — asynchronously, so the
+    // heavy aggregation never stalls the UI thread: while it runs the
+    // screen shows the shared color-based loading animation ("The Orrery")
+    // instead of freezing.
     val db = viewModel.getCachedDatabase()
     val listExcludedHabits = buildSet {
         if (excludeGarminFromLists) addAll(garminHabits)
         if (excludeDisabledFromLists) addAll(disabledHabits)
     }
-    val stats = remember(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits, listExcludedHabits) {
-        computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits, listExcludedHabits)
+    var computedStats by remember { mutableStateOf<AppStats?>(null) }
+    LaunchedEffect(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits, listExcludedHabits) {
+        computedStats = null
+        computedStats = withContext(Dispatchers.Default) {
+            computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits, listExcludedHabits)
+        }
+    }
+    val stats = computedStats ?: run {
+        // Still aggregating — the Orrery spinner, tinted by the retained
+        // loading metrics, fills the screen until the stats are ready.
+        val loadingMetrics = viewModel.loadingMetrics.value
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            HabitLoadingSpinner(
+                monthlyAverage = loadingMetrics.monthlyAverage,
+                weeklyAverage = loadingMetrics.weeklyAverage,
+                todayPoints = loadingMetrics.todayPoints,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+        return
     }
 
     // State for the habit-list popup

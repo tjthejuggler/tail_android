@@ -44,15 +44,6 @@ object AppStatsRecordNotifier {
     const val MAX_POSTS_PER_CHECK = 3
 
     /**
-     * How long a near-record / record-broken NOTIFICATION is suppressed
-     * after an essentially identical one was sent (same metric, same
-     * verdict, same record value). Keeps the checks — which run on every
-     * app open — from flooding the shade with slightly-updated variants of
-     * the same message. The Record News feed in App Stats is unaffected.
-     */
-    const val SAME_NEWS_COOLDOWN_MS = 72 * 60 * 60 * 1000L
-
-    /**
      * Runs one full check. Safe to call repeatedly (app open, daily alarm):
      * near-record ids are per-day (NotificationStore dedups) and broken
      * records are gated by the persisted episode flags.
@@ -96,20 +87,25 @@ object AppStatsRecordNotifier {
                     )
                 }
             )
-            // …but only the top few become system notifications, and only
-            // when not a near-duplicate of one sent very recently.
+            // …but only the top few become system notifications, and at most
+            // ONE per metric per DAY: once a category notified today it stays
+            // quiet for the rest of the day — EXCEPT when a genuinely NEW
+            // record is set (BROKEN with a higher record value than any
+            // already notified today), which always gets through.
             val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val nowMs = System.currentTimeMillis()
+            val todayKey = today
             var posted = 0
             for (ev in result.evaluations) {
                 if (posted >= MAX_POSTS_PER_CHECK) break
                 val lastRaw = prefs.getString("last_sent_${ev.metric}", null)
                 val lastParts = lastRaw?.split("")
-                val isRepeat = lastParts != null && lastParts.size == 3 &&
-                    lastParts[0] == ev.verdict.name &&
-                    lastParts[1] == ev.recordValue.toString() &&
-                    nowMs - (lastParts[2].toLongOrNull() ?: 0L) < SAME_NEWS_COOLDOWN_MS
-                if (isRepeat) continue
+                val lastDay = lastParts?.getOrNull(3)
+                val lastValue = lastParts?.getOrNull(1)?.toIntOrNull() ?: Int.MIN_VALUE
+                val alreadyNotifiedToday = lastDay == todayKey
+                val isNewRecord = ev.verdict == AppStatsRecordEngine.Verdict.BROKEN &&
+                    ev.recordValue > lastValue
+                if (alreadyNotifiedToday && !isNewRecord) continue
                 val prefix = if (ev.verdict == AppStatsRecordEngine.Verdict.BROKEN) "rec" else "near"
                 HabitAsks.postInfo(
                     appContext = appContext,
@@ -120,7 +116,7 @@ object AppStatsRecordNotifier {
                 )
                 prefs.edit().putString(
                     "last_sent_${ev.metric}",
-                    "${ev.verdict.name} ${ev.recordValue} $nowMs"
+                    "${ev.verdict.name} ${ev.recordValue} $nowMs $todayKey"
                 ).apply()
                 posted++
             }

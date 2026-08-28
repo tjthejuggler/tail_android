@@ -12,6 +12,7 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -1237,8 +1238,42 @@ class FloatingBubbleService : Service() {
         showSurvivalPanel(armed = false)
     }
 
+    /**
+     * Immediate tactile + visual confirmation of a PASS/FAIL tap: a short
+     * vibration (a longer, sharper double-buzz for FAIL) and a brief
+     * green/red flash of the survival banner background, so the press is
+     * unmistakably registered even mid-drill.
+     */
+    private fun feedbackSurvivalPress(pass: Boolean) {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager)
+                ?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Vibrator::class.java)
+        }
+        try {
+            val effect = if (pass) {
+                VibrationEffect.createOneShot(40L, VibrationEffect.DEFAULT_AMPLITUDE)
+            } else {
+                VibrationEffect.createWaveform(longArrayOf(0, 60, 70, 120), -1)
+            }
+            vibrator?.vibrate(effect)
+        } catch (_: Exception) {
+        }
+        val panel = survivalPanelView ?: return
+        val bg = panel.background?.mutate() as? GradientDrawable ?: return
+        bg.setColor(if (pass) 0xCC1E5631.toInt() else 0xCC7F1D1D.toInt())
+        panel.invalidate()
+        handler.postDelayed({
+            bg.setColor(0xEE161616.toInt())
+            panel.invalidate()
+        }, 180)
+    }
+
     private fun onSurvivalPass() {
         if (!survivalRunning) return
+        feedbackSurvivalPress(pass = true)
         val now = android.os.SystemClock.elapsedRealtime()
         val duration = (now - survivalPuzzleStartMs).coerceAtLeast(0L)
         ChessReadinessV3Store.appendEvent(
@@ -1279,6 +1314,7 @@ class FloatingBubbleService : Service() {
 
     private fun onSurvivalFail() {
         if (!survivalRunning) return
+        feedbackSurvivalPress(pass = false)
         val now = android.os.SystemClock.elapsedRealtime()
         ChessReadinessV3Store.appendEvent(
             this,
