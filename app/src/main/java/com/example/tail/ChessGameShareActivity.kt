@@ -47,6 +47,7 @@ import com.example.tail.widget.ChessGameAuditMapper
 import com.example.tail.widget.ChessPendingGameStore
 import com.example.tail.widget.ChessPhase2Engine
 import com.example.tail.widget.ChessPhase2Store
+import com.example.tail.widget.ChessReadinessStore
 import com.example.tail.widget.ChessPhase2V2Engine
 import com.example.tail.widget.ChessPhase2V2Store
 import com.example.tail.widget.ChessPhase2V3Engine
@@ -824,21 +825,50 @@ class ChessGameShareActivity : ComponentActivity() {
     @Composable
     private fun AuthorizedTimeLeftLine() {
         val context = LocalContext.current
-        val msLeft = remember {
-            ChessPhase2Store.ratedPlayMsRemaining(context)
-        }
-        val line = if (msLeft > 0L) {
-            val totalMin = ((msLeft + 59999L) / 60000L).toInt().coerceAtLeast(1)
-            val h = totalMin / 60
-            val m = totalMin % 60
-            val wait = if (h > 0) "$h h $m min" else "$m min"
-            "⏱ Rated play authorized for $wait more (this session's window)"
-        } else {
-            "⏱ Rated play NOT authorized — take the ♟ Chess Readiness test to earn a new window"
+        // ONE source of truth: the window timer AND the audit verdict are
+        // combined here, so this line can never again claim rated play is
+        // authorized while the audit above just prohibited it.
+        val (line, positive) = remember {
+            val msLeft = ChessPhase2Store.ratedPlayMsRemaining(context)
+            val authorized = ChessPhase2Store.ratedPlayAuthorized(context)
+            when {
+                authorized && msLeft > 0L -> {
+                    val totalMin = ((msLeft + 59999L) / 60000L).toInt().coerceAtLeast(1)
+                    val h = totalMin / 60
+                    val m = totalMin % 60
+                    val wait = if (h > 0) "$h h $m min" else "$m min"
+                    "⏱ Rated play authorized for $wait more (this session's window)" to true
+                }
+                // Window still open BUT a post-game audit filed since the
+                // readiness test revoked it — say exactly what blocks play.
+                msLeft > 0L -> {
+                    val authTs = ChessReadinessStore.lastTest(context)?.timestamp ?: 0L
+                    val blocker = ChessPhase2Store.loadAudits(context)
+                        .lastOrNull {
+                            it.timestamp >= authTs && it.outputState !=
+                                ChessPhase2Engine.OutputState.CONTINUE_RATED.name
+                        }
+                    val verdict = when (blocker?.outputState) {
+                        ChessPhase2Engine.OutputState.TERMINATE_SESSION.name -> "RED"
+                        else -> "YELLOW"
+                    }
+                    val at = blocker?.let {
+                        java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                            .format(java.util.Date(it.timestamp))
+                    } ?: ""
+                    "⏱ Rated play BLOCKED by the $verdict post-game audit at $at — " +
+                        "the readiness window's remaining time does NOT authorize " +
+                        "rated play. Unrated/bots only, or pass a new ♟ Chess " +
+                        "Readiness test to open a fresh window." to false
+                }
+                else ->
+                    "⏱ Rated play NOT authorized — take the ♟ Chess Readiness " +
+                        "test to earn a new window" to false
+            }
         }
         Text(
             text = line,
-            color = if (msLeft > 0L) Color(0xFF66BB6A) else Color(0xFFEAB308),
+            color = if (positive) Color(0xFF66BB6A) else Color(0xFFEAB308),
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.fillMaxWidth(),

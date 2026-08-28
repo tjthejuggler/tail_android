@@ -1036,8 +1036,8 @@ class FloatingBubbleService : Service() {
         override fun run() {
             if (survivalFreePlay) {
                 val now = android.os.SystemClock.elapsedRealtime()
-                // Free-play timer = cumulative survival time (all past runs)
-                // + the free-play elapsed so far.
+                // Free-play timer = this free-play session only
+                // (survivalFreePlayBaseMs is 0; kept for clarity).
                 survivalStopwatchText?.text = formatSurvivalStopwatch(
                     survivalFreePlayBaseMs + (now - survivalFreePlayStartMs)
                 )
@@ -1389,9 +1389,12 @@ class FloatingBubbleService : Service() {
         val todayKey = LocalDate.now().toString()
         val cached = try {
             GarminRepository(this).loadAllCachedData()
-        } catch (_: Exception) { emptyMap<GarminType, Map<String, Double>>() }
+        } catch (_: Exception) { emptyMap<GarminType, Map<String, Int>>() }
+        // Cached Garmin values are Ints — a "%f" conversion on an Int throws
+        // IllegalFormatConversionException, which used to abort the content
+        // build half-way and orphan the popup window on screen.
         fun garmin(type: GarminType): String =
-            cached[type]?.get(todayKey)?.let { "%.0f".format(it) } ?: "—"
+            cached[type]?.get(todayKey)?.toString() ?: "—"
         val reflex = survivalReflex
         popup.setContent("♟ Survival Gate", "Run complete — summary") {
             when (verdict) {
@@ -1435,9 +1438,9 @@ class FloatingBubbleService : Service() {
             spacer(6)
             when {
                 verdict == ChessReadinessV3Engine.Verdict.PASS ->
-                    body("Rated play unlocked. You can also keep drilling survival puzzles as free play — the banner timer keeps counting your TOTAL survival time.")
+                    body("Rated play unlocked. You can also keep drilling survival puzzles as free play — the banner timer counts this free-play session's time.")
                 !red ->
-                    body("Rated play locked (yellow). You can still continue the survival drill as free play — the banner timer keeps counting your TOTAL survival time.")
+                    body("Rated play locked (yellow). You can still continue the survival drill as free play — the banner timer counts this free-play session's time.")
                 else ->
                     body("Red mode — chess is locked entirely. Leave chess and rest; the gate can be re-tested after the rest period.", color = 0xFFFFAAAA.toInt())
             }
@@ -1462,6 +1465,10 @@ class FloatingBubbleService : Service() {
         }
         }.isSuccess && survivalResultPopup?.isShowing() == true
         if (!popupShown) {
+            // The window may already be on screen with half-built content
+            // (setContent threw mid-build) — dismiss it BEFORE dropping the
+            // reference, otherwise an unclosable overlay stays stuck on top.
+            runCatching { survivalResultPopup?.dismiss() }
             survivalResultPopup = null
             val label = when (verdict) {
                 ChessReadinessV3Engine.Verdict.PASS ->
@@ -1484,11 +1491,10 @@ class FloatingBubbleService : Service() {
         hideSurvivalPanel()
         survivalFreePlay = true
         survivalFreePlayStartMs = android.os.SystemClock.elapsedRealtime()
-        // The free-play timer starts from the CUMULATIVE survival time (all
-        // past runs — the just-finished one is already recorded) so it shows
-        // the user's total time in survival mode from the moment it appears.
-        survivalFreePlayBaseMs = ChessReadinessV3Store.loadResults(this)
-            .sumOf { it.survivalDurationMs }
+        // The free-play timer counts ONLY this free-play session (starting
+        // from 0:00) — past runs and today's earlier survival time are not
+        // included. STOP & SAVE credits exactly what this timer shows.
+        survivalFreePlayBaseMs = 0L
 
         val density = resources.displayMetrics.density
         fun Int.dp(): Int = (this * density).toInt()
@@ -1510,7 +1516,7 @@ class FloatingBubbleService : Service() {
         }
 
         val label = TextView(this).apply {
-            text = "♟ SURVIVAL\nfree play · total"
+            text = "♟ SURVIVAL\nfree play · session"
             setTextColor(0xFF66CCFF.toInt())
             textSize = 11f
             setTypeface(null, Typeface.BOLD)

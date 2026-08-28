@@ -340,8 +340,18 @@ object ChessPhase2V3Engine {
         }
         val minutesSinceYellow = lastYellow
             ?.let { (now - it.timestamp) / 60000.0 } ?: Double.MAX_VALUE
+        // An EXPECTED loss (opponent heavily favoured, expected score below
+        // UNDERDOG_BAR — e.g. a +700 rating gap) is weak evidence of poor
+        // play, exactly like Rule 2's 0.5 streak weight. It therefore counts
+        // as NEUTRAL for hysteresis recovery (like a draw) instead of
+        // resetting it — losing to a much stronger player must not lock
+        // rated play.
+        val expectedLoss = input.result == ChessPhase2Engine.GameResult.LOSS &&
+            input.expectedScore < UNDERDOG_BAR
+        val resultNeutralForRecovery =
+            input.result != ChessPhase2Engine.GameResult.LOSS || expectedLoss
         val recoveredFromYellow = lastYellow == null ||
-            (input.result != ChessPhase2Engine.GameResult.LOSS &&
+            (resultNeutralForRecovery &&
                 (zDeficit == null || zDeficit <= 0.0) &&
                 minutesSinceYellow >= ChessPhase2V2Engine.HYSTERESIS_MIN_MINUTES)
 
@@ -458,10 +468,14 @@ object ChessPhase2V3Engine {
         }
         ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS -> {
             if (hysteresis) {
-                "Still in YELLOW (hysteresis): one normal game is not enough " +
-                    "proof of recovery. Green returns after a win or draw " +
-                    "with accuracy at/above your norm AND 15+ minutes since " +
-                    "the yellow flag. Until then: unrated, bots, or drills."
+                "RATED PLAY PAUSED — Rule 6 hysteresis: an earlier game in " +
+                    "this session flagged YELLOW, and one game is not enough " +
+                    "proof of recovery. Green (rated play) returns when ALL " +
+                    "of these hold: (1) 15+ minutes since the yellow flag, " +
+                    "(2) a win or draw — or a loss to a much stronger " +
+                    "opponent (expected score below 0.35), which counts as " +
+                    "neutral — and (3) accuracy at/above your norm. Until " +
+                    "then: unrated games, bots, or drills only."
             } else if (forgiven) {
                 "Your pre-game readiness (CCRS ${input.readinessCcrs}) was " +
                     "strong enough to absorb this dip (strain " +

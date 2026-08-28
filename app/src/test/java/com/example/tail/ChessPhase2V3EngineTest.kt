@@ -432,6 +432,43 @@ class ChessPhase2V3EngineTest {
     }
 
     @Test
+    fun `underdog loss does not hold hysteresis`() {
+        // Losing to a much stronger opponent (expected score < 0.35, e.g. a
+        // +700 rating gap) is neutral for recovery — it must NOT keep rated
+        // play locked the way an even-match loss does.
+        val r = evaluate(
+            input(result = ChessPhase2Engine.GameResult.LOSS, expectedScore = 0.05),
+            session = listOf(
+                sessionGame(
+                    ChessPhase2Engine.GameResult.LOSS,
+                    minutesAgo = 30,
+                    outputState = ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS.name
+                )
+            )
+        )
+        assertFalse(r.hysteresisHeld)
+        assertEquals(ChessPhase2Engine.OutputState.CONTINUE_RATED, r.outputState)
+    }
+
+    @Test
+    fun `normal loss still holds hysteresis`() {
+        val r = evaluate(
+            input(result = ChessPhase2Engine.GameResult.LOSS, expectedScore = 0.4),
+            session = listOf(
+                // Prior yellow flag on a NON-loss game so Rule 2's streak
+                // stays silent and only Rule 6 can hold the yellow.
+                sessionGame(
+                    ChessPhase2Engine.GameResult.WIN,
+                    minutesAgo = 30,
+                    outputState = ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS.name
+                )
+            )
+        )
+        assertTrue(r.hysteresisHeld)
+        assertEquals(ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS, r.outputState)
+    }
+
+    @Test
     fun `green returns after a proven recovery`() {
         val r = evaluate(
             input(result = ChessPhase2Engine.GameResult.WIN),
