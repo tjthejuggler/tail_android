@@ -33,6 +33,8 @@ import android.widget.Toast
 import com.example.tail.MainActivity
 import com.example.tail.R
 import com.example.tail.data.BridgeClient
+import com.example.tail.data.GarminRepository
+import com.example.tail.data.GarminType
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.SettingsRepository
@@ -1086,7 +1088,10 @@ class FloatingBubbleService : Service() {
         fun Int.dp(): Int = (this * density).toInt()
 
         val panel = LinearLayout(this).apply {
-            orientation = if (armed) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            // VERTICAL in BOTH modes — a narrow tall card next to the bubble
+            // can never be clipped off the screen edge the way a wide
+            // horizontal banner was.
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
             background = GradientDrawable().apply {
                 setColor(0xEE161616.toInt())
@@ -1143,64 +1148,83 @@ class FloatingBubbleService : Service() {
                 setPadding(0, 4.dp(), 0, 0)
             })
         } else {
-            fun bannerMargin(): LinearLayout.LayoutParams =
+            fun vMargin(top: Int = 0, bottom: Int = 0): LinearLayout.LayoutParams =
                 LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { marginStart = 8.dp(); marginEnd = 8.dp() }
+                ).apply { topMargin = top.dp(); bottomMargin = bottom.dp() }
 
-            val infoBlock = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-            }
-            survivalCounterText = TextView(this).apply {
-                text = "%02d / %d".format(survivalPassed + 1, survivalTarget)
-                setTextColor(0xFF66CCFF.toInt())
-                textSize = 16f
-                setTypeface(null, Typeface.BOLD)
-                gravity = Gravity.CENTER
-            }
-            survivalPctText = TextView(this).apply {
-                text = pctBannerLabel()
-                setTextColor(if (survivalPctWon) 0xFF88FF88.toInt() else 0xFFAAAAAA.toInt())
-                textSize = 10f
-                gravity = Gravity.CENTER
-            }
+            // TOTAL timer (small, on top) counting up to the 5:00 cap — no
+            // per-puzzle stopwatch (no per-puzzle limit exists; per-puzzle
+            // latency is still recorded silently as telemetry on each PASS).
             survivalTotalText = TextView(this).apply {
                 text = "0:00 / 5:00"
                 setTextColor(0xFF999999.toInt())
-                textSize = 10f
+                textSize = 11f
                 gravity = Gravity.CENTER
             }
-            infoBlock.addView(survivalCounterText)
-            infoBlock.addView(survivalPctText)
-            infoBlock.addView(survivalTotalText)
-            panel.addView(infoBlock, bannerMargin())
+            panel.addView(survivalTotalText, vMargin())
 
-            survivalStopwatchText = TextView(this).apply {
-                text = "00:00.0"
-                setTextColor(Color.WHITE)
-                textSize = 22f
+            // Puzzle counter BELOW the timer.
+            survivalCounterText = TextView(this).apply {
+                text = "%02d / %d".format(survivalPassed + 1, survivalTarget)
+                setTextColor(0xFF66CCFF.toInt())
+                textSize = 18f
                 setTypeface(null, Typeface.BOLD)
                 gravity = Gravity.CENTER
             }
-            panel.addView(survivalStopwatchText, bannerMargin())
+            panel.addView(survivalCounterText, vMargin(top = 2))
 
-            panel.addView(
-                panelButton("✓ PASS", 0xFF1E5631.toInt(), 0xFF88FF88.toInt()) {
+            survivalPctText = TextView(this).apply {
+                text = pctBannerLabel()
+                setTextColor(if (survivalPctWon) 0xFF88FF88.toInt() else 0xFFAAAAAA.toInt())
+                textSize = 9f
+                gravity = Gravity.CENTER
+            }
+            panel.addView(survivalPctText, vMargin())
+
+            // Caption ABOVE the buttons; the buttons carry only the ✓ / ✕
+            // glyph but are LARGE (52×48 dp) so they are easy to hit mid-drill.
+            val caption = TextView(this).apply {
+                text = "✓ pass · ✕ fail"
+                setTextColor(0xFFAAAAAA.toInt())
+                textSize = 9f
+                gravity = Gravity.CENTER
+            }
+            panel.addView(caption, vMargin(top = 4, bottom = 2))
+
+            val buttonRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+            }
+            fun bigButton(label: String, bg: Int, fg: Int, onClick: () -> Unit) =
+                panelButton(label, bg, fg, onClick).apply {
+                    textSize = 20f
+                    minWidth = 52.dp()
+                    minHeight = 48.dp()
+                }
+            buttonRow.addView(
+                bigButton("✓", 0xFF1E5631.toInt(), 0xFF88FF88.toInt()) {
                     onSurvivalPass()
                 },
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { marginEnd = 6.dp() }
+                ).apply { marginEnd = 8.dp() }
             )
-            panel.addView(
-                panelButton("✕ FAIL", 0xFF7F1D1D.toInt(), 0xFFEF9A9A.toInt()) {
+            buttonRow.addView(
+                bigButton("✕", 0xFF7F1D1D.toInt(), 0xFFEF9A9A.toInt()) {
                     onSurvivalFail()
                 },
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+            panel.addView(
+                buttonRow,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 )
             )
@@ -1354,7 +1378,16 @@ class FloatingBubbleService : Service() {
         val popup = ChessOverlayDialog(this)
         survivalResultPopup = popup
         popup.show()
-        popup.setContent("♟ Survival Gate", "Run complete") {
+        // Full run summary (mirrors the v2 result screen): passive Garmin
+        // metrics, the reflex test result and the survival gate outcome.
+        val todayKey = LocalDate.now().toString()
+        val cached = try {
+            GarminRepository(this).loadAllCachedData()
+        } catch (_: Exception) { emptyMap<GarminType, Map<String, Double>>() }
+        fun garmin(type: GarminType): String =
+            cached[type]?.get(todayKey)?.let { "%.0f".format(it) } ?: "—"
+        val reflex = survivalReflex
+        popup.setContent("♟ Survival Gate", "Run complete — summary") {
             when (verdict) {
                 ChessReadinessV3Engine.Verdict.PASS ->
                     stateLabel("GATE PASSED", "#66BB6A")
@@ -1364,8 +1397,35 @@ class FloatingBubbleService : Service() {
                     stateLabel("GATE FAILED — RED", "#EF4444")
             }
             spacer(8)
+
+            // ── Passive (overnight Garmin) ───────────────────────────────
+            body("Passive — overnight (Garmin)", color = 0xFF66CCFF.toInt(), size = 13, bold = true)
+            keyValue("Sleep score", garmin(GarminType.SLEEP_SCORE))
+            keyValue("HRV (RMSSD, last night)", garmin(GarminType.HRV_LAST_NIGHT).let { if (it == "—") it else "$it ms" })
+            keyValue("Resting HR", garmin(GarminType.RESTING_HR).let { if (it == "—") it else "$it bpm" })
+            keyValue("Stress level", garmin(GarminType.STRESS_LEVEL))
+            spacer(6)
+
+            // ── Step 1: reflex test ─────────────────────────────────────
+            body("Step 1 · Reflex test (PVT-B)", color = 0xFF66CCFF.toInt(), size = 13, bold = true)
+            if (reflex != null) {
+                keyValue("Verdict", if (reflex.passed) "PASS ✓" else "FAIL ✕")
+                keyValue("Lapses (≥355 ms)", "${reflex.lapses}")
+                keyValue("False starts (<100 ms)", "${reflex.falseStarts}")
+                reflex.meanRtMs?.let { rt ->
+                    keyValue("Average response", "%.0f ms".format(rt))
+                    keyValue("Speed score (1000/RT)", "%.2f".format(1000.0 / rt))
+                }
+            } else {
+                keyValue("Verdict", "—")
+            }
+            spacer(6)
+
+            // ── Step 2: survival gate ───────────────────────────────────
+            body("Step 2 · Survival gate", color = 0xFF66CCFF.toInt(), size = 13, bold = true)
             keyValue("Puzzles passed", "$survivalPassed / $survivalTarget")
-            keyValue("Run time", formatSurvivalClock(elapsed))
+            keyValue("Run time", formatSurvivalClock(elapsed) + " / 5:00 cap")
+            if (survivalPctWon) keyValue("Percentile win", "P70 ✓ secured")
             spacer(6)
             when {
                 verdict == ChessReadinessV3Engine.Verdict.PASS ->

@@ -704,15 +704,16 @@ fun AppStatsScreen(
                             stats.completionRate >= 70 -> GreenValue
                             stats.completionRate >= 50 -> ValueColor
                             else -> RedValue
-                        }
-                    )
-                    StatClickableCountRow(
-                        label = "Habits done today",
-                        count = stats.habitsDoneToday,
-                        onClick = {
+                        },
+                        onInfo = {
                             openPopup(
-                                "Habits Done Today (${stats.habitsDoneToday})",
-                                stats.habitsDoneTodayList
+                                "Completion rate — what it means",
+                                listOf(
+                                    "What it measures" to
+                                        "The share of days (since your first recorded entry) on which you scored at least 1 point — i.e. days you completed at least one habit.",
+                                    "How it is calculated" to
+                                        "days with ≥1 point ÷ total days with any recorded data × 100. Days with zero points count against it; days before your first entry are not counted."
+                                )
                             )
                         }
                     )
@@ -725,18 +726,6 @@ fun AppStatsScreen(
                                 stats.habitsNotDoneTodayList
                             )
                         }
-                    )
-                    StatDateRow(
-                        "Most habits done in a single day",
-                        stats.mostHabitsDoneInDayDate,
-                        onNavigateToDate,
-                        suffix = " (${stats.mostHabitsDoneInDayCount} habits)"
-                    )
-                    StatDateRow(
-                        "Most points in a single day",
-                        stats.highestPointsDay.first,
-                        onNavigateToDate,
-                        suffix = " (${stats.highestPointsDay.second} pts)"
                     )
                 }
 
@@ -1151,7 +1140,9 @@ private fun StatsSection(
 private fun StatRow(
     label: String,
     value: String,
-    valueColor: Color = ValueColor
+    valueColor: Color = ValueColor,
+    /** When set, a small ⓘ appears next to the label; tapping opens a tooltip popup. */
+    onInfo: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -1160,12 +1151,22 @@ private fun StatRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Top
     ) {
-        Text(
-            text = label,
-            color = LabelColor,
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f)
-        )
+        Row(verticalAlignment = Alignment.Top, modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = LabelColor,
+                fontSize = 12.sp
+            )
+            if (onInfo != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "ⓘ",
+                    color = ValueColor,
+                    fontSize = 12.sp,
+                    modifier = Modifier.clickable { onInfo() }
+                )
+            }
+        }
         Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = value,
