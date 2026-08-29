@@ -695,7 +695,23 @@ class ChessGameShareActivity : ComponentActivity() {
         onLeaveChess: () -> Unit,
         onRetryEngine: () -> Unit
     ) {
-        val color = Color(android.graphics.Color.parseColor(r.outputState.colorHex))
+        val context = LocalContext.current
+        // The engine verdict grades GAME QUALITY only; it can say
+        // CONTINUE_RATED while the readiness window that authorized this
+        // game has since expired. Reconcile here (same source of truth as
+        // AuthorizedTimeLeftLine) so the header can never promise a next
+        // rated game the enforcement policy would block.
+        val windowOpen = remember {
+            ChessPhase2Store.ratedPlayAuthorized(context) &&
+                ChessPhase2Store.ratedPlayMsRemaining(context) > 0L
+        }
+        val cleanButWindowClosed =
+            r.outputState == ChessPhase2Engine.OutputState.CONTINUE_RATED && !windowOpen
+        val color = if (cleanButWindowClosed) {
+            Color(0xFFEAB308)
+        } else {
+            Color(android.graphics.Color.parseColor(r.outputState.colorHex))
+        }
         Column(
             modifier = Modifier.verticalScroll(rememberScrollState())
         ) {
@@ -708,14 +724,17 @@ class ChessGameShareActivity : ComponentActivity() {
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = r.outputState.name.replace("_", " "),
+                text = if (cleanButWindowClosed) "READINESS WINDOW COMPLETE"
+                else r.outputState.name.replace("_", " "),
                 color = color,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
             Text(
-                text = r.outputState.title,
+                text = if (cleanButWindowClosed)
+                    "CLEAN GAME — BUT TAKE THE ♟ CHESS READINESS TEST TO EARN A NEW WINDOW"
+                else r.outputState.title,
                 color = Color(0xFF999999),
                 fontSize = 12.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -775,20 +794,43 @@ class ChessGameShareActivity : ComponentActivity() {
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(r.message, color = Color(0xFFDDDDDD), fontSize = 13.sp)
+            if (cleanButWindowClosed) {
+                Text(
+                    text = "⚠ The authorization window for this session has " +
+                        "expired — the clean game does NOT open a new one. " +
+                        "Take the ♟ Chess Readiness test to play rated again.",
+                    color = Color(0xFFEAB308),
+                    fontSize = 12.sp
+                )
+            }
             Spacer(modifier = Modifier.height(10.dp))
 
-            r.outputState.permitted.forEach {
-                Bullet("✓ $it", Color(0xFF66BB6A))
-            }
-            r.outputState.prohibited.forEach {
-                Bullet("✗ $it", Color(0xFFEF4444))
+            if (cleanButWindowClosed) {
+                Bullet("✓ Post-game review & light study", Color(0xFF66BB6A))
+                Bullet("✓ Take the ♟ Chess Readiness test", Color(0xFF66BB6A))
+                Bullet("✗ Next rated game (window expired)", Color(0xFFEF4444))
+            } else {
+                r.outputState.permitted.forEach {
+                    Bullet("✓ $it", Color(0xFF66BB6A))
+                }
+                r.outputState.prohibited.forEach {
+                    Bullet("✗ $it", Color(0xFFEF4444))
+                }
             }
 
             AuthorizedTimeLeftLine()
             Spacer(modifier = Modifier.height(16.dp))
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                when (r.outputState) {
-                    ChessPhase2Engine.OutputState.TERMINATE_SESSION ->
+                when {
+                    cleanButWindowClosed ->
+                        Button(
+                            onClick = onDone,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF4A3A10)
+                            )
+                        ) { Text("Take the Chess Readiness test", color = Color(0xFFEAB308)) }
+
+                    r.outputState == ChessPhase2Engine.OutputState.TERMINATE_SESSION ->
                         Button(
                             onClick = onLeaveChess,
                             colors = ButtonDefaults.buttonColors(
@@ -796,7 +838,7 @@ class ChessGameShareActivity : ComponentActivity() {
                             )
                         ) { Text("Leave chess — recover", color = Color(0xFFFFAAAA)) }
 
-                    ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS ->
+                    r.outputState == ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS ->
                         Button(
                             onClick = onDone,
                             colors = ButtonDefaults.buttonColors(
@@ -804,7 +846,7 @@ class ChessGameShareActivity : ComponentActivity() {
                             )
                         ) { Text("Back to chess (unrated / bots only)", color = Color(0xFFEAB308)) }
 
-                    ChessPhase2Engine.OutputState.CONTINUE_RATED ->
+                    else ->
                         Button(
                             onClick = onDone,
                             colors = ButtonDefaults.buttonColors(
