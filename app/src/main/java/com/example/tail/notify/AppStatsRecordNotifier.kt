@@ -39,6 +39,7 @@ object AppStatsRecordNotifier {
 
     private const val PREFS = "app_stats_record_notify"
     private const val KEY_EPISODES = "episode_notified_metrics"
+    private const val KEY_LAST_SUMMARY_DAY = "last_summary_day"
 
     /** Max notifications one check may post (broken first, then near). */
     const val MAX_POSTS_PER_CHECK = 3
@@ -83,7 +84,8 @@ object AppStatsRecordNotifier {
                         title = ev.title,
                         message = ev.message,
                         day = today,
-                        createdAtMillis = now
+                        createdAtMillis = now,
+                        recordDate = ev.recordDate
                     )
                 }
             )
@@ -124,12 +126,62 @@ object AppStatsRecordNotifier {
                 ).apply()
                 posted++
             }
+            maybePostDailySummary(appContext, series, today)
+
             if (posted > 0) {
                 Log.i(TAG, "Posted $posted app-stats record notification(s)")
             }
         } catch (e: Exception) {
             Log.w(TAG, "App-stats record check failed: ${e.message}")
         }
+    }
+
+
+    /**
+     * Once-a-day "records held" summary: lists every all-time record
+     * currently standing (as of the day prior) with the date each was set.
+     * Guarded by a persisted day marker so it posts at most once per day,
+     * whichever check runs first (morning alarm or catch-up).
+     */
+    private suspend fun maybePostDailySummary(
+        appContext: Context,
+        series: AppStatsRecordEngine.Series,
+        today: String
+    ) {
+        val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getString(KEY_LAST_SUMMARY_DAY, null) == today) return
+        prefs.edit().putString(KEY_LAST_SUMMARY_DAY, today).apply()
+
+        val records = AppStatsRecordEngine.currentRecords(series, today)
+        if (records.isEmpty()) return
+        val lines = records.joinToString("\n") {
+            "• ${it.label}: ${it.formatted} ${it.unit}"
+        }
+        val title = "📊 Records held"
+        val message = "Records you are currently on top of:\n$lines"
+        val now = System.currentTimeMillis()
+        AppStatsNewsStore.add(
+            appContext,
+            listOf(
+                AppStatsNewsStore.Entry(
+                    id = "appstats:summary:$today",
+                    verdict = AppStatsRecordEngine.Verdict.SUMMARY,
+                    metric = "summary",
+                    title = title,
+                    message = message,
+                    day = today,
+                    createdAtMillis = now
+                )
+            )
+        )
+        HabitAsks.postInfo(
+            appContext = appContext,
+            id = "appstats:summary:$today",
+            title = title,
+            message = message,
+            habitLabel = "App Stats"
+        )
+        Log.i(TAG, "Posted daily records-held summary (${records.size} records)")
     }
 
     // ── Series construction (App Stats screen semantics) ───────────────────

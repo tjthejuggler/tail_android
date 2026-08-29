@@ -27,8 +27,9 @@ object AppStatsNewsStore {
      * Bumping this wipes the feed once: entries computed by an older (buggy)
      * series builder disappear instead of lingering with wrong numbers.
      * v2: fixes inverted-binary double-counting and no-points streak parity.
+     * v3: entries gain record_date (clickable in the news popup).
      */
-    private const val FEED_VERSION = 2
+    private const val FEED_VERSION = 3
 
     /** How long news entries stay visible before aging out. */
     const val RETENTION_DAYS = 7L
@@ -40,7 +41,9 @@ object AppStatsNewsStore {
         val title: String,
         val message: String,
         val day: String,            // "yyyy-MM-dd" the event refers to
-        val createdAtMillis: Long
+        val createdAtMillis: Long,
+        /** "yyyy-MM-dd" the referenced record was set (null for summaries). */
+        val recordDate: String? = null
     )
 
     /**
@@ -72,7 +75,8 @@ object AppStatsNewsStore {
                     title = o.getString("title"),
                     message = o.getString("message"),
                     day = o.getString("day"),
-                    createdAtMillis = o.getLong("at")
+                    createdAtMillis = o.getLong("at"),
+                    recordDate = o.optString("record_date").ifEmpty { null }
                 )
             }.getOrNull() ?: continue
             if (e.createdAtMillis >= cutoff) entries += e
@@ -105,6 +109,7 @@ object AppStatsNewsStore {
                     .put("message", e.message)
                     .put("day", e.day)
                     .put("at", e.createdAtMillis)
+                    .put("record_date", e.recordDate ?: "")
             )
         }
         return arr.toString()

@@ -22,6 +22,10 @@ package com.example.tail.notify
  *    (< 95% of it), so a genuinely NEW record run later notifies again.
  *  - NEAR notifications only fire while the value is below the record and
  *    no episode is active, and are deduplicated per day by notification id.
+ *  - FRESH-RECORD SUPPRESSION: when the standing record was set today or
+ *    yesterday (the user is riding a record they just set), BOTH near and
+ *    broken notifications are suppressed — re-breaking your own day-old
+ *    record is noise, not news.
  */
 object AppStatsRecordEngine {
 
@@ -31,7 +35,7 @@ object AppStatsRecordEngine {
     /** A metric counts as "out of the record episode" below this fraction. */
     const val EPISODE_RESET_FRACTION = 0.95
 
-    enum class Verdict { NONE, NEAR, BROKEN }
+    enum class Verdict { NONE, NEAR, BROKEN, SUMMARY }
 
     /** One metric's evaluation outcome. */
     data class Evaluation(
@@ -40,7 +44,20 @@ object AppStatsRecordEngine {
         val currentValue: Double,
         val recordValue: Double,
         val title: String,
-        val message: String
+        val message: String,
+        /** "yyyy-MM-dd" the standing record was set (null when unknown). */
+        val recordDate: String? = null
+    )
+
+    /** One all-time record currently standing (for the daily summary). */
+    data class RecordFact(
+        val metric: String,
+        val label: String,
+        val value: Double,
+        val formatted: String,
+        val unit: String,
+        /** "yyyy-MM-dd" the record was set (null when unknown). */
+        val date: String?
     )
 
     /**
@@ -114,6 +131,13 @@ object AppStatsRecordEngine {
         MetricDef("aggregate_streak", "day streak with any points", "days", intFmt, 2.0, 0.05)
     )
 
+    /** (current, record, recordDate) for one metric. */
+    private data class MetricValues(
+        val current: Double,
+        val record: Double,
+        val recordDate: String?
+    )
+
     /**
      * Evaluates every metric against the series.
      *
@@ -128,54 +152,21 @@ object AppStatsRecordEngine {
         if (historyCount < MIN_HISTORY_DAYS) return Result(emptyList(), states)
 
         val todayIdx = series.dates.indexOf(today)
-
-        // Pre-compute per-metric (current, record) pairs.
-        val values = mutableMapOf<String, Pair<Double, Double>>()
-
-        fun lastTodayOr(list: List<Int>): Double =
-            (if (todayIdx >= 0) list[todayIdx] else list.last()).toDouble()
-
-        fun historyMax(list: List<Int>): Double =
-            (0..historyIdx).maxOf { list[it] }.toDouble()
-
-        values["best_day_points"] = lastTodayOr(series.dailyTotals) to
-            historyMax(series.dailyTotals)
-        values["most_habits_day"] = lastTodayOr(series.dailyHabitCounts) to
-            historyMax(series.dailyHabitCounts)
-        values["total_streak_days"] = lastTodayOr(series.dailyStreakSums) to
-            historyMax(series.dailyStreakSums)
-        values["habits_with_streak"] = lastTodayOr(series.dailyStreakCounts) to
-            historyMax(series.dailyStreakCounts)
-        values["total_anti_streak_days"] = lastTodayOr(series.dailyAntiStreakSums) to
-            historyMax(series.dailyAntiStreakSums)
-        values["habits_with_anti_streak"] = lastTodayOr(series.dailyAntiStreakCounts) to
-            historyMax(series.dailyAntiStreakCounts)
-
-        // Rolling averages: calendar-day windows, missing days contribute 0
-        // (matches computeTaskerStats semantics).
-        for (n in listOf(7, 30, 90, 365)) {
-            val key = "avg$n"
-            val totalsByDate = series.dates.zip(series.dailyTotals).toMap()
-            val cur = calendarAvg(totalsByDate, today, n)
-            var best = 0.0
-            for (i in 0..historyIdx) {
-                val avg = calendarAvg(totalsByDate, series.dates[i], n)
-                if (avg > best) best = avg
-            }
-            values[key] = cur to best
-        }
-
-        // Aggregate streak: longest run of consecutive calendar days with
-        // points > 0 in history, vs the run ending today.
-        values["aggregate_streak"] = aggregateStreak(series, todayIdx, historyIdx)
+        val values = computeValues(series, today, todayIdx, historyIdx)
 
         val out = mutableListOf<Evaluation>()
         val updated = mutableMapOf<String, MetricState>()
 
+        // Records set today or yesterday are "fresh" — the user is riding a
+        // record they just set, so neither near nor broken notices fire.
+        val freshCutoff = java.time.LocalDate.parse(today).minusDays(1).toString()
+
         for (m in METRICS) {
-            val (current, record) = values[m.key] ?: continue
+            val v = values[m.key] ?: continue
+            val current = v.current
+            val record = v.record
             val state = states[m.key] ?: MetricState()
-            if (record <= 0.0) {
+            if (record <= 0.0 || (v.recordDate != null && v.recordDate >= freshCutoff)) {
                 updated[m.key] = state
                 continue
             }
@@ -189,14 +180,15 @@ object AppStatsRecordEngine {
                         verdict = Verdict.BROKEN,
                         currentValue = current,
                         recordValue = record,
+                        recordDate = v.recordDate,
                         title = if (m.caution) "⚠️ New all-time high: ${m.label}"
                         else "🏆 New all-time record: ${m.label}!",
                         message = if (m.caution)
                             "You've hit a new all-time high for ${m.label}: ${m.fmt(current)} ${m.unit} " +
-                                "(previous record ${m.fmt(record)})."
+                                "(previous record ${m.fmt(record)} set ${v.recordDate ?: "earlier"})."
                         else
                             "${m.fmt(current)} ${m.unit} — previous record was ${m.fmt(record)} " +
-                                "set before today. Keep it going!"
+                                "set on ${v.recordDate ?: "an earlier day"}. Keep it going!"
                     )
                     updated[m.key] = MetricState(episodeNotified = true)
                 }
@@ -218,14 +210,16 @@ object AppStatsRecordEngine {
                     verdict = Verdict.NEAR,
                     currentValue = current,
                     recordValue = record,
+                    recordDate = v.recordDate,
                     title = if (m.caution) "⚠️ Approaching record: ${m.label}"
                     else "📈 Record within reach: ${m.label}",
                     message = if (m.caution)
                         "You're at ${m.fmt(current)} ${m.unit} vs the all-time high of " +
-                            "${m.fmt(record)} — worth turning around."
+                            "${m.fmt(record)} (set ${v.recordDate ?: "earlier"}) — worth turning around."
                     else
                         "Currently ${m.fmt(current)} ${m.unit} vs the all-time record of " +
-                            "${m.fmt(record)} — only ${m.fmt(record - current)} to go!"
+                            "${m.fmt(record)} set on ${v.recordDate ?: "an earlier day"} — " +
+                            "only ${m.fmt(record - current)} to go!"
                 )
             }
         }
@@ -233,6 +227,94 @@ object AppStatsRecordEngine {
         // Broken records first, then near-records.
         out.sortWith(compareBy({ it.verdict != Verdict.BROKEN }, { it.metric }))
         return Result(out, updated)
+    }
+
+    /**
+     * The records CURRENTLY being ridden: all-time bests whose record day
+     * was literally the day BEFORE [today] — the hills the user is on top
+     * of right now. Feeds the once-a-day morning "records held" summary.
+     */
+    fun currentRecords(series: Series, today: String): List<RecordFact> {
+        if (series.dates.isEmpty()) return emptyList()
+        val historyIdx = series.dates.indexOfLast { it < today }
+        if (historyIdx < 0) return emptyList()
+        val yesterday = java.time.LocalDate.parse(today).minusDays(1).toString()
+        val values = computeValues(series, today, series.dates.indexOf(today), historyIdx)
+        return METRICS.mapNotNull { m ->
+            val v = values[m.key] ?: return@mapNotNull null
+            if (v.record <= 0.0 || v.recordDate != yesterday) return@mapNotNull null
+            RecordFact(
+                metric = m.key,
+                label = m.label,
+                value = v.record,
+                formatted = m.fmt(v.record),
+                unit = m.unit,
+                date = v.recordDate
+            )
+        }
+    }
+
+    // ── Per-metric (current, record, recordDate) computation ────────────────
+
+    private fun computeValues(
+        series: Series,
+        today: String,
+        todayIdx: Int,
+        historyIdx: Int
+    ): Map<String, MetricValues> {
+        val values = mutableMapOf<String, MetricValues>()
+
+        fun lastTodayOr(list: List<Int>): Double =
+            (if (todayIdx >= 0) list[todayIdx] else list.last()).toDouble()
+
+        /** Max over history plus the LATEST date achieving it. */
+        fun historyMaxWithDate(list: List<Int>): Pair<Double, String> {
+            var best = Int.MIN_VALUE
+            var bestDate = series.dates[historyIdx]
+            for (i in 0..historyIdx) {
+                if (list[i] >= best) {
+                    best = list[i]
+                    bestDate = series.dates[i]
+                }
+            }
+            return best.toDouble() to bestDate
+        }
+
+        fun put(key: String, current: Double, list: List<Int>) {
+            val (record, date) = historyMaxWithDate(list)
+            values[key] = MetricValues(current, record, date)
+        }
+
+        put("best_day_points", lastTodayOr(series.dailyTotals), series.dailyTotals)
+        put("most_habits_day", lastTodayOr(series.dailyHabitCounts), series.dailyHabitCounts)
+        put("total_streak_days", lastTodayOr(series.dailyStreakSums), series.dailyStreakSums)
+        put("habits_with_streak", lastTodayOr(series.dailyStreakCounts), series.dailyStreakCounts)
+        put("total_anti_streak_days", lastTodayOr(series.dailyAntiStreakSums), series.dailyAntiStreakSums)
+        put("habits_with_anti_streak", lastTodayOr(series.dailyAntiStreakCounts), series.dailyAntiStreakCounts)
+
+        // Rolling averages: calendar-day windows, missing days contribute 0
+        // (matches computeTaskerStats semantics).
+        val totalsByDate = series.dates.zip(series.dailyTotals).toMap()
+        for (n in listOf(7, 30, 90, 365)) {
+            val key = "avg$n"
+            val cur = calendarAvg(totalsByDate, today, n)
+            var best = -1.0
+            var bestDate = series.dates[historyIdx]
+            for (i in 0..historyIdx) {
+                val avg = calendarAvg(totalsByDate, series.dates[i], n)
+                if (avg >= best) {
+                    best = avg
+                    bestDate = series.dates[i]
+                }
+            }
+            values[key] = MetricValues(cur, maxOf(best, 0.0), bestDate)
+        }
+
+        // Aggregate streak: longest run of consecutive calendar days with
+        // points > 0 in history, vs the run ending today.
+        val (curStreak, bestStreak, streakDate) = aggregateStreak(series, todayIdx, historyIdx)
+        values["aggregate_streak"] = MetricValues(curStreak, bestStreak, streakDate)
+        return values
     }
 
     /** Mean daily total over the [n] calendar days ending on [endDate]. */
@@ -246,11 +328,16 @@ object AppStatsRecordEngine {
     }
 
     /**
-     * (current, record) for the any-points day streak: the run ending at
-     * [todayIdx] (0 when today has no points yet) vs the longest run within
-     * history. Calendar gaps break runs (missing days are zero-days).
+     * (current, record, recordDate) for the any-points day streak: the run
+     * ending at [todayIdx] (0 when today has no points yet) vs the longest
+     * run within history plus the date that run ended on. Calendar gaps
+     * break runs (missing days are zero-days).
      */
-    private fun aggregateStreak(series: Series, todayIdx: Int, historyIdx: Int): Pair<Double, Double> {
+    private fun aggregateStreak(
+        series: Series,
+        todayIdx: Int,
+        historyIdx: Int
+    ): Triple<Double, Double, String?> {
         fun runEndingAt(idx: Int): Int {
             var run = 0
             var i = idx
@@ -268,11 +355,15 @@ object AppStatsRecordEngine {
         }
 
         var longest = 0
+        var longestDate: String? = null
         for (i in 0..historyIdx) {
             val r = runEndingAt(i)
-            if (r > longest) longest = r
+            if (r >= longest && r > 0) {
+                longest = r
+                longestDate = series.dates[i]
+            }
         }
         val current = if (todayIdx >= 0) runEndingAt(todayIdx) else 0
-        return current.toDouble() to longest.toDouble()
+        return Triple(current.toDouble(), longest.toDouble(), longestDate)
     }
 }

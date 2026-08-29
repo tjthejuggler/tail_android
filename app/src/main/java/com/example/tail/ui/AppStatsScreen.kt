@@ -844,7 +844,11 @@ fun AppStatsScreen(
     if (showRecordNews) {
         RecordNewsPopup(
             entries = recordNews,
-            onDismiss = { showRecordNews = false }
+            onDismiss = { showRecordNews = false },
+            onOpenDate = { dateStr ->
+                showRecordNews = false
+                runCatching { LocalDate.parse(dateStr) }.getOrNull()?.let(onNavigateToDate)
+            }
         )
     }
 
@@ -952,7 +956,8 @@ fun AppStatsScreen(
 @Composable
 private fun RecordNewsPopup(
     entries: List<AppStatsNewsStore.Entry>,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onOpenDate: (String) -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -1003,6 +1008,16 @@ private fun RecordNewsPopup(
                                 color = LabelColor,
                                 fontSize = 12.sp
                             )
+                            if (e.recordDate != null) {
+                                Text(
+                                    text = "📅 record set on ${e.recordDate} — tap to view that day",
+                                    color = DateLinkColor,
+                                    fontSize = 10.sp,
+                                    modifier = Modifier
+                                        .padding(top = 2.dp)
+                                        .clickable { onOpenDate(e.recordDate) }
+                                )
+                            }
                             Text(
                                 text = e.day,
                                 color = DimColor,
