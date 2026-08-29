@@ -285,6 +285,7 @@ fun HabitViewModel.loadMealLogs(habitName: String) {
         _mealLogsForHabit.value = logs
         _mealTodayCalories.value = todayCal
         _mealPendingCount.value = pending
+        _mealQueueItems.value = visionQueueRepo.unresolvedItems()
     }
 }
 
@@ -646,8 +647,33 @@ internal suspend fun HabitViewModel.deleteMealStampNear(
     }
 }
 
-/** Reloads the meal StateFlows (logs, today's calories, queue count). */
+/** Refreshes the unresolved vision-queue items shown in the meal details screen. */
+internal fun HabitViewModel.refreshMealQueueItems() {
+    viewModelScope.launch(Dispatchers.IO) {
+        _mealQueueItems.value = visionQueueRepo.unresolvedItems()
+        _mealPendingCount.value = visionQueueRepo.pendingCount()
+    }
+}
 
+/**
+ * Forces a stuck/failed/needs-review queue item back to PENDING with a
+ * fresh retry budget and immediately triggers a processing pass.
+ */
+fun HabitViewModel.forceReprocessQueueItem(itemId: String) {
+    viewModelScope.launch(Dispatchers.IO) {
+        val ok = visionQueueRepo.forceRequeue(itemId)
+        if (ok) {
+            com.example.tail.data.meal.VisionProcessingWorker.enqueue(context)
+        }
+        _mealQueueItems.value = visionQueueRepo.unresolvedItems()
+        _mealPendingCount.value = visionQueueRepo.pendingCount()
+        _mealVoiceStatus.value = if (ok) {
+            "🔄 Re-analyzing photo…"
+        } else {
+            "Queue item not found"
+        }
+    }
+}
 
 /** Reloads the meal StateFlows (logs, today's calories, queue count). */
 internal suspend fun HabitViewModel.refreshMealFlows(habitName: String) {
@@ -660,10 +686,8 @@ internal suspend fun HabitViewModel.refreshMealFlows(habitName: String) {
             .toLocalDate().toString() == today
     }.sumOf { it.calories }
     _mealPendingCount.value = visionQueueRepo.pendingCount()
+    _mealQueueItems.value = visionQueueRepo.unresolvedItems()
 }
-
-/** Triggers the vision processing worker to drain the queue (called after capture). */
-
 
 /** Triggers the vision processing worker to drain the queue (called after capture). */
 fun HabitViewModel.triggerVisionProcessing() {

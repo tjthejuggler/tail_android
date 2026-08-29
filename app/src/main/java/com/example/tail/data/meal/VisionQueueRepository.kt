@@ -103,6 +103,39 @@ class VisionQueueRepository(
     fun pendingCount(): Int = pendingItems().size
 
     /**
+     * All items not yet successfully completed, newest first — surfaced in
+     * the meal details screen so the user can see exactly what is stuck,
+     * why (errorLog / reviewNote), and force a reprocess.
+     */
+    @Synchronized
+    fun unresolvedItems(): List<VisionQueueItem> =
+        loadAll()
+            .filter { it.status != VisionQueueStatus.COMPLETED }
+            .sortedByDescending { it.timestamp }
+
+    /**
+     * Forces an item back to PENDING regardless of its current status
+     * (FAILED, NEEDS_REVIEW, stuck PENDING/PROCESSING) with a full fresh
+     * retry budget — used by the meal details screen's "Analyze now"
+     * control. Returns true when the item was found.
+     */
+    @Synchronized
+    fun forceRequeue(id: String): Boolean {
+        val items = loadAll()
+        val idx = items.indexOfFirst { it.id == id }
+        if (idx < 0) return false
+        items[idx] = items[idx].copy(
+            status = VisionQueueStatus.PENDING,
+            retryCount = 0,
+            errorLog = null,
+            reviewNote = null
+        )
+        saveAll(items)
+        QcDiag.log("QUEUE", "item=${QcDiag.short(id)} FORCE re-queued by user (fresh retry budget)")
+        return true
+    }
+
+    /**
      * Updates a single queue item by id and persists the full list.
      * @return The updated item, or null if not found.
      */

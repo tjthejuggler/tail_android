@@ -68,6 +68,8 @@ import androidx.core.content.ContextCompat
 import androidx.compose.material3.LocalTextStyle
 import com.example.tail.QuickCaptureActivity
 import com.example.tail.data.meal.MealLog
+import com.example.tail.data.meal.VisionQueueItem
+import com.example.tail.data.meal.VisionQueueStatus
 import java.io.File
 import java.text.SimpleDateFormat
 import java.time.Instant
@@ -108,6 +110,7 @@ fun MealDetailDialog(
     val allMealLogs by viewModel.mealLogsForHabit.collectAsState()
     val voiceStatus by viewModel.mealVoiceStatus.collectAsState()
     val pendingCount by viewModel.mealPendingCount.collectAsState()
+    val queueItems by viewModel.mealQueueItems.collectAsState()
 
     // Filter to only the selected day's meals (newest first)
     val mealLogs = remember(allMealLogs, selectedDate) {
@@ -178,6 +181,15 @@ fun MealDetailDialog(
     LaunchedEffect(habitName) {
         viewModel.loadMealLogs(habitName)
         viewModel.clearMealVoiceStatus()
+    }
+
+    // Keep the AI queue status live while the dialog is open (the worker
+    // runs in the background and mutates queue items between recompositions).
+    LaunchedEffect(habitName) {
+        while (true) {
+            viewModel.refreshMealQueueItems()
+            kotlinx.coroutines.delay(5000)
+        }
     }
 
     Dialog(
@@ -282,7 +294,14 @@ fun MealDetailDialog(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
                 )
             }
-            if (pendingCount > 0) {
+            // ── AI queue status: per-item info + force reprocess control ──
+            if (queueItems.isNotEmpty()) {
+                VisionQueueStatusCard(
+                    items = queueItems,
+                    onForceReprocess = { id -> viewModel.forceReprocessQueueItem(id) },
+                    onRefresh = { viewModel.refreshMealQueueItems() }
+                )
+            } else if (pendingCount > 0) {
                 Text(
                     "⏳ $pendingCount photo(s) queued for AI…",
                     fontSize = 12.sp,
@@ -778,4 +797,117 @@ private fun isOnDate(log: MealLog, date: LocalDate): Boolean {
         .atZone(ZoneId.systemDefault())
         .toLocalDate()
     return logDate == date
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  AI Queue status card (meal details)
+// ════════════════════════════════════════════════════════════════════════════
+
+private fun visionQueueStatusLabel(status: VisionQueueStatus): String = when (status) {
+    VisionQueueStatus.PENDING -> "⏳ Waiting for AI"
+    VisionQueueStatus.PROCESSING -> "🔄 Analyzing…"
+    VisionQueueStatus.COMPLETED -> "✅ Done"
+    VisionQueueStatus.FAILED -> "❌ Failed"
+    VisionQueueStatus.NEEDS_REVIEW -> "⚠️ Needs review"
+}
+
+private fun formatQueueAge(timestampMs: Long): String {
+    val mins = (System.currentTimeMillis() - timestampMs) / 60000
+    return when {
+        mins < 1 -> "just now"
+        mins < 60 -> "${mins}m ago"
+        mins < 60 * 24 -> "${mins / 60}h ago"
+        else -> "${mins / (60 * 24)}d ago"
+    }
+}
+
+/**
+ * Shows every unresolved vision-queue item with its status, retry count,
+ * last error and age — plus an "Analyze now" button that force-requeues
+ * the item (fresh retry budget) and immediately triggers a worker pass.
+ */
+@Composable
+fun VisionQueueStatusCard(
+    items: List<VisionQueueItem>,
+    onForceReprocess: (String) -> Unit,
+    onRefresh: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "🤖 AI Photo Queue (${items.size})",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedButton(
+                    onClick = onRefresh,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)
+                ) {
+                    Text("Refresh", fontSize = 11.sp)
+                }
+            }
+            items.forEach { item ->
+                Spacer(modifier = Modifier.height(6.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            visionQueueStatusLabel(item.status),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            formatQueueAge(item.timestamp),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    val detail = buildString {
+                        if (item.retryCount > 0) append("attempt ${item.retryCount}/3")
+                        item.habitId?.let { append(" • ${it}") }
+                    }
+                    if (detail.isNotEmpty()) {
+                        Text(
+                            detail,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    val problem = item.errorLog ?: item.reviewNote
+                    if (problem != null) {
+                        Text(
+                            problem,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (item.status != VisionQueueStatus.PROCESSING) {
+                        Button(
+                            onClick = { onForceReprocess(item.id) },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                horizontal = 12.dp, vertical = 4.dp
+                            ),
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            Text("Analyze now", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

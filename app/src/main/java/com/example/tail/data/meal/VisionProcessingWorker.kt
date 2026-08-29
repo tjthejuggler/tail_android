@@ -47,6 +47,9 @@ private fun failOrReview(
     return willRetry
 }
 
+/** Delay before the worker re-runs itself after a failed attempt. */
+private const val RETRY_PASS_DELAY_MS = 30_000L
+
 /** Shows a toast from the background worker (hops to the main thread). */
 private fun notifyCameraResult(context: Context, message: String) {
     try {
@@ -153,6 +156,7 @@ class VisionProcessingWorker(
 
         var processed = 0
         var failed = 0
+        var anyWillRetry = false
 
         for (item in pending) {
             // Claim the item (atomic transition PENDING → PROCESSING)
@@ -251,6 +255,7 @@ class VisionProcessingWorker(
                 )
                 if (result == null) {
                     val willRetry = failOrReview(queueRepo, item.id, "Vision service returned null")
+                    anyWillRetry = anyWillRetry || willRetry
                     failed++
                     QcDiag.warn(
                         "LLM",
@@ -324,6 +329,7 @@ class VisionProcessingWorker(
                                 "item=${QcDiag.short(item.id)} auto-detect execute FAILED: $err"
                             )
                             val willRetry = failOrReview(queueRepo, item.id, err)
+                            anyWillRetry = anyWillRetry || willRetry
                             failed++
                         }
                     }
@@ -522,17 +528,31 @@ class VisionProcessingWorker(
                     e
                 )
                 Log.e(TAG, "Error processing item ${item.id}", e)
-                failOrReview(queueRepo, item.id, e.message ?: "Unknown error")
+                val willRetry = failOrReview(queueRepo, item.id, e.message ?: "Unknown error")
+                anyWillRetry = anyWillRetry || willRetry
                 failed++
             }
         }
 
         QcDiag.log(
             "WORKER",
-            "pass complete: processed=$processed failed=$failed " +
+            "pass complete: processed=$processed failed=$failed anyWillRetry=$anyWillRetry " +
                 "(pendingRemaining=${queueRepo.pendingCount()} needsReview=${queueRepo.reviewItemCount()})"
         )
         Log.i(TAG, "Vision processing complete: $processed processed, $failed failed")
+
+        // CRITICAL: an item that failed with retries remaining goes back to
+        // PENDING, but nothing else would ever trigger another pass — the
+        // next capture might be hours away. Schedule our own follow-up pass
+        // so retried items actually get retried.
+        if (anyWillRetry) {
+            QcDiag.log(
+                "WORKER",
+                "scheduling follow-up pass in ${RETRY_PASS_DELAY_MS / 1000}s " +
+                    "(item(s) awaiting retry)"
+            )
+            enqueueDelayed(appContext, RETRY_PASS_DELAY_MS)
+        }
         return Result.success()
     }
 
@@ -558,6 +578,26 @@ class VisionProcessingWorker(
                 request
             )
             Log.i(TAG, "Vision processing worker enqueued")
+        }
+
+        /**
+         * Schedules a follow-up pass after [delayMs] — used to retry items
+         * that failed with retry budget remaining (nothing else would
+         * trigger a new pass otherwise).
+         */
+        fun enqueueDelayed(context: Context, delayMs: Long) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+            val request = OneTimeWorkRequestBuilder<VisionProcessingWorker>()
+                .setConstraints(constraints)
+                .setInitialDelay(delayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                UNIQUE_WORK_NAME + "_retry",
+                ExistingWorkPolicy.REPLACE,
+                request
+            )
         }
 
         /**

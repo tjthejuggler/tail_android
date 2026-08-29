@@ -255,6 +255,14 @@ class HabitViewModel(
     internal val _mealPendingCount = MutableStateFlow(0)
     val mealPendingCount: StateFlow<Int> = _mealPendingCount.asStateFlow()
 
+    /**
+     * Unresolved vision-queue items (pending/processing/failed/needs review),
+     * newest first — shown in the meal details screen with per-item status,
+     * error info and a force-reprocess control.
+     */
+    internal val _mealQueueItems = MutableStateFlow<List<com.example.tail.data.meal.VisionQueueItem>>(emptyList())
+    val mealQueueItems: StateFlow<List<com.example.tail.data.meal.VisionQueueItem>> = _mealQueueItems.asStateFlow()
+
     /** Status of the last voice-meal parse / photo queue action (null = idle). */
     internal val _mealVoiceStatus = MutableStateFlow<String?>(null)
     val mealVoiceStatus: StateFlow<String?> = _mealVoiceStatus.asStateFlow()
