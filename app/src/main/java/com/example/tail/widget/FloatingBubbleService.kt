@@ -1036,8 +1036,8 @@ class FloatingBubbleService : Service() {
         override fun run() {
             if (survivalFreePlay) {
                 val now = android.os.SystemClock.elapsedRealtime()
-                // Free-play timer = this free-play session only
-                // (survivalFreePlayBaseMs is 0; kept for clarity).
+                // Free-play timer = gate run duration (base) + this free-play
+                // session, i.e. the user's TOTAL time in survival mode.
                 survivalStopwatchText?.text = formatSurvivalStopwatch(
                     survivalFreePlayBaseMs + (now - survivalFreePlayStartMs)
                 )
@@ -1357,6 +1357,11 @@ class FloatingBubbleService : Service() {
         handler.removeCallbacks(survivalTickRunnable)
         val elapsed = if (survivalRunStartMs > 0)
             android.os.SystemClock.elapsedRealtime() - survivalRunStartMs else 0L
+        // Seed the free-play timer with the gate run's duration so the banner
+        // shows the TOTAL survival time (gate + free play) — matching what the
+        // linked habit is credited (gate minutes here, free-play minutes on
+        // STOP & SAVE).
+        survivalFreePlayBaseMs = elapsed
         survivalRunning = false
         survivalArmed = false
         ChessReadinessV3Store.clearPendingSurvival(this)
@@ -1491,10 +1496,10 @@ class FloatingBubbleService : Service() {
         hideSurvivalPanel()
         survivalFreePlay = true
         survivalFreePlayStartMs = android.os.SystemClock.elapsedRealtime()
-        // The free-play timer counts ONLY this free-play session (starting
-        // from 0:00) — past runs and today's earlier survival time are not
-        // included. STOP & SAVE credits exactly what this timer shows.
-        survivalFreePlayBaseMs = 0L
+        // The free-play timer starts from the gate run's duration (seeded in
+        // finishSurvivalRun), so it displays the TOTAL survival time. STOP &
+        // SAVE still credits ONLY the free-play portion — the gate minutes
+        // were already credited when the run was recorded.
 
         val density = resources.displayMetrics.density
         fun Int.dp(): Int = (this * density).toInt()
