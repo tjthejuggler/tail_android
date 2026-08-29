@@ -49,6 +49,44 @@ class ChessReflexStatsCalculatorTest {
     }
 
     @Test
+    fun `buildReflexRuns drops v2-log echoes of v3 runs`() {
+        // Older app versions appended every v3 reflex run to the shared v2
+        // PVT log too — the same physical run must appear only ONCE (as v3).
+        val runs = buildReflexRuns(
+            v2Pvt = listOf(
+                // Genuine v2 run — kept.
+                V2PvtRecord(1_000, 30, 1, 2, 3.5, 285.0, 500),
+                // Echo of the v3 run below (reflex completed at 5 min, v3
+                // record written at run end 10 min later — same telemetry).
+                V2PvtRecord(5 * 60_000L, 18, 2, 1, 4.0, 250.0, 600)
+            ),
+            v3Reflex = listOf(
+                V3ReflexRunRecord(10 * 60_000L, 2, 1, 250.0)
+            )
+        )
+        assertEquals(2, runs.size)
+        assertEquals(listOf("v2", "v3"), runs.map { it.version })
+        assertEquals(1_000L, runs[0].timestampMs)
+        assertEquals(10 * 60_000L, runs[1].timestampMs)
+    }
+
+    @Test
+    fun `buildReflexRuns keeps v2 entries that only resemble a v3 run`() {
+        // Same telemetry shape but far outside the echo window → two
+        // distinct physical runs, both kept.
+        val runs = buildReflexRuns(
+            v2Pvt = listOf(
+                V2PvtRecord(0L, 18, 2, 1, 4.0, 250.0, 600)
+            ),
+            v3Reflex = listOf(
+                V3ReflexRunRecord(3 * hour, 2, 1, 250.0)
+            )
+        )
+        assertEquals(2, runs.size)
+        assertEquals(listOf("v2", "v3"), runs.map { it.version })
+    }
+
+    @Test
     fun `aggregates and trends across versions`() {
         val runs = listOf(
             ReflexRunPoint(0L, "v2", 3, 3, 1, 300.0, null, 600, 30),

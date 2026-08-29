@@ -399,7 +399,15 @@ fun HabitViewModel.saveTextEntry(
             // Also increment the habit count so it registers as done for
             // today. Movie-bridge habits: suppress the "now" stamp — the
             // text entry's watch-start time is THE timestamp (sync below).
-            incrementHabit(habitName, 1, recordTimestamp = !isMovieBridgeHabit(habitName))
+            incrementHabit(
+                habitName, 1,
+                recordTimestamp = !isMovieBridgeHabit(habitName),
+                // The increment must land on the ENTRY's day, not whatever
+                // day the user happens to be viewing (the movie-ask answer
+                // bug: answered while browsing a past day → count on the
+                // wrong day). Null date = "current date" per the doc above.
+                date = date ?: java.time.LocalDate.now()
+            )
 
             // Movie-bridge habits: reconcile the timestamp store to the
             // text log so the entry's watch time is the single timestamp,
@@ -495,7 +503,14 @@ fun HabitViewModel.saveTextEntries(
             // is a single action and must not count as multiple increments.
             // Movie-bridge habits: suppress the "now" stamp — the text
             // entries' watch-start times are THE timestamps (sync below).
-            incrementHabit(habitName, 1, recordTimestamp = !isMovieBridgeHabit(habitName))
+            incrementHabit(
+                habitName, 1,
+                recordTimestamp = !isMovieBridgeHabit(habitName),
+                // Same as the single-entry path: the increment lands on the
+                // entries' day (null date = current date), never the
+                // currently-viewed day.
+                date = date ?: java.time.LocalDate.now()
+            )
 
             // Movie-bridge habits: reconcile the timestamp store to the
             // text log so each entry's watch time is the single timestamp,

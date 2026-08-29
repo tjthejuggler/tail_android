@@ -131,12 +131,34 @@ data class ReflexStatsConfig(
  * Merges v2 PVT runs and v3 reflex summaries into the single cross-version
  * series. Both inputs are already version-tagged record types; this only
  * normalizes them.
+ *
+ * HISTORICAL DEDUPE: older app versions ALSO appended every v3 reflex run to
+ * the shared v2 PVT log (in addition to the v3 result log), so each of those
+ * runs exists in BOTH inputs. Such v2-log echoes are dropped here — a v2
+ * entry whose telemetry matches a v3 run (same lapses / false starts / mean
+ * RT) within [V3_ECHO_WINDOW_MS] of the v3 record is the same physical run.
  */
+private const val V3_ECHO_WINDOW_MS = 30L * 60 * 1000
+
 fun buildReflexRuns(
     v2Pvt: List<V2PvtRecord>,
     v3Reflex: List<V3ReflexRunRecord>
 ): List<ReflexRunPoint> {
-    val v2 = v2Pvt.map {
+    val isV3Echo = rec@{ r: V2PvtRecord ->
+        for (v3 in v3Reflex) {
+            val tsClose = kotlin.math.abs(r.timestamp - v3.timestamp) <= V3_ECHO_WINDOW_MS
+            val rtMatches = when {
+                r.meanRtMs == null && v3.meanRtMs == null -> true
+                r.meanRtMs == null || v3.meanRtMs == null -> false
+                else -> kotlin.math.abs(r.meanRtMs - v3.meanRtMs) < 0.5
+            }
+            if (tsClose && rtMatches && r.lapses == v3.lapses && r.falseStarts == v3.falseStarts) {
+                return@rec true
+            }
+        }
+        false
+    }
+    val v2 = v2Pvt.filterNot { isV3Echo(it) }.map {
         ReflexRunPoint(
             timestampMs = it.timestamp,
             version = "v2",

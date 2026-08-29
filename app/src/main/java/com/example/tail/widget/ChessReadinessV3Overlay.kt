@@ -183,22 +183,12 @@ class ChessReadinessV3Overlay(
             pvt.onComplete = { samples ->
                 val summary = ChessReadinessV3Engine.summarizeReflex(samples)
                 reflex = summary
-                // Feed the 2-min reflex run into the SHARED PVT log so the
-                // existing reflex stats/charts on the Chess Stats screen
-                // (and the personal speed baseline) include v3 runs too.
-                val v2Summary = ChessReadinessV2Engine.summarizePvt(samples)
-                ChessReadinessV2Store.appendPvt(
-                    context,
-                    ChessReadinessV2Store.PvtRecord(
-                        timestamp = System.currentTimeMillis(),
-                        validResponses = v2Summary.validResponses,
-                        lapses = v2Summary.lapses,
-                        falseStarts = v2Summary.falseStarts,
-                        meanRrt = v2Summary.meanRrt,
-                        meanRtMs = v2Summary.meanRtMs,
-                        maxRtMs = v2Summary.maxRtMs
-                    )
-                )
+                // NOTE: the reflex telemetry is persisted ONCE, by
+                // ChessReadinessV3Recorder.record() into the v3 result log
+                // (which the cross-version reflex stats read). Do NOT also
+                // append it to the shared v2 PVT log — that double-counted
+                // every v3 run in the reflex stats (one "v2" + one "v3"
+                // entry per run) and misfiled 2-min runs as 3-min v2 runs.
                 if (summary.passed) {
                     phase = Phase.SURVIVAL_INTRO
                     render()

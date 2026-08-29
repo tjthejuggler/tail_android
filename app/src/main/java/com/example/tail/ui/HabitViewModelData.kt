@@ -140,6 +140,10 @@ import java.util.UUID
 
 private const val TAG = "HabitVM"
 
+// Persist-verify retry for incrementHabit (mirrors HabitAsks ANSWER_RETRY_*).
+private const val INCREMENT_PERSIST_ATTEMPTS = 3
+private const val INCREMENT_PERSIST_BACKOFF_MS = 500L
+
 internal suspend fun HabitViewModel.catchUpAndLoad(uri: Uri) {
     _isLoading.value = true
     _errorMessage.value = null
@@ -719,6 +723,29 @@ fun HabitViewModel.incrementHabit(
         return
     }
 
+    // ANTI-WIPE / LOST-INCREMENT GATE: ask-answer paths (e.g. the in-app
+    // movie "Watched this?" flash) can run before the habits DB finished
+    // loading, or right after a transient SAF read failure. Incrementing
+    // against an empty/stale cache is then either lost (the next successful
+    // load overwrites it — the "movie logged but habit not incremented"
+    // bug) or persists a near-empty DB. Self-heal like the chess path
+    // (HabitViewModel chess sync); abort loudly if the file can't be read.
+    if (!dbLoaded) {
+        viewModelScope.launch {
+            try {
+                cachedPhoneDb = habitsRepo.loadDatabase(Uri.parse(uriString), context)
+                dbLoaded = true
+                rebuildHabitList()
+                incrementHabit(habitName, amount, recordTimestamp, date)
+            } catch (e: Exception) {
+                Log.e(TAG, "DB not loaded and reload failed — increment of '$habitName' aborted", e)
+                _errorMessage.value =
+                    "Could not read the habits file — '$habitName' was NOT counted. Please try again."
+            }
+        }
+        return
+    }
+
     // The date this increment applies to. When it is NOT the viewed date,
     // the instant UI flip below is skipped (the visible rows belong to
     // another day) and the Step-3 rebuild refreshes everything from the
@@ -904,11 +931,37 @@ fun HabitViewModel.incrementHabit(
     // persist fails.
     viewModelScope.launch {
         val uri = Uri.parse(uriString)
-        try {
-            habitsRepo.persistDatabase(uri, context, updatedDb)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to persist increment for '$habitName': ${e.message}", e)
-            _errorMessage.value = "Failed to save: ${e.message}"
+        // Persist with VERIFICATION: a SAF write can succeed without throwing
+        // yet never land (provider busy, sync in flight). Re-read the file and
+        // confirm the count actually reached disk; retry with backoff — the
+        // same guarantee the system-notification answer path has had since
+        // the earlier "movie increment failed" fix (HabitAsks.applyAnswer).
+        var persisted = false
+        var lastPersistError: Exception? = null
+        for (attempt in 1..INCREMENT_PERSIST_ATTEMPTS) {
+            try {
+                habitsRepo.persistDatabase(uri, context, updatedDb)
+                val reread = habitsRepo.loadDatabase(uri, context)
+                val rereadVal = reread[habitName]?.get(dateStr)
+                val landed = if (dbDelta >= 0) (rereadVal ?: 0) >= newCount
+                             else (rereadVal ?: Int.MAX_VALUE) <= newCount
+                if (landed) {
+                    persisted = true
+                    break
+                }
+                Log.e(TAG, "Increment verify failed (attempt $attempt) for '$habitName' — write did not land")
+            } catch (e: Exception) {
+                lastPersistError = e
+                Log.e(TAG, "Failed to persist increment for '$habitName' (attempt $attempt): ${e.message}", e)
+            }
+            if (attempt < INCREMENT_PERSIST_ATTEMPTS) {
+                delay(INCREMENT_PERSIST_BACKOFF_MS shl (attempt - 1))
+            }
+        }
+        if (!persisted) {
+            _errorMessage.value =
+                "Failed to save increment for '$habitName'" +
+                    (lastPersistError?.message?.let { ": $it" } ?: " — write did not land")
             // Resync the optimistic cache with the file so a later attempt
             // doesn't early-return against a stale-high count.
             try {
