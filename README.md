@@ -1,12 +1,16 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-08-25T08:57Z
+**Last updated:** 2026-08-29T11:53Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---31e8e7a8
+
+## Build / tooling
+
+- **🧱 Monolithic UI files split into domain modules (build OOM fixed)** *(added 2026-08-29T11:53Z)* — `compileDebugKotlin` was dying with `OutOfMemoryError: GC overhead limit exceeded` during IR lowering. Two causes: (1) [`HabitViewModel.kt`](app/src/main/java/com/example/tail/ui/HabitViewModel.kt:206) (12.9k lines) and [`HabitGridScreen.kt`](app/src/main/java/com/example/tail/ui/HabitGridScreen.kt:1) (11.3k lines) had grown into single god-files; (2) the Kotlin compile daemon kept being served by a stale shared daemon running with the default `-Xmx1024m` (registered by an external IDE session), ignoring `kotlin.daemon.jvmargs`. Fixes: the ViewModel's member functions were extracted into 15 same-package extension-function files ([`HabitViewModelData.kt`](app/src/main/java/com/example/tail/ui/HabitViewModelData.kt:1), [`HabitViewModelHabitConfig.kt`](app/src/main/java/com/example/tail/ui/HabitViewModelHabitConfig.kt:1), [`HabitViewModelScreens.kt`](app/src/main/java/com/example/tail/ui/HabitViewModelScreens.kt:1), Garmin/Movies/Meals/Media/Locations/Chess/etc. — same-package extensions resolve on the implicit receiver so all call sites compile unchanged; `private` members became `internal`), and the grid screen was split into 4 composable files. [`gradle.properties`](gradle.properties:9) now pins `kotlin.compiler.execution.strategy=in-process` with a 4g Gradle daemon heap, sidestepping the shared Kotlin-daemon registry entirely. The one-shot extraction script is kept at [`scripts/split_large_kt_files.py`](scripts/split_large_kt_files.py:1). Keep new source files under ~4k lines. Note: `ChessReadinessV3EngineTestKt` reports a pre-existing JUnit initializationError unrelated to this refactor.
 
 ## Features
 

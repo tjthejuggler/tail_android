@@ -43,7 +43,7 @@ fun SnapshotRestoreSection(viewModel: HabitViewModel) {
     val snapshots by viewModel.snapshots.collectAsState()
     val status by viewModel.snapshotStatus.collectAsState()
     var expanded by rememberSectionExpansion("settings", "Automatic snapshots", false)
-    var confirmFor by remember { mutableStateOf<HabitViewModel.SnapshotUi?>(null) }
+    var confirmFor by remember { mutableStateOf<SnapshotUi?>(null) }
 
     val dateFmt = remember { SimpleDateFormat("MMM d, HH:mm:ss", Locale.getDefault()) }
 

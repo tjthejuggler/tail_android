@@ -34,6 +34,7 @@ import com.example.tail.ui.AppStatsScreen
 import com.example.tail.ui.ChessReadinessStatsScreen
 import com.example.tail.ui.HabitGridScreen
 import com.example.tail.ui.HabitViewModel
+import com.example.tail.ui.navigateToDate
 import com.example.tail.ui.HabitViewModelFactory
 import com.example.tail.ui.MapScreen
 import com.example.tail.ui.MapStatsScreen
