@@ -75,8 +75,10 @@ import com.example.tail.data.ReadinessStats
 import com.example.tail.data.ReadinessTestRecord
 import com.example.tail.data.Phase2Verdicts
 import com.example.tail.data.V2PvtRecord
-import com.example.tail.data.V2ResultRecord
-import com.example.tail.data.V2Tiers
+import com.example.tail.data.ReflexRunPoint
+import com.example.tail.data.V3ReflexRunRecord
+import com.example.tail.data.buildReflexRuns
+import com.example.tail.data.computeReflexStats
 import com.example.tail.data.PuzzleRushSessionRecord
 import com.example.tail.data.computeBucketWinRates
 import com.example.tail.data.computeComplianceSeries
@@ -92,8 +94,6 @@ import com.example.tail.data.mergeRushSeries
 import com.example.tail.data.rushReviewRate
 import com.example.tail.data.computeRatingStats
 import com.example.tail.data.computeReadinessStats
-import com.example.tail.data.computeV2HourlyReadiness
-import com.example.tail.data.computeV2PregameStats
 import com.example.tail.data.computeWinRateByCcrsBand
 import com.example.tail.widget.ChessPhase2Store
 import com.example.tail.widget.ChessPhase2V2Store
@@ -139,14 +139,6 @@ private fun stateLabel(state: String?): String = when (state) {
     ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name -> "YELLOW"
     ChessReadinessEngine.ReadinessState.RED_LIGHT.name -> "RED"
     else -> "—"
-}
-
-/** Dot colours for the interactive V2 charts (tier → traffic light). */
-private fun v2TierDotColor(tier: String?): Color = when (tier) {
-    V2Tiers.TIER1 -> Color(0xFF22C55E)
-    V2Tiers.TIER2 -> YellowValue
-    V2Tiers.TIER3 -> Color(0xFFEF4444)
-    else -> DimColor
 }
 
 /** Dot colours for the interactive Phase-2 chart (verdict → colour). */
@@ -230,10 +222,9 @@ fun ChessReadinessStatsScreen(
     // and the user never sees stale pre-backfill numbers.
     var resumeCount by remember { mutableStateOf(0) }
     var loaded by remember { mutableStateOf(false) }
-    // V2 system telemetry: pre-game gate (verdicts + PVT-B reflex runs)
-    // and post-game audit (v2 ledger + shared audits), mapped to the pure
-    // calculator's input records.
-    var v2Results by remember { mutableStateOf<List<V2ResultRecord>>(emptyList()) }
+    // V2 system telemetry: the PVT-B reflex-run log (feeds the cross-version
+    // reflex section) and the post-game audit (v2 ledger + shared audits),
+    // mapped to the pure calculator's input records.
     var v2Pvt by remember { mutableStateOf<List<V2PvtRecord>>(emptyList()) }
     var phase2V2Games by remember { mutableStateOf<List<Phase2V2GameRecord>>(emptyList()) }
     var phase2Audits by remember { mutableStateOf<List<Phase2AuditRecord>>(emptyList()) }
@@ -246,7 +237,6 @@ fun ChessReadinessStatsScreen(
     var pregameIsV2 by remember { mutableStateOf(ChessReadinessV2Store.isV2(context)) }
     var pregameIsV3 by remember { mutableStateOf(ChessReadinessV2Store.isV3(context)) }
     var phase2IsV2 by remember { mutableStateOf(ChessPhase2V2Store.isV2(context)) }
-    var showHourlyV2 by remember { mutableStateOf(false) }
 
     // Runs on first composition AND on every resume (via resumeCount).
     // Only raw data is loaded here; every aggregate is derived below so
@@ -262,23 +252,8 @@ fun ChessReadinessStatsScreen(
             blocked = ChessReadinessLogStore.loadBlocked(context)
             rushSessions = ChessReadinessLogStore.loadRushSessions(context)
             systemStartMs = tests.minOfOrNull { it.timestamp }
-            // V2 pre-game gate: verdict log + PVT-B reflex runs.
-            v2Results = ChessReadinessV2Store.loadResults(context).map {
-                V2ResultRecord(
-                    timestamp = it.timestamp,
-                    tier = it.tier,
-                    stateName = it.stateName,
-                    ccrs = it.ccrs,
-                    zLnRmssd = it.zLnRmssd,
-                    zRhr = it.zRhr,
-                    lapses = it.lapses,
-                    falseStarts = it.falseStarts,
-                    meanRrt = it.meanRrt,
-                    acwr = it.acwr,
-                    pvtSkipped = it.pvtSkipped,
-                    sessionStartedAt = it.sessionStartedAt
-                )
-            }
+            // V2 pre-game gate: PVT-B reflex runs (the verdict log itself is
+            // no longer charted — the reflex section is version-agnostic).
             v2Pvt = ChessReadinessV2Store.loadPvt(context).map {
                 V2PvtRecord(
                     timestamp = it.timestamp,
@@ -377,17 +352,10 @@ fun ChessReadinessStatsScreen(
         computeRatingStats(visibleGames, tests, systemStartMs ?: 0L)
     }
     val ratingHistory = remember(visibleGames) { computeRatingHistory(visibleGames) }
-    // V2 aggregates — variant-independent (the gate runs before any game
-    // and the audit ledger covers every rated game regardless of variant).
-    val v2PregameStats = remember(v2Results, v2Pvt) {
-        computeV2PregameStats(v2Results, v2Pvt)
-    }
+    // V2 post-game aggregate — variant-independent (the audit ledger covers
+    // every rated game regardless of variant).
     val phase2V2Stats = remember(phase2V2Games, phase2Audits) {
         computePhase2V2Stats(phase2V2Games, phase2Audits)
-    }
-    // V2 hour-of-day aggregates (24 slots) for the hourly popup chart.
-    val v2Hourly = remember(v2Results, v2Pvt) {
-        computeV2HourlyReadiness(v2Results, v2Pvt)
     }
     // Static rule-change registry + the user's own engine switches, oldest
     // first — one ◆ marker each on the "since system" rating chart.
@@ -404,6 +372,26 @@ fun ChessReadinessStatsScreen(
     }
     val v3Events = remember(resumeCount) {
         com.example.tail.widget.ChessReadinessV3Store.loadEvents(context)
+    }
+
+    // Cross-version reflex series: every PVT-B run ever recorded (v2's
+    // 3-minute runs + v3's 2-minute runs), with the rated-game log joined
+    // in for the "following session" correlation.
+    val reflexRuns = remember(v2Pvt, v3Results) {
+        buildReflexRuns(
+            v2Pvt = v2Pvt,
+            v3Reflex = v3Results.map {
+                V3ReflexRunRecord(
+                    timestamp = it.timestamp,
+                    lapses = it.reflexLapses,
+                    falseStarts = it.reflexFalseStarts,
+                    meanRtMs = it.reflexMeanRtMs
+                )
+            }
+        )
+    }
+    val reflexStats = remember(reflexRuns, games) {
+        computeReflexStats(reflexRuns, games)
     }
 
     // Reload when the screen resumes — e.g. when returning after the
@@ -1205,30 +1193,26 @@ fun ChessReadinessStatsScreen(
                     startExpanded = pregameIsV3
                 )
 
-                // ── V2 systems: pre-game gate + post-game audit ──────────
-                // Dedicated sections for the two v2 chess-readiness systems
-                // (they render nothing until the first v2 record exists).
-                V2PregameSection(
-                    stats = v2PregameStats,
+                // ── Reflex tests (cross-version) ─────────────────────────
+                // Every PVT-B reflex run ever recorded, regardless of engine
+                // version — the long-term comparable metric (renders nothing
+                // until the first reflex run exists).
+                ReflexSection(
+                    stats = reflexStats,
+                    series = reflexRuns,
                     chartHeight = chartHeight,
-                    startExpanded = pregameIsV2,
-                    hourly = v2Hourly,
-                    onOpenHourly = { showHourlyV2 = true },
+                    startExpanded = pregameIsV2 || pregameIsV3,
                     onOpenRtChart = {
                         interactiveChart = InteractiveChartRequest(
-                            title = "⚡ PVT-B mean response time per run",
+                            title = "⚡ Reflex mean response time per run (all versions)",
                             series = listOf(
                                 IChartSeries(
                                     name = "Mean RT (ms)",
                                     color = Color(0xFFF2994A),
-                                    points = v2PregameStats.series
+                                    points = reflexRuns
                                         .filter { it.meanRtMs != null }
                                         .map {
-                                            IChartPoint(
-                                                it.timestampMs,
-                                                it.meanRtMs!!,
-                                                color = v2TierDotColor(it.tier)
-                                            )
+                                            IChartPoint(it.timestampMs, it.meanRtMs!!)
                                         }
                                 )
                             ),
@@ -1236,42 +1220,21 @@ fun ChessReadinessStatsScreen(
                             valueUnit = " ms"
                         )
                     },
-                    onOpenCleanSpeedChart = {
-                        interactiveChart = InteractiveChartRequest(
-                            title = "⚡ PVT-B response speed — clean runs (0 early taps)",
-                            series = listOf(
-                                IChartSeries(
-                                    name = "Response speed (1000/RT)",
-                                    color = Color(0xFFF2994A),
-                                    points = v2PregameStats.series
-                                        .filter { it.meanRrt != null && it.falseStarts == 0 }
-                                        .map {
-                                            IChartPoint(
-                                                it.timestampMs,
-                                                it.meanRrt!!,
-                                                color = v2TierDotColor(it.tier)
-                                            )
-                                        }
-                                )
-                            ),
-                            valueFormat = "%.2f"
-                        )
-                    },
                     onOpenLapseChart = {
                         interactiveChart = InteractiveChartRequest(
-                            title = "⚡ PVT-B late & early taps per run",
+                            title = "⚡ Reflex late & early taps per run (all versions)",
                             series = listOf(
                                 IChartSeries(
                                     name = "Late taps (≥355 ms)",
                                     color = Color(0xFFEF4444),
-                                    points = v2PregameStats.series.map {
+                                    points = reflexRuns.map {
                                         IChartPoint(it.timestampMs, it.lapses.toDouble())
                                     }
                                 ),
                                 IChartSeries(
                                     name = "Early taps (<100 ms)",
                                     color = YellowValue,
-                                    points = v2PregameStats.series.map {
+                                    points = reflexRuns.map {
                                         IChartPoint(it.timestampMs, it.falseStarts.toDouble())
                                     }
                                 )
@@ -1417,12 +1380,6 @@ fun ChessReadinessStatsScreen(
         )
     }
 
-    if (showHourlyV2) {
-        HourlyV2ReadinessChartPopup(
-            hourly = v2Hourly,
-            onDismiss = { showHourlyV2 = false }
-        )
-    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
