@@ -1,0 +1,233 @@
+[
+  {
+    "n": 79,
+    "letter": "A",
+    "animal": "Antelope",
+    "label": "Antelope",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Apnea spb"],
+    "letter_gimmick": "A as the apnea arch: the pronghorn antelope — North America's endurance sprinter — leaping between two snow-veiled peaks that form a giant letter A, holding its breath for the entire arc of the chasm-crossing, one flawless static breath-hold between takeoff and landing.",
+    "art_style": "neoclassical marble sculpture",
+    "scene": "A museum-grade marble carving in Carrara white and pale grey veining: an antelope frozen mid-leap between two polished peaks forming a monumental letter A, muscles chiseled in translucent stone. A single ribbon of carved breath — held, not exhaled — arcs inside its chest, visible through the semi-translucent marble, while frost mist drapes the sculpture's base like unfinished stone."
+  },
+  {
+    "n": 80,
+    "letter": "B",
+    "animal": "Blue Whale",
+    "label": "Blue Whale",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Book read"],
+    "letter_gimmick": "B as the whale-song audiobook: the blue whale — whose low-frequency songs travel across entire oceans — reading the sea itself as a book, each current a page, its massive fluke and rising song-line tracing a giant letter B of sound through pale water.",
+    "art_style": "scrimshaw engraving",
+    "scene": "An intricate scrimshaw on ivory-white whale bone: a blue whale etched in fine parallel needle lines swims through a sea of engraved text, the water rendered as flowing lines of an open book. Its rising song escapes as a delicately scratched ribbon forming a giant letter B, tiny engraved krill swirling like punctuation, all in bone-white and pale slate ink."
+  },
+  {
+    "n": 81,
+    "letter": "C",
+    "animal": "Capuchin",
+    "label": "Capuchin",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Chess"],
+    "letter_gimmick": "C as the Capuchin monk's chess cloister: the capuchin monkey — named after the Capuchin friars — in a tiny monk's habit, playing a solitary game of chess in a snow-quiet cloister, its curled tail forming the giant letter C around the board.",
+    "art_style": "white wire sculpture",
+    "scene": "An elegant sculpture of bent white wire on a pale gallery plinth: a capuchin monkey in a wire-woven monk's hood contemplates a wire chess set, pieces rendered as airy line-work skeletons of themselves. Its tail sweeps around the board into a giant letter C of coiled wire, the whole construction casting lace-like interlaced shadows across a frost-white wall."
+  },
+  {
+    "n": 82,
+    "letter": "D",
+    "animal": "Dromedary",
+    "label": "Dromedary",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Drm Review"],
+    "letter_gimmick": "D as the desert dream-review dome: the dromedary — ship of the starlit desert — kneeling on cold dunes at midnight, reviewing the night's dreams as constellations connected into a giant letter D above it, each star a scene replayed.",
+    "art_style": "celestial star-map engraving",
+    "scene": "An antique star-chart engraving in silver-white on pale parchment-grey: a kneeling dromedary silhouetted on engraved dune lines, gazing up at a constellation whose connected stars form a giant letter D. Within the D's starry outline, tiny vignettes of dreams — a flying fish, a staircase, a chess knight — labeled in fine copperplate, dotted declination arcs crossing the moonlit sky."
+  },
+  {
+    "n": 83,
+    "letter": "E",
+    "animal": "Emu",
+    "label": "Emu",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Early phone"],
+    "letter_gimmick": "E as the emu's early-morning errand: the flightless emu — who cannot hit snooze because he's already running at first light — sprinting across a frost field while the abandoned phone sleeps in a nest of snow, the emu's racing stride and stretched neck forming a giant letter E.",
+    "art_style": "glass snow-globe diorama",
+    "scene": "A palm-sized snow-globe of hand-blown milk glass on a pale wooden base: inside, a porcelain emu sprints through swirling white flakes across a frost meadow, its legs and neck posed to trace a giant letter E. In the corner, a tiny face-down phone nestles in a snowdrift like an abandoned egg, while the globe's glass dome catches real light and scatters it as dawn across the miniature world."
+  },
+  {
+    "n": 84,
+    "letter": "F",
+    "animal": "Fennec Fox",
+    "label": "Fennec Fox",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Flossed"],
+    "letter_gimmick": "F as the flossed fennec: the fennec fox — with the largest ears-to-body ratio on Earth — showing off a flawlessly flossed grin in its moonlit dune den, giant ears framed by delicate lace that drapes into a giant letter F of woven thread.",
+    "art_style": "white lace-making (bobbin lace)",
+    "scene": "An exquisite bobbin-lace panel in ivory and silver-white thread on a pale cushion: a fennec fox constructed entirely from delicate lace loops, its enormous ears rendered in finest mesh, smiling to reveal a neat row of pearl-button teeth being threaded clean with a single silk strand. Dune curves flow in braided picot edges that rise into a giant letter F of woven linen thread, pins and bobbins still resting at the panel's border."
+  },
+  {
+    "n": 85,
+    "letter": "G",
+    "animal": "Grizzly Bear",
+    "label": "Grizzly Bear",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Good posture"],
+    "letter_gimmick": "G as the growth-ring record of stance: the grizzly bear standing tall against a felled giant sequoia cross-section, its decades of claw marks scoring the tree rings — each ring a year of standing straighter, the marks curving into a giant letter G of accumulated good posture.",
+    "art_style": "dendrochronology tree-ring art",
+    "scene": "A monumental polished tree cross-section in pale ash, birch-white and silver ring-lines: a grizzly bear stands in perfect vertical alignment at its center, four deep claw-grooves carved through the rings in a sweeping giant letter G. Tiny dated labels pin the rings — 'stood taller', 'shoulders back', 'no slouch' — the whole disc reading like a vinyl record of a lifetime spent upright."
+  },
+  {
+    "n": 86,
+    "letter": "H",
+    "animal": "Husky",
+    "label": "Husky",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["HIT"],
+    "letter_gimmick": "H as the husky's harness intervals: a sled team in work-rest intervals across a frozen lake — the lead husky's taut tow-lines and the team's spread forming a giant letter H, sprint-hard phases alternating with gliding recovery like a HIIT timer drawn in snow.",
+    "art_style": "carved ice-lantern art",
+    "scene": "A glowing ice-lantern world chiseled from blocks of lake ice, lit from within by candlelight: a husky team rendered in carved and frosted ice streaks across the frozen surface, tow-lines carved as deep grooves forming a giant letter H of light. The lead dog's breath freezes into interval-marker crystals — dense clusters for sprints, sparse drifts for rest — warm white glow bleeding through the chiseled grain."
+  },
+  {
+    "n": 87,
+    "letter": "I",
+    "animal": "Impala",
+    "label": "Impala",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Inspired juggle"],
+    "letter_gimmick": "I as the ignition pronk: the impala — nature's vertical-launcher, stotting three meters straight up — catching a bolt of inspiration at the apex of its pronk and instantly juggling it, the lightning's frozen path forming a giant glass letter I beside the leap.",
+    "art_style": "fulgurite lightning-glass sculpture",
+    "scene": "A sculptural scene of fulgurites — lightning fused into branching glass tubes of milky white and pale silica: an impala hangs at the very top of its vertical pronk, all four hooves tucked, while a forked bolt of inspiration strikes upward beside it, frozen as a giant letter I of hollow lightning-glass. Three orbs of glowing glass orbit its horns, the first juggle of a brand-new idea, sand grains still fused into the branches."
+  },
+  {
+    "n": 88,
+    "letter": "J",
+    "animal": "Jay",
+    "label": "Jay",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Juggle lights"],
+    "letter_gimmick": "J as the jay's hoarded light-show: the jay — the notorious collector of shiny things — juggling its hoard of stolen lights under the polar aurora, each wingbeat adding one more glowing treasure to the cascade, its collection trail curving into a giant letter J.",
+    "art_style": "aurora-lit silhouette art",
+    "scene": "A stark polar night rendered in bone-white silhouettes against a sky of pale aurora curtains in whitened green and silver: a jay in pure black-and-white silhouette juggles five glowing orbs it has collected — a firefly, a star, a headlamp pearl, a headlight spark, a moon-sliver — their light spilling onto the snow. Its flight path over the drifts is stamped into the snow as a giant letter J of glowing footprints."
+  },
+  {
+    "n": 89,
+    "letter": "K",
+    "animal": "Kangaroo",
+    "label": "Kangaroo",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Kind stranger"],
+    "letter_gimmick": "K as the kangaroo's carry-a-stranger pouch: the kangaroo — built-in carrier of others — offering a lost stranger a ride home in its pouch, the stranger's grateful wave and the roo's upright tail and ears forming a giant letter K of goodwill.",
+    "art_style": "needle-felted wool sculpture",
+    "scene": "A soft needle-felted scene in cream, ivory and pale grey wool with visible fiber texture: a felted kangaroo stands on a snowy plain, pouch open, helping a tiny felted stranger climb in from the cold. The stranger's mitten-raised arm and the roo's tall ears and tail compose a giant letter K, loose wool fibers drifting like snow around the tender rescue."
+  },
+  {
+    "n": 90,
+    "letter": "L",
+    "animal": "Llama",
+    "label": "Llama",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Language studied", "Lung stretch"],
+    "letter_gimmick": "L as the llama's high-altitude lesson: the llama — breathing easy where the air is thin — practicing Quechua phrases in the thin Andean morning, each deep chest-expanding breath simultaneously a lung stretch and a new word, the mountain trail switchbacking into a giant letter L.",
+    "art_style": "Andean backstrap weaving (ivory wool)",
+    "scene": "A hand-woven textile in undyed ivory and alpaca-white wool with subtle frost-grey warp stripes: a llama woven in raised pile stands on a switchback trail whose zigzag path forms a giant letter L up the mountainside. Tiny woven word-banners — 'allinllachu', 'tupananchiskama' — flutter from its pack, and its chest is woven extra-wide and deep, the fabric itself expanding like a great high-altitude breath."
+  },
+  {
+    "n": 91,
+    "letter": "M",
+    "animal": "Moose",
+    "label": "Moose",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Meditations"],
+    "letter_gimmick": "M as the mist-meditation marsh: the moose — standing motionless up to its shoulders in fog-wrapped water for hours — in deep standing meditation, its palmate antlers and reflection forming a giant letter M of perfect stillness between sky and mirror.",
+    "art_style": "acid-etched milk-glass panel",
+    "scene": "A luminous panel of acid-etched milk glass in opal white and soft grey-white frost: a moose etched in delicate matte texture stands half-submerged in etched fog, so still that its reflection completes it. The antlers above and antler-reflection below enclose a giant letter M of clear unetched glass that glows brighter than the frosted field around it, the whole panel radiating the light of held stillness."
+  },
+  {
+    "n": 92,
+    "letter": "N",
+    "animal": "Nightingale",
+    "label": "Nightingale",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["No Coffee"],
+    "letter_gimmick": "N as the nightingale's natural nocturne: the nightingale — singing a thousand songs per night on pure instinct, zero caffeine — performing its midnight concert as the moon's musical staff, its notes and the moon's crescent tracing a giant letter N of natural energy.",
+    "art_style": "illuminated musical manuscript",
+    "scene": "A vellum-pale illuminated manuscript page where the musical staff lines are drawn in silver ink across a moonlit hedgerow: a nightingale perched on the topmost staff line sings notes rendered as tiny glowing neumes that climb into a giant letter N. An empty coffee cup sits overturned in the margin, ignored, while gold-leaf moonlight gilds the bird's throat — a thousand songs, not a single bean."
+  },
+  {
+    "n": 93,
+    "letter": "O",
+    "animal": "Orangutan",
+    "label": "Orangutan",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Todos done"],
+    "letter_gimmick": "O as the orangutan's completed nest: the orangutan — engineer of a fresh sleeping nest every single evening — ticking off the day's final task as it weaves the last branch, the finished circular nest forming a giant letter O of everything-done.",
+    "art_style": "white soapstone carving",
+    "scene": "A smooth low-relief carving in white soapstone with soft matte glow and faint grey veining: an orangutan with long arms weaves the final branch into a perfect circular nest forming a giant letter O. Around the nest's rim, small carved leaves each bear a tick-mark — every task of the day complete — the last leaf mid-checkout under the ape's gentle fingertip, stone polished to a sleepy warmth."
+  },
+  {
+    "n": 94,
+    "letter": "P",
+    "animal": "Puffin",
+    "label": "Puffin",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Programming sessions"],
+    "letter_gimmick": "P as the puffin's parallel processing beak: the puffin — famously holding a dozen fish crosswise in one beak, the ocean's original stack manager — arranging its catch like lines of code, the striped beak and stacked herring forming a giant letter P of a perfectly executed session.",
+    "art_style": "Arctic ice-carving",
+    "scene": "A crisp ice-sculpture scene carved from glacial blocks in clear-white and frosted blue-white: a puffin rendered in chiseled ice stands on an ice ledge, its great striped beak holding a neat crosswise row of small ice-herring arranged like indented code lines. The beak's curve and the stacked fish column form a giant letter P, sub-zero light refracting through the carving in prismatic cold sparks."
+  },
+  {
+    "n": 95,
+    "letter": "Q",
+    "animal": "Quetzal",
+    "label": "Quetzal",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Question asked"],
+    "letter_gimmick": "Q as the quetzal's question of the sky: the resplendent quetzal — sacred bird of the cloud forest — launching its longest tail-feathers upward as a living question mark, the emerald plume streaming white with cloud mist and curling into the tail of a giant letter Q.",
+    "art_style": "cloud-atlas engraving",
+    "scene": "A page from an impossible cloud atlas, engraved in fine white line on pale grey-blue paper: a quetzal in engraved silhouette bursts upward through classified cloud types — cirrus, cumulus, stratus labeled in tiny script — its twin tail feathers streaming into the curling tail of a giant letter Q formed of engraved cloud. The question it carries is drawn as a single silver exhalation rising from its beak into the unknown sky."
+  },
+  {
+    "n": 96,
+    "letter": "R",
+    "animal": "Reindeer",
+    "label": "Reindeer",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Rabbit Hole"],
+    "letter_gimmick": "R as the reindeer's snow-crater dig: the reindeer — which paws deep craters through meters of snow to feed, deeper than any rabbit — digging its own rabbit hole of arctic knowledge, each snow layer a deeper subject, antlers and crater-rim forming a giant letter R.",
+    "art_style": "ice-core stratigraphy art",
+    "scene": "A cross-section of a towering ice core rendered in banded whites — cream, alabaster, silver — each stratum labeled with a deeper topic: 'surface: curiosity', '-2m: astronomy', '-5m: philosophy', '-9m: chess theory'. A reindeer with frost-white antlers digs headfirst down the core's face, its antler arch and the crater's edge composing a giant letter R, ice crystals sparkling in every excavated layer."
+  },
+  {
+    "n": 97,
+    "letter": "S",
+    "animal": "Sea Turtle",
+    "label": "Sea Turtle",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Situps"],
+    "letter_gimmick": "S as the sea turtle's self-righting situp: the sea turtle — flipped on its back and performing the ocean's hardest situp, one powerful neck-and-flipper crunch to right itself — its straining shell arc tracing a giant letter S of pure core strength.",
+    "art_style": "nacre (mother-of-pearl) luster art",
+    "scene": "An iridescent scene built entirely from mother-of-pearl inlay in white, opal and pale rainbow shimmer: a sea turtle mid-crunch, tipped on its shell, neck and flippers straining in a perfect situp arc that draws a giant letter S across the nacre sand. Each scute of its shell glows with soft pearlescent interference colors, and a trail of shimmer marks its final triumphant rock back onto its feet."
+  },
+  {
+    "n": 98,
+    "letter": "T",
+    "animal": "Tree Frog",
+    "label": "Tree Frog",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Tracked Sleep"],
+    "letter_gimmick": "T as the tree frog's tracked torpor: the red-eyed tree frog — sleeping the day away on the underside of a leaf with a golden sleep-ring glow around its eye — its folded legs and the leaf's central vein forming a giant letter T of perfectly measured rest.",
+    "art_style": "botanical vitrine (glass display dome)",
+    "scene": "A Victorian glass vitrine on a white marble base, everything inside rendered in frosted and clear glass: a tree frog folded asleep on the underside of a glass leaf, its iconic red eye closed beneath a delicate golden halo of sleep-score light. The leaf's straight stem and the frog's tucked limbs compose a giant letter T, morning dew captured as tiny glass beads, the dome's curve softening all light to a lullaby glow."
+  },
+  {
+    "n": 99,
+    "letter": "U",
+    "animal": "Urial",
+    "label": "Urial",
+    "color": "White/Glass #D0D0E0",
+    "habits": ["Unusual experience"],
+    "letter_gimmick": "U as the urial's unrolled unreal staircase: the wild urial ram — whose massive horns spiral into perfect corkscrews — discovering its own horns unrolled into an impossible spiral staircase it can actually climb, the curling ascent forming a giant letter U and the day's strangest wonder.",
+    "art_style": "paper marbling (suminagashi white-on-grey)",
+    "scene": "A serene suminagashi marbled surface of ink-white swirls drifting on pale grey water: an urial ram stands at the base of a spiral staircase that grows directly from its own horns, uncoiling upward into a giant letter U of marbled stone-like swirls. Each tread is a frozen whorl of the marbling bath, concentric rings rippling outward from its hooves, the whole scene suspended between dream and paper."
+  }
+]

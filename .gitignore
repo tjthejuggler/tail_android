@@ -49,3 +49,7 @@ garmin_import.json
 dream_recorded_history.json
 
 zai_API_KEY.txt
+
+# Generated wallpaper images (raw + final)
+wallpaper_gen/raw/
+wallpaper_gen/final/
