@@ -1008,6 +1008,21 @@ private fun GraphMetricToggleRow(
                 }
             }
         }
+
+        // X button: deselect this habit from the graph. Sits at the end of
+        // the metric-button row so each habit's row can be removed directly
+        // from the graph drawer.
+        IconButton(
+            onClick = { viewModel.toggleGraphHabitSelection(habitName) },
+            modifier = Modifier.size(22.dp)
+        ) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = "Remove $habitName from graph",
+                tint = Color(0xFF889988),
+                modifier = Modifier.size(14.dp)
+            )
+        }
     }
 
     // Long-press popup: per-metric "Interp 0s" toggle + a chooser for
