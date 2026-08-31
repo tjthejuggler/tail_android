@@ -1,6 +1,6 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-08-29T11:53Z
+**Last updated:** 2026-08-30T13:26Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
@@ -8,11 +8,24 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 
 ---31e8e7a8
 
+## 2026-08-30 — Chess Phase 2 v4 automation round
+- Profile delivery is now fully automatic: `chess-coach/scripts/build_v4_profile.py` writes
+  `tail_bridge/data/chess_readiness_v4_profile.json` directly; the chess-coach tray rebuilds it
+  after every completed analysis run (plus a manual "Rebuild v4 Readiness Profile" menu item).
+- Recommendation history: every v4 verdict is reported from the phone
+  (`ChessPhase2V4Report` → bridge `chess_analysis/v4_report`) with the exact decision variables
+  (fatigue bars, weighted streak, circadian offset, ACWR, strain, baselines, profile version) and
+  appended to `tail_bridge/data/v4_recommendations.jsonl`, viewable via the tray's
+  "V4 Recommendation History…" dialog. Fire-and-forget: a lost report never blocks the audit.
+- Tail chess stats keep working unchanged (v4 refines the shared `AuditResultV3`/audit ledger).
+
 ## Build / tooling
 
 - **🧱 Monolithic UI files split into domain modules (build OOM fixed)** *(added 2026-08-29T11:53Z)* — `compileDebugKotlin` was dying with `OutOfMemoryError: GC overhead limit exceeded` during IR lowering. Two causes: (1) [`HabitViewModel.kt`](app/src/main/java/com/example/tail/ui/HabitViewModel.kt:206) (12.9k lines) and [`HabitGridScreen.kt`](app/src/main/java/com/example/tail/ui/HabitGridScreen.kt:1) (11.3k lines) had grown into single god-files; (2) the Kotlin compile daemon kept being served by a stale shared daemon running with the default `-Xmx1024m` (registered by an external IDE session), ignoring `kotlin.daemon.jvmargs`. Fixes: the ViewModel's member functions were extracted into 15 same-package extension-function files ([`HabitViewModelData.kt`](app/src/main/java/com/example/tail/ui/HabitViewModelData.kt:1), [`HabitViewModelHabitConfig.kt`](app/src/main/java/com/example/tail/ui/HabitViewModelHabitConfig.kt:1), [`HabitViewModelScreens.kt`](app/src/main/java/com/example/tail/ui/HabitViewModelScreens.kt:1), Garmin/Movies/Meals/Media/Locations/Chess/etc. — same-package extensions resolve on the implicit receiver so all call sites compile unchanged; `private` members became `internal`), and the grid screen was split into 4 composable files. [`gradle.properties`](gradle.properties:9) now pins `kotlin.compiler.execution.strategy=in-process` with a 4g Gradle daemon heap, sidestepping the shared Kotlin-daemon registry entirely. The one-shot extraction script is kept at [`scripts/split_large_kt_files.py`](scripts/split_large_kt_files.py:1). Keep new source files under ~4k lines. Note: `ChessReadinessV3EngineTestKt` reports a pre-existing JUnit initializationError unrelated to this refactor.
-
 ## Features
+
+- **♟ Post-game chess readiness v4 — data-derived personal thresholds from 6,564 analyzed games** *(added 2026-08-30T13:26Z)* — the Phase 2 post-game audit (share a rated game → CONTINUE / PIVOT / TERMINATE) gained a fourth engine version whose constants come from your own history instead of hand-picked values. Desktop side (chess-coach): `build_v4_profile.py` reads every `analysis/*.json` (recency-weighted, 150-day half-life) and derives per-time-control fatigue bars (rapid yellow 105 min, bullet 135), a continuous ΔE loss-weight curve, streak thresholds, a rest prescription (net of 5-min pipeline latency), a 24-hour personal circadian curve, within-game degradation-slope P90s, and a logistic next-game model that self-disabled at AUC 0.519 rather than gate on noise. The profile JSON is served by the bridge at `chess_analysis/v4_profile` ([`bridge_server.py`](tail_bridge/bridge_server.py:495)). Phone side: [`ChessPhase2V4Profile`](app/src/main/java/com/example/tail/widget/ChessPhase2V4Profile.kt:37) parses/caches/fetches it, and [`ChessPhase2V4Engine.refine()`](app/src/main/java/com/example/tail/widget/ChessPhase2V4Engine.kt:57) overlays it on the full v3 hybrid audit — profile fatigue bars replace 90/120, the streak recomputes on the curve, the tilt rule relaxes by your personal hourly offset, and yellow verdicts carry a rest prescription. With no profile (PC off) v4 is bit-identical to v3. Select via Settings → ♟ Chess Readiness → Post-Game Audit Version → v4. Design doc: [`plans/chess_phase2_v4_plan.md`](plans/chess_phase2_v4_plan.md:1); tests in [`ChessPhase2V4EngineTest`](app/src/test/java/com/example/tail/ChessPhase2V4EngineTest.kt:29).
+
 
 - **🐛 Race-proofed habit-list rebuilds — tap now increments the square instantly and consistently** *(added 2026-08-25T08:57Z)* — fixed the intermittent bug where tapping a habit recorded its timestamp (and wrote the increment to the habits file) but the grid square didn't update until you switched to another screen and back. Root cause: [`rebuildHabitList()`](app/src/main/java/com/example/tail/ui/HabitViewModel.kt:1870) is launched from ~55 call sites, several of which fire asynchronously at arbitrary times (the [`HabitIncrementBus`](app/src/main/java/com/example/tail/ui/HabitViewModel.kt:770) collector, [`switchScreen()`](app/src/main/java/com/example/tail/ui/HabitViewModel.kt:4030)'s background rebuild, Garmin/Chess/GitHub syncs). Each rebuild snapshotted `cachedPhoneDb` on `Dispatchers.Default` and published `_habits` unconditionally whenever it finished — so a rebuild that snapshotted the DB *before* a tap could finish *after* the increment's own rebuild and clobber the optimistic UI flip with the pre-tap list (last writer wins; the tap's timestamp still landed, hence "timestamp set but no increment"). The fix, all in [`HabitViewModel`](app/src/main/java/com/example/tail/ui/HabitViewModel.kt:692): (1) rebuilds are serialized by a new `rebuildMutex` so publish order = launch order; (2) each rebuild re-checks its snapshot (DB reference, selected date, screen index) after computing and recomputes from the latest state instead of publishing stale data — publishing anything older than the current `cachedPhoneDb` is now impossible; (3) [`incrementHabit()`](app/src/main/java/com/example/tail/ui/HabitViewModel.kt:2063) and [`incrementHabitWithRollForward()`](app/src/main/java/com/example/tail/ui/HabitViewModel.kt:2330) re-assert `cachedPhoneDb = updatedDb` right after their persist succeeds, so a concurrent disk reload (e.g. the bus collector's `ensureDaysExist` reading the pre-persist file mid-write) can never become the snapshot the post-increment rebuild publishes. The snapshot keys also fix a latent cache-poisoning bug: the per-screen cache entry is now stored under the same (screen, date) the list was computed for, instead of re-reading both at publish time.
 
@@ -629,3 +642,29 @@ Notes:
   **Advanced → Go to Tail (unsafe)** and continue.
 - If a Drive operation ever fails with "Google needs you to approve Drive access",
   the app automatically opens the consent screen on the next tap — approve and retry.
+
+## 2026-08-30 — v4 popup: game-specific decision breakdown + PC decision viewer
+- `ChessPhase2V4Engine.buildGameMessage()`: v4 popup now shows THIS game's inputs
+  (session min vs personal yellow/red bars, this loss's expected/ΔE/weight vs streak
+  thresholds, blunders & ACPL as personal z-scores, tilt z's with hourly offset,
+  workload ratio, strain vs terminate bar) and a plain-English verdict. No rule codes,
+  no version comparisons, no corpus-size phrasing.
+- Tray "V4 Recommendation History…" now renders each logged decision as a readable
+  breakdown (verdict color, per-metric rows, flags, rest prescription) instead of raw JSON.
+
+## 2026-08-30 (b) — v4: personal blunder allowance + mistake/inaccuracy baselines
+- `build_v4_profile.py`: per-TC `blunderCap` (weighted p75 of blunder history, ceil,
+  1..6) plus mistake/inaccuracy weighted mean+sd in baselines. Current caps:
+  rapid 2, blitz 3, bullet 4 (v3 fixed: 1/2/3).
+- `ChessPhase2V4Profile.Baseline` parses the new fields; `ChessPhase2V4Engine.refine`
+  overlays the cap: blunder violation, strain, session strain and Rule-5 verdict are
+  recomputed against the personal allowance. Popup lead line shows the personal cap
+  and adds mistakes/inaccuracies z-score rows. Installed on SM-S918U1.
+
+## 2026-08-31 — Rating-based survival gate (variant picker)
+- The v3 readiness test now opens with a **Step 0 popup** asking which chess type you're about to play (bullet / blitz / rapid / chess960). The survival target is derived from your **CURRENT rating in that variant** (`targetFromRating`: round((rating−700)/60), clamped 8–30) — higher rating → harder gate. Ratings are fetched from chess.com `/stats` and cached (`ChessReadinessV3Store.variantRatings`).
+- The all-time survival PB is now only the **fallback** target when a variant rating is unknown — pushing your untimed PB high no longer makes the pre-game test harder.
+- Variant + rating basis are persisted in `PendingSurvival` and logged in each `V3ResultRecord`; the bubble panel shows the variant next to the target.
+- **Fix (same day):** chess.com `/stats` does not expose the live chess960 rating — it is now derived from the most recent rated chess960 game in the monthly archives (`latestVariantRating`). Target curve steepened to `round((rating − 500) / 30)` clamped 10–32 (812→10, 926→14, 1113→20, 1200→23, 1500+→32) so different ratings produce clearly different gates.
+- **Refinement (same day):** removed the in-test variant picker — the chess type is now chosen once in Settings (v3 section, default chess960) via `ChessReadinessV3Store.selectedVariant`. Pass logic is no longer a hard cutoff: the rating-derived target is the GUARANTEED-play number, but a run below it still passes at the user's own 70th-percentile history (`effectivePassTarget`), never below the hard floor (60% of target, `floorTarget`). Curve recalibrated to `round((rating − 600) / 30)` clamped 8–28 (812→8, 926→11, 1113→17, 1200→20, 1500+→28).
+- **Popup clarity fix:** when the P70 percentile bar ends a run below the guaranteed target, the verdict popup now shows "N — pass bar M (your P70; guaranteed T)" and the live counter counts to the enforced bar; the Step-2 intro notes the P70 relaxation and hard minimum.

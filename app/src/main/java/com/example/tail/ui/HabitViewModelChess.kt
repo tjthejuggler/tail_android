@@ -306,9 +306,11 @@ fun HabitViewModel.setChessPhase2Version(version: String) {
         val normalized = when (version) {
             com.example.tail.widget.ChessPhase2V2Store.VERSION_V2 ->
                 com.example.tail.widget.ChessPhase2V2Store.VERSION_V2
-            com.example.tail.widget.ChessPhase2V2Store.VERSION_V3 ->
-                com.example.tail.widget.ChessPhase2V2Store.VERSION_V3
-            else -> com.example.tail.widget.ChessPhase2V2Store.VERSION_V1
+                com.example.tail.widget.ChessPhase2V2Store.VERSION_V3 ->
+                    com.example.tail.widget.ChessPhase2V2Store.VERSION_V3
+                com.example.tail.widget.ChessPhase2V2Store.VERSION_V4 ->
+                    com.example.tail.widget.ChessPhase2V2Store.VERSION_V4
+                else -> com.example.tail.widget.ChessPhase2V2Store.VERSION_V1
         }
         settingsRepo.saveChessPhase2Version(normalized)
         _settings.value = _settings.value.copy(chessPhase2Version = normalized)

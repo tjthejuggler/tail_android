@@ -43,6 +43,7 @@ object ChessPhase2V2Store {
     const val VERSION_V1 = "v1"
     const val VERSION_V2 = "v2"
     const val VERSION_V3 = "v3"
+    const val VERSION_V4 = "v4"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -57,6 +58,8 @@ object ChessPhase2V2Store {
 
     fun isV3(context: Context): Boolean = phase2Version(context) == VERSION_V3
 
+    fun isV4(context: Context): Boolean = phase2Version(context) == VERSION_V4
+
     /**
      * Mirrored from DataStore by the settings view-model on every change.
      * Every ACTUAL version switch is appended to the version log so the
@@ -66,6 +69,7 @@ object ChessPhase2V2Store {
         val target = when (version) {
             VERSION_V2 -> VERSION_V2
             VERSION_V3 -> VERSION_V3
+            VERSION_V4 -> VERSION_V4
             else -> VERSION_V1
         }
         val previous = phase2Version(context)

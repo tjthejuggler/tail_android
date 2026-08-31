@@ -208,7 +208,7 @@ class ChessGameShareActivity : ComponentActivity() {
         // audit below (showing the full result screen again, and picking
         // up desktop Stockfish analysis if the bridge is reachable now);
         // v1/v2 keep the simple "already reported" notice.
-        if (!ChessPhase2V2Store.isV3(this)) {
+        if (!(ChessPhase2V2Store.isV3(this) || ChessPhase2V2Store.isV4(this))) {
             ChessPhase2Store.findAuditByGameId(this, gameId)?.let { previous ->
                 emit(
                     Ui.Message(
@@ -279,7 +279,7 @@ class ChessGameShareActivity : ComponentActivity() {
             }
 
             is ChessDeferredGameReconciler.GameOutcome.AlreadyAudited -> {
-                if (ChessPhase2V2Store.isV3(this)) {
+                if (ChessPhase2V2Store.isV3(this) || ChessPhase2V2Store.isV4(this)) {
                     // Re-share: re-run the v3 audit (fresh engine analysis
                     // when the bridge is now up) and show the result screen.
                     auditedGame = game
@@ -716,7 +716,11 @@ class ChessGameShareActivity : ComponentActivity() {
             modifier = Modifier.verticalScroll(rememberScrollState())
         ) {
             Text(
-                text = "♟ Post-Game Audit v3",
+                text = if (ChessPhase2V2Store.isV4(context)) {
+                    "♟ Post-Game Audit v4 · data-derived"
+                } else {
+                    "♟ Post-Game Audit v3"
+                },
                 color = Color(0xFFFFD700),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold

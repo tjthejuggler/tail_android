@@ -24,6 +24,7 @@ object ChessReadinessV3Store {
     private const val PREFS_NAME = "tail_chess_readiness_v3"
 
     private const val KEY_SURVIVAL_PB = "survival_all_time_pb"
+    private const val KEY_VARIANT_RATINGS = "variant_ratings"
     private const val KEY_SURVIVAL_PB_SOURCE = "survival_pb_source"
     private const val KEY_SURVIVAL_PB_SYNCED_AT = "survival_pb_synced_at"
     private const val KEY_SURVIVAL_HABIT = "linked_survival_habit"
@@ -111,7 +112,9 @@ object ChessReadinessV3Store {
         val survivalDurationMs: Long,
         val reflexLapses: Int,
         val reflexFalseStarts: Int,
-        val reflexMeanRtMs: Double?
+        val reflexMeanRtMs: Double?,
+        /** Chess type this test authorized (bullet/blitz/rapid/chess960). */
+        val variant: String? = null
     )
 
     fun appendResult(context: Context, record: V3ResultRecord) {
@@ -130,6 +133,7 @@ object ChessReadinessV3Store {
             put("lapses", record.reflexLapses)
             put("falseStarts", record.reflexFalseStarts)
             record.reflexMeanRtMs?.let { put("meanRtMs", it) }
+            record.variant?.let { put("variant", it) }
         })
         while (arr.length() > MAX_RESULTS) arr.remove(0)
         prefs(context).edit().putString(KEY_RESULTS, arr.toString()).apply()
@@ -153,7 +157,9 @@ object ChessReadinessV3Store {
                     reflexLapses = o.optInt("lapses", 0),
                     reflexFalseStarts = o.optInt("falseStarts", 0),
                     reflexMeanRtMs = if (o.has("meanRtMs") && !o.isNull("meanRtMs"))
-                        o.optDouble("meanRtMs") else null
+                        o.optDouble("meanRtMs") else null,
+                    variant = if (o.has("variant") && !o.isNull("variant"))
+                        o.optString("variant") else null
                 )
             }
         } catch (_: Exception) {
@@ -173,7 +179,11 @@ object ChessReadinessV3Store {
         val target: Int,
         val reflexLapses: Int,
         val reflexFalseStarts: Int,
-        val reflexMeanRtMs: Double?
+        val reflexMeanRtMs: Double?,
+        /** Chess type this gate authorizes (rating-derived target). */
+        val variant: String? = null,
+        /** Rating the target was derived from (0 = PB fallback). */
+        val ratingBasis: Int = 0
     )
 
     /** An armed-but-unstarted survival session expires after this long. */
@@ -186,6 +196,8 @@ object ChessReadinessV3Store {
             put("lapses", pending.reflexLapses)
             put("falseStarts", pending.reflexFalseStarts)
             if (pending.reflexMeanRtMs != null) put("meanRtMs", pending.reflexMeanRtMs)
+            pending.variant?.let { put("variant", it) }
+            put("ratingBasis", pending.ratingBasis)
             put("armedAt", System.currentTimeMillis())
         }.toString()).apply()
     }
@@ -204,12 +216,54 @@ object ChessReadinessV3Store {
                 reflexLapses = o.optInt("lapses", 0),
                 reflexFalseStarts = o.optInt("falseStarts", 0),
                 reflexMeanRtMs = if (o.has("meanRtMs") && !o.isNull("meanRtMs"))
-                    o.optDouble("meanRtMs") else null
+                    o.optDouble("meanRtMs") else null,
+                variant = if (o.has("variant") && !o.isNull("variant"))
+                    o.optString("variant") else null,
+                ratingBasis = o.optInt("ratingBasis", 0)
             )
         } catch (_: Exception) {
             null
         }
     }
+
+    // ── Cached variant ratings (chess.com /stats, refreshed per test) ──────
+
+    /** Saves the latest per-variant ratings (bullet/blitz/rapid/chess960). */
+    fun saveVariantRatings(context: Context, ratings: Map<String, Int>) {
+        prefs(context).edit().putString(KEY_VARIANT_RATINGS, JSONObject().apply {
+            ratings.forEach { (k, v) -> put(k, v) }
+        }.toString()).apply()
+    }
+
+    /** Last-known per-variant ratings (empty when never synced). */
+    fun variantRatings(context: Context): Map<String, Int> {
+        val raw = prefs(context).getString(KEY_VARIANT_RATINGS, null)
+            ?: return emptyMap()
+        return try {
+            val o = JSONObject(raw)
+            buildMap {
+                for (k in o.keys()) put(k, o.optInt(k, 0))
+            }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    // ── Selected variant (Settings → v3, drives the rating-based target) ────
+
+    private const val KEY_SELECTED_VARIANT = "v3_selected_variant"
+    private val VARIANTS = listOf("bullet", "blitz", "rapid", "chess960")
+
+    /** The chess type whose current rating drives the survival target. */
+    fun saveSelectedVariant(context: Context, variant: String) {
+        if (variant in VARIANTS) {
+            prefs(context).edit().putString(KEY_SELECTED_VARIANT, variant).apply()
+        }
+    }
+
+    fun selectedVariant(context: Context): String =
+        prefs(context).getString(KEY_SELECTED_VARIANT, null)
+            ?.takeIf { it in VARIANTS } ?: "chess960"
 
     fun clearPendingSurvival(context: Context) {
         prefs(context).edit().remove("pending_survival").apply()
@@ -279,7 +333,8 @@ object ChessReadinessV3Recorder {
         target: Int,
         puzzlesPassed: Int,
         survivalDurationMs: Long,
-        reflex: ChessReadinessV3Engine.ReflexSummary?
+        reflex: ChessReadinessV3Engine.ReflexSummary?,
+        variant: String? = null
     ) {
         val now = System.currentTimeMillis()
         val stateName = ChessReadinessV3Engine.stateNameFor(verdict)
@@ -301,7 +356,8 @@ object ChessReadinessV3Recorder {
                 survivalDurationMs = survivalDurationMs,
                 reflexLapses = reflex?.lapses ?: 0,
                 reflexFalseStarts = reflex?.falseStarts ?: 0,
-                reflexMeanRtMs = reflex?.meanRtMs
+                reflexMeanRtMs = reflex?.meanRtMs,
+                variant = variant
             )
         )
         if (survivalDurationMs > 0) {

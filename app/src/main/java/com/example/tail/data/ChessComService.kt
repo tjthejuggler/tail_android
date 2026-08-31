@@ -190,6 +190,52 @@ class ChessComService {
     }
 
     /**
+     * Current per-variant ratings from the /stats endpoint
+     * (chess_bullet / chess_blitz / chess_rapid / chess960_daily `last`).
+     * Missing variants come back as 0.
+     */
+    suspend fun getVariantRatings(username: String): Map<String, Int> =
+        withContext(Dispatchers.IO) {
+            val url = "$BASE_URL/player/${username.lowercase()}/stats"
+            val json = httpGet(url)
+            fun last(key: String) =
+                json.optJSONObject(key)?.optJSONObject("last")
+                    ?.optInt("rating", 0) ?: 0
+            val user = username.lowercase()
+            mapOf(
+                "bullet" to last("chess_bullet"),
+                "blitz" to last("chess_blitz"),
+                "rapid" to last("chess_rapid"),
+                // chess.com's /stats does NOT expose the live chess960
+                // rating (chess960_daily is a different, daily variant).
+                // Derive it from the most recent chess960 game in the
+                // monthly archives instead (newest first, last 3 months).
+                "chess960" to runCatching { latestVariantRating(user, "chess960") }
+                    .getOrDefault(0)
+            )
+        }
+
+    /**
+     * The player's CURRENT rating in [variant] ("chess960"), taken from
+     * their most recent rated game of that variant across the last few
+     * monthly archives (each game JSON carries both players'
+     * post-game ratings).
+     */
+    private suspend fun latestVariantRating(username: String, variant: String): Int {
+        val archives = getArchiveUrls(username).takeLast(3).reversed()
+        for (url in archives) {
+            val games = runCatching { getGamesForMonth(url) }.getOrDefault(emptyList())
+            val hit = games
+                .filter { it.rated && it.rules == variant }
+                .filter { it.whiteUsername.lowercase() == username || it.blackUsername.lowercase() == username }
+                .maxByOrNull { it.endTime } ?: continue
+            return if (hit.whiteUsername.lowercase() == username) hit.whiteRating
+            else hit.blackRating
+        }
+        return 0
+    }
+
+    /**
      * Finds a single game by its numeric ID (as extracted from a shared
      * chess.com game link) in the player's monthly archives. Searches the
      * current month first, then the previous month (to cover month

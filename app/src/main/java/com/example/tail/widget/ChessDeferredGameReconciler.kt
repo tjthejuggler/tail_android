@@ -158,7 +158,7 @@ object ChessDeferredGameReconciler {
         // blunders from desktop Stockfish when the bridge is reachable);
         // "v2" runs the research-report audit; the default "v1" path below
         // is untouched.
-        if (ChessPhase2V2Store.isV3(context)) {
+        if (ChessPhase2V2Store.isV3(context) || ChessPhase2V2Store.isV4(context)) {
             return processGameV3(context, username, game, gameEndMs, bridge)
         }
         if (ChessPhase2V2Store.isV2(context)) {
@@ -424,9 +424,14 @@ object ChessDeferredGameReconciler {
             username = username,
             isWhite = isWhite
         )
+        // v4: refresh the personal profile from the bridge (best-effort;
+        // a failure keeps the cached copy / v3-identical fallback).
+        if (ChessPhase2V2Store.isV4(context)) {
+            ChessPhase2V4Profile.refresh(bridge, context)
+        }
 
         val tc = ready.input.timeControl
-        val result = evaluateV3(context, username, game, gameEndMs, ready, analysis)
+        val result = evaluateV3(context, username, game, gameEndMs, ready, analysis, bridge)
         val expectedScore = ready.input.result.score - ready.deltaE
 
         // Personal baselines grow from every game with KNOWN telemetry.
@@ -482,13 +487,14 @@ object ChessDeferredGameReconciler {
      * (where this game's own audit is already on file) matches the
      * first-run semantics exactly.
      */
-    private fun evaluateV3(
+    private suspend fun evaluateV3(
         context: Context,
         username: String,
         game: ChessComGameDetail,
         gameEndMs: Long,
         ready: ChessPhase2V2Engine.MappingV2.Ready,
-        analysis: ChessAnalysisFetcher.Analysis?
+        analysis: ChessAnalysisFetcher.Analysis?,
+        bridge: ChessAnalysisFetcher.BridgeCredentials? = null
     ): ChessPhase2V3Engine.AuditResultV3 {
         val localHour = java.time.Instant.ofEpochMilli(gameEndMs)
             .atZone(java.time.ZoneId.systemDefault()).hour
@@ -534,26 +540,27 @@ object ChessDeferredGameReconciler {
 
         val expectedScore = ready.input.result.score - ready.deltaE
 
-        return ChessPhase2V3Engine.evaluate(
-            input = ChessPhase2V3Engine.GameInputV3(
-                timeControl = tc,
-                result = ready.input.result,
-                accuracy = ready.input.accuracy,
-                avgMoveSec = ready.input.avgMoveSec,
-                sessionElapsedMins = ready.input.sessionElapsedMins,
-                localHour = localHour,
-                shortGame = ready.input.shortGame,
-                expectedScore = expectedScore,
-                deltaE = ready.deltaE,
-                unforcedBlunders = analysis?.userStats?.unforcedBlunders,
-                blunderCount = analysis?.userStats?.blunders,
-                mistakeCount = analysis?.userStats?.mistakes,
-                inaccuracyCount = analysis?.userStats?.inaccuracies,
-                analysisAcpl = analysis?.userStats?.acpl,
-                analysisMoves = analysis?.userStats?.moves,
-                accuracyHistory = ChessPhase2V2Store.accuracyHistory(context, tc),
-                readinessCcrs = ccrs
-            ),
+        val v4Input = ChessPhase2V3Engine.GameInputV3(
+            timeControl = tc,
+            result = ready.input.result,
+            accuracy = ready.input.accuracy,
+            avgMoveSec = ready.input.avgMoveSec,
+            sessionElapsedMins = ready.input.sessionElapsedMins,
+            localHour = localHour,
+            shortGame = ready.input.shortGame,
+            expectedScore = expectedScore,
+            deltaE = ready.deltaE,
+            unforcedBlunders = analysis?.userStats?.unforcedBlunders,
+            blunderCount = analysis?.userStats?.blunders,
+            mistakeCount = analysis?.userStats?.mistakes,
+            inaccuracyCount = analysis?.userStats?.inaccuracies,
+            analysisAcpl = analysis?.userStats?.acpl,
+            analysisMoves = analysis?.userStats?.moves,
+            accuracyHistory = ChessPhase2V2Store.accuracyHistory(context, tc),
+            readinessCcrs = ccrs
+        )
+        val base = ChessPhase2V3Engine.evaluate(
+            input = v4Input,
             sessionGames = sessionGames,
             accBaseline = accBaseline,
             moveBaseline = moveBaseline,
@@ -561,6 +568,31 @@ object ChessDeferredGameReconciler {
             deltaEHistory = deltaEHistory,
             now = gameEndMs
         )
+        // v4 overlay: personal, data-derived thresholds refine the v3
+        // verdict (bit-identical to v3 under the fallback profile), and
+        // every recommendation is reported (with its exact decision
+        // variables) to the bridge-side history log — fire-and-forget.
+        if (!ChessPhase2V2Store.isV4(context)) return base
+        val profile = ChessPhase2V4Profile.load(context)
+        val refined = ChessPhase2V4Engine.refine(
+            base = base,
+            input = v4Input,
+            sessionGames = sessionGames,
+            profile = profile
+        )
+        try {
+            ChessPhase2V4Report.send(
+                credentials = bridge,
+                gameId = game.gameId,
+                username = username,
+                result = refined,
+                input = v4Input,
+                profile = profile
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "v4 report failed for game ${game.gameId}: ${e.message}")
+        }
+        return refined
     }
 
     /**
@@ -601,7 +633,10 @@ object ChessDeferredGameReconciler {
             username = username,
             isWhite = isWhite
         )
-        val result = evaluateV3(context, username, game, gameEndMs, ready, analysis)
+        if (ChessPhase2V2Store.isV4(context)) {
+            ChessPhase2V4Profile.refresh(bridge, context)
+        }
+        val result = evaluateV3(context, username, game, gameEndMs, ready, analysis, bridge)
 
         // In-place verdict update — Chess Guard / authorization consumers
         // read these stores, so a revised verdict must replace, not append.

@@ -498,6 +498,50 @@ def chess_analysis_status(api_key: str = Security(verify_key)):
     return _chess_analysis_service().status()
 
 
+_V4_PROFILE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "chess_readiness_v4_profile.json"
+)
+
+
+@app.get("/api/v1/chess_analysis/v4_profile", tags=["chess_analysis"])
+def chess_v4_profile(api_key: str = Security(verify_key)):
+    """Serves the Phase 2 v4 readiness profile built by chess-coach's
+    build_v4_profile.py (personal, data-derived audit thresholds). 404 until
+    the desktop has produced one — the phone then falls back to v3 constants."""
+    if not os.path.isfile(_V4_PROFILE_PATH):
+        raise HTTPException(status_code=404, detail="v4 profile not built yet")
+    with open(_V4_PROFILE_PATH) as f:
+        return json.load(f)
+
+
+# POST alias — the phone's BridgeClient only implements POST.
+@app.post("/api/v1/chess_analysis/v4_profile", tags=["chess_analysis"])
+def chess_v4_profile_post(api_key: str = Security(verify_key)):
+    return chess_v4_profile(api_key)
+
+
+_V4_RECS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "v4_recommendations.jsonl"
+)
+
+
+@app.post("/api/v1/chess_analysis/v4_report", tags=["chess_analysis"])
+def chess_v4_report(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """Appends one v4 post-game recommendation record (the phone's full
+    decision telemetry) to the JSONL log the chess-coach tray's V4
+    Recommendation History viewer reads. Fire-and-forget from the phone."""
+    if not isinstance(payload, dict) or not payload:
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+    line = json.dumps(payload, ensure_ascii=False) + "\n"
+    os.makedirs(os.path.dirname(_V4_RECS_PATH), exist_ok=True)
+    with open(_V4_RECS_PATH, "a") as f:
+        f.write(line)
+    dashboard.note("phone", "chess_v4_report",
+                   "v4 audit recorded: " + str(payload.get("verdict", "?")) +
+                   " (" + str(payload.get("reason", "?")) + ")")
+    return {"ok": True}
+
+
 @app.post("/api/v1/chess_analysis/analyze", tags=["chess_analysis"])
 def chess_analysis_analyze(payload: Dict[str, Any], api_key: str = Security(verify_key)):
     """Analyse a PGN with local Stockfish. Returns per-side blunder/ACPL stats.

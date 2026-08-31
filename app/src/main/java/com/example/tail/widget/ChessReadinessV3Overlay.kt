@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -43,7 +44,9 @@ class ChessReadinessV3Overlay(
     private val dialog = ChessOverlayDialog(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    private enum class Phase { LOADING, BLOCKED, REFLEX_INTRO, REFLEX_RUN, SURVIVAL_INTRO, RESULT }
+    private enum class Phase {
+        LOADING, BLOCKED, REFLEX_INTRO, REFLEX_RUN, SURVIVAL_INTRO, RESULT
+    }
 
     // ── Wizard state ────────────────────────────────────────────────────────
 
@@ -55,6 +58,12 @@ class ChessReadinessV3Overlay(
     private var reflex: ChessReadinessV3Engine.ReflexSummary? = null
     private var verdict: Verdict? = null
     private var target = 0
+
+    // Chosen chess type + the rating the target is derived from.
+    private var variant = ""
+    private var ratingBasis = 0
+    private var ratings: Map<String, Int> = emptyMap()
+    private var ratingsRefreshing = false
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
 
@@ -86,13 +95,62 @@ class ChessReadinessV3Overlay(
                     phase = Phase.BLOCKED
                 }
                 is ChessReadinessEngine.GateStatus.Allowed -> {
-                    target = ChessReadinessV3Engine.targetScore(
-                        ChessReadinessV3Store.survivalPb(context)
-                    )
+                    variant = ChessReadinessV3Store.selectedVariant(context)
+                    ratings = ChessReadinessV3Store.variantRatings(context)
+                    applyVariantTarget()
                     phase = Phase.REFLEX_INTRO
+                    refreshRatings()
                 }
             }
             if (dialog.isShowing()) render()
+        }
+    }
+
+    /**
+     * Sets [target]/[ratingBasis] from the selected variant's current
+     * rating (Settings → v3); falls back to the survival-PB target when
+     * the rating is unknown.
+     */
+    private fun applyVariantTarget() {
+        val r = ratings[variant] ?: 0
+        ratingBasis = r
+        target = if (r > 0) ChessReadinessV3Engine.targetFromRating(r)
+        else ChessReadinessV3Engine.targetScore(
+            ChessReadinessV3Store.survivalPb(context)
+        )
+    }
+
+    /**
+     * Pulls the current per-variant ratings from chess.com (when a username
+     * is configured) and caches them in the store so the next test works
+     * even offline. If the fresh rating changes the target and the run has
+     * not started yet, the intro re-renders with the updated number.
+     */
+    private fun refreshRatings() {
+        if (ratingsRefreshing) return
+        ratingsRefreshing = true
+        scope.launch {
+            try {
+                val settings = com.example.tail.data.SettingsRepository(context)
+                    .settingsFlow.first()
+                val username = settings.chessComUsername.trim()
+                if (username.isNotEmpty()) {
+                    val fresh = com.example.tail.data.ChessComService()
+                        .getVariantRatings(username)
+                    if (fresh.values.any { it > 0 }) {
+                        ChessReadinessV3Store.saveVariantRatings(context, fresh)
+                        ratings = fresh
+                    }
+                }
+            } catch (_: Exception) {
+                // offline / no username — cached ratings (if any) stand
+            }
+            ratingsRefreshing = false
+            if (phase == Phase.REFLEX_INTRO) {
+                val before = target
+                applyVariantTarget()
+                if (target != before && dialog.isShowing()) render()
+            }
         }
     }
 
@@ -210,13 +268,19 @@ class ChessReadinessV3Overlay(
             body("Reflex cleared — the nervous system is online.", color = 0xFF66BB6A.toInt())
             spacer(6)
             keyValue("Dynamic target", "$target puzzles")
-            keyValue("Derived from", if (pb > 0) "PB $pb × 0.60" else "default PB ${ChessReadinessV3Engine.DEFAULT_PB} × 0.60")
+            keyValue(
+                "Derived from",
+                if (ratingBasis > 0) "current $variant rating $ratingBasis"
+                else if (pb > 0) "PB $pb × 0.60 (rating unknown)"
+                else "default PB ${ChessReadinessV3Engine.DEFAULT_PB} × 0.60"
+            )
             spacer(6)
             body("The survival run happens in the chess app, controlled from the bubble:")
             hint("• 1 — Tap START below, then open the Puzzle Rush Survival drill in chess.com.")
             hint("• 2 — Tap ▶ on the bubble panel when the drill begins.")
             hint("• 3 — Tap ✓ PASS per solved puzzle, ✕ FAIL on a miss. One strike fails the gate.")
             hint("• Global cap: 5 minutes. Target: $target consecutive passes.")
+            hint("• Below $target can still pass at your own P70 history (min ${ChessReadinessV3Engine.floorTarget(target)}).")
             primaryButton("Arm survival gate") {
                 ChessReadinessV3Store.savePendingSurvival(
                     context,
@@ -225,7 +289,9 @@ class ChessReadinessV3Overlay(
                         target = target,
                         reflexLapses = reflex?.lapses ?: 0,
                         reflexFalseStarts = reflex?.falseStarts ?: 0,
-                        reflexMeanRtMs = reflex?.meanRtMs
+                        reflexMeanRtMs = reflex?.meanRtMs,
+                        variant = variant.ifEmpty { null },
+                        ratingBasis = ratingBasis
                     )
                 )
                 dismiss()
@@ -246,7 +312,8 @@ class ChessReadinessV3Overlay(
             target = target,
             puzzlesPassed = 0,
             survivalDurationMs = 0L,
-            reflex = reflex
+            reflex = reflex,
+            variant = variant.ifEmpty { null }
         )
         phase = Phase.RESULT
         render()

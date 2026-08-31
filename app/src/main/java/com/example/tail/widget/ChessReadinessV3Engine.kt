@@ -28,10 +28,12 @@ import kotlin.math.roundToInt
  *        TIMEOUT  — a global 5-minute cap auto-fails (calculation
  *                    sluggishness / cognitive drain).
  *
- *  Dynamic target:  target = round(survival_all_time_pb × 0.60)
- *  where the PB comes from the Chess.com `puzzle_rush.best.score` API
- *  sync or the manual override in Settings (the API cache can lag up to
- *  12 h). With no PB configured yet, [DEFAULT_PB] keeps the gate usable.
+ *  Dynamic target:  the user picks the chess type they are about to play
+ *  (bullet / blitz / rapid / chess960) and the target scales with their
+ *  CURRENT rating in that variant — see [targetFromRating]. The old
+ *  PB-based target ([targetScore], round(PB × 0.60)) remains the FALLBACK
+ *  when no rating is known, so pushing an untimed all-time survival high
+ *  no longer raises the bar for the timed gate.
  *
  *  Verdict mapping into the SHARED v1 traffic-light system (so Chess
  *  Guard enforcement, the color system and the Phase-2 audit pipeline
@@ -84,6 +86,38 @@ object ChessReadinessV3Engine {
     }
 
     // ── Step 2: puzzle rush survival gate ──────────────────────────────────
+
+    /**
+     * Rating-derived survival target: round((rating − 700) / 60), clamped
+     * to 8..28 puzzles inside the 5-minute cap. Examples: 812 → 8,
+     * 926 → 11, 1113 → 17, 1200 → 20, 1500+ → 28 (capped). A higher current
+     * rating means a harder pre-game gate — ~1 extra puzzle per 30 rating
+     * points above 600.
+     */
+    fun targetFromRating(rating: Int): Int {
+        if (rating <= 0) return targetScore(DEFAULT_PB)
+        return Math.round((rating - 600) / 30.0).toInt().coerceIn(8, 28)
+    }
+
+    /**
+     * Hard minimum: below this the run can NEVER pass, regardless of
+     * percentile history — 60% of the guaranteed target.
+     */
+    fun floorTarget(target: Int): Int =
+        kotlin.math.ceil(target * 0.60).toInt().coerceAtLeast(1)
+
+    /**
+     * The pass bar actually enforced during a run. The rating-derived
+     * [target] is the GUARANTEED-play number; but a run that lands below it
+     * can still pass when it matches the user's own experience — the 70th
+     * percentile of their past solved counts ([percentileTarget]) — as long
+     * as it clears the hard [floorTarget] minimum. With no percentile
+     * history the guaranteed target is the only bar.
+     */
+    fun effectivePassTarget(target: Int, pastPuzzlesPassed: List<Int>): Int {
+        val pct = percentileTarget(pastPuzzlesPassed) ?: return target
+        return maxOf(floorTarget(target), minOf(target, pct))
+    }
 
     /** Global survival session cap (ms) — exceeding it auto-fails. */
     const val SURVIVAL_CAP_MS = 5L * 60 * 1000

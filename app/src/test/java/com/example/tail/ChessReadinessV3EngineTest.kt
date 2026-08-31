@@ -75,6 +75,29 @@ class ChessReadinessV3EngineTest {
         assertEquals(ChessReadinessV3Engine.MIN_TARGET, ChessReadinessV3Engine.targetScore(1))
     }
 
+    @Test
+    fun `rating-based target scales steeply and is clamped`() {
+        assertEquals(8, ChessReadinessV3Engine.targetFromRating(812))    // floor
+        assertEquals(11, ChessReadinessV3Engine.targetFromRating(926))
+        assertEquals(17, ChessReadinessV3Engine.targetFromRating(1113))
+        assertEquals(20, ChessReadinessV3Engine.targetFromRating(1200))
+        assertEquals(28, ChessReadinessV3Engine.targetFromRating(1500))  // cap
+        assertEquals(28, ChessReadinessV3Engine.targetFromRating(2200))  // still cap
+    }
+
+    @Test
+    fun `effective pass target relaxes to personal percentile above the floor`() {
+        val past = List(10) { 14 } // p70 = 14
+        // Guaranteed 20, p70 14, floor ceil(20*0.6)=12 → pass at 14
+        assertEquals(14, ChessReadinessV3Engine.effectivePassTarget(20, past))
+        // Weak history (p70 = 6) can never drop below the floor
+        assertEquals(12, ChessReadinessV3Engine.effectivePassTarget(20, List(10) { 6 }))
+        // Strong history (p70 = 25) never exceeds the guaranteed target
+        assertEquals(20, ChessReadinessV3Engine.effectivePassTarget(20, List(10) { 25 }))
+        // No history → guaranteed target is the only bar
+        assertEquals(20, ChessReadinessV3Engine.effectivePassTarget(20, listOf(1, 2)))
+    }
+
     // ── Survival gate state machine ────────────────────────────────────────
 
     @Test

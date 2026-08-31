@@ -2520,8 +2520,12 @@ private fun ChessReadinessSettingsSection(
                     "v3 — reflex + survival gate: a 2-minute reflex test (PVT-B) " +
                     "followed by a Puzzle Rush Survival session — solve real " +
                     "puzzles in the chess app and tap PASS per solve; one strike " +
-                    "or the 5-minute cap fails the gate. The target is 60% of " +
-                    "your survival PB (Chess.com sync or manual entry below). " +
+                    "or the 5-minute cap fails the gate. The target scales with " +
+                    "your CURRENT rating in the chess type selected below " +
+                    "(PB is only the fallback when the rating is unknown). " +
+                    "Below the guaranteed target, a pass is still possible at " +
+                    "your own 70th-percentile history — but never under the " +
+                    "hard minimum. " +
                     "All versions share the same history, Chess Guard " +
                     "enforcement and game-audit rules.",
                 fontSize = 11.sp,
@@ -2566,14 +2570,23 @@ private fun ChessReadinessSettingsSection(
                     "fatigue ceiling, and REAL unforced-blunder counts from " +
                     "desktop Stockfish via the Tail bridge (needs the bridge " +
                     "URL + token below; away from the PC the blunder rule " +
-                    "simply stays inactive and everything else still works).",
+                    "simply stays inactive and everything else still works).\n" +
+                    "v4 — data-derived: v3's hybrid audit with every threshold " +
+                    "computed from your 6,500+ analyzed games (recency-" +
+                    "weighted): personal per-time-control fatigue bars, a " +
+                    "continuous loss-weight curve, your own circadian curve " +
+                    "and a data-derived rest prescription. The profile is " +
+                    "built on the PC (chess-coach build_v4_profile.py) and " +
+                    "served via the bridge; without it v4 falls back to " +
+                    "exact v3 behavior.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             listOf(
                 "v1" to "v1 — Adaptive ΔE / strain audit",
                 "v2" to "v2 — Tilt / fatigue / loss-chasing system",
-                "v3" to "v3 — Hybrid + desktop Stockfish blunders"
+                "v3" to "v3 — Hybrid + desktop Stockfish blunders",
+                "v4" to "v4 — Data-derived personal thresholds"
             ).forEach { (value, label) ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2588,7 +2601,8 @@ private fun ChessReadinessSettingsSection(
             }
 
             // v3 diagnostics — one tap verifies phone → bridge → Stockfish.
-            if (settings.chessPhase2Version == "v3") {
+            if (settings.chessPhase2Version == "v3" ||
+                settings.chessPhase2Version == "v4") {
                 val analysisTestStatus by viewModel.chessAnalysisTestStatus.collectAsState()
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(
@@ -2845,15 +2859,59 @@ private fun ChessReadinessSettingsSection(
                 )
             }
 
-            // Puzzle Rush Survival — all-time PB (v3 readiness target).
+            // Chess type whose current rating drives the v3 survival target.
+            if (settings.chessReadinessVersion == "v3") {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Chess type for the readiness gate", fontSize = 14.sp)
+                Text(
+                    "Pick the variant that best represents the chess you " +
+                        "play. Its CURRENT chess.com rating drives the " +
+                        "survival target — a higher rating means a harder " +
+                        "gate (roughly +1 puzzle per 30 rating points).",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                val ctx = LocalContext.current
+                var selVariant by remember {
+                    mutableStateOf(
+                        com.example.tail.widget.ChessReadinessV3Store
+                            .selectedVariant(ctx)
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("bullet", "blitz", "rapid", "chess960").forEach { v ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selVariant == v,
+                                onClick = {
+                                    selVariant = v
+                                    com.example.tail.widget.ChessReadinessV3Store
+                                        .saveSelectedVariant(ctx, v)
+                                }
+                            )
+                            Text(v, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            // Puzzle Rush Survival — all-time PB (v3 FALLBACK target).
             // Chess.com API sync + manual override (the API cache can lag
             // up to 12 h, so both paths exist).
             if (settings.chessReadinessVersion == "v3") {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("Puzzle Rush Survival — All-Time PB", fontSize = 14.sp)
                 Text(
-                    "The v3 survival gate asks you to solve round(PB × 0.60) " +
-                        "puzzles with zero strikes inside 5 minutes. Sync the PB " +
+                    "The v3 survival gate target scales with your CURRENT " +
+                        "rating in the chess type selected above. The " +
+                        "all-time PB below is only the FALLBACK target when a " +
+                        "variant rating is unknown — pushing your untimed PB " +
+                        "high no longer makes the gate harder. Sync the PB " +
                         "from Chess.com (puzzle_rush.best.score — its cache can " +
                         "lag up to 12 h) or enter it manually; a manual value " +
                         "overrides the sync until beaten.",

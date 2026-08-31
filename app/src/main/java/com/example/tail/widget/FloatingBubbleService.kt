@@ -158,6 +158,7 @@ class FloatingBubbleService : Service() {
     private var survivalRunning = false
     private var survivalSessionStartedAt = 0L
     private var survivalTarget = 0
+    private var survivalVariant: String? = null
     private var survivalPassed = 0
     private var survivalRunStartMs = 0L      // elapsedRealtime when ▶ was tapped
     private var survivalPuzzleStartMs = 0L
@@ -177,6 +178,13 @@ class FloatingBubbleService : Service() {
 
     /** 70th-percentile personal target (null until 8 past runs exist). */
     private var survivalPctTarget: Int? = null
+
+    /**
+     * The pass bar actually enforced: the rating-derived guaranteed target,
+     * relaxed to the user's own 70th-percentile history when that is lower
+     * (but never below the hard floor). 0 until the run starts.
+     */
+    private var survivalPassAt = 0
 
     /** Percentile win already secured this run (run continues regardless). */
     private var survivalPctWon = false
@@ -1008,6 +1016,7 @@ class FloatingBubbleService : Service() {
         val pending = ChessReadinessV3Store.loadPendingSurvival(this) ?: return
         survivalSessionStartedAt = pending.sessionStartedAt
         survivalTarget = pending.target
+        survivalVariant = pending.variant
         survivalReflex = ChessReadinessV3Engine.ReflexSummary(
             lapses = pending.reflexLapses,
             falseStarts = pending.reflexFalseStarts,
@@ -1022,6 +1031,7 @@ class FloatingBubbleService : Service() {
         val pending = ChessReadinessV3Store.loadPendingSurvival(this) ?: return
         survivalSessionStartedAt = pending.sessionStartedAt
         survivalTarget = pending.target
+        survivalVariant = pending.variant
         survivalReflex = ChessReadinessV3Engine.ReflexSummary(
             lapses = pending.reflexLapses,
             falseStarts = pending.reflexFalseStarts,
@@ -1125,7 +1135,9 @@ class FloatingBubbleService : Service() {
                 gravity = Gravity.CENTER
             })
             panel.addView(TextView(this).apply {
-                text = "Target: $survivalTarget puzzles · 0 strikes · 5:00 cap"
+                text = "Target: $survivalTarget puzzles" +
+                    (survivalVariant?.let { " ($it)" } ?: "") +
+                    " · 0 strikes · 5:00 cap"
                 setTextColor(Color.WHITE)
                 textSize = 11f
                 gravity = Gravity.CENTER
@@ -1256,9 +1268,9 @@ class FloatingBubbleService : Service() {
         survivalPuzzleStartMs = survivalRunStartMs
         survivalPassed = 0
         survivalPctWon = false
-        survivalPctTarget = ChessReadinessV3Engine.percentileTarget(
-            ChessReadinessV3Store.loadResults(this).map { it.puzzlesPassed }
-        )
+        val past = ChessReadinessV3Store.loadResults(this).map { it.puzzlesPassed }
+        survivalPctTarget = ChessReadinessV3Engine.percentileTarget(past)
+        survivalPassAt = ChessReadinessV3Engine.effectivePassTarget(survivalTarget, past)
         showSurvivalPanel(armed = false)
     }
 
@@ -1312,11 +1324,11 @@ class FloatingBubbleService : Service() {
         )
         val passed = survivalPassed
         survivalPassed = passed + 1
-        if (ChessReadinessV3Engine.onPass(passed, survivalTarget)) {
+        if (ChessReadinessV3Engine.onPass(passed, survivalPassAt)) {
             finishSurvivalRun(ChessReadinessV3Engine.Verdict.PASS)
         } else {
             // Percentile win: secured but NOT terminal — the run continues
-            // up to the absolute 60%-of-PB target.
+            // up to the absolute guaranteed target.
             if (!survivalPctWon &&
                 ChessReadinessV3Engine.percentileReached(survivalPassed, survivalPctTarget)
             ) {
@@ -1331,7 +1343,11 @@ class FloatingBubbleService : Service() {
                     Toast.LENGTH_SHORT
                 ).show()
             }
-            survivalCounterText?.text = "%02d / %d".format(survivalPassed + 1, survivalTarget)
+            survivalCounterText?.text = "%02d / %d".format(
+                survivalPassed + 1,
+                if (survivalPassAt in 1 until survivalTarget) survivalPassAt
+                else survivalTarget
+            )
             survivalPuzzleStartMs = now
         }
     }
@@ -1372,7 +1388,8 @@ class FloatingBubbleService : Service() {
             target = survivalTarget,
             puzzlesPassed = survivalPassed,
             survivalDurationMs = elapsed,
-            reflex = survivalReflex
+            reflex = survivalReflex,
+            variant = survivalVariant
         )
         // Verdict POPUP: tells the user the outcome and — unless the run put
         // them in RED (kicked out of chess entirely) — offers continuing the
@@ -1437,7 +1454,13 @@ class FloatingBubbleService : Service() {
 
             // ── Step 2: survival gate ───────────────────────────────────
             body("Step 2 · Survival gate", color = 0xFF66CCFF.toInt(), size = 13, bold = true)
-            keyValue("Puzzles passed", "$survivalPassed / $survivalTarget")
+            keyValue(
+                "Puzzles passed",
+                if (survivalPassAt in 1 until survivalTarget)
+                    "$survivalPassed — pass bar $survivalPassAt (your P70; guaranteed $survivalTarget)"
+                else
+                    "$survivalPassed / $survivalTarget"
+            )
             keyValue("Run time", formatSurvivalClock(elapsed) + " / 5:00 cap")
             if (survivalPctWon) keyValue("Percentile win", "P70 ✓ secured")
             spacer(6)
