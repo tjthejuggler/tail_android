@@ -540,16 +540,37 @@ fun GraphsPanel(
                                     )
                                     textEntriesForPoint.forEach { entry ->
                                         val rating = imdbRatingsForPoint[entry]
+                                        // Hide the trailing playback URI (spotify:track:…)
+                                        val shownEntry = com.example.tail.data.SpotifyPlaybackHelper
+                                            .displayText(entry)
                                         val displayText = if (rating != null) {
-                                            "\u2022 $entry  \u2B50 $rating"
+                                            "\u2022 $shownEntry  \u2B50 $rating"
                                         } else {
-                                            "\u2022 $entry"
+                                            "\u2022 $shownEntry"
                                         }
+                                        // Media-habit song entries (HH:mm Title — Artist …)
+                                        // are tappable: Spotify plays the song in the
+                                        // background via its MediaSession (notification-
+                                        // listener access — the same toggle as detection).
+                                        val isMediaSong = com.example.tail.data.SpotifyPlaybackHelper
+                                            .parseMediaEntry(entry) != null
+                                        val songContext = androidx.compose.ui.platform.LocalContext.current
                                         Text(
                                             text = displayText,
-                                            color = Color(0xFFCCEECC),
+                                            color = if (isMediaSong) Color(0xFFAAFFAA) else Color(0xFFCCEECC),
                                             fontSize = 11.sp,
-                                            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                            textDecoration = if (isMediaSong) TextDecoration.Underline else null,
+                                            modifier = Modifier
+                                                .padding(start = 4.dp, top = 2.dp)
+                                                .then(
+                                                    if (isMediaSong) Modifier.clickable(
+                                                        indication = null,
+                                                        interactionSource = remember { MutableInteractionSource() }
+                                                    ) {
+                                                        com.example.tail.data.SpotifyPlaybackHelper
+                                                            .playFromEntry(songContext, entry)
+                                                    } else Modifier
+                                                )
                                         )
                                     }
                                 }

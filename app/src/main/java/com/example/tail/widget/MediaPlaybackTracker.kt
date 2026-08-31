@@ -145,7 +145,7 @@ object MediaPlaybackTracker {
      * metadata can lag playback start by a tick or two, so the next poll
      * retries.
      */
-    private fun mediaMetaOf(md: MediaMetadata?, positionMs: Long?): MediaMeta? {
+    private fun mediaMetaOf(md: MediaMetadata?, positionMs: Long?, pkg: String? = null): MediaMeta? {
         if (md == null) return null
         val title = md.getString(MediaMetadata.METADATA_KEY_TITLE)?.trim()
         if (title.isNullOrEmpty()) return null
@@ -160,8 +160,23 @@ object MediaPlaybackTracker {
             ?.trim()?.takeIf { it.isNotEmpty() && it != title }
         val durationMin = md.getLong(MediaMetadata.METADATA_KEY_DURATION)
             .takeIf { it > 0 }?.let { Math.round(it / 60000.0).toInt() }
-        val mediaUri = md.getString(MediaMetadata.METADATA_KEY_MEDIA_URI)
+        var mediaUri = md.getString(MediaMetadata.METADATA_KEY_MEDIA_URI)
             ?.trim()?.takeIf { it.isNotEmpty() }
+        // Spotify's session rarely exposes MEDIA_URI, but its MEDIA_ID is
+        // usually the raw track-id hash — build the deep-link URI from it.
+        if (mediaUri == null && pkg == "com.spotify.music") {
+            val mediaId = md.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
+                ?.trim()?.takeIf { it.isNotEmpty() }
+            if (mediaId != null) {
+                when {
+                    // Full URI form (observed on current Spotify builds)
+                    mediaId.startsWith("spotify:track:") -> mediaUri = mediaId
+                    // Bare base62 track-id hash
+                    !mediaId.contains(':') && mediaId.length in 16..32 ->
+                        mediaUri = "spotify:track:$mediaId"
+                }
+            }
+        }
         // Some players expose the release year in the session — free data.
         val year = md.getString(MediaMetadata.METADATA_KEY_YEAR)
             ?.trim()?.take(4)?.toIntOrNull()
@@ -178,6 +193,12 @@ object MediaPlaybackTracker {
         mutex.withLock {
             val appContext = context.applicationContext
 
+            // Capture Spotify track ids via the metadatachanged broadcast so
+            // logged plays carry a spotify:track: URI (tap-to-play deep-link).
+            if (habitsByPackage.keys.any { it == "com.spotify.music" }) {
+                com.example.tail.data.SpotifyTrackIdCache.ensureRegistered(appContext)
+            }
+
             // Playing packages + item metadata from their media sessions.
             var playingPackages: Set<String> = emptySet()
             var metaByPackage: Map<String, MediaMeta> = emptyMap()
@@ -190,7 +211,7 @@ object MediaPlaybackTracker {
                 metaByPackage = playing
                     .filter { it.packageName in habitsByPackage }
                     .mapNotNull { c ->
-                        mediaMetaOf(c.metadata, c.playbackState?.position)
+                        mediaMetaOf(c.metadata, c.playbackState?.position, c.packageName)
                             ?.let { c.packageName to it }
                     }
                     .toMap()
@@ -386,7 +407,12 @@ object MediaPlaybackTracker {
                 append(meta.title)
                 meta.artist?.let { append(" — ").append(it) }
                 meta.durationMin?.let { append(" (").append(it).append(" min)") }
-                meta.mediaUri?.let { append(" — ").append(it) }
+                // Prefer the session's own media URI; Spotify's session rarely
+                // exposes one, so fall back to the broadcast-captured track id
+                // (title-matched) — this is what makes tap-to-play exact.
+                val trackUri = meta.mediaUri
+                    ?: com.example.tail.data.SpotifyTrackIdCache.matchingTrackUri(meta.title)
+                trackUri?.let { append(" — ").append(it) }
             }
             TextInputRepository().appendTextEntry(
                 Uri.parse(textUri), context, entry, habitName = habit

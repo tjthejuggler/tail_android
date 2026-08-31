@@ -3,6 +3,7 @@ package com.example.tail.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -435,20 +436,41 @@ private fun TimestampCard(
             }
         }
 
-        // ── Text preview (abbreviated, expandable) ──
+        // ── Text preview (abbreviated, expandable; songs tap-to-play) ──
         if (!isEditing && text.isNotBlank()) {
             Spacer(modifier = Modifier.height(2.dp))
+            // Media-habit song entries (HH:mm Title — Artist …) are tappable:
+            // Spotify plays the song in the background via its MediaSession
+            // (notification-listener access — the same toggle as detection).
+            val isMediaSong = com.example.tail.data.SpotifyPlaybackHelper
+                .parseMediaEntry(text) != null
+            val songContext = androidx.compose.ui.platform.LocalContext.current
             Text(
-                text = text,
+                // Hide the trailing playback URI (spotify:track:…) from the
+                // card — the full text stays intact for editing + playback.
+                text = if (isMediaSong)
+                    com.example.tail.data.SpotifyPlaybackHelper.displayText(text)
+                else text,
                 fontSize = 12.sp,
-                color = Color(0xFFBBBBCC),
+                color = if (isMediaSong) Color(0xFFAADDAA) else Color(0xFFBBBBCC),
                 fontStyle = FontStyle.Italic,
+                textDecoration = if (isMediaSong) TextDecoration.Underline else null,
                 maxLines = if (textExpanded) Int.MAX_VALUE else 2,
                 overflow = TextOverflow.Ellipsis,
                 onTextLayout = { result ->
                     if (!textExpanded) textOverflows = result.hasVisualOverflow
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (isMediaSong) Modifier.clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {
+                            com.example.tail.data.SpotifyPlaybackHelper
+                                .playFromEntry(songContext, text)
+                        } else Modifier
+                    )
             )
             if (textOverflows || textExpanded) {
                 Text(
