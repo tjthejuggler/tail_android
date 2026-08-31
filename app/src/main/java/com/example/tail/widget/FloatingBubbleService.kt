@@ -1060,7 +1060,13 @@ class FloatingBubbleService : Service() {
             survivalStopwatchText?.text = formatSurvivalStopwatch(now - survivalPuzzleStartMs)
             survivalTotalText?.text = formatSurvivalClock(total) + " / 5:00"
             if (ChessReadinessV3Engine.timedOut(total)) {
-                finishSurvivalRun(ChessReadinessV3Engine.Verdict.FAIL_TIMEOUT)
+                // Timeout ends the run, but a score already at/above the
+                // personal P70 bar still passes (never below the floor).
+                finishSurvivalRun(
+                    if (survivalPassAt > 0 && survivalPassed >= survivalPassAt)
+                        ChessReadinessV3Engine.Verdict.PASS
+                    else ChessReadinessV3Engine.Verdict.FAIL_TIMEOUT
+                )
             } else {
                 handler.postDelayed(this, 100)
             }
@@ -1324,7 +1330,9 @@ class FloatingBubbleService : Service() {
         )
         val passed = survivalPassed
         survivalPassed = passed + 1
-        if (ChessReadinessV3Engine.onPass(passed, survivalPassAt)) {
+        // The run ALWAYS continues to the guaranteed target — the P70 bar
+        // never ends it early, so the logged score reflects the true max.
+        if (ChessReadinessV3Engine.onPass(passed, survivalTarget)) {
             finishSurvivalRun(ChessReadinessV3Engine.Verdict.PASS)
         } else {
             // Percentile win: secured but NOT terminal — the run continues
@@ -1343,11 +1351,7 @@ class FloatingBubbleService : Service() {
                     Toast.LENGTH_SHORT
                 ).show()
             }
-            survivalCounterText?.text = "%02d / %d".format(
-                survivalPassed + 1,
-                if (survivalPassAt in 1 until survivalTarget) survivalPassAt
-                else survivalTarget
-            )
+            survivalCounterText?.text = "%02d / %d".format(survivalPassed + 1, survivalTarget)
             survivalPuzzleStartMs = now
         }
     }
@@ -1366,7 +1370,14 @@ class FloatingBubbleService : Service() {
                 verdict = ChessReadinessV3Engine.Verdict.FAIL_STRIKE.name
             )
         )
-        finishSurvivalRun(ChessReadinessV3Engine.Verdict.FAIL_STRIKE)
+        // A strike ends the run, but a score already at/above the personal
+        // P70 bar (which is never below the hard floor) still passes —
+        // e.g. failing puzzle 20 of 20 with 19 solved and P70 = 19.
+        finishSurvivalRun(
+            if (survivalPassAt > 0 && survivalPassed >= survivalPassAt)
+                ChessReadinessV3Engine.Verdict.PASS
+            else ChessReadinessV3Engine.Verdict.FAIL_STRIKE
+        )
     }
 
     private fun finishSurvivalRun(verdict: ChessReadinessV3Engine.Verdict) {
