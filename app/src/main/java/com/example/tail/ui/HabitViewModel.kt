@@ -756,6 +756,12 @@ class HabitViewModel(
     // Keyed by (screen index, selected date) so switching between screens on the same date is instant.
     internal val screenHabitCache = mutableMapOf<Pair<Int, LocalDate>, List<Habit>>()
 
+    // Guards background warming of screenHabitCache: identifies the
+    // (cachedPhoneDb identity, selected date) pair the other screens' lists
+    // were last warmed for, so warmScreenCaches() does redundant work at most
+    // once per data change instead of on every rebuild.
+    internal var screenWarmKey: Pair<Any, LocalDate>? = null
+
     /** Serializes [rebuildHabitList] runs. Rebuilds are launched from many
      *  asynchronous triggers (screen switches, HabitIncrementBus events,
      *  Garmin/Chess/GitHub syncs, …) and each one publishes the whole habit

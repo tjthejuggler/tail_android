@@ -520,7 +520,51 @@ internal suspend fun HabitViewModel.rebuildHabitList() = rebuildMutex.withLock {
             LauncherIconTierManager.applyDailyTier(context, habitPointsTier(freshMetrics.todayPoints))
         }
         screenHabitCache[Pair(screenIndex, targetDate)] = newList
+        warmScreenCaches()
         return@withLock
+    }
+}
+
+/**
+ * Pre-builds the habit lists for ALL screens (not just the active one) in the
+ * background and stores them in [screenHabitCache], so pressing a screen tab
+ * swaps the squares instantly instead of waiting for a full rebuild.
+ *
+ * Guarded by [screenWarmKey]: at most one warming pass per (DB snapshot,
+ * selected date) — increments replace cachedPhoneDb, which naturally
+ * invalidates the key and lets the next rebuild re-warm the other screens.
+ * Stale results are never stored: if the DB or date changed while building,
+ * the pass aborts and clears the key so it retries.
+ */
+internal fun HabitViewModel.warmScreenCaches() {
+    val screens = _habitScreens.value
+    if (screens.size < 2) return
+    val dbSnapshot = cachedPhoneDb
+    val targetDate = _selectedDate.value
+    val key = Pair(dbSnapshot as Any, targetDate)
+    if (screenWarmKey == key) return
+    screenWarmKey = key
+    viewModelScope.launch(Dispatchers.Default) {
+        for ((idx, screen) in screens.withIndex()) {
+            if (idx == _activeScreenIndex.value) continue
+            if (screen.habitNames.isEmpty()) {
+                screenHabitCache[Pair(idx, targetDate)] = emptyList()
+                continue
+            }
+            val settingsWithOrder = _settings.value.copy(habitOrder = screen.habitNames)
+            val list = habitsRepo.buildHabitList(
+                db = dbSnapshot,
+                settings = settingsWithOrder,
+                targetDate = targetDate
+            )
+            // Never store results computed from a snapshot that has been
+            // superseded — that would poison the cache with stale squares.
+            if (dbSnapshot !== cachedPhoneDb || targetDate != _selectedDate.value) {
+                screenWarmKey = null
+                return@launch
+            }
+            screenHabitCache[Pair(idx, targetDate)] = list
+        }
     }
 }
 

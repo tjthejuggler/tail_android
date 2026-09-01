@@ -129,6 +129,8 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.painterResource
@@ -355,6 +357,19 @@ fun HabitGridScreen(
     val movePendingSourceIndex by viewModel.movePendingSourceIndex.collectAsState()
     val habitScreens by viewModel.habitScreens.collectAsState()
     val activeScreenIndex by viewModel.activeScreenIndex.collectAsState()
+
+    // Screen-switch feedback: a brief haptic tick so the tab press feels
+    // acknowledged. The habit squares themselves swap instantly (all screens'
+    // lists are pre-warmed in the ViewModel's screenHabitCache).
+    val hapticFeedback = LocalHapticFeedback.current
+    var screenSwitchInitialized by remember { mutableStateOf(false) }
+    LaunchedEffect(activeScreenIndex) {
+        if (!screenSwitchInitialized) {
+            screenSwitchInitialized = true
+        } else {
+            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
 
     // ── Edit-mode drag-to-reorder ──────────────────────────────────────────────
     // Long-pressing a habit cell in edit mode lifts it into a drag: the grid
