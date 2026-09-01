@@ -411,9 +411,9 @@ class FloatingBubbleService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // Start at the right edge, vertically centered
+            // Always open in the top-right corner
             x = Resources.getSystem().displayMetrics.widthPixels - bubbleSize - 16.dp(resources)
-            y = Resources.getSystem().displayMetrics.heightPixels / 3
+            y = 48.dp(resources) // below the status bar
         }
 
         // Border ring around the bubble (turns green while the timer runs)
