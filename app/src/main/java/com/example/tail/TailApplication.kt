@@ -27,5 +27,9 @@ class TailApplication : Application() {
         } catch (t: Throwable) {
             Log.e("QC_DIAG", "│ INIT │ QcDiag attach failed — file logging disabled", t)
         }
+        // Attach the app context to the increment bus so every habit
+        // increment — even with no UI alive — refreshes the launcher
+        // icon's daily-points tier colour.
+        com.example.tail.ui.HabitIncrementBus.install(this)
     }
 }

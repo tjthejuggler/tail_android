@@ -106,6 +106,7 @@ import com.example.tail.data.SearchStateStore
 import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.bridgeConnectionFrom
 import com.example.tail.data.TextInputRepository
+import com.example.tail.data.LauncherIconTierManager
 import com.example.tail.data.applyDivider
 import com.example.tail.widget.ChessDeferredGameReconciler
 import com.example.tail.widget.ChessReadinessLogStore
@@ -514,6 +515,9 @@ internal suspend fun HabitViewModel.rebuildHabitList() = rebuildMutex.withLock {
         // poisons the cold-start cache.
         if (targetDate == LocalDate.now()) {
             cacheLoadingMetrics(freshMetrics, targetDate)
+            // Mirror today's daily-points tier onto the launcher icon's
+            // background colour (no-op unless the tier changed).
+            LauncherIconTierManager.applyDailyTier(context, habitPointsTier(freshMetrics.todayPoints))
         }
         screenHabitCache[Pair(screenIndex, targetDate)] = newList
         return@withLock

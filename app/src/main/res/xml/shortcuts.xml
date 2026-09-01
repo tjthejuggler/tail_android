@@ -25,7 +25,6 @@
             android:action="com.example.tail.ACTION_MEDIA_CAPTURE"
             android:targetPackage="com.example.tail"
             android:targetClass="com.example.tail.MediaCaptureActivity" />
-        <categories android:name="android.shortcut.conversation" />
     </shortcut>
 
 -------
@@ -45,7 +44,7 @@
             android:action="com.example.tail.widget.LAUNCH_BUBBLE"
             android:targetPackage="com.example.tail"
             android:targetClass="com.example.tail.widget.FloatingBubbleActivity" />
-        <categories android:name="android.shortcut.conversation" />
     </shortcut>
+
 
 </shortcuts>

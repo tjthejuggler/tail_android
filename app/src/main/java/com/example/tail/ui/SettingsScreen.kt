@@ -390,6 +390,8 @@ fun SettingsScreen(
                     SettingsSubSectionDivider()
                     FloatingBubbleSettingsSection(context = context)
                     SettingsSubSectionDivider()
+                    TierBarWidgetSettingsSection(context = context)
+                    SettingsSubSectionDivider()
                     DebugModeCard(
                         debugModeEnabled = debugSnapshot.debugModeEnabled,
                         debugFileDirUri = debugSnapshot.debugFileDirUri,
@@ -2439,6 +2441,46 @@ private fun FloatingBubbleSettingsSection(context: Context) {
  * "Chess Readiness" option that launches the Phase 1 Pre-Session Diagnostic
  * (CCRS 0–100 → Green / Yellow / Red authorization).
  */
+@Composable
+private fun TierBarWidgetSettingsSection(context: Context) {
+    var config by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(
+            com.example.tail.widget.TierBarWidgetConfig.load(context)
+        )
+    }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    Column {
+        Text("🎨 Tier Bar Widget", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            "Full-width home-screen widget whose background is the daily points " +
+                "tier colour, with quick-launch buttons for app tabs. Toggle which " +
+                "buttons appear (changes apply to placed widgets immediately).",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        com.example.tail.widget.TierBarWidgetProvider.BUTTONS.forEach { spec ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("${spec.glyph}  ${spec.label}", fontSize = 14.sp)
+                Spacer(modifier = Modifier.weight(1f))
+                Switch(
+                    checked = config[spec.key] == true,
+                    onCheckedChange = { enabled ->
+                        com.example.tail.widget.TierBarWidgetConfig.setEnabled(context, spec.key, enabled)
+                        config = com.example.tail.widget.TierBarWidgetConfig.load(context)
+                        scope.launch {
+                            com.example.tail.widget.TierBarWidgetProvider.refreshAll(context)
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ChessReadinessSettingsSection(
     viewModel: HabitViewModel,

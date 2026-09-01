@@ -86,15 +86,264 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:theme="@style/Theme.Tail"
             android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-
             <meta-data
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- Tier-coloured launcher icons: 13 activity-aliases, one per daily-points
+             tier colour (habitPointsTier(): 0=red ... 12=white/yellow).
+             LauncherIconTierManager enables exactly the alias matching
+             today's tier, so the home-screen icon background mirrors the
+             daily habit points colour. Tier 0 ships enabled as default;
+             MainActivity keeps no MAIN/LAUNCHER filter of its own. -->
+        <activity-alias
+            android:name=".LauncherAliasTier0"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier0"
+            android:roundIcon="@mipmap/ic_launcher_tier0_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier1"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier1"
+            android:roundIcon="@mipmap/ic_launcher_tier1_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier2"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier2"
+            android:roundIcon="@mipmap/ic_launcher_tier2_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier3"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier3"
+            android:roundIcon="@mipmap/ic_launcher_tier3_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier4"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier4"
+            android:roundIcon="@mipmap/ic_launcher_tier4_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier5"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier5"
+            android:roundIcon="@mipmap/ic_launcher_tier5_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier6"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier6"
+            android:roundIcon="@mipmap/ic_launcher_tier6_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier7"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier7"
+            android:roundIcon="@mipmap/ic_launcher_tier7_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier8"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier8"
+            android:roundIcon="@mipmap/ic_launcher_tier8_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier9"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier9"
+            android:roundIcon="@mipmap/ic_launcher_tier9_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier10"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier10"
+            android:roundIcon="@mipmap/ic_launcher_tier10_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier11"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier11"
+            android:roundIcon="@mipmap/ic_launcher_tier11_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherAliasTier12"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_tier12"
+            android:roundIcon="@mipmap/ic_launcher_tier12_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Shortcuts must also live on the alias: launchers query
+                 them from the LAUNCHABLE component, which is the
+                 enabled tier alias, not MainActivity itself. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity-alias>
 
 -------
         <!--
@@ -320,6 +569,25 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_info" />
+        </receiver>
+
+        <!--
+            Full-width Tier Bar Widget: a home-screen strip whose background
+            is the current daily-points tier colour, with the live point total
+            and configurable quick-launch buttons for app tabs (configured in
+            Settings → Tier Bar Widget). Refreshed from HabitIncrementBus on
+            every habit increment; the 30-min OS tick is a rollover fallback.
+        -->
+        <receiver
+            android:name=".widget.TierBarWidgetProvider"
+            android:exported="true"
+            android:label="Tail tier bar">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_tier_bar_info" />
         </receiver>
 
         <!--

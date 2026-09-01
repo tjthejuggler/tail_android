@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Launcher-icon background colours for the 13 daily-points tiers
+    (see habitPointsTier() in HabitLoadingSpinner.kt).
+
+    Tiers 0–6 use the tier's own vivid accent colour (Border* palette in
+    HabitColors.kt). Tiers 7–12 are the white+colour combo tiers whose body
+    colour is a near-white glass tint — a near-white background would make
+    the white tail glyph invisible, so those tiers use the combo's vivid
+    accent hue instead (tierComboAccent()), keeping the glyph readable while
+    still signalling the tier's colour.
+-->
+<resources>
+    <color name="ic_launcher_tier0">#FFCC3333</color>  <!-- red -->
+    <color name="ic_launcher_tier1">#FFE07020</color>  <!-- orange -->
+    <color name="ic_launcher_tier2">#FF33AA55</color>  <!-- green -->
+    <color name="ic_launcher_tier3">#FF3366DD</color>  <!-- blue -->
+    <color name="ic_launcher_tier4">#FFDD44AA</color>  <!-- pink -->
+    <color name="ic_launcher_tier5">#FFDDCC00</color>  <!-- yellow -->
+    <color name="ic_launcher_tier6">#FFD0D0E0</color>  <!-- glass/white -->
+    <color name="ic_launcher_tier7">#FFCC3333</color>  <!-- white/red combo -->
+    <color name="ic_launcher_tier8">#FFE07020</color>  <!-- white/orange combo -->
+    <color name="ic_launcher_tier9">#FF33AA55</color>  <!-- white/green combo -->
+    <color name="ic_launcher_tier10">#FF3366DD</color> <!-- white/blue combo -->
+    <color name="ic_launcher_tier11">#FFDD44AA</color> <!-- white/pink combo -->
+    <color name="ic_launcher_tier12">#FFDDCC00</color> <!-- white/yellow combo -->
+</resources>

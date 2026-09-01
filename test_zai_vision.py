@@ -15,7 +15,8 @@ import urllib.request
 import urllib.error
 
 # ── Configuration ────────────────────────────────────────────────────
-API_KEY = "41b28a65f2e74e4aa09b3cae62101d0f.Mi8KZUuATcfaxKkD"
+import os
+API_KEY = os.environ["ZAI_API_KEY"]  # NEVER hardcode — this key was leaked on GitHub and must be rotated
 BASE_URL = "https://api.z.ai/api/coding/paas/v4"
 MODEL = "glm-4.6v"
 IMAGE_PATH = "app/src/main/assets/banana.jpeg"

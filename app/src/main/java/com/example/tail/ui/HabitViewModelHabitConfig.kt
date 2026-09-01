@@ -1360,48 +1360,12 @@ fun HabitViewModel.setValueDisplayLabel(habitName: String, valueKey: String, lab
  * Computes the effective points for [habitName] on the given [dateStr],
  * applying the secondary-value fallback when enabled.
  */
-internal fun HabitViewModel.effectivePointsForDate(habitName: String, rawCount: Int, dateStr: String): Int {
-    val divider = _settings.value.habitDividers[habitName] ?: 1
-    // Minutes-primary habits: minutes (the first-class minutes slot) drive
-    // points (divider applies), sessions are the zero-minutes fallback.
-    // Inverted-binary habits: 1 point on not-done days, 0 on done days —
-    // but never before the habit's first recorded entry (no retroactive
-    // points for dates that predate the habit or any data on it).
-    if (habitName in _settings.value.invertedBinaryHabits) {
-        val firstDataDate = cachedPhoneDb[habitName]
-            ?.filterValues { it != 0 }?.keys?.minOrNull()
-        if (firstDataDate == null || dateStr < firstDataDate) return 0
-        return com.example.tail.data.invertedBinaryPoints(rawCount)
-    }
-    if (habitName in _settings.value.widgetTimerMinutesPrimary) {
-        val minutes = cachedPhoneDb[minutesKey(habitName)]?.get(dateStr) ?: 0
-        // Minutes-primary: which value covers points on 0-minute days is
-        // configurable — sessions (the default), the second value, or none.
-        return when (
-            _settings.value.minutesPrimaryFallbacks[habitName]
-                ?: com.example.tail.data.MINUTES_PRIMARY_FALLBACK_SESSIONS
-        ) {
-            com.example.tail.data.MINUTES_PRIMARY_FALLBACK_NONE ->
-                applyDivider(minutes, divider)
-            com.example.tail.data.MINUTES_PRIMARY_FALLBACK_VALUE2 -> {
-                val v2 = cachedPhoneDb[secondaryValueKey(habitName)]?.get(dateStr) ?: 0
-                com.example.tail.data.effectivePointsWithFallback(minutes, divider, v2, true)
-            }
-            else -> com.example.tail.data.effectivePointsWithFallback(minutes, divider, rawCount, true)
-        }
-    }
-    val useFallback = habitName in _settings.value.secondaryValueFallbackHabits
-    if (!useFallback) return applyDivider(rawCount, divider)
-    // Fallback source: the legacy generic secondary slot when the habit
-    // uses it or has data there (Meditations/Apnea/Resonance sessions,
-    // chess.com games, JugCoach seconds), otherwise the first-class
-    // minutes slot.
-    val fallbackKey = com.example.tail.data.fallbackSlotKey(
-        habitName, _settings.value.secondaryValueHabits, cachedPhoneDb
+internal fun HabitViewModel.effectivePointsForDate(habitName: String, rawCount: Int, dateStr: String): Int =
+    // Delegates to the shared pure calculator so every consumer (in-app
+    // spinner, launcher-icon tier switcher) computes identical numbers.
+    com.example.tail.data.DailyPointsCalculator.effectivePointsForDate(
+        habitName, rawCount, dateStr, cachedPhoneDb, _settings.value
     )
-    val secVal = cachedPhoneDb[fallbackKey]?.get(dateStr) ?: 0
-    return com.example.tail.data.effectivePointsWithFallback(rawCount, divider, secVal, true)
-}
 
 /**
  * Points earned by ONE schedule instance of [habitName] with [amount]

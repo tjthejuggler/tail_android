@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AppWidgetProvider metadata for the full-width tier bar widget.
+    4 cells wide / 1 cell tall, horizontally resizable, home-screen only.
+    The 30-minute OS tick is just a fallback for date rollover — real
+    updates are pushed from TierBarWidgetProvider.refreshAll() on every
+    habit increment (see HabitIncrementBus).
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialLayout="@layout/widget_tier_bar"
+    android:minWidth="320dp"
+    android:minHeight="48dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="48dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="1"
+    android:resizeMode="horizontal"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen"
+    android:previewImage="@mipmap/ic_launcher" />
