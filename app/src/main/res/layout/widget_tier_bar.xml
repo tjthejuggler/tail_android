@@ -1,107 +1,109 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Full-width tier bar widget: the whole strip's background is the current
-    daily-points tier colour; the left segment shows the point total and the
-    right side holds configurable quick-launch buttons for app tabs.
-    Visibility of each button is driven from Settings (TierBarWidgetConfig).
+    Full-width tier bar widget: background is a runtime-composited bitmap
+    (sky + surroundings + lizard, rounded corners) sized to the widget's
+    actual aspect. A top bar holds the notification-count circle and the
+    quick-launch icon circles (runtime bitmaps). The body is divided into
+    invisible horizontal touch zones (one per selected habit screen).
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/tier_bar_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="horizontal"
-    android:gravity="center_vertical"
-    android:paddingStart="12dp"
-    android:paddingEnd="8dp"
-    android:background="#FF33AA55">
+    android:background="@drawable/widget_tier_bar_bg">
 
-    <TextView
-        android:id="@+id/tier_bar_points"
+    <ImageView
+        android:id="@+id/tier_bar_bg"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:contentDescription="Tail tier background" />
+
+    <!-- Invisible horizontal touch zones: zone i opens the i-th selected
+         habit grid screen. Filled by the provider; unused zones GONE. -->
+    <LinearLayout
+        android:id="@+id/tier_bar_zones"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal">
+
+        <TextView android:id="@+id/tier_bar_zone_0" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1"
+            android:clickable="true" android:focusable="true" />
+        <TextView android:id="@+id/tier_bar_zone_1" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1"
+            android:clickable="true" android:focusable="true" />
+        <TextView android:id="@+id/tier_bar_zone_2" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1"
+            android:clickable="true" android:focusable="true" />
+        <TextView android:id="@+id/tier_bar_zone_3" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1"
+            android:clickable="true" android:focusable="true" />
+        <TextView android:id="@+id/tier_bar_zone_4" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1"
+            android:clickable="true" android:focusable="true" />
+        <TextView android:id="@+id/tier_bar_zone_5" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1"
+            android:clickable="true" android:focusable="true" />
+        <TextView android:id="@+id/tier_bar_zone_6" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1"
+            android:clickable="true" android:focusable="true" />
+        <TextView android:id="@+id/tier_bar_zone_7" android:layout_width="0dp"
+            android:layout_height="match_parent" android:layout_weight="1"
+            android:clickable="true" android:focusable="true" />
+    </LinearLayout>
+
+    <!-- Top bar: notification badge + quick-launch icon circles. All icons
+         are runtime bitmaps (fill = daily tier colour, border = weekly,
+         glyph = monthly). -->
+    <LinearLayout
+        android:id="@+id/tier_bar_top_bar"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Tail · 0 pts"
-        android:textStyle="bold"
-        android:textSize="14sp"
-        android:textColor="#FFFFFFFF"
-        android:maxLines="1" />
+        android:layout_gravity="top|start"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="3dp">
 
-    <!-- RemoteViews does not allow android.view.Space — an empty weighted
-         TextView is the sanctioned spacer. -->
-    <TextView
-        android:layout_width="0dp"
-        android:layout_height="1dp"
-        android:layout_weight="1"
-        android:text=""
-        android:maxLines="1" />
+        <ImageView
+            android:id="@+id/tier_bar_notif"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="Pending habit notifications" />
 
-    <TextView
-        android:id="@+id/tier_bar_btn_grid"
-        android:layout_width="wrap_content"
-        android:layout_height="match_parent"
-        android:gravity="center"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:text="▦"
-        android:textSize="16sp"
-        android:textColor="#FFFFFFFF"
-        android:clickable="true"
-        android:focusable="true"
- />
+        <ImageView
+            android:id="@+id/tier_bar_btn_grid"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="Habits grid" />
 
-    <TextView
-        android:id="@+id/tier_bar_btn_map"
-        android:layout_width="wrap_content"
-        android:layout_height="match_parent"
-        android:gravity="center"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:text="🗺"
-        android:textSize="16sp"
-        android:textColor="#FFFFFFFF"
-        android:clickable="true"
-        android:focusable="true"
- />
+        <ImageView
+            android:id="@+id/tier_bar_btn_map"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="Map" />
 
-    <TextView
-        android:id="@+id/tier_bar_btn_app_stats"
-        android:layout_width="wrap_content"
-        android:layout_height="match_parent"
-        android:gravity="center"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:text="📊"
-        android:textSize="16sp"
-        android:textColor="#FFFFFFFF"
-        android:clickable="true"
-        android:focusable="true"
- />
+        <ImageView
+            android:id="@+id/tier_bar_btn_app_stats"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="App stats" />
 
-    <TextView
-        android:id="@+id/tier_bar_btn_chess_stats"
-        android:layout_width="wrap_content"
-        android:layout_height="match_parent"
-        android:gravity="center"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:text="♟"
-        android:textSize="16sp"
-        android:textColor="#FFFFFFFF"
-        android:clickable="true"
-        android:focusable="true"
- />
+        <ImageView
+            android:id="@+id/tier_bar_btn_chess_stats"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="Chess readiness stats" />
 
-    <TextView
-        android:id="@+id/tier_bar_btn_settings"
-        android:layout_width="wrap_content"
-        android:layout_height="match_parent"
-        android:gravity="center"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:text="⚙"
-        android:textSize="16sp"
-        android:textColor="#FFFFFFFF"
-        android:clickable="true"
-        android:focusable="true"
- />
-
-</LinearLayout>
+        <ImageView
+            android:id="@+id/tier_bar_btn_settings"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="Settings" />
+    </LinearLayout>
+</FrameLayout>

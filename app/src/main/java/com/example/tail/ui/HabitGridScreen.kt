@@ -531,6 +531,27 @@ fun HabitGridScreen(
     // In-app notification center dialog state
     var showNotificationsDialog by remember { mutableStateOf(false) }
 
+    // Deep links from the tier-bar widget: open the habit grid straight
+    // into the notifications popup, and/or switch to a touch-zone's tab.
+    // The hand-off object is Compose state, so this reacts both on cold
+    // launch and while the activity is already alive; the screen switch is
+    // deferred until the screens are loaded so the ViewModel's async
+    // settings sync can't overwrite it.
+    val deepLink = com.example.tail.MainActivity.NotificationsDeepLink
+    androidx.compose.runtime.LaunchedEffect(deepLink.open) {
+        if (deepLink.open) {
+            deepLink.open = false
+            showNotificationsDialog = true
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(deepLink.screenIndex, habitScreens) {
+        val idx = deepLink.screenIndex
+        if (idx in habitScreens.indices) {
+            deepLink.screenIndex = -1
+            viewModel.switchScreen(idx)
+        }
+    }
+
     // Location edit dialog state
     var showLocationEditDialog by remember { mutableStateOf(false) }
 

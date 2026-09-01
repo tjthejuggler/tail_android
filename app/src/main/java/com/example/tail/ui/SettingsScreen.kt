@@ -390,7 +390,10 @@ fun SettingsScreen(
                     SettingsSubSectionDivider()
                     FloatingBubbleSettingsSection(context = context)
                     SettingsSubSectionDivider()
-                    TierBarWidgetSettingsSection(context = context)
+                    TierBarWidgetSettingsSection(
+                        context = context,
+                        habitScreens = settings.habitScreens
+                    )
                     SettingsSubSectionDivider()
                     DebugModeCard(
                         debugModeEnabled = debugSnapshot.debugModeEnabled,
@@ -2442,10 +2445,18 @@ private fun FloatingBubbleSettingsSection(context: Context) {
  * (CCRS 0–100 → Green / Yellow / Red authorization).
  */
 @Composable
-private fun TierBarWidgetSettingsSection(context: Context) {
+private fun TierBarWidgetSettingsSection(
+    context: Context,
+    habitScreens: List<com.example.tail.data.HabitScreen>
+) {
     var config by androidx.compose.runtime.remember {
         androidx.compose.runtime.mutableStateOf(
             com.example.tail.widget.TierBarWidgetConfig.load(context)
+        )
+    }
+    var touchScreens by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(
+            com.example.tail.widget.TierBarWidgetConfig.loadScreens(context)
         )
     }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -2476,6 +2487,42 @@ private fun TierBarWidgetSettingsSection(context: Context) {
                         }
                     }
                 )
+            }
+        }
+
+        if (habitScreens.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("👆 Widget touch zones", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(
+                "Select which habit screens the widget opens: it is divided " +
+                    "into invisible horizontal zones (left → right in tab " +
+                    "order). With none selected, tapping opens the grid as-is.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            habitScreens.forEachIndexed { idx, screen ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("${idx + 1}. ${screen.name}", fontSize = 14.sp)
+                    Spacer(modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = idx in touchScreens,
+                        onCheckedChange = { enabled ->
+                            touchScreens =
+                                if (enabled) (touchScreens + idx).sorted()
+                                else touchScreens - idx
+                            com.example.tail.widget.TierBarWidgetConfig
+                                .setScreens(context, touchScreens)
+                            scope.launch {
+                                com.example.tail.widget.TierBarWidgetProvider
+                                    .refreshAll(context)
+                            }
+                        }
+                    )
+                }
             }
         }
     }

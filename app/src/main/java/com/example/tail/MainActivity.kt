@@ -62,6 +62,29 @@ class MainActivity : ComponentActivity() {
 
         /** Quick Capture History — deep-linked from the review notification. */
         const val ROUTE_QUICK_CAPTURE_HISTORY = "quick_capture_history"
+
+        /** Intent extra: open the habit grid's notification popup on launch
+         *  (deep link from the tier-bar widget's notification badge). */
+        const val EXTRA_OPEN_NOTIFICATIONS = "open_notifications"
+
+        /** Intent extra: habit screen (grid tab) index to open on launch
+         *  (deep link from the tier-bar widget's touch zones). */
+        const val EXTRA_OPEN_SCREEN_INDEX = "open_screen_index"
+    }
+
+    /** One-shot hand-off: set by the deep-link handler, consumed by
+     *  HabitGridScreen to auto-open the in-app notification dialog and/or
+     *  switch to the deep-linked habit screen tab. Compose state so the
+     *  grid reacts even when the activity is already alive (onNewIntent). */
+    object NotificationsDeepLink {
+        private val _open = androidx.compose.runtime.mutableStateOf(false)
+        private val _screenIndex = androidx.compose.runtime.mutableIntStateOf(-1)
+        var open: Boolean
+            get() = _open.value
+            set(value) { _open.value = value }
+        var screenIndex: Int
+            get() = _screenIndex.intValue
+            set(value) { _screenIndex.intValue = value }
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -188,9 +211,17 @@ private fun TailApp(
     val activity = context as? androidx.activity.ComponentActivity
     if (activity != null) {
         androidx.compose.runtime.LaunchedEffect(activity) {
-            activity.intent?.getStringExtra(MainActivity.EXTRA_OPEN_ROUTE)?.let { route ->
-                if (navController.currentDestination?.route != route) {
-                    navController.navigate(route)
+            activity.intent?.let { intent ->
+                intent.getStringExtra(MainActivity.EXTRA_OPEN_ROUTE)?.let { route ->
+                    if (navController.currentDestination?.route != route) {
+                        navController.navigate(route)
+                    }
+                }
+                if (intent.getBooleanExtra(MainActivity.EXTRA_OPEN_NOTIFICATIONS, false)) {
+                    MainActivity.NotificationsDeepLink.open = true
+                }
+                intent.getIntExtra(MainActivity.EXTRA_OPEN_SCREEN_INDEX, -1).let { idx ->
+                    if (idx >= 0) MainActivity.NotificationsDeepLink.screenIndex = idx
                 }
             }
         }
@@ -200,6 +231,12 @@ private fun TailApp(
                     if (navController.currentDestination?.route != route) {
                         navController.navigate(route)
                     }
+                }
+                if (intent.getBooleanExtra(MainActivity.EXTRA_OPEN_NOTIFICATIONS, false)) {
+                    MainActivity.NotificationsDeepLink.open = true
+                }
+                intent.getIntExtra(MainActivity.EXTRA_OPEN_SCREEN_INDEX, -1).let { idx ->
+                    if (idx >= 0) MainActivity.NotificationsDeepLink.screenIndex = idx
                 }
             }
             activity.addOnNewIntentListener(listener)

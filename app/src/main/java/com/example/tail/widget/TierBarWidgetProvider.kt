@@ -5,36 +5,53 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Shader
 import android.net.Uri
 import android.widget.RemoteViews
 import com.example.tail.MainActivity
 import com.example.tail.R
-import com.example.tail.data.DailyPointsCalculator
 import com.example.tail.data.HabitsLoadResult
 import com.example.tail.data.HabitsRepository
+import com.example.tail.data.NotificationStore
 import com.example.tail.data.SettingsRepository
-import com.example.tail.data.dateString
+import com.example.tail.data.computeTaskerStats
 import com.example.tail.ui.habitPointsTier
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import kotlin.math.roundToInt
 
 /**
  * ═══════════════════════════════════════════════════════════════════════
- *  FULL-WIDTH TIER BAR WIDGET
+ * FULL-WIDTH TIER BAR WIDGET
  * ═══════════════════════════════════════════════════════════════════════
  *
- * A home-screen strip whose entire background is the current daily-points
- * tier colour (same palette as the tier launcher icons), with the live
- * point total on the left and configurable quick-launch buttons for app
- * tabs on the right. Which buttons appear is configured in the app's
- * Settings screen via [TierBarWidgetConfig].
+ * A home-screen strip that encodes the three headline habit metrics:
+ *
+ *  · TODAY's points      → the metallic mecha-lizard artwork variant
+ *                          (tier_bar_lizard_t0…t12; tiers 0–5 are single
+ *                          glow colours, 6–12 are white+colour combos).
+ *  · WEEKLY avg (7-day)  → the background gradient colour.
+ *  · MONTHLY avg (30-day)→ the rounded border stroke colour.
+ *
+ * The background bitmap is composited at runtime (gradient + SCREEN-blended
+ * lizard + rounded corners + border) and pushed via setImageViewBitmap.
+ * Quick-launch buttons for app tabs sit on top; their visibility is
+ * configured in Settings via [TierBarWidgetConfig]. Tapping anywhere else
+ * opens the app.
  *
  * Updates are pushed from [refreshAll], which the HabitIncrementBus calls
- * (debounced) after every habit increment from any path, so the colour and
- * point total track the day in real time. The 30-minute OS tick is only a
- * date-rollover fallback.
+ * (debounced) after every habit increment from any path. The 30-minute OS
+ * tick is only a date-rollover fallback.
  */
 class TierBarWidgetProvider : AppWidgetProvider() {
 
@@ -44,9 +61,9 @@ class TierBarWidgetProvider : AppWidgetProvider() {
 
         val BUTTONS = listOf(
             ButtonSpec("grid", null, "▦", "Habits grid"),
-            ButtonSpec("map", "map", "🗺", "Map"),
-            ButtonSpec("app_stats", "app_stats", "📊", "App stats"),
-            ButtonSpec("chess_stats", "chess_readiness_stats", "♟", "Chess readiness stats"),
+            ButtonSpec("map", "map", "◈", "Map"),
+            ButtonSpec("app_stats", "app_stats", "≡", "App stats"),
+            ButtonSpec("chess_stats", "chess_readiness_stats", "♞", "Chess readiness stats"),
             ButtonSpec("settings", "settings", "⚙", "Settings")
         )
 
@@ -60,8 +77,8 @@ class TierBarWidgetProvider : AppWidgetProvider() {
         }
 
         /**
-         * Recomputes today's points from the habits DB and pushes a fresh
-         * RemoteViews (tier background colour + point total + button
+         * Recomputes today / avg7 / avg30 from the habits DB and pushes a
+         * fresh RemoteViews (lizard variant + gradient + border + button
          * visibility/intents) to every placed tier-bar widget. Cheap no-op
          * (beyond one DB read) when no widget exists.
          */
@@ -73,47 +90,151 @@ class TierBarWidgetProvider : AppWidgetProvider() {
             )
             if (ids.isEmpty()) return
 
-            var points = 0
+            var today = 0
+            var avg7 = 0.0
+            var avg30 = 0.0
+            var habitScreenCount = 0
             try {
                 val settings = SettingsRepository(appContext).settingsFlow.first()
+                habitScreenCount = settings.habitScreens.size
                 if (settings.fileUri.isNotEmpty()) {
                     val result = HabitsRepository().loadDatabaseResult(
                         Uri.parse(settings.fileUri), appContext
                     )
                     val db = (result as? HabitsLoadResult.Success)?.db
                     if (db != null) {
-                        points = DailyPointsCalculator.totalPointsForDate(
-                            dateString(LocalDate.now()), db, settings
+                        val stats = computeTaskerStats(
+                            db = db,
+                            dividers = settings.habitDividers,
+                            noPointsHabits = settings.noPointsHabits,
+                            secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits,
+                            timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary,
+                            invertedBinaryHabits = settings.invertedBinaryHabits,
+                            secondaryValueHabits = settings.secondaryValueHabits
                         )
+                        today = stats.today
+                        avg7 = stats.avg7
+                        avg30 = stats.avg30
                     }
                 }
             } catch (_: Exception) {
-                // Keep last-known points (0) on DB hiccups — the widget
+                // Keep last-known metrics (0) on DB hiccups — the widget
                 // stays alive rather than blanking.
             }
 
-            val tier = habitPointsTier(points)
-            val bgColor = tierColor(appContext, tier)
-            val fgColor = if (isLight(bgColor)) Color.BLACK else Color.WHITE
+            val dayTier = habitPointsTier(today)
+            val weekTier = habitPointsTier(avg7.roundToInt())
+            val monthTier = habitPointsTier(avg30.roundToInt())
+            val weekColor = tierColor(appContext, weekTier)
+            val fgColor = if (isLight(weekColor)) Color.BLACK else Color.WHITE
             val config = TierBarWidgetConfig.load(appContext)
 
+            // Pending habit-ask notifications → badge count (capped display).
+            val notifCount = try {
+                NotificationStore(appContext).notificationsFlow.first().size
+            } catch (_: Exception) { 0 }
+            val dayColor = tierColor(appContext, dayTier)
+            val monthColor = tierColor(appContext, monthTier)
+
+            // Deep link: open the habit grid straight into the notifications popup.
+            val notifIntent = Intent(appContext, MainActivity::class.java).apply {
+                action = "com.example.tail.TIER_BAR.NOTIFICATIONS"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(MainActivity.EXTRA_OPEN_ROUTE, "grid")
+                putExtra(MainActivity.EXTRA_OPEN_NOTIFICATIONS, true)
+            }
+            val notifPending = PendingIntent.getActivity(
+                appContext, 4242, notifIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            // Tapping anywhere that is not a quick-launch button opens the app.
+            val openApp = launchPendingIntent(
+                appContext, BUTTONS.first { it.key == "grid" }
+            )
+
             val views = RemoteViews(appContext.packageName, R.layout.widget_tier_bar).apply {
-                setInt(R.id.tier_bar_root, "setBackgroundColor", bgColor)
-                setTextColor(R.id.tier_bar_points, fgColor)
-                setTextViewText(R.id.tier_bar_points, "Tail · $points pts")
+                setOnClickPendingIntent(R.id.tier_bar_root, openApp)
+                if (notifCount > 0) {
+                    setViewVisibility(R.id.tier_bar_notif, android.view.View.VISIBLE)
+                    setImageViewBitmap(
+                        R.id.tier_bar_notif,
+                        buildBadge(dayColor, weekColor, monthColor,
+                            if (notifCount > 9) "+" else notifCount.toString())
+                    )
+                    setOnClickPendingIntent(R.id.tier_bar_notif, notifPending)
+                } else {
+                    setViewVisibility(R.id.tier_bar_notif, android.view.View.GONE)
+                }
+                // Top-bar quick-launch icon circles (runtime bitmaps).
                 for (spec in BUTTONS) {
                     val viewId = buttonViewId(spec.key)
                     if (viewId == 0) continue
-                    setViewVisibility(
-                        viewId,
-                        if (config[spec.key] == true)
-                            android.view.View.VISIBLE else android.view.View.GONE
-                    )
-                    setTextColor(viewId, fgColor)
-                    setOnClickPendingIntent(viewId, launchPendingIntent(appContext, spec))
+                    if (config[spec.key] == true) {
+                        setViewVisibility(viewId, android.view.View.VISIBLE)
+                        setImageViewBitmap(
+                            viewId,
+                            buildBadge(dayColor, weekColor, monthColor, spec.glyph)
+                        )
+                        setOnClickPendingIntent(viewId, launchPendingIntent(appContext, spec))
+                    } else {
+                        setViewVisibility(viewId, android.view.View.GONE)
+                    }
+                }
+                // Invisible horizontal touch zones → selected habit screens
+                // (in their tab order). Unused zones are hidden; with none
+                // selected the root tap (open app grid) covers everything.
+                val zoneIds = intArrayOf(
+                    R.id.tier_bar_zone_0, R.id.tier_bar_zone_1, R.id.tier_bar_zone_2,
+                    R.id.tier_bar_zone_3, R.id.tier_bar_zone_4, R.id.tier_bar_zone_5,
+                    R.id.tier_bar_zone_6, R.id.tier_bar_zone_7
+                )
+                val selected = TierBarWidgetConfig.loadScreens(appContext)
+                    .filter { it in 0 until habitScreenCount }
+                    .sorted()
+                zoneIds.forEachIndexed { i, zoneId ->
+                    if (i < selected.size) {
+                        setViewVisibility(zoneId, android.view.View.VISIBLE)
+                        setOnClickPendingIntent(
+                            zoneId, screenPendingIntent(appContext, selected[i], i)
+                        )
+                    } else {
+                        setViewVisibility(zoneId, android.view.View.GONE)
+                    }
                 }
             }
-            for (id in ids) mgr.updateAppWidget(id, views)
+
+            // One bitmap per widget: sized to that widget's actual aspect so
+            // fitXY never stretches the art and nothing gets cropped.
+            for (id in ids) {
+                val opts = mgr.getAppWidgetOptions(id)
+                val wDp = opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 320)
+                val hDp = opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 60)
+                val aspect = (wDp.toFloat() / hDp.toFloat()).coerceIn(2f, 12f)
+                views.setImageViewBitmap(
+                    R.id.tier_bar_bg,
+                    buildBackground(appContext, monthTier, weekTier, dayTier, aspect)
+                )
+                mgr.updateAppWidget(id, views)
+            }
+        }
+
+        /** Deep link: open the habit grid on the given screen (tab). */
+        private fun screenPendingIntent(
+            context: Context, screenIndex: Int, zoneIndex: Int
+        ): PendingIntent {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                action = "com.example.tail.TIER_BAR.SCREEN$screenIndex"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(MainActivity.EXTRA_OPEN_ROUTE, "grid")
+                putExtra(MainActivity.EXTRA_OPEN_SCREEN_INDEX, screenIndex)
+            }
+            return PendingIntent.getActivity(
+                context,
+                5000 + zoneIndex,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
         }
 
         private fun launchPendingIntent(context: Context, spec: ButtonSpec): PendingIntent {
@@ -127,6 +248,162 @@ class TierBarWidgetProvider : AppWidgetProvider() {
                 spec.key.hashCode(),
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // Background compositing
+        // ────────────────────────────────────────────────────────────────────
+
+        /** (monthTier, weekTier, dayTier, aspect) → composited strip bitmap. */
+        private val backgroundCache = HashMap<Long, Bitmap>()
+        private val layerCache = HashMap<String, Bitmap?>()
+        private val lizardCache = HashMap<Int, Bitmap?>()
+
+        /**
+         * Three-layer scene composite:
+         *   1. SKY       (monthly points tier) — deepest background, fills frame
+         *   2. SURROUNDINGS (weekly points tier) — keyed silhouette over the sky
+         *   3. LIZARD    (today's tier) — front layer, right-anchored
+         * Everything is clipped to the rounded-corner widget silhouette.
+         * All art ships with real alpha (processed offline), so this is pure
+         * drawBitmap compositing with zero runtime pixel work.
+         */
+        private fun buildBackground(
+            context: Context,
+            monthTier: Int,
+            weekTier: Int,
+            dayTier: Int,
+            aspect: Float
+        ): Bitmap {
+            val key = (monthTier.toLong() shl 44) or
+                (weekTier.toLong() shl 40) or
+                (dayTier.toLong() shl 36) or
+                (aspect.toInt().toLong())
+            backgroundCache[key]?.let { return it }
+
+            val h = 400
+            val w = (h * aspect).toInt().coerceIn(800, 4800)
+            val radius = h / 6f
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+
+            // Rounded-corner clip so every layer gets the same silhouette.
+            val clip = Path().apply {
+                addRoundRect(0f, 0f, w.toFloat(), h.toFloat(), radius, radius, Path.Direction.CW)
+            }
+            canvas.save()
+            canvas.clipPath(clip)
+
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            val full = android.graphics.RectF(0f, 0f, w.toFloat(), h.toFloat())
+
+            // 1. Sky — monthly tier, stretched edge-to-edge (sky has no
+            //    silhouette so uniform stretch is fine; 4:1-ish source).
+            layerBitmap(context, "tier_bar_sky_t", monthTier)?.let {
+                canvas.drawBitmap(it, null, full, paint)
+            }
+
+            // 2. Surroundings — weekly tier, full-width and bottom-anchored
+            //    (silhouette art: transparent sky above, terrain below).
+            layerBitmap(context, "tier_bar_env_t", weekTier)?.let { env ->
+                val envH = (w / 4f).coerceAtMost(h.toFloat())
+                canvas.drawBitmap(
+                    env, null,
+                    android.graphics.RectF(0f, h - envH, w.toFloat(), h.toFloat()),
+                    paint
+                )
+            }
+
+            // 3. Lizard — today's tier, uniform 4:1 scale, height-filling,
+            //    right-anchored with a small margin.
+            lizardBitmap(context, dayTier)?.let { lizard ->
+                val margin = h / 32f
+                val avail = h - margin * 2f
+                val drawW = avail * 4f
+                canvas.drawBitmap(
+                    lizard, null,
+                    android.graphics.RectF(
+                        w - drawW - margin, margin,
+                        w.toFloat() - margin, h.toFloat() - margin
+                    ),
+                    paint
+                )
+            }
+            canvas.restore()
+
+            backgroundCache[key] = bmp
+            return bmp
+        }
+
+        private fun layerBitmap(context: Context, prefix: String, tier: Int): Bitmap? {
+            val t = tier.coerceIn(0, 12)
+            val cacheKey = "$prefix$t"
+            layerCache[cacheKey]?.let { return it }
+            val resId = context.resources.getIdentifier(
+                cacheKey, "drawable", context.packageName
+            )
+            val bmp = if (resId != 0)
+                BitmapFactory.decodeResource(context.resources, resId) else null
+            layerCache[cacheKey] = bmp
+            return bmp
+        }
+
+        /**
+         * Circular badge used by both the notification count and the
+         * quick-launch buttons: border = weekly-tier colour, fill =
+         * daily-tier colour, glyph = monthly-tier colour. [label] is a
+         * single digit/glyph ("+" for counts above 9).
+         */
+        private fun buildBadge(fill: Int, border: Int, text: Int, label: String): Bitmap {
+            val size = 120
+            val c = size / 2f
+            val stroke = 12f
+            val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            canvas.drawCircle(c, c, c - stroke / 2f - 1f,
+                Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fill })
+            canvas.drawCircle(c, c, c - stroke / 2f - 1f,
+                Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = border
+                    style = Paint.Style.STROKE
+                    strokeWidth = stroke
+                })
+            val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = text
+                textSize = size * 0.5f
+                textAlign = Paint.Align.CENTER
+                isFakeBoldText = true
+                setShadowLayer(4f, 0f, 1f, 0x66000000)
+            }
+            val fm = tp.fontMetrics
+            canvas.drawText(
+                label, c,
+                c - (fm.ascent + fm.descent) / 2f, tp
+            )
+            return bmp
+        }
+
+        private fun lizardBitmap(context: Context, tier: Int): Bitmap? {
+            lizardCache[tier]?.let { return it }
+            val resId = context.resources.getIdentifier(
+                "tier_bar_lizard_t${tier.coerceIn(0, 12)}",
+                "drawable", context.packageName
+            )
+            val bmp = if (resId != 0)
+                BitmapFactory.decodeResource(context.resources, resId) else null
+            lizardCache[tier] = bmp
+            return bmp
+        }
+
+
+        private fun shiftToward(from: Int, to: Int, fraction: Float): Int {
+            fun ch(f: Int, t: Int) = (f + (t - f) * fraction).toInt().coerceIn(0, 255)
+            return Color.argb(
+                255,
+                ch(Color.red(from), Color.red(to)),
+                ch(Color.green(from), Color.green(to)),
+                ch(Color.blue(from), Color.blue(to))
             )
         }
 
@@ -177,5 +454,19 @@ object TierBarWidgetConfig {
     fun setEnabled(context: Context, key: String, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(key, enabled).apply()
+    }
+
+    /** Indices of the habit grid screens mapped to the widget's invisible
+     *  horizontal touch zones (stored ordered by tab index). */
+    fun loadScreens(context: Context): List<Int> =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString("touch_screens", "")
+            .orEmpty()
+            .split(',')
+            .mapNotNull { it.trim().toIntOrNull() }
+
+    fun setScreens(context: Context, screens: List<Int>) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString("touch_screens", screens.sorted().joinToString(",")).apply()
     }
 }
