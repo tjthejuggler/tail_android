@@ -49,9 +49,12 @@ import com.example.tail.data.AdviceItem
  * visible scrollbar so the UI stays clean.
  */
 @Composable
-fun AdviceBanner(
+internal fun AdviceBanner(
     viewModel: AdviceViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** The grid's shimmer sweep + direction, mirrored onto the ghost squares. */
+    shimmerSweep: (() -> Float)? = null,
+    shimmerDirection: (() -> ShimmerDirection)? = null
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
@@ -105,7 +108,16 @@ fun AdviceBanner(
             modifier = modifier
                 .fillMaxWidth()
                 .heightIn(max = maxBannerHeight)
-                .background(Color(0xFF1E1E1E).copy(alpha = 0.85f))
+                .then(
+                    if (shimmerSweep != null && shimmerDirection != null) {
+                        Modifier.ghostGlassSquares(
+                            shimmerSweep = shimmerSweep,
+                            shimmerDirection = shimmerDirection
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragEnd = {

@@ -18,6 +18,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import com.example.tail.R
 import com.example.tail.data.backup.HabitRestorePreview
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -778,6 +779,10 @@ fun HabitGridScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                modifier = Modifier.ghostGlassSquares(
+                    shimmerSweep = { shimmerSweep.value },
+                    shimmerDirection = { shimmerDirection.value }
+                ),
                 title = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -836,7 +841,7 @@ fun HabitGridScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = Color.Transparent
                 ),
                 actions = {
                     // Six compact actions (edit, graph, schedule, notifications,
@@ -979,6 +984,10 @@ fun HabitGridScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .ghostGlassSquares(
+                            shimmerSweep = { shimmerSweep.value },
+                            shimmerDirection = { shimmerDirection.value }
+                        )
                         .padding(start = 12.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -992,17 +1001,17 @@ fun HabitGridScreen(
                                 indication = null,
                                 interactionSource = remember { MutableInteractionSource() }
                             ) { showLocationEditDialog = true }
-                            .padding(vertical = 3.dp)
+                            .padding(vertical = 1.dp)
                     )
                     // Globe icon — positioned under the Settings icon in the top bar.
                     IconButton(
                         onClick = onNavigateToMap,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(20.dp)
                     ) {
                         Image(
                             painter = painterResource(id = com.example.tail.R.drawable.globe),
                             contentDescription = "World map timeline",
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                 }
@@ -1012,6 +1021,8 @@ fun HabitGridScreen(
             // landscape and in schedule mode, which aggregates all screens)
             if (habitScreens.size > 1 && !isLandscape && !scheduleMode) {
                 ScreenTabRow(
+                    shimmerSweep = { shimmerSweep.value },
+                    shimmerDirection = { shimmerDirection.value },
                     screens = habitScreens,
                     activeIndex = activeScreenIndex,
                     editMode = editMode,
@@ -2085,7 +2096,11 @@ fun HabitGridScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 8.dp)
         ) {
-            AdviceBanner(viewModel = adviceViewModel)
+            AdviceBanner(
+                viewModel = adviceViewModel,
+                shimmerSweep = { shimmerSweep.value },
+                shimmerDirection = { shimmerDirection.value }
+            )
         }
     }
     } // end Box
@@ -2945,6 +2960,9 @@ fun HabitGridScreen(
 @Composable
 internal fun ScreenTabRow(
     screens: List<HabitScreen>,
+    /** The grid's shimmer sweep + direction, mirrored onto the ghost squares. */
+    shimmerSweep: (() -> Float)? = null,
+    shimmerDirection: (() -> ShimmerDirection)? = null,
     activeIndex: Int,
     editMode: Boolean,
     hiddenScreenIds: Set<String>,
@@ -2961,12 +2979,21 @@ internal fun ScreenTabRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF111111))
+            .then(
+                if (shimmerSweep != null && shimmerDirection != null) {
+                    Modifier.ghostGlassSquares(
+                        shimmerSweep = shimmerSweep,
+                        shimmerDirection = shimmerDirection
+                    )
+                } else {
+                    Modifier
+                }
+            )
             .horizontalScroll(scrollState)
             .onGloballyPositioned { coords ->
                 onRowLayout?.invoke(Rect(coords.positionInWindow(), coords.size.toSize()))
             }
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .padding(horizontal = 4.dp, vertical = 1.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -3491,6 +3518,20 @@ internal fun HabitGrid(
         state = gridState,
         modifier = Modifier
             .fillMaxSize()
+            // Ghost squares continue behind the grid itself, fading out over
+            // the first rows and fading back in over the last rows (toward the
+            // advice banner). Only visible through empty cells / gaps.
+            .then(
+                if (shimmerSweep != null && shimmerDirection != null) {
+                    Modifier.ghostGlassSquares(
+                        shimmerSweep = shimmerSweep,
+                        shimmerDirection = shimmerDirection,
+                        isGridAnchor = true
+                    )
+                } else {
+                    Modifier
+                }
+            )
             .padding(4.dp)
             .onGloballyPositioned { coords ->
                 onGridLayout?.invoke(coords.positionInWindow())
