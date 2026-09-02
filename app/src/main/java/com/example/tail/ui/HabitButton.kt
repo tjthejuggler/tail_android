@@ -3,6 +3,7 @@ package com.example.tail.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import androidx.compose.animation.animateColorAsState
@@ -44,18 +45,23 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.R
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.GarminType
 import com.example.tail.data.Habit
@@ -280,6 +286,41 @@ fun HabitButton(
         else -> bgColor
     }
 
+    // Subtle AI-generated brushed-metal texture — one grayscale tile per tier
+    // background colour, drawn in Overlay blend mode over the animated solid
+    // colour. Overlay modulates luminance only, so the tier colours read
+    // exactly as before while gaining a faint metallic grain + sheen. Glass
+    // phases 2–4 all share the Glass tile (their borders are programmatic).
+    // Drawn in the draw phase (no recomposition cost) over the background but
+    // under the content, borders, and the idle shimmer, which stays intact.
+    val context = LocalContext.current
+    val metalTile: ImageBitmap? = remember(habitStyle.background) {
+        val res = when (habitStyle.background) {
+            ColorRed    -> R.drawable.habit_tile_red
+            ColorOrange -> R.drawable.habit_tile_orange
+            ColorGreen  -> R.drawable.habit_tile_green
+            ColorBlue   -> R.drawable.habit_tile_blue
+            ColorPink   -> R.drawable.habit_tile_pink
+            ColorYellow -> R.drawable.habit_tile_yellow
+            ColorGlass  -> R.drawable.habit_tile_glass
+            else -> 0
+        }
+        if (res == 0) null
+        else BitmapFactory.decodeResource(context.resources, res)?.asImageBitmap()
+    }
+    val metallicMod = if (metalTile != null) {
+        Modifier.drawWithContent {
+            drawImage(
+                image = metalTile,
+                dstOffset = IntOffset.Zero,
+                dstSize = IntSize(size.width.toInt(), size.height.toInt()),
+                alpha = 0.85f,
+                blendMode = BlendMode.Overlay
+            )
+            drawContent()
+        }
+    } else Modifier
+
     // Idle shimmer — a barely-visible brightness wave rolling diagonally
     // across the grid while the user is idle. Drawn over the background but
     // under the tier borders and content.
@@ -298,6 +339,7 @@ fun HabitButton(
             .graphicsLayer { this.scaleX = scale; this.scaleY = scale }
             .clip(shape)
             .background(effectiveBgColor)
+            .then(metallicMod)
             .then(shimmerMod)
             .then(tierBorderMod)
             .then(modeBorderMod)
