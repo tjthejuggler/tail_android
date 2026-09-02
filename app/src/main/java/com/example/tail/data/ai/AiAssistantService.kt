@@ -127,6 +127,8 @@ class AiAssistantController(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val timestampRepo = HabitTimestampRepository(context)
+    /** Read-only access to the user's daily travel-location history. */
+    private val locationRepo = com.example.tail.data.LocationRepository(context)
 
     /**
      * Running LLM conversation (WITHOUT the system prompt) so multi-turn
@@ -448,6 +450,60 @@ class AiAssistantController(
     private suspend fun executeReadTool(name: String, args: JSONObject, fileUri: Uri): String {
         return try {
             when (name) {
+                "get_visit_locations" -> {
+                    val from = args.optString("from_date", "")
+                    val to = args.optString("to_date", "")
+                    val filter = args.optString("location_contains", "").trim()
+                    val arr = JSONArray()
+                    locationRepo.getAllStoredLabels()
+                        .toSortedMap()
+                        .filterKeys { date ->
+                            (from.isEmpty() || date >= from) && (to.isEmpty() || date <= to)
+                        }
+                        .filterValues { label -> filter.isEmpty() || label.contains(filter, ignoreCase = true) }
+                        .forEach { (date, label) ->
+                            arr.put(JSONObject().apply {
+                                put("date", date)
+                                put("location", label)
+                            })
+                        }
+                    JSONObject()
+                        .put("count", arr.length())
+                        .put("note", "Labels are \"City, Region, Country\" (or similar). " +
+                            "Use location_contains to narrow large ranges by country/place name.")
+                        .put("visits", arr).toString()
+                }
+                "get_country_visit_summary" -> {
+                    val from = args.optString("from_date", "")
+                    val to = args.optString("to_date", "")
+                    val ignored = locationRepo.getIgnoredCountries()
+                    // Aggregate the daily labels into one entry per distinct
+                    // label with the exact dates it occurred on, so the model
+                    // can answer "which countries" / "how many days" without
+                    // pulling every raw day.
+                    val byLabel = sortedMapOf<String, MutableList<String>>()
+                    locationRepo.getAllStoredLabels().forEach { (date, label) ->
+                        if ((from.isEmpty() || date >= from) && (to.isEmpty() || date <= to)) {
+                            byLabel.getOrPut(label) { mutableListOf() }.add(date)
+                        }
+                    }
+                    val arr = JSONArray()
+                    byLabel.forEach { (label, dates) ->
+                        arr.put(JSONObject().apply {
+                            put("location", label)
+                            put("days", dates.size)
+                            put("first_date", dates.first())
+                            put("last_date", dates.last())
+                            put("dates", JSONArray(dates))
+                        })
+                    }
+                    JSONObject()
+                        .put("range_from", from.ifEmpty { "(all history)" })
+                        .put("range_to", to.ifEmpty { "(all history)" })
+                        .put("distinct_locations", arr.length())
+                        .put("ignored_locations", JSONArray(ignored))
+                        .put("locations", arr).toString()
+                }
                 "list_habits" -> {
                     val db = loadDb(fileUri)
                     val today = LocalDate.now().toString()
@@ -667,6 +723,16 @@ class AiAssistantController(
         append("RULES\n")
         append("- Only use habit names returned by list_habits. Never invent or guess names.\n")
         append("- Inspect the data with the read-only tools before planning changes.\n")
+        append("- Travel history: the app records where the user was each day. Use ")
+        append("get_visit_locations (raw per-day entries) or get_country_visit_summary ")
+        append("(aggregated per distinct location) to answer travel questions such as ")
+        append("\"which asian countries have I visited in the last 5 years\" or \"which ")
+        append("schengen countries have I not been to\". Location labels are typically ")
+        append("\"City, Region, Country\" — extract the country from the last segment. ")
+        append("Set membership lists (schengen, EU, asian countries, etc.) come from your ")
+        append("own knowledge; only the visited set comes from the tools.\n")
+        append("- If the user asks a pure INFORMATION question (about habits OR travel), ")
+        append("answer it directly from the read tools — do NOT call propose_plan.\n")
         append("- When the user asks for a database change, finish by calling propose_plan with:\n")
         append("  * description: a precise human-readable summary of EXACTLY what will change ")
         append("(habit names, dates, times, values, before -> after where relevant).\n")
@@ -726,6 +792,25 @@ class AiAssistantController(
                 put("date", JSONObject().put("type", "string").put("description", "YYYY-MM-DD, defaults to today"))
             },
             listOf("habit")
+        )
+        fn(
+            "get_visit_locations",
+            "Get the user's recorded daily locations (travel history). Each entry is a date plus a location label, typically \"City, Region, Country\". Supports an optional inclusive date range and an optional case-insensitive substring filter (e.g. location_contains=\"Japan\"). Use this for questions like \"which asian countries did I visit in the last 5 years\" — filter by date range first, then extract the countries from the labels.",
+            JSONObject().apply {
+                put("from_date", JSONObject().put("type", "string").put("description", "YYYY-MM-DD inclusive, optional"))
+                put("to_date", JSONObject().put("type", "string").put("description", "YYYY-MM-DD inclusive, optional"))
+                put("location_contains", JSONObject().put("type", "string").put("description", "Case-insensitive substring the location label must contain, optional"))
+            },
+            emptyList()
+        )
+        fn(
+            "get_country_visit_summary",
+            "Get an aggregated summary of the user's travel history: one entry per distinct visited location label (with all its dates), instead of every raw day. Includes the user's ignored/excluded location names. Use this for questions like \"which schengen countries have I NOT been to\": fetch the summary, extract the distinct countries, and compare against the set you already know (e.g. schengen members).",
+            JSONObject().apply {
+                put("from_date", JSONObject().put("type", "string").put("description", "YYYY-MM-DD inclusive, optional"))
+                put("to_date", JSONObject().put("type", "string").put("description", "YYYY-MM-DD inclusive, optional"))
+            },
+            emptyList()
         )
         fn(
             "propose_plan",

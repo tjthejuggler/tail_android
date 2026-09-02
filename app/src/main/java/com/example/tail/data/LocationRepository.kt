@@ -892,6 +892,9 @@ class LocationRepository(private val context: Context) {
         }
     }
 
+    /** Public read-only access to the ignored/excluded location names (used by the AI assistant). */
+    fun getIgnoredCountries(): Set<String> = loadIgnoredCountries()
+
     private fun loadIgnoredCountries(): Set<String> {
         val json = prefs.getString(KEY_IGNORED_COUNTRIES, null) ?: return emptySet()
         return try {
