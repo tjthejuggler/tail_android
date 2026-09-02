@@ -29,6 +29,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -83,8 +86,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.DayStats
 import com.example.tail.data.SecondaryLocation
+import com.example.tail.ui.map.CountryFacts
 import com.example.tail.ui.map.DayClock
+import com.example.tail.ui.map.MapDetailData
 import com.example.tail.ui.map.WorldLandData
+import androidx.compose.ui.graphics.nativeCanvas
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -342,6 +348,9 @@ fun MapScreen(
 
     // ── Map settings dialog ────────────────────────────────────────────────
     var showMapSettingsDialog by remember { mutableStateOf(false) }
+    // Country whose bbox currently fills >50% of the map — set from the
+    // canvas renderer, drives the country facts section in the side panel.
+    var dominantCountry by remember { mutableStateOf<String?>(null) }
 
     // ── Playback state ──────────────────────────────────────────────────────
     var isPlaying by remember { mutableStateOf(false) }
@@ -688,6 +697,18 @@ fun MapScreen(
                     onToggleMainHabit = { viewModel.toggleMapMainHabit(it) },
                     onToggleHideZeroDays = { viewModel.toggleMapHideZeroDays() },
                     onSetBeginDate = { viewModel.setMapBeginDate(it) },
+                    onUpdatePopulations = {
+                        val ctx = context
+                        scope.launch {
+                            val n = CountryFacts.updatePopulations(ctx)
+                            if (n >= 0) {
+                                CountryFacts.invalidate()
+                                Toast.makeText(ctx, "Updated populations for $n countries", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(ctx, "Population update failed", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
                     onDismiss = { showMapSettingsDialog = false }
                 )
             }
@@ -727,6 +748,8 @@ fun MapScreen(
                 ) {
                     WorldMapWithMarker(
                         currentCoords = currentDisplayCoords,
+                        onDominantCountry = { dominantCountry = it },
+                        labelForDate = { viewModel.getLocationLabelForDate(it) },
                         allCoordsTrail = coordsByDate,
                         selectedDate = selectedDate,
                         dotColorsByDate = dotColorsByDate,
@@ -768,6 +791,7 @@ fun MapScreen(
                 // ── Side info panel (right) ────────────────────────────────
                 MapInfoPanel(
                     date = selectedDate,
+                    dominantCountry = dominantCountry,
                     stats = dayStats,
                     statsLoading = statsLoading,
                     countriesVisited = countriesVisited,
@@ -1069,6 +1093,8 @@ private fun MapTopBar(
 @Composable
 private fun WorldMapWithMarker(
     currentCoords: Pair<Double, Double>?,
+    onDominantCountry: (String?) -> Unit = {},
+    labelForDate: (LocalDate) -> String? = { null },
     allCoordsTrail: Map<LocalDate, Pair<Double, Double>>,
     selectedDate: LocalDate,
     dotColorsByDate: Map<LocalDate, Color?>,
@@ -1083,8 +1109,28 @@ private fun WorldMapWithMarker(
     // while the asset is parsed. Empty list until ready (just shows the dark
     // background + dots, which is fine).
     var land by remember { mutableStateOf<List<List<Pair<Double, Double>>>>(emptyList()) }
+    // Zoom-dependent detail layers (country borders, high-res land, cities).
+    // The 110m set loads together with the base land so the faint country
+    // lines appear immediately; the heavier 50m set + cities stream in right
+    // after — until ready the map simply renders without them.
+    var borders110 by remember { mutableStateOf<List<List<Pair<Double, Double>>>>(emptyList()) }
+    var land50 by remember { mutableStateOf<List<List<Pair<Double, Double>>>>(emptyList()) }
+    var borders50 by remember { mutableStateOf<List<List<Pair<Double, Double>>>>(emptyList()) }
+    var cities by remember { mutableStateOf<List<MapDetailData.LabelPoint>>(emptyList()) }
+    var countryLabels by remember { mutableStateOf<List<MapDetailData.LabelPoint>>(emptyList()) }
     LaunchedEffect(Unit) {
-        land = withContext(Dispatchers.Default) { WorldLandData.load(context) }
+        withContext(Dispatchers.Default) {
+            land = WorldLandData.load(context)
+            borders110 = MapDetailData.loadBorders110(context)
+            countryLabels = MapDetailData.loadCountryLabels(context)
+        }
+    }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.Default) {
+            land50 = MapDetailData.loadLand50(context)
+            borders50 = MapDetailData.loadBorders50(context)
+            cities = MapDetailData.loadCities(context)
+        }
     }
 
     // Animate the marker between coord changes for a smooth slide.
@@ -1100,6 +1146,9 @@ private fun WorldMapWithMarker(
     // Pinch-to-zoom state
     var zoomScale by remember { mutableStateOf(1f) }
     var zoomOffset by remember { mutableStateOf(Offset.Zero) }
+    // Last reported dominant country (bbox covers >50% of the screen) —
+    // drives the country facts section in the side panel.
+    var lastDominantCountry by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(currentCoords, lastSize) {
         if (currentCoords == null || lastSize == Size.Zero) return@LaunchedEffect
@@ -1185,7 +1234,7 @@ private fun WorldMapWithMarker(
 
                             if (prevPinchDist > 0f) {
                                 val zoom = dist / prevPinchDist
-                                val newScale = (zoomScale * zoom).coerceIn(1f, 5f)
+                                val newScale = (zoomScale * zoom).coerceIn(1f, 250f)
                                 if (newScale > 1f) {
                                     val scaleRatio = newScale / zoomScale
                                     val pan = Offset(
@@ -1257,11 +1306,41 @@ private fun WorldMapWithMarker(
         drawContext.canvas.translate(zoomOffset.x, zoomOffset.y)
         drawContext.canvas.scale(zoomScale, zoomScale)
 
-        // Continent fills.
+        // Screen-constant element helper: radii/strokes are divided by
+        // zoomScale because the whole canvas is scaled by the zoom transform.
+        // Visible region in UNSCALED map coordinates (for cheap culling of
+        // detail layers while zoomed in).
+        val viewLeft = -zoomOffset.x / zoomScale
+        val viewTop = -zoomOffset.y / zoomScale
+        val viewRight = viewLeft + size.width / zoomScale
+        val viewBottom = viewTop + size.height / zoomScale
+        fun ringVisible(ring: List<Pair<Double, Double>>): Boolean {
+            var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE
+            var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+            for ((lon, lat) in ring) {
+                val x = lonToX(lon, size.width)
+                val y = latToY(lat, size.height)
+                if (x < minX) minX = x; if (x > maxX) maxX = x
+                if (y < minY) minY = y; if (y > maxY) maxY = y
+            }
+            return maxX >= viewLeft && minX <= viewRight && maxY >= viewTop && minY <= viewBottom
+        }
+        // Stroke widths are divided by zoomScale so features keep a constant
+        // on-screen thickness instead of thickening with the canvas scale.
+        val detailZoom = zoomScale >= 3f
+        // User dots/marker grow only SLIGHTLY with zoom (asymptotic: at
+        // infinite zoom they are 1.4× their world-view size) instead of
+        // scaling with the map.
+        val dotGrow = 1f + 1.5f * (1f - 1f / zoomScale)
+
+        // Continent fills — swap in the higher-resolution polygon set once
+        // the user zooms in far enough for the extra detail to matter.
         val landColor = Color(0xFF2A2A2A)
         val landStroke = Color(0xFF444444)
-        for (ring in land) {
+        val landSource = if (detailZoom && land50.isNotEmpty()) land50 else land
+        for (ring in landSource) {
             if (ring.size < 3) continue
+            if (zoomScale > 1f && !ringVisible(ring)) continue
             val path = Path()
             val first = ring[0]
             path.moveTo(lonToX(first.first, size.width), latToY(first.second, size.height))
@@ -1271,7 +1350,25 @@ private fun WorldMapWithMarker(
             }
             path.close()
             drawPath(path, color = landColor)
-            drawPath(path, color = landStroke, style = Stroke(width = 0.6f))
+            drawPath(path, color = landStroke, style = Stroke(width = 0.6f / zoomScale))
+        }
+
+        // Country borders. At world zoom: faint 110m lines (no labels — the
+        // minimalist look is preserved). Zoomed in: crisper 50m lines that
+        // replace the coarse set.
+        val borderSet = if (detailZoom && borders50.isNotEmpty()) borders50 else borders110
+        val borderColor = if (detailZoom) Color(0xFF555555) else Color(0xFF363636)
+        for (line in borderSet) {
+            if (line.size < 2) continue
+            if (zoomScale > 1f && !ringVisible(line)) continue
+            val path = Path()
+            val first = line[0]
+            path.moveTo(lonToX(first.first, size.width), latToY(first.second, size.height))
+            for (i in 1 until line.size) {
+                val (lon, lat) = line[i]
+                path.lineTo(lonToX(lon, size.width), latToY(lat, size.height))
+            }
+            drawPath(path, color = borderColor, style = Stroke(width = 0.7f / zoomScale))
         }
 
         // Equator + prime meridian — faint guides.
@@ -1300,7 +1397,7 @@ private fun WorldMapWithMarker(
             val (lat, lon) = coord
             drawCircle(
                 color = dotColor.copy(alpha = 0.55f),
-                radius = 2.0f,
+                radius = 2.0f * dotGrow / zoomScale,
                 center = Offset(lonToX(lon, size.width), latToY(lat, size.height))
             )
         }
@@ -1316,7 +1413,7 @@ private fun WorldMapWithMarker(
             for (sec in secondaries) {
                 drawCircle(
                     color = secColor.copy(alpha = 0.35f),
-                    radius = 1.3f,
+                    radius = 1.3f * dotGrow / zoomScale,
                     center = Offset(lonToX(sec.lon, size.width), latToY(sec.lat, size.height))
                 )
             }
@@ -1335,22 +1432,255 @@ private fun WorldMapWithMarker(
                 alpha = 1f
             )
             // Halo
-            drawCircle(color = accent.halo(0.20f), radius = 22f, center = Offset(cx, cy))
+            drawCircle(color = accent.halo(0.20f), radius = 22f * dotGrow / zoomScale, center = Offset(cx, cy))
             // Body
-            drawCircle(color = accent, radius = 8.5f, center = Offset(cx, cy + 6f))
+            drawCircle(color = accent, radius = 8.5f * dotGrow / zoomScale, center = Offset(cx, cy + 6f * dotGrow / zoomScale))
             // Head
-            drawCircle(color = headColor, radius = 6.5f, center = Offset(cx, cy - 7f))
+            drawCircle(color = headColor, radius = 6.5f * dotGrow / zoomScale, center = Offset(cx, cy - 7f * dotGrow / zoomScale))
             // Outline
             drawCircle(
                 color = Color(0xFF111111),
-                radius = 8.5f,
-                center = Offset(cx, cy + 6f),
-                style = Stroke(width = 1.5f)
+                radius = 8.5f * dotGrow / zoomScale,
+                center = Offset(cx, cy + 6f * dotGrow / zoomScale),
+                style = Stroke(width = 1.5f / zoomScale)
             )
         }
 
         drawContext.canvas.restore()
+
+        // ── Labels, drawn in SCREEN space ────────────────────────────────────
+        // Text must be drawn OUTSIDE the zoom transform: inside it, text
+        // sizes become sub-pixel in canvas units and the renderer collapses
+        // every letter of a word onto one point. Screen-space drawing also
+        // keeps labels at a constant, readable dp size at any zoom.
+        val native = drawContext.canvas.nativeCanvas
+        // Occupied screen-space label bounds (l, t, r, b) for overlap
+        // prevention — a label is only drawn if it fits without touching
+        // any already-drawn label.
+        val occupiedBounds = ArrayList<FloatArray>(0)
+        fun overlaps(l: Float, t: Float, r: Float, b: Float): Boolean {
+            for (o in occupiedBounds) {
+                if (l < o[2] && r > o[0] && t < o[3] && b > o[1]) return true
+            }
+            return false
+        }
+
+        // Country names — uppercase, centred. A name only shows once the
+        // country's bbox comfortably contains the rendered text (so long
+        // names / small countries wait for deeper zoom) AND it doesn't
+        // overlap another visible label.
+        if (zoomScale >= 6f && countryLabels.isNotEmpty()) {
+            val countryPaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(210, 0x8C, 0x8C, 0x8C)
+                textSize = 13.dp.toPx()
+                textAlign = android.graphics.Paint.Align.CENTER
+                isAntiAlias = true
+                isFakeBoldText = true
+                letterSpacing = 0.08f
+            }
+            val rankMinZoom = floatArrayOf(6f, 8f, 11f, 15f, 20f)
+            for (country in countryLabels) {
+                if (zoomScale < rankMinZoom[country.rank.coerceIn(0, 4)]) continue
+                val sx = lonToX(country.lon, size.width) * zoomScale + zoomOffset.x
+                val sy = latToY(country.lat, size.height) * zoomScale + zoomOffset.y
+                if (sx < -200f || sx > size.width + 200f || sy < -100f || sy > size.height + 100f) continue
+                val text = country.name.uppercase()
+                val w = countryPaint.measureText(text)
+                val h = countryPaint.textSize
+                val countryWpx = (country.wDeg / 360.0 * size.width * zoomScale).toFloat()
+                val countryHpx = (country.hDeg / 180.0 * size.height * zoomScale).toFloat()
+                // The label must fit inside the country with margin.
+                if (countryWpx < w * 1.25f || countryHpx < h * 1.7f) continue
+                val l = sx - w / 2f
+                val t = sy - h
+                val r = sx + w / 2f
+                val b = sy + h * 0.3f
+                if (overlaps(l, t, r, b)) continue
+                occupiedBounds.add(floatArrayOf(l, t, r, b))
+                native.drawText(text, sx, sy, countryPaint)
+            }
+        }
+
+        // Cities — small dots + labels, only once deeply zoomed in
+        // (zoom ≥ 25× → ≥ 1M, ≥ 45× → ≥ 250k, ≥ 80× → ≥ 50k), skipping
+        // any label that would overlap an existing label.
+        if (zoomScale >= 25f && cities.isNotEmpty()) {
+            val maxRank = when {
+                zoomScale >= 80f -> 4
+                zoomScale >= 45f -> 3
+                else -> 2
+            }
+            val cityDot = Color(0xFF888888)
+            val cityPaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(220, 0x99, 0x99, 0x99)
+                textSize = 11.dp.toPx()
+                isAntiAlias = true
+            }
+            val dotR = 1.5.dp.toPx()
+            for (city in cities) {
+                if (city.rank > maxRank) break  // list is sorted big → small
+                val sx = lonToX(city.lon, size.width) * zoomScale + zoomOffset.x
+                val sy = latToY(city.lat, size.height) * zoomScale + zoomOffset.y
+                if (sx < -100f || sx > size.width + 100f || sy < -50f || sy > size.height + 50f) continue
+                val w = cityPaint.measureText(city.name)
+                val h = cityPaint.textSize
+                val l = sx + 5.dp.toPx()
+                val t = sy - h
+                val r = l + w
+                val b = sy + dotR
+                if (overlaps(l - dotR, t - dotR, r, b)) continue
+                occupiedBounds.add(floatArrayOf(l - dotR, t - dotR, r, b))
+                drawCircle(color = cityDot, radius = dotR, center = Offset(sx, sy))
+                native.drawText(city.name, l, sy, cityPaint)
+            }
+        }
+
+        // ── Visited-place labels ─────────────────────────────────────────────
+        // Once zoomed to city level, name the place each visited dot was
+        // logged in. One label per unique place name (repeated stays in the
+        // same town produce a single label) and no overlap with any other
+        // visible label.
+        if (zoomScale >= 25f) {
+            val placePaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(235, 0xBB, 0xBB, 0xBB)
+                textSize = 11.dp.toPx()
+                textAlign = android.graphics.Paint.Align.CENTER
+                isAntiAlias = true
+                isFakeBoldText = true
+            }
+            val drawnPlaces = HashSet<String>()
+            for ((date, coord) in allCoordsTrail) {
+                if (date.isAfter(selectedDate)) continue
+                // Label is the city part of "City, Region, Country".
+                val label = labelForDate(date)?.split(",")?.firstOrNull()?.trim()
+                if (label.isNullOrBlank() || !drawnPlaces.add(label)) continue
+                val sx = lonToX(coord.second, size.width) * zoomScale + zoomOffset.x
+                val sy = latToY(coord.first, size.height) * zoomScale + zoomOffset.y
+                if (sx < -100f || sx > size.width + 100f || sy < -60f || sy > size.height + 60f) continue
+                val w = placePaint.measureText(label)
+                val h = placePaint.textSize
+                val l = sx - w / 2f
+                val t = sy - 10.dp.toPx() - h
+                val r = sx + w / 2f
+                val b = sy - 8.dp.toPx()
+                if (overlaps(l, t, r, b)) continue
+                occupiedBounds.add(floatArrayOf(l, t, r, b))
+                native.drawText(label, sx, t + h, placePaint)
+            }
+        }
+
+        // ── Dominant-country detection ───────────────────────────────────────
+        // Among countries whose bbox covers >50% of the screen, report the one
+        // with the SMALLEST bbox — the most specific country filling the view.
+        // (Picking the largest coverage made big neighbours' bboxes like Croatia
+        // or Serbia always swallow small countries such as Slovenia or Bosnia.)
+        if (countryLabels.isNotEmpty()) {
+            var bestName: String? = null
+            var bestArea = Float.MAX_VALUE
+            val screenArea = size.width * size.height
+            for (c in countryLabels) {
+                val w = (c.wDeg / 360.0 * size.width * zoomScale).toFloat()
+                val h = (c.hDeg / 180.0 * size.height * zoomScale).toFloat()
+                if (w * h <= 0.5f * screenArea) continue
+                val sx = lonToX(c.lon, size.width) * zoomScale + zoomOffset.x
+                val sy = latToY(c.lat, size.height) * zoomScale + zoomOffset.y
+                val iw = minOf(sx + w / 2f, size.width) - maxOf(sx - w / 2f, 0f)
+                val ih = minOf(sy + h / 2f, size.height) - maxOf(sy - h / 2f, 0f)
+                if (iw <= 0f || ih <= 0f) continue
+                val coverage = iw * ih / screenArea
+                if (coverage > 0.5f && w * h < bestArea) {
+                    bestArea = w * h
+                    bestName = c.name
+                }
+            }
+            val dominant = bestName
+            if (dominant != lastDominantCountry) {
+                lastDominantCountry = dominant
+                onDominantCountry(dominant)
+            }
+        }
     }
+}
+
+/**
+ * Looks up a country fact with fuzzy name matching — the map's country
+ * detection uses Natural Earth names which occasionally differ from the
+ * facts keys (e.g. "North Macedonia" vs "Macedonia").
+ */
+private fun lookupCountryFact(
+    facts: Map<String, CountryFacts.Fact>,
+    name: String?
+): CountryFacts.Fact? {
+    if (name == null) return null
+    facts[name]?.let { return it }
+    val normalized = name.lowercase()
+        .removePrefix("north ").removePrefix("the ")
+        .replace(".", "").trim()
+    // Containment both ways catches NE abbreviations like
+    // "Bosnia and Herz." vs "Bosnia and Herzegovina".
+    return facts.entries.firstOrNull {
+        val k = it.key.lowercase().replace(".", "").trim()
+        k == normalized ||
+            k.removePrefix("north ").removePrefix("the ") == normalized ||
+            (k.length > 5 && normalized.length > 5 &&
+                (k.contains(normalized) || normalized.contains(k)))
+    }?.value
+}
+
+/** ISO-3166 alpha-2 code → emoji flag (e.g. "SI" → 🇸🇮). */
+private fun flagEmoji(iso2: String?): String {
+    if (iso2 == null || iso2.length != 2) return ""
+    val base = 0x1F1E6 - 'A'.code
+    val sb = StringBuilder()
+    for (ch in iso2.uppercase()) sb.append(Character.toChars(base + ch.code))
+    return sb.toString()
+}
+
+/**
+ * Country fact row: prefers a single line "label  value (pron)" and only
+ * wraps onto further lines when the text does not fit the panel width.
+ * When [onClick] is provided the whole row is tappable (used for TTS).
+ */
+@Composable
+private fun CountryFactLine(
+    label: String,
+    value: String,
+    pron: String?,
+    accent: Color,
+    onClick: (() -> Unit)? = null
+) {
+    val text = buildAnnotatedString {
+        withStyle(SpanStyle(color = Color(0xFF888888), fontSize = 11.sp)) {
+            append("$label  ")
+        }
+        withStyle(SpanStyle(color = Color.White, fontSize = 12.sp)) {
+            append(value)
+        }
+        if (pron != null) {
+            withStyle(SpanStyle(color = Color(0xFF999999), fontSize = 10.sp)) {
+                append(" ($pron)")
+            }
+        }
+    }
+    Text(
+        text = text,
+        softWrap = true,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .then(
+                if (onClick != null) Modifier.clickable(onClick = onClick)
+                else Modifier
+            )
+    )
+}
+
+/** Human-friendly population: 1.41B / 33.9M / 590k. */
+private fun formatPopulation(pop: Long): String = when {
+    pop >= 1_000_000_000 -> String.format("%.2fB", pop / 1e9)
+    pop >= 1_000_000 -> String.format("%.1fM", pop / 1e6)
+    pop >= 1_000 -> "${pop / 1_000}k"
+    else -> pop.toString()
 }
 
 /** Equirectangular projection: lon ∈ [-180, 180] → [0, width]. */
@@ -1366,6 +1696,7 @@ private fun latToY(lat: Double, height: Float): Float =
 @Composable
 private fun MapInfoPanel(
     date: LocalDate,
+    dominantCountry: String? = null,
     stats: DayStats,
     statsLoading: Boolean,
     countriesVisited: Int,
@@ -1386,7 +1717,46 @@ private fun MapInfoPanel(
     var showCountriesPopup by remember { mutableStateOf(false) }
     var showIgnoredDialog  by remember { mutableStateOf(false) }
     var showPointsPopup    by remember { mutableStateOf(false) }
-    var statsCollapsed by remember { mutableStateOf(false) }
+    var countrySectionExpanded by remember { mutableStateOf(true) }
+
+    // Country facts for the dominant-country section (loaded once, lazily).
+    val context = LocalContext.current
+    var countryFacts by remember { mutableStateOf<Map<String, CountryFacts.Fact>>(emptyMap()) }
+    var countryFlags by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    LaunchedEffect(dominantCountry) {
+        if (dominantCountry != null && countryFacts.isEmpty()) {
+            countryFacts = withContext(Dispatchers.Default) { CountryFacts.load(context) }
+            countryFlags = withContext(Dispatchers.Default) { CountryFacts.loadFlags(context) }
+        }
+    }
+    // While a country dominates the screen the stats section auto-collapses,
+    // but the user can still expand it manually. Manual overrides are cleared
+    // once zooming out removes the dominant country again.
+    val statsAutoCollapsed = dominantCountry != null
+    var statsUserOverride by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(statsAutoCollapsed) {
+        if (!statsAutoCollapsed) statsUserOverride = null
+    }
+    val statsHidden = statsUserOverride ?: statsAutoCollapsed
+
+    // Text-to-speech for tapping the Hello / Thank-you words.
+    val tts = remember {
+        android.speech.tts.TextToSpeech(context) { }
+    }
+    DisposableEffect(Unit) {
+        onDispose { tts.shutdown() }
+    }
+    fun speakWord(word: String, lang: String) {
+        try {
+            val loc = java.util.Locale.forLanguageTag(lang)
+            // Prefer a native voice for the language when the engine has one;
+            // otherwise setLanguage falls back to the default voice.
+            val voice = tts.voices?.firstOrNull { it.locale.language == loc.language }
+            if (voice != null) tts.voice = voice else tts.language = loc
+            tts.speak(word, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "country_word")
+        } catch (_: Exception) {
+        }
+    }
 
     // Text entries for habits that have "show text" enabled — loaded asynchronously.
     // Each load completes via a callback, so update Compose state inside the callback
@@ -1439,7 +1809,7 @@ private fun MapInfoPanel(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { statsCollapsed = !statsCollapsed }
+                        .clickable { statsUserOverride = !statsHidden }
                         .padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -1451,14 +1821,14 @@ private fun MapInfoPanel(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = if (statsCollapsed) "+" else "−",
+                        text = if (statsHidden) "+" else "−",
                         color = accent,
                         fontSize = 16.sp
                     )
                 }
 
                 // Stats content (collapsible)
-                if (!statsCollapsed) {
+                if (!statsHidden) {
                     Column {
                         ClickableStatLine(
                             label = "Day points",
@@ -1479,6 +1849,70 @@ private fun MapInfoPanel(
                             accent = accent,
                             onClick = { showCountriesPopup = true }
                         )
+                    }
+                }
+            }
+        }
+
+        // ── Dominant-country facts section ───────────────────────────────────
+        // Appears when one country fills >50% of the map. The stats section
+        // auto-collapses while this is visible and restores on zoom-out.
+        if (dominantCountry != null) {
+            HorizontalDivider(color = Color(0xFF222222))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF0E0E0E))
+                    .padding(horizontal = 12.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { countrySectionExpanded = !countrySectionExpanded }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = flagEmoji(countryFlags[dominantCountry])
+                                .let { if (it.isEmpty()) dominantCountry else "$it  $dominantCountry" },
+                            color = accent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (countrySectionExpanded) "−" else "+",
+                            color = accent,
+                            fontSize = 16.sp
+                        )
+                    }
+                    if (countrySectionExpanded) {
+                        val fact = lookupCountryFact(countryFacts, dominantCountry)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            if (fact == null) {
+                                StatLine("Loading…", "", accent)
+                            } else {
+                                CountryFactLine("Hello", fact.hello, fact.helloPron, accent) {
+                                    speakWord(fact.hello, fact.lang)
+                                }
+                                CountryFactLine("Thank you", fact.thanks, fact.thanksPron, accent) {
+                                    speakWord(fact.thanks, fact.lang)
+                                }
+                                CountryFactLine("Founded", fact.founded, null, accent)
+                                CountryFactLine(
+                                    "Population",
+                                    "${formatPopulation(fact.population)} (${fact.popYear})",
+                                    null,
+                                    accent
+                                )
+                            }
+                        }
                     }
                 }
             }

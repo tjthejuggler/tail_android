@@ -61,6 +61,7 @@ fun MapSettingsDialog(
     onToggleMainHabit: (String) -> Unit,
     onToggleHideZeroDays: () -> Unit,
     onSetBeginDate: (String) -> Unit,
+    onUpdatePopulations: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
@@ -152,6 +153,35 @@ fun MapSettingsDialog(
                             ) {
                                 Text("Reset", fontSize = 12.sp)
                             }
+                        }
+                    }
+
+                    // Population data refresh (country facts section)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Population data",
+                                color = Color.White,
+                                fontSize = 13.sp
+                            )
+                            Text(
+                                text = "Refresh country populations (needs internet)",
+                                color = Color(0xFF888888),
+                                fontSize = 11.sp
+                            )
+                        }
+                        TextButton(
+                            onClick = onUpdatePopulations,
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = Color(0xFFFFAA00)
+                            )
+                        ) {
+                            Text("Update", fontSize = 12.sp)
                         }
                     }
 
