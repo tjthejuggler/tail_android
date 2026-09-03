@@ -104,6 +104,11 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        // Register all notification channels eagerly so per-category controls
+        // (e.g. blocking "Movie confirmations" off the Garmin watch) are
+        // visible in system settings immediately, before any notification posts.
+        com.example.tail.notify.HabitNotifier.ensureChannel(applicationContext)
+
         // Revive the always-on-top stats overlay if the user enabled it but it
         // died (process kill, APK update, OEM cleanup). No-op when off/running.
         com.example.tail.widget.StatsOverlayService.ensureRunning(applicationContext)

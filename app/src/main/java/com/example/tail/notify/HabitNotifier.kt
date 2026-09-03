@@ -21,22 +21,52 @@ import com.example.tail.data.HabitNotification
 object HabitNotifier {
 
     const val CHANNEL_ID = "habit_asks"
+    const val CHANNEL_ID_MOVIES = "habit_asks_movies"
+    const val CHANNEL_ID_INFO = "habit_notices"
+
+    /**
+     * Channel for [ask] — one per category so the user (and companion
+     * devices like Garmin that mirror per-channel phone settings) can
+     * block a single category, e.g. movie prompts, without affecting
+     * the other asks.
+     */
+    fun channelIdFor(ask: HabitNotification): String = when (ask.type) {
+        HabitNotification.TYPE_MOVIE -> CHANNEL_ID_MOVIES
+        HabitNotification.TYPE_INFO -> CHANNEL_ID_INFO
+        else -> CHANNEL_ID
+    }
 
     /** Stable system notification id derived from the ask id string. */
     fun systemNotificationId(askId: String): Int = askId.hashCode()
 
-    /** Creates the channel (no-op below O / when already created). */
+    /** Creates the channels (no-op below O / when already created). */
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Habit confirmations",
-            NotificationManager.IMPORTANCE_DEFAULT
-        ).apply {
-            description = "Asks whether you did a habit, waiting for a Yes/No answer"
-        }
-        nm.createNotificationChannel(channel)
+        val channels = listOf(
+            NotificationChannel(
+                CHANNEL_ID,
+                "Habit confirmations",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Asks whether you did a habit, waiting for a Yes/No answer"
+            },
+            NotificationChannel(
+                CHANNEL_ID_MOVIES,
+                "Movie confirmations",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Asks whether to log a watched movie — can be turned off per-category (e.g. off the watch) without affecting other asks"
+            },
+            NotificationChannel(
+                CHANNEL_ID_INFO,
+                "Notices",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Informational notices waiting for an acknowledgement"
+            }
+        )
+        nm.createNotificationChannels(channels)
     }
 
     /**
@@ -81,7 +111,7 @@ object HabitNotifier {
             HabitNotification.TYPE_INFO -> "⚠️"
             else -> "❓"
         }
-        val builder = Notification.Builder(context, CHANNEL_ID)
+        val builder = Notification.Builder(context, channelIdFor(ask))
             .setSmallIcon(R.drawable.ic_stat_tail)
             .setContentTitle("$emoji ${ask.title}")
             .setContentText(ask.question)
