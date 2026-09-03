@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.example.tail.R
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.pow
 
 /**
  * Dark AI-generated steel panel background. Each surface uses its own
@@ -147,11 +148,19 @@ internal object GhostGridGeometry {
 
 /**
  * Ghost glass squares — the white-metallic (Glass) habit-square texture
- * drawn FULL-SIZE (one square per GRID_COLUMNS cell, edge-to-edge), so the
- * chrome panels read as if the habit grid simply continued past its edges.
- * Each square shimmers INDIVIDUALLY with the same idle-shimmer wave as the
- * real grid, sampled at its own virtual (row, col) position. Drawn at a
- * barely-visible base alpha that brightens as the wave passes. Purely a
+ * drawn as a PERSPECTIVE lattice receding INTO the screen. Every logical
+ * (row, col) keeps its uniform-lattice identity (the idle-shimmer wave and
+ * the row/col enumeration still use it), but the drawn geometry is
+ * projected toward a vanishing point at the centre of the window: a row's
+ * depth factor is 1.0 (full size, at the surface) at the top/bottom screen
+ * edges and shrinks progressively as the row approaches the vertical
+ * centre, with each row's whole column strip scaled about the horizontal
+ * centre line — so tiles get narrower, shorter and bunch together more and
+ * more toward the middle, reading as a floor/wall grid diving deep into
+ * the phone. Rest brightness is tied to the same depth factor (near =
+ * bright, deep = dim), replacing the old edge-anchored fade ramps. Each
+ * square still shimmers INDIVIDUALLY with the same idle-shimmer wave as
+ * the real grid, sampled at its own virtual (row, col) position. Purely a
  * background layer — content is always drawn on top, unaffected.
  */
 internal fun Modifier.ghostGlassSquares(
@@ -187,8 +196,8 @@ internal fun Modifier.ghostGlassSquares(
         .drawWithContent {
             if (tile != null) {
                 // Mirror the real grid's geometry: 4.dp outer padding, 2.dp
-                // per-cell padding, and 6.dp rounded corners — so the ghost
-                // squares read as literal continuations of the habit squares.
+                // per-cell padding, and 6.dp rounded corners — the LOGICAL
+                // lattice the perspective projection starts from.
                 val outerPad = 4.dp.toPx()
                 val cellPad = 2.dp.toPx()
                 val corner = 6.dp.toPx()
@@ -197,15 +206,21 @@ internal fun Modifier.ghostGlassSquares(
                 val sweep = shimmerSweep()
                 val dir = shimmerDirection()
 
+                // Vanishing point — the centre of the WINDOW (global
+                // coordinates), shared by every panel so the projected
+                // lattice is one seamless scene across all chrome panels
+                // and the loading screen alike.
+                val vpx = size.width / 2f
+                val vpy = windowH / 2f
+
                 // Global y where the grid's row-0 square tops sit (published by
                 // the grid panel). Squares then land at anchor + k*cell for any
-                // integer k, so the lattice aligns EXACTLY with the real grid
-                // rows everywhere on screen.
+                // integer k, so the LOGICAL lattice aligns with the real grid.
                 // Anchor resolution order: the live grid's published anchor →
                 // the last anchor the grid ever published (loading state, grid
                 // absent) → a bottom-edge-aligned lattice so even the very
-                // first cold-start frame has a consistent, correctly-faded
-                // grid instead of each panel self-anchoring at its own top.
+                // first cold-start frame has a consistent lattice instead of
+                // each panel self-anchoring at its own top.
                 val anchorBase = GhostGridGeometry.gridTopY
                     ?: GhostGridGeometry.lastKnownGridTopY
                     ?: run {
@@ -215,50 +230,187 @@ internal fun Modifier.ghostGlassSquares(
                     }
                 val anchorTop = anchorBase + outerPad + cellPad
 
-                // Vertical brightness profile — anchored to the SCREEN edges
-                // (global window coordinates), NOT to each panel's own extent.
-                // (Using each panel's last visible row as the bottom anchor
-                // made every small header panel brighten its own bottom edge,
-                // which inverted the top gradient.)
+                // ── Perspective projection (smoothstep horizon) ───────────
+                // The deepest pit is a HORIZONTAL line across the middle of
+                // the screen (the vanishing "horizon"). Depth of a point
+                // depends on its VERTICAL distance from that midline (vpy):
+                //  - depth(y) = 1.0 (surface, full size) at the top/bottom
+                //    screen edges, shrinking progressively toward the
+                //    midline — the sub-linear exponent makes compression
+                //    ACCELERATE toward the centre, so tiles get smaller,
+                //    narrower and bunch tighter (rows crowd toward the
+                //    horizon) the deeper they go.
+                //  - Each tile is a TRAPEZOID: its four corners are projected
+                //    independently, so the horizontal edge facing the
+                //    midline is narrower (in both width and height) than the
+                //    edge at the surface — tiles visibly angle inward
+                //    downward into the pit.
+                //  - Columns beyond the real grid are enumerated (virtual
+                //    col < 0 / ≥ GRID_COLUMNS): as a deep row's width
+                //    compresses toward the centre, extra full-size tiles
+                //    flow in from the sides so the pit's walls stay
+                //    continuous edge to edge.
+                // All y values here are GLOBAL window coordinates (the
+                // projection is one seamless scene shared by every panel);
+                // the panel-local offset is subtracted only at draw time.
+                val minDepth = 0.18f
+                val halfH = windowH / 2f
+                // FLAT ZONE: the first 3 rows at the TOP of the screen stay
+                // at depth 1.0 — completely flat, perfect squares at exactly
+                // their original size and spacing (same as the habit
+                // squares) — before the perspective starts dipping inward.
+                val flatPx = 2f * cell
+                // Smoothstep falloff over the remaining span: zero slope at
+                // BOTH the flat zone's edge (nd = 1) and the horizon
+                // (nd = 0). The zero slope at the edge keeps the transition
+                // gapless (no derivative kink → no visible jump after the
+                // flat rows); the zero slope at the horizon makes rows bunch
+                // infinitesimally tight toward the vanishing line.
+                fun depthAt(yGlobal: Float): Float {
+                    val d = kotlin.math.abs(yGlobal - vpy)
+                    val span = if (yGlobal < vpy) halfH - flatPx else halfH
+                    if (span <= 0f) return minDepth
+                    val nd = d / span
+                    if (nd >= 1f) return 1f
+                    val t = nd * nd * (3f - 2f * nd)
+                    return minDepth + (1f - minDepth) * t
+                }
+                // Projection toward the horizon. BOTH axes scale by the SAME
+                // depth factor, so a tile at depth 1 is an exact square the
+                // same size as the habit squares, and partial-depth tiles
+                // stay square-ish trapezoids (never elongated).
+                fun projY(yGlobal: Float, s: Float): Float = vpy + (yGlobal - vpy) * s
+                fun projX(x: Float, s: Float): Float = vpx + (x - vpx) * s
+
+                // Rest brightness is tied to depth and hits ZERO at full
+                // depth: the deepest tiles (at the horizon) are invisible at
+                // rest and appear ONLY when the shimmer wave passes over
+                // them. Surface tiles (top/bottom screen edges) are at full
+                // rest brightness. (edgePeak keeps the old top-vs-bottom
+                // asymmetry, evaluated per row.)
+                fun restAlphaFor(gridRow: Int, depth: Float): Float {
+                    val edgePeak = if (anchorTop + gridRow * cell < vpy) 0.20f else baseAlpha
+                    val dNorm = ((depth - minDepth) / (1f - minDepth)).coerceIn(0f, 1f)
+                    return edgePeak * dNorm.pow(2.6f)
+                }
+
+                // Shared projected ROW BOUNDARY lines, built by INTEGRATING
+                // the local pitch: Y_{k+1} = Y_k + cell × depth(k↔k+1). A
+                // pointwise projection (vpy + (y−vpy)·s) can locally
+                // STRETCH (f′ > 1 where |y−vpy|·|s′| > 1−s), which opened
+                // the horizontal gap after the flat rows. Integrating the
+                // depth-scaled pitch guarantees every row pitch ≤ cell, so
+                // rows only ever compress — seams are impossible — while
+                // the flat zone (s = 1) still reproduces the exact original
+                // lattice. Shared boundaries also mean row k's bottom and
+                // row k+1's top are the same value by construction.
                 //
-                // Top: the lattice row at the very top edge of the screen is
-                // the brightest (1.0); the falloff is quadratic over ~6 rows,
-                // so rows 1-3 read clearly, rows 4-6 are very slightly visible
-                // and everything below fades to shimmer-only. Bottom: fades
-                // back in over the last ~3 rows, brightest at the very bottom
-                // edge (toward the advice banner) — as before.
-                // Vertical brightness profile — LINEAR ramps anchored to the
-                // screen edges (global window coordinates). The top ramp spans
-                // 6 rows peaking at 0.20 alpha; every row steps down by the
-                // SAME constant (~0.033), so the fade reads as a smooth
-                // gradient — a squared falloff was tried and perceptually
-                // collapsed into "flat rows then a hard cut" because only
-                // absolute (not relative) steps are visible at these low
-                // alphas. The bottom ramp is unchanged: 5 rows peaking at
-                // baseAlpha, brightest at the very bottom edge.
-                val topEdgeRow = floor((0f - anchorTop) / cell)
-                val bottomEdgeRow = floor((windowH - anchorTop) / cell)
-                fun topFadeAlpha(gridRow: Int): Float =
-                    0.20f * (1f - (gridRow - topEdgeRow) / 6f).coerceIn(0f, 1f)
-                fun bottomFadeAlpha(gridRow: Int): Float =
-                    baseAlpha * (0.05f + 0.95f *
-                        ((gridRow - (bottomEdgeRow - 4)) / 5f).coerceIn(0f, 1f))
-                fun rowFadeFraction(gridRow: Int): Float =
-                    maxOf(
-                        (1f - (gridRow - topEdgeRow) / 6f).coerceIn(0f, 1f),
-                        ((gridRow - (bottomEdgeRow - 4)) / 5f).coerceIn(0f, 1f)
-                    )
+                // BOTH ENDS ANCHORED: rows above the horizon integrate
+                // downward from row 0 (top of screen, flat), rows below the
+                // horizon integrate UPWARD from the last lattice row at the
+                // bottom edge — so the surface rows stay glued to BOTH the
+                // top and the bottom of the screen while everything
+                // compresses toward the horizon from either side. (The two
+                // integrations meet at the horizon where tiles are at
+                // minimum depth and invisible at rest, so any sub-pixel
+                // mismatch there is imperceptible.)
+                val rowLineCache = HashMap<Int, Float>()
+                val horizonRow = ((vpy - anchorTop) / cell).toInt()
+                val bottomAnchorRow = floor((windowH - anchorTop) / cell).toInt()
+                fun rowLineY(k: Int): Float {
+                    rowLineCache[k]?.let { return it }
+                    var y: Float
+                    if (k <= horizonRow) {
+                        // Downward from the top anchor (row 0 = lattice);
+                        // negative rows extend UPWARD from it at their own
+                        // depth-scaled pitch (rows above the grid anchor).
+                        y = anchorTop.toFloat()
+                        for (i in 0 until k) {
+                            val mid = anchorTop + (i + 0.5f) * cell
+                            y += cell * depthAt(mid)
+                        }
+                        for (i in k until 0) {
+                            val mid = anchorTop + (i - 0.5f) * cell
+                            y -= cell * depthAt(mid)
+                        }
+                    } else {
+                        // Upward from the bottom-edge lattice anchor; rows
+                        // beyond it extend DOWNWARD at their own pitch.
+                        y = anchorTop + bottomAnchorRow * cell
+                        for (i in bottomAnchorRow downTo k + 1) {
+                            val mid = anchorTop + (i - 0.5f) * cell
+                            y -= cell * depthAt(mid)
+                        }
+                        for (i in bottomAnchorRow until k) {
+                            val mid = anchorTop + (i + 0.5f) * cell
+                            y += cell * depthAt(mid)
+                        }
+                    }
+                    rowLineCache[k] = y
+                    return y
+                }
+                // Shared projected COLUMN boundary line for a row-scale s.
+                fun colLineX(c: Int, s: Float): Float = projX(outerPad + c * cell, s)
 
                 fun drawSquareRow(gridRow: Int) {
-                    val fade = rowFadeFraction(gridRow)
-                    val restAlpha = maxOf(topFadeAlpha(gridRow), bottomFadeAlpha(gridRow))
-                    for (c in 0 until GRID_COLUMNS) {
-                        // Clamp u: extrapolated virtual rows would otherwise produce
-                        // out-of-range u values that linger inside the shimmer band
-                        // after the sweep ends (squares stuck slightly shimmered).
-                        val u = dir.u(gridRow, c).coerceIn(0f, 1f)
+                    // Row boundary depths (evaluated on the boundary lines,
+                    // shared with the neighbouring rows).
+                    val topLineG = anchorTop + gridRow * cell
+                    val botLineG = topLineG + cell
+                    val sTop = depthAt(topLineG)
+                    val sBot = depthAt(botLineG)
+                    val depth = depthAt(topLineG + cell / 2f)
+                    // Projected boundary lines, then DEPTH-SCALED cell
+                    // padding inset from each boundary — the gaps between
+                    // tiles thin out as the tiles slope downward (both
+                    // horizontally and vertically), tightening the illusion.
+                    val topB = rowLineY(gridRow)
+                    val botB = rowLineY(gridRow + 1)
+                    val y0 = topB + cellPad * sTop
+                    val y1 = botB - cellPad * sBot
+                    // Cull rows whose PROJECTED extent misses this panel.
+                    if (y1 - topY < 0f || y0 - topY > size.height || y1 - y0 < 1f) return
+                    val restAlpha = restAlphaFor(gridRow, depth)
+                    // Expand the column range past the real grid until the
+                    // projected tiles clear the panel on BOTH sides — extra
+                    // tiles "come in from the sides" to feed the compression.
+                    var cFirst = 0
+                    while (true) {
+                        if (colLineX(cFirst - 1, depth) < -side) break
+                        cFirst--
+                    }
+                    var cLast = GRID_COLUMNS - 1
+                    while (true) {
+                        if (colLineX(cLast + 1, depth) > size.width + side) break
+                        cLast++
+                    }
+                    // Shimmer u comes STRAIGHT from the direction's formula
+                    // with the raw (possibly negative / ≥ GRID_COLUMNS)
+                    // column index — the formulas extrapolate linearly (or
+                    // radially), so every virtual side column gets its own
+                    // distinct position along the wave: no clustering, and
+                    // every direction (horizontals, verticals, both diagonal
+                    // pairs, centre-out / outer-centre) keeps its true
+                    // geometry, including the forward-then-opposite pairing.
+                    // u is NOT clamped: tiles whose extrapolated u lies
+                    // outside the traversed range are automatically dark at
+                    // rest (their distance to the wave front exceeds the
+                    // band width), so a finished sweep leaves NOTHING
+                    // glowing — clamping to the band edge is exactly what
+                    // used to pin the final tiles at full brightness.
+                    for (c in cFirst..cLast) {
+                        // Column boundaries projected with each edge's own
+                        // depth (sTop for the top edge, sBot for the bottom
+                        // edge), with DEPTH-SCALED padding insets — the
+                        // horizontal gaps thin as depth increases too.
+                        val px0t = colLineX(c, sTop) + cellPad * sTop
+                        val px1t = colLineX(c + 1, sTop) - cellPad * sTop
+                        val px0b = colLineX(c, sBot) + cellPad * sBot
+                        val px1b = colLineX(c + 1, sBot) - cellPad * sBot
+                        if (maxOf(px1t, px1b) < 0f || minOf(px0t, px0b) > size.width) continue
+                        val u = dir.u(gridRow, c)
                         // Global brightness boost applied to every ghost square,
-                        // on top of the fade profile and shimmer alike.
+                        // on top of the depth fade and shimmer alike.
                         // HISTORY: every earlier "+X%" pass was a silent no-op
                         // because `expr * Nf.coerceIn(0f, 1f)` binds .coerceIn
                         // to the LITERAL (→ always 1.0f) — even across a line
@@ -266,28 +418,59 @@ internal fun Modifier.ghostGlassSquares(
                         // step so the precedence cannot bite again; clamp on
                         // the final value. Boost = ×4 (two requested doublings).
                         val unboosted = restAlpha +
-                            idleShimmerAlpha(sweep, u) * 3.0f * (0.45f + 0.55f * fade)
-                        val alpha = (unboosted * 4.0f).coerceIn(0f, 1f)
+                            idleShimmerAlpha(sweep, u) * 1.8f * (0.45f + 0.55f * depth)
+                        val alpha = (unboosted * 2.0f).coerceIn(0f, 1f)
                         if (alpha > 0.004f) {
-                            val left = outerPad + c * cell + cellPad
-                            val top = anchorTop + gridRow * cell - topY
+                            // Trapezoid corners from the shared projected
+                            // boundaries + scaled padding insets.
+                            val p00x = px0t; val p01x = px1t
+                            val p10x = px0b; val p11x = px1b
+                            val p0y = y0 - topY
+                            val p1y = y1 - topY
+                            val left = minOf(p00x, p10x)
+                            val right = maxOf(p01x, p11x)
+                            if (right - left < 1f) continue
+                            // Rounded corners on the trapezoid: at the
+                            // surface (depth 1) the radius matches the real
+                            // habit squares' 6.dp, so flat ghost squares are
+                            // pixel-identical to them; deeper tiles round
+                            // proportionally smaller. Implemented as four
+                            // quadratic corner arcs cut into the trapezoid.
+                            val rPx = corner * depth
+                            fun ax(ax0: Float, ay0: Float, bx: Float, by: Float): Float =
+                                ax0 + (bx - ax0) * ((rPx / kotlin.math.hypot(bx - ax0, by - ay0)).coerceIn(0f, 0.5f))
+                            fun ay(ax0: Float, ay0: Float, bx: Float, by: Float): Float =
+                                ay0 + (by - ay0) * ((rPx / kotlin.math.hypot(bx - ax0, by - ay0)).coerceIn(0f, 0.5f))
                             clipPath.reset()
-                            clipPath.addRoundRect(
-                                RoundRect(
-                                    left = left,
-                                    top = top,
-                                    right = left + side,
-                                    bottom = top + side,
-                                    cornerRadius = CornerRadius(corner, corner)
-                                )
-                            )
+                            // top edge p00 -> p01
+                            clipPath.moveTo(ax(p00x, p0y, p01x, p0y), ay(p00x, p0y, p01x, p0y))
+                            clipPath.lineTo(ax(p01x, p0y, p00x, p0y), ay(p01x, p0y, p00x, p0y))
+                            // corner at p01
+                            clipPath.quadraticTo(p01x, p0y, ax(p01x, p0y, p11x, p1y), ay(p01x, p0y, p11x, p1y))
+                            // right edge p01 -> p11
+                            clipPath.lineTo(ax(p11x, p1y, p01x, p0y), ay(p11x, p1y, p01x, p0y))
+                            // corner at p11
+                            clipPath.quadraticTo(p11x, p1y, ax(p11x, p1y, p10x, p1y), ay(p11x, p1y, p10x, p1y))
+                            // bottom edge p11 -> p10
+                            clipPath.lineTo(ax(p10x, p1y, p11x, p1y), ay(p10x, p1y, p11x, p1y))
+                            // corner at p10
+                            clipPath.quadraticTo(p10x, p1y, ax(p10x, p1y, p00x, p0y), ay(p10x, p1y, p00x, p0y))
+                            // left edge p10 -> p00
+                            clipPath.lineTo(ax(p00x, p0y, p10x, p1y), ay(p00x, p0y, p10x, p1y))
+                            // corner at p00
+                            clipPath.quadraticTo(p00x, p0y, ax(p00x, p0y, p01x, p0y), ay(p00x, p0y, p01x, p0y))
+                            clipPath.close()
+                            val dstX = left.toInt()
+                            val dstY = minOf(p0y, p1y).toInt()
+                            val dstW = (right - left).toInt().coerceAtLeast(1)
+                            val dstH = (maxOf(p0y, p1y) - minOf(p0y, p1y)).toInt().coerceAtLeast(1)
                             clipPath(clipPath) {
                                 drawImage(
                                     image = tile,
                                     srcOffset = IntOffset.Zero,
                                     srcSize = IntSize(tile.width, tile.height),
-                                    dstOffset = IntOffset(left.toInt(), top.toInt()),
-                                    dstSize = IntSize(side, side),
+                                    dstOffset = IntOffset(dstX, dstY),
+                                    dstSize = IntSize(dstW, dstH),
                                     alpha = alpha
                                 )
                             }
@@ -302,8 +485,7 @@ internal fun Modifier.ghostGlassSquares(
                 // chrome panels (top bar → location row → tab row → grid) all
                 // run this same draw phase on the shared lattice, and without
                 // the clip each seam square was painted by BOTH neighbours,
-                // compounding alpha — which made rows brighter toward the
-                // grid and then hard-cut. Row alpha depends only on gridRow,
+                // compounding alpha. Row geometry depends only on gridRow,
                 // so clipped halves from the two neighbours match exactly.
                 val kFirst = ceil((topY - anchorTop - side) / cell).toInt()
                 val kLast = floor((topY + size.height - anchorTop) / cell).toInt()

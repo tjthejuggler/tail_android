@@ -231,7 +231,7 @@ internal const val TAB_DRAG_SWITCH_DWELL_MS = 550L
 internal const val IDLE_SHIMMER_GAP_MIN_MS = 5_000L   // min quiet time before a wave starts
 internal const val IDLE_SHIMMER_GAP_MAX_MS = 15_000L  // max quiet time before a wave starts
 internal const val IDLE_SHIMMER_SWEEP_MS = 1_300      // duration of one leg (forward or return) of a pair
-internal const val IDLE_SHIMMER_BAND = 0.22f          // wave width (fraction of the sweep span)
+internal const val IDLE_SHIMMER_BAND = 0.07f          // wave width (fraction of the sweep span) — thin enough that essentially ONE row/column lights at a time
 internal const val IDLE_SHIMMER_MAX_ALPHA = 0.07f     // peak brightness — deliberately very slight
 
 internal const val GRID_ROWS = TOTAL_CELLS / GRID_COLUMNS
@@ -486,21 +486,31 @@ fun HabitGridScreen(
     val shimmerDirection = remember { mutableStateOf(ShimmerDirection.BOTTOM_RIGHT_TO_TOP_LEFT) }
     LaunchedEffect(Unit) {
         snapshotFlow { shimmerInteractionGen.intValue }.collectLatest {
-            shimmerSweep.snapTo(0f)
-            delay(kotlin.random.Random.nextLong(IDLE_SHIMMER_GAP_MIN_MS, IDLE_SHIMMER_GAP_MAX_MS + 1))
-            while (true) {
-                val forward = ShimmerDirection.entries.random()
-                // Forward leg — sweep in the randomly chosen direction.
-                shimmerDirection.value = forward
+            try {
                 shimmerSweep.snapTo(0f)
-                shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
-                // Return leg — the opposite wave follows immediately with no
-                // gap, retracing the sweep back to where it came from.
-                shimmerDirection.value = forward.opposite
-                shimmerSweep.snapTo(0f)
-                shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
-                // Quiet period before the next random direction is chosen.
                 delay(kotlin.random.Random.nextLong(IDLE_SHIMMER_GAP_MIN_MS, IDLE_SHIMMER_GAP_MAX_MS + 1))
+                while (true) {
+                    val forward = ShimmerDirection.entries.random()
+                    // Forward leg — sweep in the randomly chosen direction.
+                    shimmerDirection.value = forward
+                    shimmerSweep.snapTo(0f)
+                    shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
+                    // Return leg — the opposite wave follows immediately with no
+                    // gap, retracing the sweep back to where it came from.
+                    shimmerDirection.value = forward.opposite
+                    shimmerSweep.snapTo(0f)
+                    shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
+                    // Quiet period before the next random direction is chosen.
+                    delay(kotlin.random.Random.nextLong(IDLE_SHIMMER_GAP_MIN_MS, IDLE_SHIMMER_GAP_MAX_MS + 1))
+                }
+            } finally {
+                // Cancellation (a new interaction restarts the cycle via
+                // collectLatest) must NEVER freeze the wave mid-screen —
+                // snapping the sweep to its END pushes the wave front fully
+                // off the lattice so every tile goes dark before the next
+                // quiet period, instead of a half-finished band parking and
+                // glowing in place until the next cycle.
+                shimmerSweep.snapTo(1f)
             }
         }
     }
@@ -3106,21 +3116,15 @@ internal fun ScreenTabRow(
                     // Chips must always be slightly wider than they are tall.
                     .widthIn(min = chipHeight * 1.1f)
                     .clip(chipShape)
+                    // Chip backgrounds are fully TRANSPARENT so the ghost
+                    // glass lattice stays visible through every screen-name
+                    // chip; only the border distinguishes active/inactive.
                     .then(
                         if (isActive) {
                             Modifier
-                                .background(
-                                    brush = Brush.verticalGradient(
-                                        listOf(Color(0xFFD7DEE6), Color(0xFF8C98A6))
-                                    )
-                                )
-                                .border(1.dp, Color(0xFFE8EEF4), chipShape)
+                                .border(1.5.dp, Color(0xFFE8EEF4), chipShape)
                         } else {
                             Modifier
-                                .background(
-                                    if (editMode && isHidden) Color(0x1A888888)
-                                    else Color(0x1C9AA6B2)
-                                )
                                 .border(1.dp, Color(0x33FFFFFF), chipShape)
                         }
                     )
