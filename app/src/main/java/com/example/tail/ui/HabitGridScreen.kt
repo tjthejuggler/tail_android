@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
@@ -3102,6 +3103,8 @@ internal fun ScreenTabRow(
             Box(
                 modifier = Modifier
                     .height(chipHeight)
+                    // Chips must always be slightly wider than they are tall.
+                    .widthIn(min = chipHeight * 1.1f)
                     .clip(chipShape)
                     .then(
                         if (isActive) {
