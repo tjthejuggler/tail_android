@@ -1,5 +1,6 @@
 package com.example.tail.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,6 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.res.painterResource
 
 /**
  * Dialog for manually setting the location for a given day.
@@ -54,6 +58,8 @@ fun LocationEditDialog(
     suggestions: List<String>,
     onConfirm: (String?) -> Unit,
     onDismiss: () -> Unit,
+    /** Opens the world-map timeline (globe button in the title row). */
+    onOpenMap: (() -> Unit)? = null,
     onFetchCandidates: (((List<String>) -> Unit) -> Unit)? = null,
     onSavePreferredCandidateIndex: ((Int) -> Unit)? = null
 ) {
@@ -129,6 +135,21 @@ fun LocationEditDialog(
                                 }
                             }
                         )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    // Globe icon — opens the map timeline view. Moved here
+                    // from the main screen's location row.
+                    if (onOpenMap != null) {
+                        IconButton(
+                            onClick = onOpenMap,
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Image(
+                                painter = painterResource(id = com.example.tail.R.drawable.globe),
+                                contentDescription = "World map timeline",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
 

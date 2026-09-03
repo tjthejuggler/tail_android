@@ -20,9 +20,11 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -135,6 +137,12 @@ fun Modifier.silverSteelPanel(
  */
 internal object GhostGridGeometry {
     var gridTopY: Float? = null
+
+    /** Last value ever published for [gridTopY]. While the loading spinner
+     *  replaces the grid (grid not composed → nothing publishes), chrome
+     *  panels use this so the lattice stays exactly where the real grid put
+     *  it instead of re-anchoring per panel (the "messed up" cold-start look). */
+    var lastKnownGridTopY: Float? = null
 }
 
 /**
@@ -158,6 +166,9 @@ internal fun Modifier.ghostGlassSquares(
     baseAlpha: Float = 0.12f
 ): Modifier = composed {
     val context = LocalContext.current
+    // Window height (px) — anchors the bottom fade to the true bottom edge of
+    // the screen regardless of which panel is drawing.
+    val windowH = LocalWindowInfo.current.containerSize.height
     val tile: ImageBitmap? = remember {
         BitmapFactory.decodeResource(context.resources, R.drawable.habit_tile_glass)?.asImageBitmap()
     }
@@ -168,7 +179,10 @@ internal fun Modifier.ghostGlassSquares(
     Modifier
         .onGloballyPositioned { coords ->
             topY = coords.positionInWindow().y
-            if (isGridAnchor) GhostGridGeometry.gridTopY = topY
+            if (isGridAnchor) {
+                GhostGridGeometry.gridTopY = topY
+                GhostGridGeometry.lastKnownGridTopY = topY
+            }
         }
         .drawWithContent {
             if (tile != null) {
@@ -187,31 +201,73 @@ internal fun Modifier.ghostGlassSquares(
                 // the grid panel). Squares then land at anchor + k*cell for any
                 // integer k, so the lattice aligns EXACTLY with the real grid
                 // rows everywhere on screen.
-                val anchorTop = (GhostGridGeometry.gridTopY ?: topY) + outerPad + cellPad
+                // Anchor resolution order: the live grid's published anchor →
+                // the last anchor the grid ever published (loading state, grid
+                // absent) → a bottom-edge-aligned lattice so even the very
+                // first cold-start frame has a consistent, correctly-faded
+                // grid instead of each panel self-anchoring at its own top.
+                val anchorBase = GhostGridGeometry.gridTopY
+                    ?: GhostGridGeometry.lastKnownGridTopY
+                    ?: run {
+                        val wh = windowH.toFloat()
+                        wh - floor(wh / ((size.width - 2 * outerPad) / GRID_COLUMNS)) *
+                            ((size.width - 2 * outerPad) / GRID_COLUMNS)
+                    }
+                val anchorTop = anchorBase + outerPad + cellPad
 
-                // Vertical brightness profile: the top rows (above the grid)
-                // stay bright — the fade-from-dark-into-the-tab-row look —
-                // but EVERY grid row (0+) is invisible at rest (only the
-                // shimmer still shows, faintly). Near the panel's bottom edge
-                // the squares fade back in over just ~3 rows, brightest at the
-                // very bottom (toward the advice banner).
-                fun rowBrightness(gridRow: Int, maxRow: Int): Float {
-                    val topB = if (gridRow < 0) ((2 - gridRow) / 3f).coerceIn(0f, 1f) else 0f
-                    val bottomB = ((gridRow - (maxRow - 3)) / 4f).coerceIn(0f, 1f)
-                    return maxOf(topB, bottomB)
-                }
+                // Vertical brightness profile — anchored to the SCREEN edges
+                // (global window coordinates), NOT to each panel's own extent.
+                // (Using each panel's last visible row as the bottom anchor
+                // made every small header panel brighten its own bottom edge,
+                // which inverted the top gradient.)
+                //
+                // Top: the lattice row at the very top edge of the screen is
+                // the brightest (1.0); the falloff is quadratic over ~6 rows,
+                // so rows 1-3 read clearly, rows 4-6 are very slightly visible
+                // and everything below fades to shimmer-only. Bottom: fades
+                // back in over the last ~3 rows, brightest at the very bottom
+                // edge (toward the advice banner) — as before.
+                // Vertical brightness profile — LINEAR ramps anchored to the
+                // screen edges (global window coordinates). The top ramp spans
+                // 6 rows peaking at 0.20 alpha; every row steps down by the
+                // SAME constant (~0.033), so the fade reads as a smooth
+                // gradient — a squared falloff was tried and perceptually
+                // collapsed into "flat rows then a hard cut" because only
+                // absolute (not relative) steps are visible at these low
+                // alphas. The bottom ramp is unchanged: 5 rows peaking at
+                // baseAlpha, brightest at the very bottom edge.
+                val topEdgeRow = floor((0f - anchorTop) / cell)
+                val bottomEdgeRow = floor((windowH - anchorTop) / cell)
+                fun topFadeAlpha(gridRow: Int): Float =
+                    0.20f * (1f - (gridRow - topEdgeRow) / 6f).coerceIn(0f, 1f)
+                fun bottomFadeAlpha(gridRow: Int): Float =
+                    baseAlpha * (0.05f + 0.95f *
+                        ((gridRow - (bottomEdgeRow - 4)) / 5f).coerceIn(0f, 1f))
+                fun rowFadeFraction(gridRow: Int): Float =
+                    maxOf(
+                        (1f - (gridRow - topEdgeRow) / 6f).coerceIn(0f, 1f),
+                        ((gridRow - (bottomEdgeRow - 4)) / 5f).coerceIn(0f, 1f)
+                    )
 
-                fun drawSquareRow(gridRow: Int, maxRow: Int) {
-                    val b = rowBrightness(gridRow, maxRow)
+                fun drawSquareRow(gridRow: Int) {
+                    val fade = rowFadeFraction(gridRow)
+                    val restAlpha = maxOf(topFadeAlpha(gridRow), bottomFadeAlpha(gridRow))
                     for (c in 0 until GRID_COLUMNS) {
                         // Clamp u: extrapolated virtual rows would otherwise produce
                         // out-of-range u values that linger inside the shimmer band
                         // after the sweep ends (squares stuck slightly shimmered).
                         val u = dir.u(gridRow, c).coerceIn(0f, 1f)
-                        val alpha = (
-                            baseAlpha * (0.05f + 0.95f * b) +
-                                idleShimmerAlpha(sweep, u) * 3.0f * (0.45f + 0.55f * b)
-                            ).coerceIn(0f, 1f)
+                        // Global brightness boost applied to every ghost square,
+                        // on top of the fade profile and shimmer alike.
+                        // HISTORY: every earlier "+X%" pass was a silent no-op
+                        // because `expr * Nf.coerceIn(0f, 1f)` binds .coerceIn
+                        // to the LITERAL (→ always 1.0f) — even across a line
+                        // break. The multiplier is now applied in a separate
+                        // step so the precedence cannot bite again; clamp on
+                        // the final value. Boost = ×4 (two requested doublings).
+                        val unboosted = restAlpha +
+                            idleShimmerAlpha(sweep, u) * 3.0f * (0.45f + 0.55f * fade)
+                        val alpha = (unboosted * 4.0f).coerceIn(0f, 1f)
                         if (alpha > 0.004f) {
                             val left = outerPad + c * cell + cellPad
                             val top = anchorTop + gridRow * cell - topY
@@ -242,9 +298,18 @@ internal fun Modifier.ghostGlassSquares(
                 // Enumerate every lattice row visible in this panel; gridRow
                 // IS the true row index (negative above the grid, GRID_ROWS+
                 // below it), so brightness and shimmer are globally consistent.
+                // The drawing is CLIPPED to this panel's own bounds: adjacent
+                // chrome panels (top bar → location row → tab row → grid) all
+                // run this same draw phase on the shared lattice, and without
+                // the clip each seam square was painted by BOTH neighbours,
+                // compounding alpha — which made rows brighter toward the
+                // grid and then hard-cut. Row alpha depends only on gridRow,
+                // so clipped halves from the two neighbours match exactly.
                 val kFirst = ceil((topY - anchorTop - side) / cell).toInt()
                 val kLast = floor((topY + size.height - anchorTop) / cell).toInt()
-                for (gridRow in kFirst..kLast) drawSquareRow(gridRow, kLast)
+                clipRect(0f, 0f, size.width, size.height) {
+                    for (gridRow in kFirst..kLast) drawSquareRow(gridRow)
+                }
             }
             drawContent()
         }

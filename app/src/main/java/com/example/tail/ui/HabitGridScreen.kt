@@ -130,6 +130,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalContext
@@ -988,32 +989,28 @@ fun HabitGridScreen(
                             shimmerSweep = { shimmerSweep.value },
                             shimmerDirection = { shimmerDirection.value }
                         )
-                        .padding(start = 12.dp, end = 4.dp),
+                        .padding(start = 12.dp, end = 4.dp, top = 0.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Slightly slid up: a small negative offset tightens the
+                    // gap to the top bar.
                     Text(
                         text = locationLabel,
                         color = if (selectedDateLocation != null) Color(0xFFAAAAAA) else Color(0xFF666666),
                         fontSize = 11.sp,
                         modifier = Modifier
                             .weight(1f)
-                            .clickable(
+                            .offset(y = (-2).dp)
+                            .combinedClickable(
                                 indication = null,
-                                interactionSource = remember { MutableInteractionSource() }
-                            ) { showLocationEditDialog = true }
+                                interactionSource = remember { MutableInteractionSource() },
+                                onClick = { showLocationEditDialog = true },
+                                // Long-press the location name → map view
+                                // (replaces the old globe icon button).
+                                onLongClick = { onNavigateToMap() }
+                            )
                             .padding(vertical = 1.dp)
                     )
-                    // Globe icon — positioned under the Settings icon in the top bar.
-                    IconButton(
-                        onClick = onNavigateToMap,
-                        modifier = Modifier.size(20.dp)
-                    ) {
-                        Image(
-                            painter = painterResource(id = com.example.tail.R.drawable.globe),
-                            contentDescription = "World map timeline",
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
                 }
             }
 
@@ -1052,7 +1049,18 @@ fun HabitGridScreen(
                 // orbital halo, today's points the central spark. Reads the
                 // retained loadingMetrics StateFlow (not the stale habits list)
                 // so the tiers are correct even mid-load.
-                Box(modifier = Modifier.fillMaxSize()) {
+                // ghostGlassSquares keeps the full-screen background lattice
+                // alive while the grid itself is not composed (loading),
+                // using the same brightness/fade as the real grid.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .ghostGlassSquares(
+                            shimmerSweep = { shimmerSweep.value },
+                            shimmerDirection = { shimmerDirection.value },
+                            isGridAnchor = true
+                        )
+                ) {
                     HabitLoadingSpinner(
                         monthlyAverage = loadingMetrics.monthlyAverage,
                         weeklyAverage = loadingMetrics.weeklyAverage,
@@ -2354,6 +2362,12 @@ fun HabitGridScreen(
         LocationEditDialog(
             currentLocation = effectiveLocation,
             suggestions = viewModel.getAllStoredLocations(),
+            // Globe button inside the popup → map view (moved here from the
+            // main screen's location row).
+            onOpenMap = {
+                showLocationEditDialog = false
+                onNavigateToMap()
+            },
             onConfirm = { label ->
                 if (label == null) {
                     viewModel.removeLocationForDate(selectedDate)
@@ -3031,16 +3045,12 @@ internal fun ScreenTabRow(
                 isHidden && isActive -> screen.name  // show name when active even if hidden
                 else -> screen.name
             }
-            TextButton(
-                onClick = { onTabClick(index) },
-                colors = ButtonDefaults.textButtonColors(
-                    containerColor = if (isActive) Color(0xFF555555)
-                        else if (editMode && isHidden) Color(0xFF1A1A1A)
-                        else Color.Transparent,
-                    contentColor = if (isActive) Color.White
-                        else if (editMode && isHidden) Color(0xFF555555)
-                        else Color(0xFF888888)
-                ),
+            // Each screen name is paired with a small glass square. Clicking
+            // the SQUARE selects that screen. The ACTIVE screen's square is
+            // bright — brighter than the top/bottom fade rows — replacing the
+            // old grey oval highlight on the name.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .height(32.dp)
                     .onGloballyPositioned { coords ->
@@ -3050,11 +3060,49 @@ internal fun ScreenTabRow(
                         )
                     }
             ) {
-                Text(
-                    text = if (editMode && isHidden && !isActive) "👁‍🗨 ${screen.name}" else label,
-                    fontSize = 12.sp,
-                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 3.dp)
+                        .size(20.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .then(
+                            if (isActive) {
+                                Modifier
+                                    .background(
+                                        brush = Brush.verticalGradient(
+                                            listOf(Color(0xFFD7DEE6), Color(0xFF8C98A6))
+                                        )
+                                    )
+                                    .border(1.dp, Color(0xFFE8EEF4), RoundedCornerShape(6.dp))
+                            } else {
+                                Modifier
+                                    .background(
+                                        if (editMode && isHidden) Color(0x1A888888)
+                                        else Color(0x1C9AA6B2)
+                                    )
+                                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(6.dp))
+                            }
+                        )
+                        .clickable { onTabClick(index) }
                 )
+                TextButton(
+                    onClick = { onTabClick(index) },
+                    colors = ButtonDefaults.textButtonColors(
+                        containerColor = Color.Transparent,
+                        contentColor = when {
+                            isActive -> Color.White
+                            editMode && isHidden -> Color(0xFF555555)
+                            else -> Color(0xFF888888)
+                        }
+                    ),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
+                ) {
+                    Text(
+                        text = if (editMode && isHidden && !isActive) "👁‍🗨 ${screen.name}" else label,
+                        fontSize = 12.sp,
+                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
             }
             if (editMode && isActive && onMoveScreenRight != null && index < screens.size - 1) {
                 ScreenTabMoveArrow(arrow = "▶", onClick = { onMoveScreenRight(index) })
