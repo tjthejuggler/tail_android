@@ -238,6 +238,22 @@ internal const val GRID_ROWS = TOTAL_CELLS / GRID_COLUMNS
 /** Grid diagonal span in cells: (rows − 1) + (columns − 1). */
 internal const val GRID_DIAGONAL_SPAN = (GRID_ROWS - 1) + (GRID_COLUMNS - 1)
 
+/**
+ * Virtual lattice rows of ghost squares extending past the real grid on each
+ * side (the chrome panels' background lattice). The shimmer sweep coordinate
+ * u() is normalized over a span that includes this margin on BOTH ends, so
+ * off-grid ghost rows keep DISTINCT per-row coordinates. Without it, virtual
+ * rows above/below the grid produce u > 1 / u < 0 that clamp into a single
+ * block — which made the vertical (and radial) waves light the top and bottom
+ * ghost bands as one frozen slab instead of sweeping row by row.
+ */
+internal const val SHIMMER_VIRTUAL_MARGIN = 6f
+
+/** Vertical sweep span in rows, including the ghost margin on both ends. */
+internal val SHIMMER_VERTICAL_SPAN = (GRID_ROWS - 1) + 2 * SHIMMER_VIRTUAL_MARGIN
+
+/** Diagonal sweep span in cells, including the ghost margin on both ends. */
+internal val SHIMMER_DIAGONAL_SPAN = GRID_DIAGONAL_SPAN + 2 * SHIMMER_VIRTUAL_MARGIN
 
 /** Distance from the grid center to the farthest corner, in cells. */
 internal val GRID_CENTER_MAX_DISTANCE = run {
@@ -245,6 +261,9 @@ internal val GRID_CENTER_MAX_DISTANCE = run {
     val dc = (GRID_COLUMNS - 1) / 2f
     kotlin.math.sqrt(dr * dr + dc * dc)
 }
+
+/** Radial sweep radius extended by the ghost margin, for the same reason. */
+internal val SHIMMER_RADIAL_SPAN = GRID_CENTER_MAX_DISTANCE + SHIMMER_VIRTUAL_MARGIN
 
 /**
  * Directions the idle shimmer can travel. Each direction maps a cell's
@@ -280,25 +299,29 @@ internal enum class ShimmerDirection {
             EDGES_IN -> CENTER_OUT
         }
 
-    /** Normalized sweep coordinate of a cell: 1 = lit first, 0 = lit last. */
+    /** Normalized sweep coordinate of a cell: 1 = lit first, 0 = lit last.
+     *  Vertical, diagonal and radial spans include [SHIMMER_VIRTUAL_MARGIN]
+     *  ghost rows on each side so the wave keeps sweeping row by row through
+     *  the chrome panels' background lattice instead of clamping the whole
+     *  off-grid band to u = 1 (top) / u = 0 (bottom). */
     fun u(row: Int, col: Int): Float = when (this) {
-        BOTTOM_RIGHT_TO_TOP_LEFT -> (row + col).toFloat() / GRID_DIAGONAL_SPAN
-        TOP_LEFT_TO_BOTTOM_RIGHT -> 1f - (row + col).toFloat() / GRID_DIAGONAL_SPAN
-        BOTTOM_LEFT_TO_TOP_RIGHT -> (row + (GRID_COLUMNS - 1 - col)).toFloat() / GRID_DIAGONAL_SPAN
-        TOP_RIGHT_TO_BOTTOM_LEFT -> 1f - (row + (GRID_COLUMNS - 1 - col)).toFloat() / GRID_DIAGONAL_SPAN
+        BOTTOM_RIGHT_TO_TOP_LEFT -> (row + col + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_DIAGONAL_SPAN
+        TOP_LEFT_TO_BOTTOM_RIGHT -> 1f - (row + col + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_DIAGONAL_SPAN
+        BOTTOM_LEFT_TO_TOP_RIGHT -> (row + (GRID_COLUMNS - 1 - col) + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_DIAGONAL_SPAN
+        TOP_RIGHT_TO_BOTTOM_LEFT -> 1f - (row + (GRID_COLUMNS - 1 - col) + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_DIAGONAL_SPAN
         LEFT_TO_RIGHT -> 1f - col.toFloat() / (GRID_COLUMNS - 1)
         RIGHT_TO_LEFT -> col.toFloat() / (GRID_COLUMNS - 1)
-        TOP_TO_BOTTOM -> 1f - row.toFloat() / (GRID_ROWS - 1)
-        BOTTOM_TO_TOP -> row.toFloat() / (GRID_ROWS - 1)
+        TOP_TO_BOTTOM -> 1f - (row + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_VERTICAL_SPAN
+        BOTTOM_TO_TOP -> (row + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_VERTICAL_SPAN
         CENTER_OUT -> 1f - centerDistance(row, col)
         EDGES_IN -> centerDistance(row, col)
     }
 
-    /** Normalized distance from the grid center (0 = center, 1 = corners). */
+    /** Normalized distance from the grid center (0 = center, ~1 = far ghost rows). */
     internal fun centerDistance(row: Int, col: Int): Float {
         val dr = row - (GRID_ROWS - 1) / 2f
         val dc = col - (GRID_COLUMNS - 1) / 2f
-        return kotlin.math.sqrt(dr * dr + dc * dc) / GRID_CENTER_MAX_DISTANCE
+        return kotlin.math.sqrt(dr * dr + dc * dc) / SHIMMER_RADIAL_SPAN
     }
 }
 
@@ -779,6 +802,10 @@ fun HabitGridScreen(
     ) {
     Scaffold(
         topBar = {
+            // NOTE: the offset must live on the title/actions CONTENT, never on
+            // the TopAppBar modifier itself — ghostGlassSquares panels must not
+            // shift, or the neighbouring panels' lattice tiling overlaps/gaps
+            // (grey/black seam lines).
             TopAppBar(
                 modifier = Modifier.ghostGlassSquares(
                     shimmerSweep = { shimmerSweep.value },
@@ -791,8 +818,9 @@ fun HabitGridScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             // Nudge the whole date widget a little left to make
-                            // room for the sixth action icon on the right.
-                            .offset(x = (-4).dp)
+                            // room for the sixth action icon on the right, and
+                            // up to sit closer to the status bar.
+                            .offset(x = (-4).dp, y = (-12).dp)
                     ) {
                         // Soft red accent shared by the Today label and its arrows;
                         // the date itself turns bright red when viewing a past day.
@@ -851,7 +879,8 @@ fun HabitGridScreen(
                     // visible tint of its accent colour.
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(0.dp)
+                        horizontalArrangement = Arrangement.spacedBy(0.dp),
+                        modifier = Modifier.offset(y = (-12).dp)
                     ) {
                         // Edit mode toggle — slight orange tint
                         IconButton(
@@ -997,10 +1026,10 @@ fun HabitGridScreen(
                     Text(
                         text = locationLabel,
                         color = if (selectedDateLocation != null) Color(0xFFAAAAAA) else Color(0xFF666666),
-                        fontSize = 11.sp,
+                        fontSize = 12.sp,
                         modifier = Modifier
                             .weight(1f)
-                            .offset(y = (-2).dp)
+                            .offset(y = (-10).dp)
                             .combinedClickable(
                                 indication = null,
                                 interactionSource = remember { MutableInteractionSource() },
@@ -2990,7 +3019,13 @@ internal fun ScreenTabRow(
     /** Reports the whole tab row's window-space bounds (edge auto-scroll zones). */
     onRowLayout: ((Rect) -> Unit)? = null
 ) {
-    Row(
+    // Box wrapper so the tiny scroll-direction arrowheads can float over the
+    // row's ends without scrolling away with the content.
+    Box(
+        // No offset on this Box: ghostGlassSquares panels must tile EXACTLY
+        // with their neighbours — a shifted panel double-paints the overlap
+        // (grey seam line at top) and leaves the vacated strip unpainted
+        // (black line at bottom).
         modifier = Modifier
             .fillMaxWidth()
             .then(
@@ -3003,12 +3038,16 @@ internal fun ScreenTabRow(
                     Modifier
                 }
             )
+    ) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
             .horizontalScroll(scrollState)
             .onGloballyPositioned { coords ->
                 onRowLayout?.invoke(Rect(coords.positionInWindow(), coords.size.toSize()))
             }
-            .padding(horizontal = 4.dp, vertical = 1.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         screens.forEachIndexed { index, screen ->
@@ -3045,69 +3084,91 @@ internal fun ScreenTabRow(
                 isHidden && isActive -> screen.name  // show name when active even if hidden
                 else -> screen.name
             }
-            // Each screen name is paired with a small glass square. Clicking
-            // the SQUARE selects that screen. The ACTIVE screen's square is
-            // bright — brighter than the top/bottom fade rows — replacing the
-            // old grey oval highlight on the name.
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+            // Each screen name sits in its OWN glass rectangle (chip) — same
+            // visual language as the old selection square, but the whole chip
+            // is the hit target. The ACTIVE screen's chip carries the bright
+            // steel gradient; inactive chips are faint translucent glass.
+            // HEIGHT: exactly the ghost background square's size — a grid cell
+            // (screen width / 8) minus 2×2.dp cell padding — so chip tops AND
+            // bottoms line up with the background squares. A Box is used
+            // instead of TextButton because Material3 silently inflates
+            // buttons to the ~48 dp minimum-interactive size, pushing the
+            // bottoms past the squares.
+            val chipShape = RoundedCornerShape(6.dp)
+            // screenWidthDp is already in dp: cell = (width − 2×4.dp outer pad)/8,
+            // square = cell − 2×2.dp cell pad.
+            val chipHeight =
+                ((LocalConfiguration.current.screenWidthDp - 8) / GRID_COLUMNS - 4).dp
+            Box(
                 modifier = Modifier
-                    .height(32.dp)
+                    .height(chipHeight)
+                    .clip(chipShape)
+                    .then(
+                        if (isActive) {
+                            Modifier
+                                .background(
+                                    brush = Brush.verticalGradient(
+                                        listOf(Color(0xFFD7DEE6), Color(0xFF8C98A6))
+                                    )
+                                )
+                                .border(1.dp, Color(0xFFE8EEF4), chipShape)
+                        } else {
+                            Modifier
+                                .background(
+                                    if (editMode && isHidden) Color(0x1A888888)
+                                    else Color(0x1C9AA6B2)
+                                )
+                                .border(1.dp, Color(0x33FFFFFF), chipShape)
+                        }
+                    )
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { onTabClick(index) }
                     .onGloballyPositioned { coords ->
                         onTabLayout?.invoke(
                             index,
                             Rect(coords.positionInWindow(), coords.size.toSize())
                         )
                     }
+                    .padding(horizontal = 8.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 3.dp)
-                        .size(20.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .then(
-                            if (isActive) {
-                                Modifier
-                                    .background(
-                                        brush = Brush.verticalGradient(
-                                            listOf(Color(0xFFD7DEE6), Color(0xFF8C98A6))
-                                        )
-                                    )
-                                    .border(1.dp, Color(0xFFE8EEF4), RoundedCornerShape(6.dp))
-                            } else {
-                                Modifier
-                                    .background(
-                                        if (editMode && isHidden) Color(0x1A888888)
-                                        else Color(0x1C9AA6B2)
-                                    )
-                                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(6.dp))
-                            }
-                        )
-                        .clickable { onTabClick(index) }
+                Text(
+                    text = if (editMode && isHidden && !isActive) "👁‍🗨 ${screen.name}" else label,
+                    fontSize = 12.sp,
+                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                    color = when {
+                        isActive -> Color.White
+                        editMode && isHidden -> Color(0xFF555555)
+                        else -> Color(0xFF888888)
+                    }
                 )
-                TextButton(
-                    onClick = { onTabClick(index) },
-                    colors = ButtonDefaults.textButtonColors(
-                        containerColor = Color.Transparent,
-                        contentColor = when {
-                            isActive -> Color.White
-                            editMode && isHidden -> Color(0xFF555555)
-                            else -> Color(0xFF888888)
-                        }
-                    ),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
-                ) {
-                    Text(
-                        text = if (editMode && isHidden && !isActive) "👁‍🗨 ${screen.name}" else label,
-                        fontSize = 12.sp,
-                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
-                    )
-                }
             }
             if (editMode && isActive && onMoveScreenRight != null && index < screens.size - 1) {
                 ScreenTabMoveArrow(arrow = "▶", onClick = { onMoveScreenRight(index) })
             }
         }
+    }
+    // Minimal scroll affordance: a very faint arrowhead at whichever end can
+    // still scroll, hinting the row continues in that direction. Non-clickable
+    // and barely visible, so the row stays minimalist.
+    if (scrollState.canScrollBackward) {
+        Text(
+            text = "‹",
+            fontSize = 11.sp,
+            color = Color(0x669AA6B2),
+            modifier = Modifier.align(Alignment.CenterStart)
+        )
+    }
+    if (scrollState.canScrollForward) {
+        Text(
+            text = "›",
+            fontSize = 11.sp,
+            color = Color(0x669AA6B2),
+            modifier = Modifier.align(Alignment.CenterEnd)
+        )
+    }
     }
 }
 

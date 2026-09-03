@@ -362,7 +362,10 @@ class TierBarWidgetProvider : AppWidgetProvider() {
             }
 
             // 3. Lizard — today's tier, uniform 4:1 scale, height-filling,
-            //    right-anchored with a small margin.
+            //    right-anchored with a small margin. (The strips themselves
+            //    carry a baked-in right padding for the curled tail — see
+            //    wallpaper_gen/pad_lizard_strips.py — so no extra runtime
+            //    inset is needed.)
             lizardBitmap(context, dayTier)?.let { lizard ->
                 val margin = h / 32f
                 val avail = h - margin * 2f
