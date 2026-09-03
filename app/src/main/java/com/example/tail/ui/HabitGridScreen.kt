@@ -75,7 +75,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -374,7 +374,6 @@ fun HabitGridScreen(
     val errorMessage by viewModel.errorMessage.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val selectedDate by viewModel.selectedDate.collectAsState()
-    val selectedDateLocation by viewModel.selectedDateLocation.collectAsState()
     val editMode by viewModel.editMode.collectAsState()
     val graphMode by viewModel.graphMode.collectAsState()
     val scheduleMode by viewModel.scheduleMode.collectAsState()
@@ -560,9 +559,6 @@ fun HabitGridScreen(
     // (opened from a schedule event) closes, so the timeline reloads.
     var scheduleRefresh by remember { mutableIntStateOf(0) }
 
-    // Global search dialog state (query/filters/results live in the ViewModel,
-    // so closing the dialog preserves its exact state for the next open)
-    var showSearchDialog by remember { mutableStateOf(false) }
 
     // In-app notification center dialog state
     var showNotificationsDialog by remember { mutableStateOf(false) }
@@ -588,8 +584,6 @@ fun HabitGridScreen(
         }
     }
 
-    // Location edit dialog state
-    var showLocationEditDialog by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     var dialogHabit by remember { mutableStateOf<Habit?>(null) }
@@ -973,17 +967,15 @@ fun HabitGridScreen(
                                 )
                             }
                         }
-                        // Global search — slight pink tint
+                        // Map view — globe icon replaces the search button
+                        // (search moved to the Settings screen top bar).
                         IconButton(
-                            onClick = {
-                                viewModel.refreshSearchableHabits()
-                                showSearchDialog = true
-                            },
+                            onClick = onNavigateToMap,
                             modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
-                                Icons.Default.Search,
-                                contentDescription = "Search",
+                                Icons.Default.Public,
+                                contentDescription = "Map",
                                 tint = lerp(Color.White, Color(0xFFFF69B4), 0.35f),
                                 modifier = Modifier.size(19.dp)
                             )
@@ -1012,47 +1004,8 @@ fun HabitGridScreen(
                 .padding(paddingValues)
                 .imePadding()
         ) {
-            // ── Location row — shown below the top bar, above tabs/grid.
-            // Right-aligned globe icon sits directly under the Settings icon
-            // in the top bar (same horizontal position).
-            if (!isLandscape) {
-                val assumedLocation = remember(selectedDate) {
-                    viewModel.getAssumedLocationForDate(selectedDate)
-                }
-                val locationLabel = selectedDateLocation
-                    ?: assumedLocation?.let { "$it *" }
-                    ?: "No location"
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .ghostGlassSquares(
-                            shimmerSweep = { shimmerSweep.value },
-                            shimmerDirection = { shimmerDirection.value }
-                        )
-                        .padding(start = 12.dp, end = 4.dp, top = 0.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Slightly slid up: a small negative offset tightens the
-                    // gap to the top bar.
-                    Text(
-                        text = locationLabel,
-                        color = if (selectedDateLocation != null) Color(0xFFAAAAAA) else Color(0xFF666666),
-                        fontSize = 12.sp,
-                        modifier = Modifier
-                            .weight(1f)
-                            .offset(y = (-10).dp)
-                            .combinedClickable(
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() },
-                                onClick = { showLocationEditDialog = true },
-                                // Long-press the location name → map view
-                                // (replaces the old globe icon button).
-                                onLongClick = { onNavigateToMap() }
-                            )
-                            .padding(vertical = 1.dp)
-                    )
-                }
-            }
+            // (Location row removed — the location label and its edit popup
+            // now live on the map screen.)
 
             // Screen tabs — shown when multiple screens exist (hidden in
             // landscape and in schedule mode, which aggregates all screens)
@@ -2394,37 +2347,8 @@ fun HabitGridScreen(
         )
     }
 
-    // Location edit dialog — pass the effective location (stored or assumed)
-    // so the field is pre-filled even for days with no stored location.
-    if (showLocationEditDialog) {
-        val effectiveLocation = selectedDateLocation
-            ?: viewModel.getAssumedLocationForDate(selectedDate)
-        LocationEditDialog(
-            currentLocation = effectiveLocation,
-            suggestions = viewModel.getAllStoredLocations(),
-            // Globe button inside the popup → map view (moved here from the
-            // main screen's location row).
-            onOpenMap = {
-                showLocationEditDialog = false
-                onNavigateToMap()
-            },
-            onConfirm = { label ->
-                if (label == null) {
-                    viewModel.removeLocationForDate(selectedDate)
-                } else {
-                    viewModel.setLocationForDate(selectedDate, label)
-                }
-                showLocationEditDialog = false
-            },
-            onDismiss = { showLocationEditDialog = false },
-            onFetchCandidates = { onResult ->
-                viewModel.fetchLocationCandidates(selectedDate, onResult)
-            },
-            onSavePreferredCandidateIndex = { index ->
-                viewModel.savePreferredAutoCandidateIndex(index)
-            }
-        )
-    }
+    // (Location edit dialog moved to the map screen — tapping the location
+    // label there opens it.)
 
     // Calendar picker dialog
     if (showCalendarPicker) {
@@ -2976,22 +2900,7 @@ fun HabitGridScreen(
         viewModel.clearDatedEntryRefreshStatus()
     }
 
-    // Global search dialog — clicking a result closes it (state is preserved
-    // in the ViewModel), jumps to the result's date, switches to the habit's
-    // screen and pulses the habit cell so the user can spot it.
-    if (showSearchDialog) {
-        HabitSearchDialog(
-            viewModel = viewModel,
-            onDismiss = { showSearchDialog = false },
-            onResultClick = { result ->
-                showSearchDialog = false
-                result.date?.let { viewModel.navigateToDate(it) }
-                val screenIdx = viewModel.screenIndexForHabit(result.habitName)
-                if (screenIdx >= 0) viewModel.switchScreen(screenIdx)
-                viewModel.highlightHabit(result.habitName)
-            }
-        )
-    }
+    // (Global search dialog moved to the Settings screen top bar.)
 
     // In-app notification center — lists every pending ask (movie-bridge
     // and scheduled). Answering here applies the effect everywhere at once.

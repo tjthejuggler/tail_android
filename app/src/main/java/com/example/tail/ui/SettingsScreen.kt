@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.AlertDialog
@@ -205,6 +206,10 @@ fun SettingsScreen(
     // AI Assistant chat popup — opened via the 🤖 button in the top bar.
     var showAiAssistant by rememberSaveable { mutableStateOf(false) }
 
+    // Global habit search dialog — query/filters/results live in the ViewModel
+    // so closing it preserves state (moved here from the main screen top bar).
+    var showSearchDialog by rememberSaveable { mutableStateOf(false) }
+
     // Picker for habitsdb.txt — needs read+write so the app can increment habits
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -278,6 +283,13 @@ fun SettingsScreen(
                     }
                     IconButton(onClick = onNavigateToAppStats) {
                         Icon(Icons.Filled.BarChart, contentDescription = "App Stats")
+                    }
+                    // Global habit search — moved here from the main screen.
+                    IconButton(onClick = {
+                        viewModel.refreshSearchableHabits()
+                        showSearchDialog = true
+                    }) {
+                        Icon(Icons.Filled.Search, contentDescription = "Search")
                     }
                 }
             )
@@ -467,6 +479,25 @@ fun SettingsScreen(
         AiAssistantDialog(
             viewModel = viewModel,
             onDismiss = { showAiAssistant = false }
+        )
+    }
+
+    // Global habit search dialog (top-bar 🔍 button). Clicking a result closes
+    // it (state is preserved in the ViewModel), jumps to the result's date,
+    // switches to the habit's screen and pulses the habit cell so the user can
+    // spot it — then returns to the main grid.
+    if (showSearchDialog) {
+        HabitSearchDialog(
+            viewModel = viewModel,
+            onDismiss = { showSearchDialog = false },
+            onResultClick = { result ->
+                showSearchDialog = false
+                result.date?.let { viewModel.navigateToDate(it) }
+                val screenIdx = viewModel.screenIndexForHabit(result.habitName)
+                if (screenIdx >= 0) viewModel.switchScreen(screenIdx)
+                viewModel.highlightHabit(result.habitName)
+                onNavigateBack()
+            }
         )
     }
     } // closes grayscale MaterialTheme

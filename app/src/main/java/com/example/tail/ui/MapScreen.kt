@@ -38,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -639,8 +640,14 @@ fun MapScreen(
     val locationLabel = activeSecondary?.label ?: primaryLabelPair.first
     val locationIsAssumed = activeSecondary == null && primaryLabelPair.second
 
-    // ── Location timeline popup state ──────────────────────────────────────
+    // ── Location timeline popup state (opened via the history icon in the
+    // top-right corner) ────────────────────────────────────────────────────
     var showLocationTimeline by remember { mutableStateOf(false) }
+
+    // ── Location edit dialog state — opened by tapping the location name
+    // label in the top bar (moved here from the main habit screen) ─────────
+    var showLocationEditDialog by remember { mutableStateOf(false) }
+    val selectedDateLocation by viewModel.selectedDateLocation.collectAsState()
 
     // ── Stats panel scroll state — persists across day changes ─────────────
     val statsListState = rememberLazyListState()
@@ -655,7 +662,7 @@ fun MapScreen(
             MapTopBar(
                 locationLabel = locationLabel,
                 isAssumed = locationIsAssumed,
-                onClick = { showLocationTimeline = true },
+                onClick = { showLocationEditDialog = true },
                 onAddLocationClick = { showAddLocationDialog = true }
             )
 
@@ -679,6 +686,35 @@ fun MapScreen(
                     onDismiss = { showLocationTimeline = false },
                     onGetCoords = { date -> viewModel.getCoordsForDate(date) },
                     onSetCoords = { date, lat, lon -> viewModel.setCoordsForDate(date, lat, lon) }
+                )
+            }
+
+            if (showLocationEditDialog) {
+                // Effective location (stored or assumed) so the field is
+                // pre-filled even for days with no stored location.
+                val effectiveLocation = selectedDateLocation
+                    ?: viewModel.getAssumedLocationForDate(selectedDate)
+                LocationEditDialog(
+                    currentLocation = effectiveLocation,
+                    suggestions = viewModel.getAllStoredLocations(),
+                    // Already on the map screen — the popup's globe button
+                    // just closes the dialog.
+                    onOpenMap = { showLocationEditDialog = false },
+                    onConfirm = { label ->
+                        if (label == null) {
+                            viewModel.removeLocationForDate(selectedDate)
+                        } else {
+                            viewModel.setLocationForDate(selectedDate, label)
+                        }
+                        showLocationEditDialog = false
+                    },
+                    onDismiss = { showLocationEditDialog = false },
+                    onFetchCandidates = { onResult ->
+                        viewModel.fetchLocationCandidates(selectedDate, onResult)
+                    },
+                    onSavePreferredCandidateIndex = { index ->
+                        viewModel.savePreferredAutoCandidateIndex(index)
+                    }
                 )
             }
 
@@ -927,6 +963,17 @@ fun MapScreen(
                 .align(Alignment.TopEnd)
                 .padding(top = 8.dp, end = 8.dp)
         ) {
+            IconButton(
+                onClick = { showLocationTimeline = true },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    Icons.Default.History,
+                    contentDescription = "Location timeline",
+                    tint = Color(0xFF888888),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
             IconButton(
                 onClick = onNavigateToStats,
                 modifier = Modifier.size(28.dp)
