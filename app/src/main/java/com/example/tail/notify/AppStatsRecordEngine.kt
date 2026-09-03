@@ -264,6 +264,17 @@ object AppStatsRecordEngine {
     ): Map<String, MetricValues> {
         val values = mutableMapOf<String, MetricValues>()
 
+        // ISO dates sort chronologically; parse each date ONCE into epoch
+        // days and drive every window/streak computation off that array.
+        // The old paths re-parsed LocalDates inside O(N²) loops — on long
+        // histories that allocation storm exhausted the heap and the
+        // resulting OutOfMemoryError killed the whole process (bubble and
+        // home-screen widget included).
+        val epochDays = IntArray(series.dates.size) { i ->
+            runCatching { java.time.LocalDate.parse(series.dates[i]).toEpochDay().toInt() }
+                .getOrDefault(Int.MIN_VALUE)
+        }
+
         fun lastTodayOr(list: List<Int>): Double =
             (if (todayIdx >= 0) list[todayIdx] else list.last()).toDouble()
 
@@ -293,15 +304,51 @@ object AppStatsRecordEngine {
         put("habits_with_anti_streak", lastTodayOr(series.dailyAntiStreakCounts), series.dailyAntiStreakCounts)
 
         // Rolling averages: calendar-day windows, missing days contribute 0
-        // (matches computeTaskerStats semantics).
-        val totalsByDate = series.dates.zip(series.dailyTotals).toMap()
+        // (matches computeTaskerStats semantics). Prefix sums + binary search
+        // over the epoch-day array keep this O(N log N) with zero per-day
+        // parsing.
+        val prefix = LongArray(series.dates.size + 1)
+        series.dailyTotals.forEachIndexed { i, v -> prefix[i + 1] = prefix[i] + v }
+
+        /** First index whose epoch day is >= [day]. */
+        fun lowerBound(day: Int): Int {
+            var lo = 0
+            var hi = epochDays.size
+            while (lo < hi) {
+                val mid = (lo + hi) ushr 1
+                if (epochDays[mid] < day) lo = mid + 1 else hi = mid
+            }
+            return lo
+        }
+
+        /** First index whose epoch day is > [day]. */
+        fun upperBound(day: Int): Int {
+            var lo = 0
+            var hi = epochDays.size
+            while (lo < hi) {
+                val mid = (lo + hi) ushr 1
+                if (epochDays[mid] <= day) lo = mid + 1 else hi = mid
+            }
+            return lo
+        }
+
+        /** Sum of daily totals within the [n] calendar days ending on [endDay]. */
+        fun windowSum(endDay: Int, n: Int): Long {
+            val hi = upperBound(endDay)
+            val lo = lowerBound(endDay - n + 1).coerceAtMost(hi)
+            return prefix[hi] - prefix[lo]
+        }
+
+        val todayEpoch = runCatching {
+            java.time.LocalDate.parse(today).toEpochDay().toInt()
+        }.getOrDefault(Int.MAX_VALUE)
         for (n in listOf(7, 30, 90, 365)) {
             val key = "avg$n"
-            val cur = calendarAvg(totalsByDate, today, n)
+            val cur = windowSum(todayEpoch, n) / n.toDouble()
             var best = -1.0
             var bestDate = series.dates[historyIdx]
             for (i in 0..historyIdx) {
-                val avg = calendarAvg(totalsByDate, series.dates[i], n)
+                val avg = windowSum(epochDays[i], n) / n.toDouble()
                 if (avg >= best) {
                     best = avg
                     bestDate = series.dates[i]
@@ -312,19 +359,10 @@ object AppStatsRecordEngine {
 
         // Aggregate streak: longest run of consecutive calendar days with
         // points > 0 in history, vs the run ending today.
-        val (curStreak, bestStreak, streakDate) = aggregateStreak(series, todayIdx, historyIdx)
+        val (curStreak, bestStreak, streakDate) =
+            aggregateStreak(series, todayIdx, historyIdx, epochDays)
         values["aggregate_streak"] = MetricValues(curStreak, bestStreak, streakDate)
         return values
-    }
-
-    /** Mean daily total over the [n] calendar days ending on [endDate]. */
-    private fun calendarAvg(totalsByDate: Map<String, Int>, endDate: String, n: Int): Double {
-        val end = java.time.LocalDate.parse(endDate)
-        var sum = 0
-        for (i in 0 until n) {
-            sum += totalsByDate[end.minusDays(i.toLong()).toString()] ?: 0
-        }
-        return sum.toDouble() / n
     }
 
     /**
@@ -332,38 +370,52 @@ object AppStatsRecordEngine {
      * ending at [todayIdx] (0 when today has no points yet) vs the longest
      * run within history plus the date that run ended on. Calendar gaps
      * break runs (missing days are zero-days).
+     *
+     * Single-pass over epoch days (parsed once by [computeValues]) — the
+     * previous version re-parsed LocalDates inside a nested loop, which on
+     * multi-year histories allocated enough to OOM the process.
      */
     private fun aggregateStreak(
         series: Series,
         todayIdx: Int,
-        historyIdx: Int
+        historyIdx: Int,
+        epochDays: IntArray
     ): Triple<Double, Double, String?> {
-        fun runEndingAt(idx: Int): Int {
-            var run = 0
-            var i = idx
-            if (i < 0 || series.dailyTotals[i] <= 0) return 0
-            while (i >= 0 && series.dailyTotals[i] > 0) {
-                if (run > 0) {
-                    val prev = java.time.LocalDate.parse(series.dates[i])
-                    val curr = java.time.LocalDate.parse(series.dates[i + 1])
-                    if (java.time.temporal.ChronoUnit.DAYS.between(prev, curr) > 1L) break
-                }
-                run++
-                i--
-            }
-            return run
-        }
+        /** True when [i] and [i]-1 are consecutive calendar days. */
+        fun contiguous(i: Int): Boolean =
+            i > 0 &&
+                epochDays[i] != Int.MIN_VALUE &&
+                epochDays[i - 1] != Int.MIN_VALUE &&
+                epochDays[i] - epochDays[i - 1] == 1
 
+        // Longest run within the STRICT history (before today).
         var longest = 0
         var longestDate: String? = null
-        for (i in 0..historyIdx) {
-            val r = runEndingAt(i)
-            if (r >= longest && r > 0) {
-                longest = r
-                longestDate = series.dates[i]
+        var run = 0
+        val historyEnd = minOf(historyIdx, series.dailyTotals.size - 1)
+        for (i in 0..historyEnd) {
+            if (series.dailyTotals[i] > 0) {
+                run = if (contiguous(i)) run + 1 else 1
+                if (run >= longest) {
+                    longest = run
+                    longestDate = series.dates[i]
+                }
+            } else {
+                run = 0
             }
         }
-        val current = if (todayIdx >= 0) runEndingAt(todayIdx) else 0
+
+        // Current run: the streak ending at [todayIdx] (today when present,
+        // otherwise 0) — walks backward over points + calendar contiguity.
+        var current = 0
+        if (todayIdx >= 0 && series.dailyTotals[todayIdx] > 0) {
+            var j = todayIdx
+            while (j >= 0 && series.dailyTotals[j] > 0) {
+                if (j < todayIdx && !contiguous(j + 1)) break
+                current++
+                j--
+            }
+        }
         return Triple(current.toDouble(), longest.toDouble(), longestDate)
     }
 }

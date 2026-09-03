@@ -122,16 +122,49 @@ class TierBarWidgetProvider : AppWidgetProvider() {
                 // stays alive rather than blanking.
             }
 
-            val dayTier = habitPointsTier(today)
-            val weekTier = habitPointsTier(avg7.roundToInt())
-            val monthTier = habitPointsTier(avg30.roundToInt())
+            val tiers = TierStateStore.Tiers(
+                monthTier = habitPointsTier(avg30.roundToInt()),
+                weekTier = habitPointsTier(avg7.roundToInt()),
+                dayTier = habitPointsTier(today)
+            )
+            // Persist for the SYNCHRONOUS render path: on a host rebind
+            // (nav-mode/keyboard config change) onUpdate must paint the
+            // COMPLETE widget from this state without a DB round-trip.
+            TierStateStore.save(appContext, tiers)
+
+            val views = buildRenderViews(appContext, tiers, mgr, ids)
+            for (id in ids) {
+                mgr.updateAppWidget(id, views)
+            }
+        }
+
+        /**
+         * Builds the COMPLETE tier-bar RemoteViews synchronously from the
+         * given tiers (no DB, no suspend calls). Both the async refresh and
+         * the synchronous rebind answer go through this one code path, so
+         * the frame a host paints during a rebind is visually identical to
+         * the settled state — the never-vanish guarantee (see [onUpdate]).
+         */
+        fun buildRenderViews(
+            appContext: Context,
+            tiers: TierStateStore.Tiers,
+            mgr: AppWidgetManager,
+            ids: IntArray
+        ): RemoteViews {
+            val (monthTier, weekTier, dayTier) = tiers
             val weekColor = tierColor(appContext, weekTier)
-            val fgColor = if (isLight(weekColor)) Color.BLACK else Color.WHITE
             val config = TierBarWidgetConfig.load(appContext)
+            val habitScreenCount = try {
+                kotlinx.coroutines.runBlocking {
+                    SettingsRepository(appContext).settingsFlow.first()
+                }.habitScreens.size
+            } catch (_: Exception) { 0 }
 
             // Pending habit-ask notifications → badge count (capped display).
             val notifCount = try {
-                NotificationStore(appContext).notificationsFlow.first().size
+                kotlinx.coroutines.runBlocking {
+                    NotificationStore(appContext).notificationsFlow.first().size
+                }
             } catch (_: Exception) { 0 }
             val dayColor = tierColor(appContext, dayTier)
             val monthColor = tierColor(appContext, monthTier)
@@ -153,7 +186,17 @@ class TierBarWidgetProvider : AppWidgetProvider() {
                 appContext, BUTTONS.first { it.key == "grid" }
             )
 
-            val views = RemoteViews(appContext.packageName, R.layout.widget_tier_bar).apply {
+            // Alternate between two byte-identical layouts: AIO Launcher's
+            // host short-circuits RemoteViews it considers "the same view"
+            // during rebind storms, leaving the slot stuck on its Loading
+            // placeholder. A changed layout id forces a REAL re-inflation
+            // of the host view on every push.
+            val layoutId = if (layoutFlip.getAndSet(!layoutFlip.get())) {
+                R.layout.widget_tier_bar_b
+            } else {
+                R.layout.widget_tier_bar
+            }
+            val views = RemoteViews(appContext.packageName, layoutId).apply {
                 setOnClickPendingIntent(R.id.tier_bar_root, openApp)
                 if (notifCount > 0) {
                     setViewVisibility(R.id.tier_bar_notif, android.view.View.VISIBLE)
@@ -215,8 +258,8 @@ class TierBarWidgetProvider : AppWidgetProvider() {
                     R.id.tier_bar_bg,
                     buildBackground(appContext, monthTier, weekTier, dayTier, aspect)
                 )
-                mgr.updateAppWidget(id, views)
             }
+            return views
         }
 
         /** Deep link: open the habit grid on the given screen (tab). */
@@ -250,6 +293,9 @@ class TierBarWidgetProvider : AppWidgetProvider() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
         }
+
+        /** Alternates widget_tier_bar ↔ widget_tier_bar_b (see buildRenderViews). */
+        private val layoutFlip = java.util.concurrent.atomic.AtomicBoolean(false)
 
         // ────────────────────────────────────────────────────────────────────
         // Background compositing
@@ -429,8 +475,89 @@ class TierBarWidgetProvider : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray
     ) {
-        // Render immediately with last-known config; refreshAll (called by
-        // the increment bus and the 30-min tick) brings the numbers current.
+        // ONE fully-formed answer, synchronously (complete art + intents,
+        // no DB round-trip) — the host always gets a valid frame inside the
+        // broadcast. Then schedule delayed re-pushes: the nav-mode rebind
+        // storm on AIO Launcher applies early updates to host views it
+        // discards mid-relayout (slots stay "Loading..." forever), while
+        // updates arriving AFTER the storm settles render normally —
+        // which is why opening the app used to be the only cure.
+        paintCurrent(context, appWidgetManager, appWidgetIds)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            refreshAll(context)
+        }
+        scheduleRebindRepaints(context.applicationContext)
+    }
+
+    /**
+     * Host-side option changes (resize, and the double re-ask AIO fires
+     * during a nav-mode rebind) get the same complete synchronous answer.
+     */
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle
+    ) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        paintCurrent(context, appWidgetManager, intArrayOf(appWidgetId))
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            refreshAll(context)
+        }
+        scheduleRebindRepaints(context.applicationContext)
+    }
+
+    /**
+     * Re-pushes the full widget a few seconds after a rebind storm. Cheap
+     * (compositing caches; no-op without placed widgets) and it converts
+     * "stuck Loading… until the app is opened" into a self-healing repaint.
+     * The companion Handler outlives the transient receiver instances; the
+     * process is kept alive by the widget-trigger / notification-listener
+     * foreground services.
+     */
+    private fun scheduleRebindRepaints(appContext: Context) {
+        for (delayMs in longArrayOf(2_500L, 7_000L, 15_000L)) {
+            rebindHandler.postDelayed({
+                try {
+                    kotlinx.coroutines.CoroutineScope(
+                        kotlinx.coroutines.Dispatchers.IO
+                    ).launch { refreshAll(appContext) }
+                } catch (_: Exception) { /* best-effort */ }
+            }, delayMs)
+        }
+    }
+
+    private val rebindHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * Synchronous full render of every listed widget from the last
+     * persisted tier state (no DB read). Reuses the exact view-building
+     * code path as the async refresh so the painted frame is visually
+     * identical to the settled state.
+     */
+    private fun paintCurrent(
+        context: Context,
+        mgr: AppWidgetManager,
+        ids: IntArray
+    ) {
+        try {
+            val appContext = context.applicationContext
+            val tiers = TierStateStore.load(appContext)
+            val views = buildRenderViews(appContext, tiers, mgr, ids)
+            for (id in ids) {
+                mgr.updateAppWidget(id, views)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("TierBarWidget", "paintCurrent failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Non-suspend entry point for callers outside coroutines (e.g.
+     * [WidgetTriggerService]'s nav-mode self-heal repaints). Launches
+     * refreshAll on IO; cheap no-op when no widgets are placed.
+     */
+    fun refreshAllFromAnyThread(context: Context) {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             refreshAll(context)
         }
@@ -468,5 +595,38 @@ object TierBarWidgetConfig {
     fun setScreens(context: Context, screens: List<Int>) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString("touch_screens", screens.sorted().joinToString(",")).apply()
+    }
+}
+
+/**
+ * Last-known tier state for the tier-bar widget, persisted so
+ * [TierBarWidgetProvider.onUpdate] can paint the COMPLETE widget
+ * synchronously during a host rebind (nav-mode config change) without a
+ * DB round-trip — the never-vanish guarantee.
+ */
+object TierStateStore {
+    /** monthTier (border), weekTier (gradient), dayTier (lizard variant). */
+    data class Tiers(val monthTier: Int, val weekTier: Int, val dayTier: Int)
+
+    private const val PREFS = "tier_bar_widget"
+    private const val KEY_MONTH = "last_month_tier"
+    private const val KEY_WEEK = "last_week_tier"
+    private const val KEY_DAY = "last_day_tier"
+
+    fun save(context: Context, tiers: Tiers) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_MONTH, tiers.monthTier)
+            .putInt(KEY_WEEK, tiers.weekTier)
+            .putInt(KEY_DAY, tiers.dayTier)
+            .apply()
+    }
+
+    fun load(context: Context): Tiers {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return Tiers(
+            monthTier = prefs.getInt(KEY_MONTH, 0),
+            weekTier = prefs.getInt(KEY_WEEK, 0),
+            dayTier = prefs.getInt(KEY_DAY, 0)
+        )
     }
 }

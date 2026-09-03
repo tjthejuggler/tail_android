@@ -131,8 +131,14 @@ object AppStatsRecordNotifier {
             if (posted > 0) {
                 Log.i(TAG, "Posted $posted app-stats record notification(s)")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "App-stats record check failed: ${e.message}")
+        } catch (ce: kotlin.coroutines.cancellation.CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            // Throwable (not Exception): an OutOfMemoryError escaping this
+            // background check used to kill the whole process — taking the
+            // floating-bubble overlays and the home-screen widget refresh
+            // down with it. A stats check must never be fatal.
+            Log.w(TAG, "App-stats record check failed: ${t.message}")
         }
     }
 

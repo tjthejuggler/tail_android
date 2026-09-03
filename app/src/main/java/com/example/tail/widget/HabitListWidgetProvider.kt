@@ -127,9 +127,59 @@ class HabitListWidgetProvider : AppWidgetProvider() {
         appWidgetIds: IntArray
     ) {
         registerScreenReceiver(context)
+        // Delayed re-pushes: during the nav-mode rebind storm AIO applies
+        // early updates to host views it then discards (slots stay stuck).
+        // A repaint after the storm settles self-heals the slot.
+        val appCtx = context.applicationContext
+        val mgr = appWidgetManager
+        for (delayMs in longArrayOf(3_000L, 8_000L, 16_000L)) {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    for (id in appWidgetIds) {
+                        renderWidget(appCtx, mgr, id, armed = false)
+                    }
+                } catch (_: Exception) { /* best-effort */ }
+            }, delayMs)
+        }
+        // SYNCHRONOUS static frame first: on a host restart (launcher
+        // recovered after a configuration change — e.g. a Modes & Routines
+        // nav-bar switch — or reboot) the host re-asks every provider and
+        // paints whatever arrives inside the rebind window. renderWidget's
+        // coroutine + DB read used to leave a window with no answer; a
+        // launcher that drops unanswered slots (e.g. AIO Launcher) showed
+        // the widget as vanished. The collapsed layout is pure static
+        // construction (no DB), so it can be painted inside the broadcast;
+        // the async render then upgrades it with the real state.
+        for (id in appWidgetIds) {
+            try {
+                appWidgetManager.updateAppWidget(id, buildCollapsedViews(context, id, armed = false))
+            } catch (_: Exception) { /* best-effort placeholder */ }
+        }
         for (id in appWidgetIds) {
             renderWidget(context, appWidgetManager, id, armed = false)
         }
+    }
+
+    /**
+     * Host restarts (launcher recovers, configuration change, reboot)
+     * re-ask every provider for content; hosts paint whatever arrives
+     * within the rebind window and drop what doesn't. Both Tail renders
+     * hop through a coroutine + DB read, so on a restart there was NO
+     * synchronous answer at all — the widget slot stayed empty (observed
+     * as "the widget vanishes when leaving the chess app", whose real
+     * trigger was a Modes & Routines nav-bar switch that restarts the
+     * launcher). Answering resize/rebind callbacks synchronously with the
+     * static collapsed layout guarantees a valid RemoteViews inside the
+     * broadcast; the async render still upgrades it with live data.
+     */
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle
+    ) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        renderWidget(context, appWidgetManager, appWidgetId, armed = false)
     }
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {

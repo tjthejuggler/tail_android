@@ -572,6 +572,21 @@
         </receiver>
 
         <!--
+            WidgetRefreshReceiver: external refresh hook for automation
+            apps (MacroDroid/Tasker). One explicit broadcast repaints BOTH
+            Tail widgets with fully-formed frames — the automation-grade
+            equivalent of AIO Launcher's per-widget refresh button (which
+            is an AIO-side affordance we cannot attach to our slot).
+        -->
+        <receiver
+            android:name=".widget.WidgetRefreshReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.example.tail.widget.EXTERNAL_REFRESH" />
+            </intent-filter>
+        </receiver>
+
+        <!--
             Full-width Tier Bar Widget: a home-screen strip whose background
             is the current daily-points tier colour, with the live point total
             and configurable quick-launch buttons for app tabs (configured in

@@ -170,6 +170,16 @@ class WidgetTriggerService : Service() {
     /** The package that is currently in the foreground (or null). */
     private var currentForegroundPackage: String? = null
 
+    /** Settings.Secure key holding the current navigation mode. */
+    private val KEY_NAV_MODE = "navigation_mode"
+
+    /** Last seen navigation mode (rebind detector). */
+    private var lastNavMode: String? = null
+
+    /** True while a nav-switch repaint is waiting for the launcher to resume. */
+    @Volatile
+    private var repaintPending = false
+
     /** Whether the bubble is currently shown. */
     private var bubbleActive = false
 
@@ -202,6 +212,11 @@ class WidgetTriggerService : Service() {
         WidgetWatchdogReceiver.schedule(this)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
+        // Baseline for the nav-mode rebind detector: never repaint on the
+        // first poll after (re)start — only on real CHANGES.
+        lastNavMode = try {
+            Settings.Secure.getString(contentResolver, KEY_NAV_MODE)
+        } catch (_: Exception) { null }
         loadWatchedPackages()
     }
 
@@ -343,6 +358,27 @@ class WidgetTriggerService : Service() {
         // still-open trigger app would be "forgotten" and the bubble hidden.
         if (foregroundPkg == null) return
 
+        // ── Widget rebind self-heal (nav-mode switches) ──────────────────
+        // A Modes & Routines navigation-type switch rebinds widget hosts
+        // and (on AIO Launcher) leaves third-party widget slots stuck.
+        // The providers' own delayed repaints never fire here: the routine
+        // usually fires while Tail is backgrounded and Samsung's Freecess
+        // freezer suspends the process, killing scheduled handlers. THIS
+        // service is a foreground service — exempt from freezing — so the
+        // detector lives on its 2 s poll instead. First read after boot is
+        // the baseline (no repaint storm on service start).
+        try {
+            val navMode = Settings.Secure.getString(contentResolver, KEY_NAV_MODE)
+            val last = lastNavMode
+            if (last != null && navMode != null && navMode != last) {
+                Log.i(TAG, "Navigation mode changed $last → $navMode — scheduling widget repaints")
+                scheduleWidgetRepaints()
+            }
+            if (navMode != null) lastNavMode = navMode
+        } catch (e: Exception) {
+            Log.w(TAG, "Nav-mode check failed: ${e.message}")
+        }
+
         // ── Chess Guard backstop ────────────────────────────────────────
         // The accessibility gate reacts instantly, but OEM launchers do
         // not always deliver TYPE_WINDOW_STATE_CHANGED for an app brought
@@ -374,6 +410,20 @@ class WidgetTriggerService : Service() {
             Log.d(TAG, "Foreground changed: $currentForegroundPackage → $foregroundPkg")
             val previousForegroundPackage = currentForegroundPackage
             currentForegroundPackage = foregroundPkg
+
+            // Repaint pending after a nav-mode switch? AIO Launcher only
+            // re-reads widget content when its ACTIVITY resumes — pushes
+            // made while it was backgrounded update the service-side cache
+            // but the on-screen slot stays stuck. Fire the repaint ~2 s
+            // after the launcher comes back to the front (past the resume
+            // transition), when its host listener is live again.
+            if (repaintPending &&
+                foregroundPkg?.startsWith("ru.execbit.aiolauncher") == true
+            ) {
+                repaintPending = false
+                Log.i(TAG, "Launcher resumed after nav switch — repainting widgets")
+                handler.postDelayed({ repaintWidgetsNow() }, 2_000L)
+            }
 
             if (foregroundPkg in watchedPackages) {
                 // Chess Guard bypass check: the chess app is open while the
@@ -480,6 +530,49 @@ class WidgetTriggerService : Service() {
     // ──────────────────────────────────────────────────────────────────────
     //  Bubble start / stop
     // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * Called when a navigation-mode switch is detected. Marks a pending
+     * repaint and starts timed fallbacks. The PRIMARY cure fires when the
+     * launcher's ACTIVITY resumes (AIO only re-reads widget content on
+     * resume — pushes made while it is backgrounded update only the
+     * service-side cache; see the foreground-change hook).
+     */
+    private fun scheduleWidgetRepaints() {
+        repaintPending = true
+        for (delayMs in longArrayOf(3_000L, 10_000L, 25_000L)) {
+            handler.postDelayed({ repaintWidgetsNow() }, delayMs)
+        }
+        // Fallback: if the resume hook never fired (service restart in the
+        // middle, launcher stayed front the whole time), do one late pass.
+        handler.postDelayed({
+            if (repaintPending) {
+                repaintPending = false
+                repaintWidgetsNow()
+            }
+        }, 40_000L)
+    }
+
+    /** Pushes fresh RemoteViews for both Tail widgets. */
+    private fun repaintWidgetsNow() {
+        try {
+            HabitListWidgetProvider.refreshAll(applicationContext)
+            val mgr = getSystemService(APPWIDGET_SERVICE) as android.appwidget.AppWidgetManager
+            val tierIds = mgr.getAppWidgetIds(
+                android.content.ComponentName(applicationContext, TierBarWidgetProvider::class.java)
+            )
+            if (tierIds.isNotEmpty()) {
+                sendBroadcast(
+                    Intent(applicationContext, TierBarWidgetProvider::class.java).apply {
+                        action = android.appwidget.AppWidgetManager.ACTION_APPWIDGET_UPDATE
+                        putExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_IDS, tierIds)
+                    }
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Widget repaint failed: ${e.message}")
+        }
+    }
 
     private fun startBubble(triggerHabits: List<String>, chessReadiness: Boolean = false) {
         val intent = Intent(this, FloatingBubbleService::class.java).apply {

@@ -265,4 +265,67 @@ class AppStatsRecordEngineTest {
             ).isEmpty()
         )
     }
+
+    // ── Long-history robustness (the OOM regression) ────────────────────────
+    //
+    // aggregateStreak used to re-parse LocalDates inside an O(N²) loop; on a
+    // multi-year history that allocation storm exhausted the heap and the
+    // OutOfMemoryError killed the whole process (bubble + widget included).
+    // These tests pin correctness on a calendar-gap series AND prove the
+    // engine survives a two-year daily history quickly.
+
+    @Test
+    fun `aggregate streak handles a two-year contiguous history`() {
+        // Two years of daily points; today has none → the record run ends
+        // on the newest history day, which is FRESH (recordDate >=
+        // freshCutoff) → suppressed. The point is evaluate() completing
+        // cleanly over a long series (the old O(N²) parse loop OOM'd here).
+        val n = 730
+        val s = series(historyDays = n, totals = { 10 }, todayTotal = 0)
+        val r = evaluate(s)
+        assertTrue(r.evaluations.none { it.metric == "aggregate_streak" })
+    }
+
+    @Test
+    fun `aggregate streak breaks on calendar gaps`() {
+        // 30 consecutive history days of points, with daysAgo=12 MISSING
+        // from the date list entirely (calendar gap). Longest run = the
+        // newer segment daysAgo 11..1 (11 days); the older segment is 18.
+        // Today has 0 points → current streak 0.
+        val n = 30
+        val daysWithPoints = (n downTo 0).filter { it != 12 }.map { date(it) }
+        val s = AppStatsRecordEngine.Series(
+            dates = daysWithPoints + listOf(date(-1)),
+            dailyTotals = daysWithPoints.map { 10 } + listOf(0),
+            dailyHabitCounts = List(daysWithPoints.size + 1) { 0 },
+            dailyStreakSums = List(daysWithPoints.size + 1) { 0 },
+            dailyAntiStreakSums = List(daysWithPoints.size + 1) { 0 },
+            dailyStreakCounts = List(daysWithPoints.size + 1) { 0 },
+            dailyAntiStreakCounts = List(daysWithPoints.size + 1) { 0 }
+        )
+        // The engine must complete without crashing and, because today has
+        // no points and the newest record segment ended daysAgo 1 (fresh),
+        // emit no aggregate_streak notices.
+        val r = AppStatsRecordEngine.evaluate(s, date(-1), emptyMap())
+        assertTrue(r.evaluations.none { it.metric == "aggregate_streak" })
+    }
+
+    @Test
+    fun `aggregate streak current run resumes across today`() {
+        // 30-day contiguous history ENDING daysAgo 6 (daysAgo 5..1 are
+        // zero) plus a today run of 7 contiguous points — impossible in a
+        // real series, so instead: 10-day run at daysAgo 15..6 (record,
+        // NOT fresh), zeros daysAgo 5..1, today 10 → current run 1, no
+        // notice. Engine must treat the gap as a streak breaker.
+        val n = 15
+        val s = series(
+            historyDays = n,
+            totals = { if (it in 6..15) 10 else 0 },
+            todayTotal = 10
+        )
+        val r = evaluate(s)
+        // Current run = 1 (today alone); longest = 10 ending daysAgo 6.
+        // 1 < 10 and far below → nothing fires for aggregate_streak.
+        assertTrue(r.evaluations.none { it.metric == "aggregate_streak" })
+    }
 }

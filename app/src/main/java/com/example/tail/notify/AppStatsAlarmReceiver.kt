@@ -83,6 +83,11 @@ class AppStatsAlarmReceiver : BroadcastReceiver() {
                         AppStatsRecordNotifier.checkAndPost(appContext)
                     } catch (e: Exception) {
                         Log.e(TAG, "App-stats record check failed: ${e.message}", e)
+                    } catch (t: Throwable) {
+                        // Errors (OOM etc.) must not escape a broadcast
+                        // receiver's coroutine — that kills the process
+                        // and takes the bubble + home-screen widget down.
+                        Log.e(TAG, "App-stats record check error: ${t.message}", t)
                     } finally {
                         schedule(appContext)
                         pendingResult.finish()
