@@ -277,6 +277,24 @@ internal const val GRID_DIAGONAL_SPAN = (GRID_ROWS - 1) + (GRID_COLUMNS - 1)
  */
 internal const val SHIMMER_VIRTUAL_MARGIN = 6f
 
+/**
+ * Depth factor of the deepest lattice tiles (the horizon wall) — must match
+ * `minDepth` in SteelPanel.kt's ghost-lattice projection.
+ */
+internal const val GHOST_MIN_DEPTH = 0.18f
+
+/**
+ * Virtual-lattice COLUMN margin. Columns need far more reach than rows:
+ * the deep wall tiles are compressed toward the centre by GHOST_MIN_DEPTH,
+ * so the screen's half-width inverse-projects to ~(grid half-width +
+ * halfScreen / (minDepth × cell)) columns — well past the grid's edge.
+ * Normalizing the horizontal sweep over this full extent is what lets the
+ * wave travel all the way to the wall's outer edges (and the lizard's
+ * head/tail) instead of stopping at the grid's columns.
+ */
+internal val SHIMMER_VIRTUAL_COL_MARGIN =
+    (kotlin.math.ceil((GRID_COLUMNS / 2f + 2f) / GHOST_MIN_DEPTH)).toInt().toFloat()
+
 /** Vertical sweep span in rows, including the ghost margin on both ends. */
 internal val SHIMMER_VERTICAL_SPAN = (GRID_ROWS - 1) + 2 * SHIMMER_VIRTUAL_MARGIN
 
@@ -328,28 +346,69 @@ internal enum class ShimmerDirection {
         }
 
     /** Normalized sweep coordinate of a cell: 1 = lit first, 0 = lit last.
-     *  Vertical, diagonal and radial spans include [SHIMMER_VIRTUAL_MARGIN]
-     *  ghost rows on each side so the wave keeps sweeping row by row through
-     *  the chrome panels' background lattice instead of clamping the whole
-     *  off-grid band to u = 1 (top) / u = 0 (bottom). */
-    fun u(row: Int, col: Int): Float = when (this) {
-        BOTTOM_RIGHT_TO_TOP_LEFT -> (row + col + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_DIAGONAL_SPAN
-        TOP_LEFT_TO_BOTTOM_RIGHT -> 1f - (row + col + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_DIAGONAL_SPAN
-        BOTTOM_LEFT_TO_TOP_RIGHT -> (row + (GRID_COLUMNS - 1 - col) + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_DIAGONAL_SPAN
-        TOP_RIGHT_TO_BOTTOM_LEFT -> 1f - (row + (GRID_COLUMNS - 1 - col) + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_DIAGONAL_SPAN
-        LEFT_TO_RIGHT -> 1f - col.toFloat() / (GRID_COLUMNS - 1)
-        RIGHT_TO_LEFT -> col.toFloat() / (GRID_COLUMNS - 1)
-        TOP_TO_BOTTOM -> 1f - (row + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_VERTICAL_SPAN
-        BOTTOM_TO_TOP -> (row + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_VERTICAL_SPAN
-        CENTER_OUT -> 1f - centerDistance(row, col)
-        EDGES_IN -> centerDistance(row, col)
+     *  The COLUMN axis is normalized over a span that includes
+     *  [SHIMMER_VIRTUAL_COL_MARGIN] ghost columns on each side, so the
+     *  wave keeps sweeping cell by cell through the background lattice's
+     *  VIRTUAL columns too — including the far sides of the deep back
+     *  wall (whose compressed tiles map to columns well outside the real
+     *  grid). Without the column margin, off-grid wall columns extrapolate
+     *  to u far outside the swept 0..1 range and simply never light. */
+    fun u(row: Int, col: Int): Float = u(row, col, yN = null)
+
+    /**
+     * Full variant — the single source of truth for the sweep coordinate.
+     *
+     * [yN] (when non-null) is the cell's NORMALIZED SCREEN Y
+     * (global y px / window height, 0 = top edge, 1 = bottom edge) and
+     * replaces the logical row axis. This is what keeps ONE continuous
+     * shimmer across the close grid AND the deep back wall: the wall's
+     * stall gap (hundreds of px of screen with no lattice rows) gets a
+     * proportional slice of the sweep, subdivided wall-square by
+     * wall-square — instead of one logical-row-sized u-slice that lit the
+     * whole wall in a single flash.
+     */
+    fun u(row: Int, col: Int, yN: Float?): Float {
+        val rN = yN ?: ((row + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_VERTICAL_SPAN)
+        val colN = (col + SHIMMER_VIRTUAL_COL_MARGIN) /
+            ((GRID_COLUMNS - 1) + 2 * SHIMMER_VIRTUAL_COL_MARGIN)
+        val colMirrorN = ((GRID_COLUMNS - 1 - col) + SHIMMER_VIRTUAL_COL_MARGIN) /
+            ((GRID_COLUMNS - 1) + 2 * SHIMMER_VIRTUAL_COL_MARGIN)
+        return when (this) {
+            BOTTOM_RIGHT_TO_TOP_LEFT -> (rN + colN) / 2f
+            TOP_LEFT_TO_BOTTOM_RIGHT -> 1f - (rN + colN) / 2f
+            BOTTOM_LEFT_TO_TOP_RIGHT -> (rN + colMirrorN) / 2f
+            TOP_RIGHT_TO_BOTTOM_LEFT -> 1f - (rN + colMirrorN) / 2f
+            // Horizontal sweeps carry a slight ROW tilt: with a pure
+            // column-only u, one sweep lit an ENTIRE column of wall tiles
+            // simultaneously — on the deep wall those ~24px squares stack
+            // into what reads as a continuous tall column. Mixing in a
+            // little row component staggers neighbouring rows by a
+            // fraction of the sweep, so at any instant only a couple of
+            // rows of the column are at peak brightness and the wall
+            // resolves into individual squares even mid-sweep (the surface
+            // grid just gets a subtle diagonal drift, still reading
+            // left-to-right).
+            LEFT_TO_RIGHT -> 1f - (0.82f * colN + 0.18f * rN)
+            RIGHT_TO_LEFT -> 0.82f * colN + 0.18f * rN
+            TOP_TO_BOTTOM -> 1f - rN
+            BOTTOM_TO_TOP -> rN
+            CENTER_OUT -> 1f - centerDistance(rN, col)
+            EDGES_IN -> centerDistance(rN, col)
+        }
     }
 
-    /** Normalized distance from the grid center (0 = center, ~1 = far ghost rows). */
-    internal fun centerDistance(row: Int, col: Int): Float {
-        val dr = row - (GRID_ROWS - 1) / 2f
-        val dc = col - (GRID_COLUMNS - 1) / 2f
-        return kotlin.math.sqrt(dr * dr + dc * dc) / SHIMMER_RADIAL_SPAN
+    /** Normalized distance from the screen center: 0 = center, 1 = the FAR
+     *  CORNERS of the screen (the vertical axis uses the same normalized
+     *  screen-y as [u], so radial waves expand uniformly in SCREEN space —
+     *  through the wall's stall gap included). Dividing the hypotenuse by
+     *  √2 makes the extreme corners reach exactly 1 — CENTER_OUT expands
+     *  all the way out to the wall's edges before ending, and EDGES_IN
+     *  starts fully outside. */
+    internal fun centerDistance(rN: Float, col: Int): Float {
+        val drN = (rN - 0.5f) * 2f * 0.95f
+        val dcN = (col - (GRID_COLUMNS - 1) / 2f) /
+            ((GRID_COLUMNS - 1) / 2f + SHIMMER_VIRTUAL_COL_MARGIN)
+        return kotlin.math.sqrt(drN * drN + dcN * dcN) / kotlin.math.sqrt(2f)
     }
 }
 

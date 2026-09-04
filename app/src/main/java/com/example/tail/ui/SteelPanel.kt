@@ -193,6 +193,7 @@ internal fun BoxScope.FrostGlassLayer(
         modifier = Modifier
             .matchParentSize()
             .ghostGlassSquares(
+                pitLizard = false,
                 shimmerSweep = { 0f },
                 shimmerDirection = { ShimmerDirection.BOTTOM_RIGHT_TO_TOP_LEFT },
                 baseAlpha = 0.06f
@@ -213,7 +214,12 @@ internal fun BoxScope.FrostGlassLayer(
     )
 }
 
+private var pitDebugDumped = false
+
 internal fun Modifier.ghostGlassSquares(
+    /** Draw the pit-floor lizard on the horizon wall (skipped for frost
+     *  layers, which are tiny static copies). */
+    pitLizard: Boolean = true,
     /** The grid's shimmer sweep value (0..1), read inside the draw phase. */
     shimmerSweep: () -> Float,
     /** The grid's current shimmer direction, read inside the draw phase. */
@@ -231,6 +237,22 @@ internal fun Modifier.ghostGlassSquares(
     val tile: ImageBitmap? = remember {
         BitmapFactory.decodeResource(context.resources, R.drawable.habit_tile_glass)?.asImageBitmap()
     }
+    // Pit-floor lizard — the SAME tier variant the tier-bar widget is
+    // showing right now (dayTier from TierStateStore, which the widget
+    // refreshes on every repaint), as a transparent-background strip.
+    val lizard: ImageBitmap? = if (!pitLizard) null else remember {
+        val tier = com.example.tail.widget.TierStateStore.load(context).dayTier
+        val resId = context.resources.getIdentifier(
+            "tier_bar_lizard_t${tier.coerceIn(0, 12)}", "drawable", context.packageName
+        )
+        if (resId != 0) {
+            BitmapFactory.decodeResource(context.resources, resId)?.asImageBitmap()
+        } else null
+    }
+    // Slightly SMALLER than the tier-bar widget's height-filling lizard
+    // (~100dp): reads as standing far back against the horizon wall.
+    // Drawn at the strip's baked 4:1 aspect.
+    val lizardHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { 64.dp.toPx() }
     val clipPath = remember { Path() }
     // Window-space y of this panel — the grid anchor publishes its own so all
     // panels share ONE lattice phase anchored to the real grid's first row.
@@ -402,6 +424,20 @@ internal fun Modifier.ghostGlassSquares(
                 // Shared projected COLUMN boundary line for a row-scale s.
                 fun colLineX(c: Int, s: Float): Float = projX(outerPad + c * cell, s)
 
+                // TEMP DEBUG: one dump of the wall geometry per panel.
+                if (pitLizard && !pitDebugDumped) {
+                    pitDebugDumped = true
+                    android.util.Log.d(
+                        "PitWall",
+                        "topY=$topY panelH=${size.height} windowH=$windowH " +
+                            "cell=$cell anchorTop=$anchorTop vpy=$vpy " +
+                            "horizonRow=$horizonRow bottomAnchorRow=$bottomAnchorRow " +
+                            "rowY(-3)=${rowLineY(-3)} rowY(0)=${rowLineY(0)} " +
+                            "rowY(3)=${rowLineY(3)} rowY(6)=${rowLineY(6)} " +
+                            "rowY(9)=${rowLineY(9)} rowY(12)=${rowLineY(12)}"
+                    )
+                }
+
                 fun drawSquareRow(gridRow: Int) {
                     // Row boundary depths (evaluated on the boundary lines,
                     // shared with the neighbouring rows).
@@ -421,6 +457,31 @@ internal fun Modifier.ghostGlassSquares(
                     // Cull rows whose PROJECTED extent misses this panel.
                     if (y1 - topY < 0f || y0 - topY > size.height || y1 - y0 < 1f) return
                     val restAlpha = restAlphaFor(gridRow, depth)
+                    // WALL ROW SUBDIVISION: the two pitch integrations
+                    // (down from the grid anchor, up from the bottom edge)
+                    // both stall before reaching the horizon, so the row
+                    // that straddles the stall gap (the horizon row) is a
+                    // SINGLE tile hundreds of px tall × ~24px wide — it
+                    // rendered as tall vertical columns, and because all of
+                    // it shared one lattice row's u, vertical / diagonal /
+                    // radial sweeps flashed the whole back wall at once.
+                    // Subdivide it into SQUARE wall cells (one per
+                    // min-depth pitch step) and let each sample the wave at
+                    // its own FRACTIONAL lattice row — the same mapping the
+                    // pit-floor lizard uses, so wall and lizard stay
+                    // locked. Rows whose height already matches their
+                    // width (everywhere else) are untouched (nSub = 1).
+                    // ONLY the stall-gap row subdivides: its height (~800px)
+                    // dwarfs its own projected tile width (~24px). Normal
+                    // rows are square-ish (height ≈ cell × depth ≤ their
+                    // width), so they stay untouched — nSub = 1.
+                    val wallPitch = cell * minDepth
+                    val tileW = cell * depth
+                    val nSub = if (y1 - y0 > tileW * 1.6f) {
+                        ceil((y1 - y0) / maxOf(wallPitch, tileW)).toInt()
+                            .coerceAtLeast(1)
+                    } else 1
+                    val subH = (y1 - y0) / nSub
                     // Expand the column range past the real grid until the
                     // projected tiles clear the panel on BOTH sides — extra
                     // tiles "come in from the sides" to feed the compression.
@@ -448,6 +509,20 @@ internal fun Modifier.ghostGlassSquares(
                     // band width), so a finished sweep leaves NOTHING
                     // glowing — clamping to the band edge is exactly what
                     // used to pin the final tiles at full brightness.
+                    for (j in 0 until nSub) {
+                    val sy0 = y0 + j * subH
+                    val sy1 = sy0 + subH
+                    // Fractional lattice row for this (sub-)cell. Identity
+                    // (gridRow) everywhere except the subdivided wall row:
+                    // there the sub-cells INTERPOLATE from the row's top
+                    // boundary to its bottom boundary — i.e. the wave
+                    // coordinate slides from gridRow's u to (gridRow+1)'s
+                    // u across the stall gap. The wall thus lights as the
+                    // CONTINUATION of the close grid's sweep (one seamless
+                    // shimmer top→wall→bottom), never as a separate flash
+                    // with its own timing.
+                    val rowF = if (nSub == 1) gridRow.toFloat()
+                        else gridRow + (sy0 - y0) / (y1 - y0)
                     for (c in cFirst..cLast) {
                         // Column boundaries projected with each edge's own
                         // depth (sTop for the top edge, sBot for the bottom
@@ -458,7 +533,18 @@ internal fun Modifier.ghostGlassSquares(
                         val px0b = colLineX(c, sBot) + cellPad * sBot
                         val px1b = colLineX(c + 1, sBot) - cellPad * sBot
                         if (maxOf(px1t, px1b) < 0f || minOf(px0t, px0b) > size.width) continue
-                        val u = dir.u(gridRow, c)
+                        // One seamless shimmer across close grid AND wall:
+                        // the wave coordinate's vertical axis is the cell's
+                        // NORMALIZED SCREEN Y, not the logical row. The
+                        // wall's stall gap (hundreds of px with no lattice
+                        // rows) thus gets a proportional slice of the
+                        // sweep — split across the subdivided wall squares
+                        // — instead of one row-sized u-slice that flashed
+                        // the whole wall at once.
+                        val u = dir.u(
+                            gridRow, c,
+                            yN = (sy0 + sy1) / 2f / windowH
+                        )
                         // Global brightness boost applied to every ghost square,
                         // on top of the depth fade and shimmer alike.
                         // HISTORY: every earlier "+X%" pass was a silent no-op
@@ -475,8 +561,8 @@ internal fun Modifier.ghostGlassSquares(
                             // boundaries + scaled padding insets.
                             val p00x = px0t; val p01x = px1t
                             val p10x = px0b; val p11x = px1b
-                            val p0y = y0 - topY
-                            val p1y = y1 - topY
+                            val p0y = sy0 - topY
+                            val p1y = sy1 - topY
                             val left = minOf(p00x, p10x)
                             val right = maxOf(p01x, p11x)
                             if (right - left < 1f) continue
@@ -526,6 +612,7 @@ internal fun Modifier.ghostGlassSquares(
                             }
                         }
                     }
+                    }
                 }
 
                 // Enumerate every lattice row visible in this panel; gridRow
@@ -541,6 +628,114 @@ internal fun Modifier.ghostGlassSquares(
                 val kLast = floor((topY + size.height - anchorTop) / cell).toInt()
                 clipRect(0f, 0f, size.width, size.height) {
                     for (gridRow in kFirst..kLast) drawSquareRow(gridRow)
+                }
+
+                // ── Pit-floor lizard ──────────────────────────────────────
+                // The tier-bar widget's lizard (today's tier variant, the
+                // same transparent 4:1 strip the widget draws) sits ON the
+                // flat wall at the bottom of the pit — the horizon band at
+                // the window midline. It is INVISIBLE at rest and lights up
+                // EXACTLY where/when the wall's own shimmer line passes:
+                //
+                //  · The lizard is drawn smaller than on the widget (64dp
+                //    vs the ~100dp widget bar) so it reads as sitting far
+                //    back against the horizon wall.
+                //  · The strip is sliced into thin vertical slices. Each
+                //    slice's on-screen x is mapped back to a LOGICAL
+                //    lattice column through the SAME perspective projection
+                //    the wall tiles use (inverse-projected at the horizon's
+                //    depth), so the slice samples the wave precisely where
+                //    the compressed wall tile beside it samples it — the
+                //    reveal is locked, time- and space-wise, to the wall's
+                //    thin shimmer line. A vertical wave lights the whole
+                //    horizon row (lizard included) at once, exactly like
+                //    the row of wall tiles; horizontal / diagonal / radial
+                //    waves sweep across it slice group by slice group, in
+                //    perfect step with the neighbouring wall tiles.
+                //  · Brightness peaks below 1 so it stays a faint thing at
+                //    the back of the pit, matching the deep tiles.
+                //
+                // Drawn only by the ONE panel whose bounds contain the
+                // horizon, so adjacent chrome panels never double-paint it.
+                val vpyLocal = vpy - topY
+                if (pitLizard && lizard != null && sweep > 0f &&
+                    vpyLocal >= 0f && vpyLocal < size.height
+                ) {
+                    val lzH = lizardHeightPx
+                    val lzW = lzH * 4f
+                    val lzLeft = vpx - lzW / 2f
+                    val lzTop = vpyLocal - lzH / 2f
+                    // The lizard is sampled as a 2D GRID of square
+                    // sliver-cells — one compressed wall tile (cell × the
+                    // horizon's depth factor) on EACH side — so the reveal
+                    // granularity matches the deep wall's squares in BOTH
+                    // axes. (Earlier the strip was only sliced by column:
+                    // a vertical wavefront sampled a single lattice row and
+                    // therefore flashed the whole 64dp-tall lizard at once,
+                    // reading as "the entire back wall lights up". Now each
+                    // sliver-cell samples the wave at its own fractional
+                    // (row, col) and vertical sweeps cross the lizard row
+                    // by row, exactly like the wall.)
+                    val sWall = minDepth
+                    val sliver = (cell * sWall).coerceAtLeast(1f)
+                    val nx = ceil(lzW / sliver).toInt().coerceIn(24, 160)
+                    val ny = ceil(lzH / sliver).toInt().coerceAtLeast(1)
+                    val cw = lzW / nx
+                    val chh = lzH / ny
+                    // Inverse projections at the horizon's depth (minDepth):
+                    // screen x/y → unprojected lattice column/row. This is
+                    // what keeps the lizard's reveal locked to the wall's
+                    // own wave. Fractional and UNCLAMPED: the formulas
+                    // extrapolate cleanly past the grid's span — crucial
+                    // for the lizard's head and tail, which inverse-project
+                    // to columns well outside the real grid.
+                    val pitch = cell * sWall
+                    for (j in 0 until ny) {
+                        val y0 = lzTop + j * chh
+                        val yCenterG = y0 + chh / 2f + topY
+                        val rowF = horizonRow + (yCenterG - vpy) / pitch
+                        for (s in 0 until nx) {
+                            val x0 = lzLeft + s * cw
+                            if (x0 + cw < 0f || x0 > size.width) continue
+                            val xCenter = x0 + cw / 2f
+                            val latticeX = vpx + (xCenter - vpx) / sWall
+                            // Column axis: inverse-projected, fractional,
+                            // interpolated between the two neighbouring
+                            // integer columns (the direction formulas are
+                            // linear in col). Vertical axis: NORMALIZED
+                            // SCREEN Y (dir.u's yN) — identical mapping to
+                            // the wall squares beside the lizard, so both
+                            // light in perfect lock-step for every sweep.
+                            val colF = (latticeX - outerPad) / cell - 0.5f
+                            val c0 = colF.toInt()
+                            val f = colF - c0
+                            val yN = yCenterG / windowH
+                            val u = dir.u(0, c0, yN) * (1f - f) +
+                                dir.u(0, c0 + 1, yN) * f
+                            val proximity = idleShimmerAlpha(sweep, u) /
+                                IDLE_SHIMMER_MAX_ALPHA
+                            if (proximity <= 0.01f) continue
+                            val sx = (s.toFloat() / nx * lizard.width).toInt()
+                            val sy = (j.toFloat() / ny * lizard.height).toInt()
+                            val sw = (lizard.width.toFloat() / nx).toInt()
+                                .coerceAtLeast(1)
+                            val sh = (lizard.height.toFloat() / ny).toInt()
+                                .coerceAtLeast(1)
+                            clipRect(x0, y0, x0 + cw, y0 + chh) {
+                                drawImage(
+                                    image = lizard,
+                                    srcOffset = IntOffset(sx, sy),
+                                    srcSize = IntSize(sw, sh),
+                                    dstOffset = IntOffset(x0.toInt(), y0.toInt()),
+                                    dstSize = IntSize(
+                                        (cw + 0.99f).toInt(),
+                                        (chh + 0.99f).toInt()
+                                    ),
+                                    alpha = (proximity * 0.45f).coerceIn(0f, 1f)
+                                )
+                            }
+                        }
+                    }
                 }
             }
             drawContent()
