@@ -1,5 +1,7 @@
 package com.example.tail.ui
 
+import androidx.compose.ui.draw.clip
+
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import androidx.compose.foundation.Canvas
@@ -144,9 +146,32 @@ fun StreakGraphPopup(
     val model = remember(data) { buildStreakChartModel(data) }
     val totalRange = (model.totalDays - 1).toFloat()
 
-    // Viewport state, in day units over [0, totalRange].
-    var windowStart by remember(model) { mutableFloatStateOf(0f) }
+    // Viewport state, in day units over [0, totalRange]. Defaults to the
+    // last month of data; the range buttons below can change it.
+    var windowStart by remember(model) {
+        mutableFloatStateOf((totalRange - 30f).coerceAtLeast(0f))
+    }
     var windowEnd by remember(model) { mutableFloatStateOf(totalRange) }
+
+    // Selected time-range preset (1W/1M/6M/1Y/5Y/Max); null = custom viewport
+    // after a manual pinch/pan. Remembered with the model so switching graphs
+    // resets the selection.
+    var selectedRange by remember(model) { mutableStateOf<String?>("1M") }
+
+    /**
+     * Apply a range preset: show the last [days] days of data (clamped to
+     * the available range), or the full range for "Max".
+     */
+    fun applyRangePreset(label: String, days: Int?) {
+        selectedRange = label
+        if (days == null || days.toFloat() >= totalRange) {
+            windowStart = 0f
+            windowEnd = totalRange
+        } else {
+            windowStart = (totalRange - days.toFloat()).coerceAtLeast(0f)
+            windowEnd = totalRange
+        }
+    }
 
     // Scrub crosshair x-position (px within the chart Box), null when idle.
     var scrubX by remember { mutableStateOf<Float?>(null) }
@@ -193,8 +218,36 @@ fun StreakGraphPopup(
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f, fill = false)
                 )
+
+                // ── Range preset buttons (inline in the top bar) ────────────
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .padding(horizontal = 8.dp)
+                ) {
+                    val presets = listOf(
+                        "1W" to 7, "1M" to 30, "6M" to 182,
+                        "1Y" to 365, "5Y" to 1826, "Max" to null
+                    )
+                    presets.forEach { (label, days) ->
+                        val isSelected = selectedRange == label
+                        Text(
+                            text = label,
+                            color = if (isSelected) PopupBg else DimColor,
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) TitleColor else Color(0x221E1E30))
+                                .clickable { applyRangePreset(label, days) }
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
 
                 // Current value badge
                 val displayValue = currentValue ?: data.lastOrNull()?.second
@@ -275,8 +328,6 @@ fun StreakGraphPopup(
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
-
             // ── Chart ───────────────────────────────────────────────────────
             if (model.dayIdx.isEmpty()) {
                 Box(
@@ -340,6 +391,8 @@ fun StreakGraphPopup(
 
                                 windowStart = newStart
                                 windowEnd = newEnd
+                                // Manual gesture — no preset is active anymore.
+                                selectedRange = null
                             }
 
                             val touchSlop = viewConfiguration.touchSlop
@@ -410,8 +463,7 @@ fun StreakGraphPopup(
                                         val isZoomed =
                                             (windowEnd - windowStart) < totalRange * 0.999f
                                         if (isZoomed) {
-                                            windowStart = 0f
-                                            windowEnd = totalRange
+                                            applyRangePreset("Max", null)
                                         } else {
                                             applyGesture(0f, DOUBLE_TAP_ZOOM, down.position.x)
                                         }
@@ -483,8 +535,7 @@ fun StreakGraphPopup(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier
                             .clickable {
-                                windowStart = 0f
-                                windowEnd = totalRange
+                                applyRangePreset("Max", null)
                             }
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     )

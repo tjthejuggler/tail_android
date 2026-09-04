@@ -209,6 +209,12 @@ fun AppStatsScreen(
             RedValue,
             stats.totalAntiStreakDays
         )
+        "total_net_streak_days" -> GraphInfo(
+            "Total Net Streak Days Over Time",
+            stats.dailyTotalNetStreakDays,
+            screenProgressionAccent(3), // blue
+            stats.totalNetStreakDays
+        )
         "habits_with_streak" -> GraphInfo(
             "Habits With Streak Over Time",
             stats.dailyHabitsWithStreak,
@@ -390,6 +396,12 @@ fun AppStatsScreen(
                         value = stats.totalAntiStreakDays.toString(),
                         valueColor = RedValue,
                         onClick = { graphPopupKey = "total_anti_streak_days" }
+                    )
+                    StatGraphableRow(
+                        label = "Total net streak days (all habits)",
+                        value = stats.totalNetStreakDays.toString(),
+                        valueColor = screenProgressionAccent(3), // blue
+                        onClick = { graphPopupKey = "total_net_streak_days" }
                     )
                     StatGraphableCountRow(
                         label = "Habits with active streak",
@@ -1586,6 +1598,7 @@ private data class AppStats(
     // Streak aggregate stats (Overview section)
     val totalStreakDays: Int = 0,                // sum of all current streak values
     val totalAntiStreakDays: Int = 0,            // sum of all current anti-streak values
+    val totalNetStreakDays: Int = 0,             // streak minus anti-streak
     val habitsWithStreak: Int = 0,               // count of habits with streak > 0
     val habitsWithAntiStreak: Int = 0,           // count of habits with anti-streak > 0
     val habitsWithStreakList: List<Pair<String, String>> = emptyList(),
@@ -1593,6 +1606,7 @@ private data class AppStats(
     // Historical daily values for graphing
     val dailyTotalStreakDays: List<Pair<String, Int>> = emptyList(),     // date → sum of streaks
     val dailyTotalAntiStreakDays: List<Pair<String, Int>> = emptyList(), // date → sum of anti-streaks
+    val dailyTotalNetStreakDays: List<Pair<String, Int>> = emptyList(),  // date → streaks minus anti-streaks
     val dailyHabitsWithStreak: List<Pair<String, Int>> = emptyList(),    // date → count with streak
     val dailyHabitsWithAntiStreak: List<Pair<String, Int>> = emptyList(),// date → count with anti-streak
 
@@ -2057,6 +2071,7 @@ private fun computeAppStats(
     val enabledHabitStats = habitStats.filter { it.name !in disabledHabits }
     val totalStreakDays = enabledHabitStats.sumOf { it.currentStreak }
     val totalAntiStreakDays = enabledHabitStats.sumOf { it.antiStreak }
+    val totalNetStreakDays = totalStreakDays - totalAntiStreakDays
     val habitsWithStreakCount = enabledHabitStats.count { it.currentStreak > 0 }
     val habitsWithAntiStreakCount = enabledHabitStats.count { it.antiStreak > 0 }
     val habitsWithStreakList = enabledHabitStats.filter { it.currentStreak > 0 }
@@ -2147,6 +2162,7 @@ private fun computeAppStats(
 
     val dailyStreakTotals = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateStreakSum[idx]) }
     val dailyAntiStreakTotals = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateAntiStreakSum[idx]) }
+    val dailyNetStreakTotals = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateStreakSum[idx] - perDateAntiStreakSum[idx]) }
     val dailyStreakCounts = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateStreakCount[idx]) }
     val dailyAntiStreakCounts = sortedDatesList.mapIndexed { idx, d -> Pair(d, perDateAntiStreakCount[idx]) }
 
@@ -2389,12 +2405,14 @@ private fun computeAppStats(
         dailyHabitsDoneLists = dailyHabitsDoneLists,
         totalStreakDays = totalStreakDays,
         totalAntiStreakDays = totalAntiStreakDays,
+        totalNetStreakDays = totalNetStreakDays,
         habitsWithStreak = habitsWithStreakCount,
         habitsWithAntiStreak = habitsWithAntiStreakCount,
         habitsWithStreakList = habitsWithStreakList,
         habitsWithAntiStreakList = habitsWithAntiStreakList,
         dailyTotalStreakDays = dailyStreakTotals,
         dailyTotalAntiStreakDays = dailyAntiStreakTotals,
+        dailyTotalNetStreakDays = dailyNetStreakTotals,
         dailyHabitsWithStreak = dailyStreakCounts,
         dailyHabitsWithAntiStreak = dailyAntiStreakCounts,
         highestPointsDay = highestPointsDay,

@@ -19,7 +19,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import com.example.tail.R
-import androidx.compose.ui.draw.blur
 import com.example.tail.data.backup.HabitRestorePreview
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -132,6 +131,9 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -3039,11 +3041,40 @@ internal fun ScreenTabRow(
             // square = cell − 2×2.dp cell pad.
             val chipHeight =
                 ((LocalConfiguration.current.screenWidthDp - 8) / GRID_COLUMNS - 4).dp
+            // CONSISTENT chip size: every chip is exactly the old minimum
+            // (slightly wider than tall). Long names shrink their font (down
+            // to 8sp) and then wrap to two lines instead of growing the chip.
+            val chipWidth = chipHeight * 1.1f
+            // Pick the largest font size (12sp → 8sp) whose two-line layout
+            // fits the chip's inner width; falls back to 8sp + 2 lines.
+            val textMeasurer = rememberTextMeasurer()
+            val tabText = if (editMode && isHidden && !isActive) "👁‍🗨 ${screen.name}" else label
+            val density = LocalDensity.current
+            // Single line is strongly preferred: names of ≤7 letters NEVER
+            // wrap; longer ones may fall back to two lines after the font
+            // shrink has been exhausted (down to 7sp).
+            val chipAllowsWrap = tabText.count { it.isLetter() } > 8
+            val chipFontSize = remember(tabText, chipWidth, isActive, density, chipAllowsWrap) {
+                val baseStyle = TextStyle(
+                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
+                )
+                val maxWpx = with(density) { (chipWidth - 4.dp).roundToPx() }
+                (12 downTo 7).firstOrNull { sp ->
+                    val layout = textMeasurer.measure(
+                        text = tabText,
+                        style = baseStyle.copy(fontSize = sp.sp),
+                        maxLines = if (chipAllowsWrap) 2 else 1,
+                        overflow = TextOverflow.Clip,
+                        softWrap = chipAllowsWrap,
+                        constraints = Constraints(maxWidth = maxWpx)
+                    )
+                    !layout.hasVisualOverflow
+                }?.sp ?: 7.sp
+            }
             Box(
                 modifier = Modifier
                     .height(chipHeight)
-                    // Chips must always be slightly wider than they are tall.
-                    .widthIn(min = chipHeight * 1.1f)
+                    .width(chipWidth)
                     .clip(chipShape)
                     .then(
                         if (!isActive) {
@@ -3064,36 +3095,23 @@ internal fun ScreenTabRow(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                // Frosted glass: ghostGlassSquares anchors its lattice to
-                // window-space geometry, so a chip-sized copy renders exactly
-                // the lattice that shows through behind the chip — blurred
-                // (own-layer RenderEffect) it becomes real-looking frosted
-                // glass. Selected: heavy blur + strong white fog; unselected:
-                // light blur + a faint haze.
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .ghostGlassSquares(
-                            shimmerSweep = { shimmerSweep?.invoke() ?: 0f },
-                            shimmerDirection = {
-                                shimmerDirection?.invoke() ?: ShimmerDirection.BOTTOM_RIGHT_TO_TOP_LEFT
-                            }
-                        )
-                        .blur(if (isActive) 10.dp else 3.dp)
-                )
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(
-                            if (isActive) Color.White.copy(alpha = 0.55f)
-                            else Color.White.copy(alpha = 0.12f),
-                            chipShape
-                        )
+                // Shared frosted-glass backdrop (static, faint lattice copy +
+                // blur + white fog) — size-independent, so small and large
+                // chips frost identically.
+                FrostGlassLayer(
+                    blurRadius = if (isActive) 10.dp else 3.dp,
+                    fogAlpha = if (isActive) 0.55f else 0.12f,
+                    fogShape = chipShape
                 )
                 Text(
-                    text = if (editMode && isHidden && !isActive) "👁‍🗨 ${screen.name}" else label,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 8.dp),
+                    text = tabText,
+                    fontSize = chipFontSize,
+                    lineHeight = chipFontSize * 1.1f,
+                    maxLines = if (chipAllowsWrap) 2 else 1,
+                    overflow = TextOverflow.Clip,
+                    softWrap = chipAllowsWrap,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 2.dp),
                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                     color = when {
                         isActive -> Color.White

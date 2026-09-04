@@ -2,6 +2,13 @@ package com.example.tail.ui
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.getValue
@@ -163,6 +170,49 @@ internal object GhostGridGeometry {
  * the real grid, sampled at its own virtual (row, col) position. Purely a
  * background layer — content is always drawn on top, unaffected.
  */
+/**
+ * Size-independent frosted-glass backdrop for chips/panels. Renders a copy of
+ * the shared ghost lattice aligned to the same window-space phase as the
+ * lattice behind the surface (so it shows "what's behind"), then blurs it.
+ * The copy is STATIC (no shimmer) and faint (low base alpha), so the frost
+ * reads identically at ANY size — no resolvable "reflective grid" on larger
+ * instances — with a white fog layer on top at [fogAlpha].
+ *
+ * Use as children of a Box: the layers fill the box via matchParentSize.
+ */
+@Composable
+internal fun BoxScope.FrostGlassLayer(
+    blurRadius: Dp,
+    fogAlpha: Float,
+    fogShape: Shape = RoundedCornerShape(6.dp),
+    /** Optional thin border drawn around the frosted area. */
+    borderWidth: Dp = 0.dp,
+    borderColor: Color = Color.White.copy(alpha = 0.45f)
+) {
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .ghostGlassSquares(
+                shimmerSweep = { 0f },
+                shimmerDirection = { ShimmerDirection.BOTTOM_RIGHT_TO_TOP_LEFT },
+                baseAlpha = 0.06f
+            )
+            .blur(blurRadius)
+    )
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .background(Color.White.copy(alpha = fogAlpha), fogShape)
+            .then(
+                if (borderWidth > 0.dp) {
+                    Modifier.border(borderWidth, borderColor, fogShape)
+                } else {
+                    Modifier
+                }
+            )
+    )
+}
+
 internal fun Modifier.ghostGlassSquares(
     /** The grid's shimmer sweep value (0..1), read inside the draw phase. */
     shimmerSweep: () -> Float,

@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -108,16 +109,6 @@ internal fun AdviceBanner(
             modifier = modifier
                 .fillMaxWidth()
                 .heightIn(max = maxBannerHeight)
-                .then(
-                    if (shimmerSweep != null && shimmerDirection != null) {
-                        Modifier.ghostGlassSquares(
-                            shimmerSweep = shimmerSweep,
-                            shimmerDirection = shimmerDirection
-                        )
-                    } else {
-                        Modifier
-                    }
-                )
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
@@ -146,10 +137,19 @@ internal fun AdviceBanner(
                     }
                     dragged = false
                 }
-                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .padding(horizontal = 10.dp, vertical = 4.dp)
                 .verticalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center
         ) {
+            // Frosted-glass backdrop (same treatment as the screen-name
+            // chips): static faint ghost-lattice copy, blurred, with a light
+            // white fog — replaces the old live ghost-square highlighting.
+            FrostGlassLayer(
+                blurRadius = 8.dp,
+                fogAlpha = 0.15f,
+                fogShape = RoundedCornerShape(10.dp),
+                borderWidth = 0.75.dp
+            )
             Text(
                 text = "$text".toMarkdownAnnotatedString(),
                 style = MaterialTheme.typography.bodySmall.copy(
