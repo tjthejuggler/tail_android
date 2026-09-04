@@ -480,6 +480,12 @@ fun AppStatsScreen(
                         date = stats.highestTotalAntiStreakDays.first,
                         onNavigateToDate = onNavigateToDate
                     )
+                    StatDateValueRow(
+                        label = "Most total net streak days",
+                        value = stats.highestTotalNetStreakDays.second.toString(),
+                        date = stats.highestTotalNetStreakDays.first,
+                        onNavigateToDate = onNavigateToDate
+                    )
                     StatCountDateRow(
                         label = "Most habits with streak",
                         count = stats.highestHabitsWithStreak.second,
@@ -1614,6 +1620,7 @@ private data class AppStats(
     val highestPointsDay: Pair<String?, Int> = Pair(null, 0),
     val highestTotalStreakDays: Pair<String?, Int> = Pair(null, 0),
     val highestTotalAntiStreakDays: Pair<String?, Int> = Pair(null, 0),
+    val highestTotalNetStreakDays: Pair<String?, Int> = Pair(null, 0),
     val highestHabitsWithStreak: Pair<String?, Int> = Pair(null, 0),
     val highestHabitsWithAntiStreak: Pair<String?, Int> = Pair(null, 0),
     val highestHabitsWithStreakList: List<Pair<String, String>> = emptyList(),
@@ -2170,6 +2177,7 @@ private fun computeAppStats(
     // Best-ever value of each overview streak stat, with the date it occurred.
     val bestStreakTotal = dailyStreakTotals.filter { it.second > 0 }.maxByOrNull { it.second }
     val bestAntiStreakTotal = dailyAntiStreakTotals.filter { it.second > 0 }.maxByOrNull { it.second }
+    val bestNetStreakTotal = dailyNetStreakTotals.filter { it.second > 0 }.maxByOrNull { it.second }
     val bestStreakCount = dailyStreakCounts.filter { it.second > 0 }.maxByOrNull { it.second }
     val bestAntiStreakCount = dailyAntiStreakCounts.filter { it.second > 0 }.maxByOrNull { it.second }
 
@@ -2418,6 +2426,7 @@ private fun computeAppStats(
         highestPointsDay = highestPointsDay,
         highestTotalStreakDays = Pair(bestStreakTotal?.first, bestStreakTotal?.second ?: 0),
         highestTotalAntiStreakDays = Pair(bestAntiStreakTotal?.first, bestAntiStreakTotal?.second ?: 0),
+        highestTotalNetStreakDays = Pair(bestNetStreakTotal?.first, bestNetStreakTotal?.second ?: 0),
         highestHabitsWithStreak = Pair(bestStreakCount?.first, bestStreakCount?.second ?: 0),
         highestHabitsWithAntiStreak = Pair(bestAntiStreakCount?.first, bestAntiStreakCount?.second ?: 0),
         highestHabitsWithStreakList = highestStreakHabitsList,

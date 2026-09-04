@@ -124,6 +124,7 @@ object AppStatsRecordEngine {
             "total_anti_streak_days", "total anti-streak days (all habits)", "days",
             intFmt, 2.0, 0.05, caution = true
         ),
+        MetricDef("total_net_streak_days", "total net streak days (all habits)", "days", intFmt, 2.0, 0.05),
         MetricDef(
             "habits_with_anti_streak", "habits with an active anti-streak", "habits",
             intFmt, 1.0, 0.0, caution = true
@@ -302,6 +303,11 @@ object AppStatsRecordEngine {
         put("habits_with_streak", lastTodayOr(series.dailyStreakCounts), series.dailyStreakCounts)
         put("total_anti_streak_days", lastTodayOr(series.dailyAntiStreakSums), series.dailyAntiStreakSums)
         put("habits_with_anti_streak", lastTodayOr(series.dailyAntiStreakCounts), series.dailyAntiStreakCounts)
+        // Net streak days = streak sums minus anti-streak sums per date.
+        val dailyNetStreakSums = List(series.dates.size) { i ->
+            series.dailyStreakSums[i] - series.dailyAntiStreakSums[i]
+        }
+        put("total_net_streak_days", lastTodayOr(dailyNetStreakSums), dailyNetStreakSums)
 
         // Rolling averages: calendar-day windows, missing days contribute 0
         // (matches computeTaskerStats semantics). Prefix sums + binary search
