@@ -48,6 +48,9 @@ garmin_import.json
 # Dream data
 dream_recorded_history.json
 
+# Chess analysis results (personal data, belongs in local backups only)
+tail_bridge/data/
+
 zai_API_KEY.txt
 
 # Generated wallpaper images (raw + final)
