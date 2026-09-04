@@ -51,6 +51,12 @@ dream_recorded_history.json
 # Chess analysis results (personal data, belongs in local backups only)
 tail_bridge/data/
 
+# Recovery snapshots (personal habit data)
+recovery_20260719/
+
+# Garmin fetch runtime status
+garmin_proxy/fetch_status.json
+
 zai_API_KEY.txt
 
 # Generated wallpaper images (raw + final)
