@@ -311,6 +311,10 @@ class StatsOverlayService : Service() {
             FrameLayout.LayoutParams.WRAP_CONTENT,
             Gravity.CENTER
         ))
+        // Tap area extension: since the bar typically sits over the status
+        // bar (whose taps SystemUI intercepts), pad the window with one
+        // digit-height of empty, tappable space BELOW the numbers.
+        applyTapExtension(root, text)
         resizeHandle = handle
         root.addView(handle, handleLP)
         root.setOnTouchListener(BarTouchListener())
@@ -344,6 +348,15 @@ class StatsOverlayService : Service() {
         (widthDp / 11f).coerceIn(8f, 42f)
 
     /**
+     * Extends the tappable window one digit-height below the numbers so the
+     * part of the bar hanging below the status bar is an easy tap target.
+     * Re-applied whenever the font size changes.
+     */
+    private fun applyTapExtension(root: FrameLayout, text: TextView) {
+        root.setPadding(0, 0, 0, text.textSize.toInt().coerceAtLeast(0))
+    }
+
+    /**
      * Re-reads geometry/opacity from the store and applies it to the live
      * overlay (position clamp, width, font size, background alpha). Sent by
      * the Settings screen after opacity changes / geometry resets.
@@ -359,6 +372,7 @@ class StatsOverlayService : Service() {
             overlayParams.width = geo.widthDp.dp(resources)
             statsText?.textSize = fontSpForWidth(geo.widthDp)
             statsText?.typeface = Typeface.create(geo.fontFamily, Typeface.BOLD)
+            overlayView?.let { root -> statsText?.let { applyTapExtension(root, it) } }
             applyEditMode()
         }
         // Re-render the coloured spans so font / brightness changes show live.
@@ -367,10 +381,10 @@ class StatsOverlayService : Service() {
 
     /**
      * Applies the edit-mode setting: while editing, the bar shows its
-     * background and the ◢ resize handle and accepts drags / long-press;
-     * otherwise it renders as bare tier-coloured numbers, background-free
-     * and fully touch-through (FLAG_NOT_TOUCHABLE) so it never blocks
-     * whatever is underneath — including the status bar area.
+     * background and the ◢ resize handle; otherwise it renders as bare
+     * tier-coloured numbers, background-free. In BOTH modes the bar is
+     * touchable: a tap opens the app, a drag moves it, a long-press also
+     * opens the app.
      */
     private fun applyEditMode() {
         val edit = StatsOverlayStore.isEditMode(this)
@@ -379,10 +393,9 @@ class StatsOverlayService : Service() {
             resizeHandle?.visibility = if (edit) View.VISIBLE else View.GONE
             overlayParams.flags =
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                (if (edit) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
             updateLayout()
         }
     }
@@ -452,6 +465,9 @@ class StatsOverlayService : Service() {
                     if (isDragging) {
                         geo = geo.copy(x = overlayParams.x, y = overlayParams.y)
                         StatsOverlayStore.saveGeometry(this@StatsOverlayService, geo)
+                    } else {
+                        // Plain tap (no drag, no long-press) — open the app.
+                        launchApp()
                     }
                     return true
                 }
@@ -493,6 +509,7 @@ class StatsOverlayService : Service() {
                         geo = geo.copy(widthDp = newWidth)
                         overlayParams.width = newWidth.dp(resources)
                         statsText?.textSize = fontSpForWidth(newWidth)
+                        overlayView?.let { root -> statsText?.let { applyTapExtension(root, it) } }
                         updateLayout()
                     }
                     return true
@@ -516,6 +533,11 @@ class StatsOverlayService : Service() {
 
     private fun onOverlayLongPressed() {
         longPressConsumed = true
+        launchApp()
+    }
+
+    /** Opens the main app from the overlay (tap or long-press). */
+    private fun launchApp() {
         val intent = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
@@ -634,7 +656,7 @@ class StatsOverlayService : Service() {
 
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Tail Stats Overlay")
-            .setContentText("Drag to move · ◢ corner to resize · long-press to open Tail")
+            .setContentText("Tap to open Tail · drag to move · ◢ corner to resize")
             .setSmallIcon(R.drawable.ic_stat_tail)
             .setOngoing(true)
             .addAction(

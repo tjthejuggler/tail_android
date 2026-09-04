@@ -19,6 +19,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import com.example.tail.R
+import androidx.compose.ui.draw.blur
 import com.example.tail.data.backup.HabitRestorePreview
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -216,6 +217,30 @@ private data class TextInputDialogState(
 // Grid is 8 columns × 10 rows = 80 cells
 internal const val GRID_COLUMNS = 8
 internal const val TOTAL_CELLS = 80
+
+// ── Tile-derived top-bar accents ──────────────────────────────────────────────
+// Two shades per habit colour tile image (wallpaper_gen/raw_habit_tiles —
+// averages computed by wallpaper_gen/tile_avg_colors.py, ignoring near-grey /
+// near-black pixels):
+//  • TileAccent* — the EXACT chromatic average shade (used for the active
+//    button containers).
+//  • TileVivid*  — same hue + saturation, luminance raised to ~75% so the
+//    colour actually reads against the dark bar (used for icon tints).
+private val TileAccentRed = Color(0xFF4F1F18)
+private val TileAccentOrange = Color(0xFF5B3922)
+private val TileAccentGreen = Color(0xFF274D3C)
+private val TileAccentBlue = Color(0xFF253042)
+private val TileAccentYellow = Color(0xFF715C12)
+private val TileAccentPink = Color(0xFF621947)
+private val TileAccentGlass = Color(0xFF282E36)
+
+private val TileVividRed = Color(0xFFBF4B3A)
+private val TileVividOrange = Color(0xFFBF7847)
+private val TileVividGreen = Color(0xFF61BF95)
+private val TileVividBlue = Color(0xFF6B8BBF)
+private val TileVividYellow = Color(0xFFBF9C1E)
+private val TileVividPink = Color(0xFFBF318B)
+private val TileVividGlass = Color(0xFF8EA3BF)
 
 // How long the finger must hover a screen tab (while dragging a habit in
 // edit mode) before the drag switches over to that screen.
@@ -827,9 +852,8 @@ fun HabitGridScreen(
                             // up to sit closer to the status bar.
                             .offset(x = (-4).dp, y = (-12).dp)
                     ) {
-                        // Soft red accent shared by the Today label and its arrows;
-                        // the date itself turns bright red when viewing a past day.
-                        val dateNavTint = lerp(Color.White, Color(0xFFFF5252), 0.35f)
+                        // Red-tile accent shared by the Today label and its arrows.
+                        val dateNavTint = TileVividRed
 
                         // Back arrow — always available, hold to rapid-step
                         RepeatIconButton(
@@ -845,7 +869,7 @@ fun HabitGridScreen(
 
                         // Date label — tappable to open the calendar picker
                         val dateLabel = if (isToday) "Today" else selectedDate.format(DISPLAY_DATE_FMT)
-                        val dateLabelColor = if (isToday) dateNavTint else Color(0xFFFF5252)
+                        val dateLabelColor = if (isToday) dateNavTint else TileVividRed
                         Text(
                             text = dateLabel,
                             color = dateLabelColor,
@@ -892,14 +916,13 @@ fun HabitGridScreen(
                             onClick = { viewModel.toggleEditMode() },
                             modifier = Modifier.size(34.dp),
                             colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = if (editMode) Color(0xFF4A2A00) else Color.Transparent
+                                containerColor = if (editMode) TileAccentOrange else Color.Transparent
                             )
                         ) {
                             Icon(
                                 Icons.Default.Edit,
                                 contentDescription = if (editMode) "Edit mode ON" else "Edit mode OFF",
-                                tint = if (editMode) Color(0xFFFFAA00)
-                                else lerp(Color.White, Color(0xFFFFAA00), 0.35f),
+                                tint = TileVividOrange,
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -908,14 +931,13 @@ fun HabitGridScreen(
                             onClick = { viewModel.toggleGraphMode() },
                             modifier = Modifier.size(34.dp),
                             colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = if (graphMode) Color(0xFF0A2A0A) else Color.Transparent
+                                containerColor = if (graphMode) TileAccentGreen else Color.Transparent
                             )
                         ) {
                             Icon(
                                 Icons.Default.BarChart,
                                 contentDescription = if (graphMode) "Graph mode ON" else "Graph mode OFF",
-                                tint = if (graphMode) Color(0xFF66DD66)
-                                else lerp(Color.White, Color(0xFF66DD66), 0.35f),
+                                tint = TileVividGreen,
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -925,14 +947,13 @@ fun HabitGridScreen(
                             onClick = { viewModel.toggleScheduleMode() },
                             modifier = Modifier.size(34.dp),
                             colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = if (scheduleMode) Color(0xFF0A2A3A) else Color.Transparent
+                                containerColor = if (scheduleMode) TileAccentBlue else Color.Transparent
                             )
                         ) {
                             Icon(
                                 Icons.Default.Schedule,
                                 contentDescription = if (scheduleMode) "Day timeline ON" else "Day timeline",
-                                tint = if (scheduleMode) Color(0xFF66CCFF)
-                                else lerp(Color.White, Color(0xFF66CCFF), 0.35f),
+                                tint = TileVividBlue,
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -942,7 +963,7 @@ fun HabitGridScreen(
                             onClick = { showNotificationsDialog = true },
                             modifier = Modifier.size(34.dp),
                             colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = if (pendingNotifications > 0) Color(0xFF3A320A) else Color.Transparent
+                                containerColor = if (pendingNotifications > 0) TileAccentYellow else Color.Transparent
                             )
                         ) {
                             BadgedBox(
@@ -961,8 +982,7 @@ fun HabitGridScreen(
                                 Icon(
                                     Icons.Default.Notifications,
                                     contentDescription = "Notifications",
-                                    tint = if (pendingNotifications > 0) Color(0xFFFFD700)
-                                    else lerp(Color.White, Color(0xFFFFD700), 0.35f),
+                                    tint = TileVividYellow,
                                     modifier = Modifier.size(19.dp)
                                 )
                             }
@@ -976,7 +996,7 @@ fun HabitGridScreen(
                             Icon(
                                 Icons.Default.Public,
                                 contentDescription = "Map",
-                                tint = lerp(Color.White, Color(0xFFFF69B4), 0.35f),
+                                tint = TileVividPink,
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -988,7 +1008,7 @@ fun HabitGridScreen(
                             Icon(
                                 Icons.Default.Settings,
                                 contentDescription = "Settings",
-                                tint = Color.White,
+                                tint = TileVividGlass,
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -3025,16 +3045,11 @@ internal fun ScreenTabRow(
                     // Chips must always be slightly wider than they are tall.
                     .widthIn(min = chipHeight * 1.1f)
                     .clip(chipShape)
-                    // Chip backgrounds are fully TRANSPARENT so the ghost
-                    // glass lattice stays visible through every screen-name
-                    // chip; only the border distinguishes active/inactive.
                     .then(
-                        if (isActive) {
-                            Modifier
-                                .border(1.5.dp, Color(0xFFE8EEF4), chipShape)
+                        if (!isActive) {
+                            Modifier.border(0.75.dp, Color.White.copy(alpha = 0.45f), chipShape)
                         } else {
                             Modifier
-                                .border(1.dp, Color(0x33FFFFFF), chipShape)
                         }
                     )
                     .clickable(
@@ -3046,18 +3061,44 @@ internal fun ScreenTabRow(
                             index,
                             Rect(coords.positionInWindow(), coords.size.toSize())
                         )
-                    }
-                    .padding(horizontal = 8.dp),
+                    },
                 contentAlignment = Alignment.Center
             ) {
+                // Frosted glass: ghostGlassSquares anchors its lattice to
+                // window-space geometry, so a chip-sized copy renders exactly
+                // the lattice that shows through behind the chip — blurred
+                // (own-layer RenderEffect) it becomes real-looking frosted
+                // glass. Selected: heavy blur + strong white fog; unselected:
+                // light blur + a faint haze.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .ghostGlassSquares(
+                            shimmerSweep = { shimmerSweep?.invoke() ?: 0f },
+                            shimmerDirection = {
+                                shimmerDirection?.invoke() ?: ShimmerDirection.BOTTOM_RIGHT_TO_TOP_LEFT
+                            }
+                        )
+                        .blur(if (isActive) 10.dp else 3.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            if (isActive) Color.White.copy(alpha = 0.55f)
+                            else Color.White.copy(alpha = 0.12f),
+                            chipShape
+                        )
+                )
                 Text(
                     text = if (editMode && isHidden && !isActive) "👁‍🗨 ${screen.name}" else label,
                     fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 8.dp),
                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                     color = when {
                         isActive -> Color.White
-                        editMode && isHidden -> Color(0xFF555555)
-                        else -> Color(0xFF888888)
+                        editMode && isHidden -> Color(0xFF999999)
+                        else -> Color(0xFFE2E2E2)
                     }
                 )
             }
