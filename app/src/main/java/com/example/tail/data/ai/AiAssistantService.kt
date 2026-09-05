@@ -11,6 +11,9 @@ import com.example.tail.data.SECONDARY_VALUE_SLOT_PREFIXES
 import com.example.tail.data.isAppLink
 import com.example.tail.data.isInternalValueKey
 import com.example.tail.data.minutesKey
+import com.example.tail.data.meal.Macronutrients
+import com.example.tail.data.meal.MealLog
+import com.example.tail.data.meal.MealLogRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,13 +48,23 @@ data class AiAssistantConfig(
  * (never by the model itself).
  */
 data class AiPlanOp(
-    val type: String,          // set_habit_value | add_timestamps | remove_timestamps | set_timestamps | copy_timestamps
+    val type: String,          // set_habit_value | add_timestamps | remove_timestamps | set_timestamps | copy_timestamps | add_meal_log
     val habit: String,
     val date: String,          // YYYY-MM-DD
     val value: Int? = null,    // for set_habit_value
     val times: List<String> = emptyList(),  // HH:mm:ss strings
-    val sourceHabit: String? = null,        // for copy_timestamps
-    val replaceExisting: Boolean = false    // for copy_timestamps
+    val sourceHabit: String? = null,        // for copy_timestamps / add_meal_log template source
+    val replaceExisting: Boolean = false,   // for copy_timestamps
+    // ── add_meal_log fields ──
+    val time: String = "12:00:00",          // HH:mm:ss meal time
+    val title: String? = null,
+    val summary: String? = null,
+    val calories: Int? = null,
+    val proteinGrams: Double? = null,
+    val carbsGrams: Double? = null,
+    val fatGrams: Double? = null,
+    val ingredients: List<String>? = null,  // null = inherit all from template meal
+    val sourceLogId: String? = null         // template meal log id (from get_meal_logs)
 ) {
     /** Compact one-line human rendering used in the confirmation card. */
     fun describe(): String = when (type) {
@@ -62,6 +75,19 @@ data class AiPlanOp(
         "copy_timestamps" ->
             "Copy ALL sessions (timestamps + counts/minutes) from \"${sourceHabit ?: "?"}\" to \"$habit\" on $date" +
                 if (replaceExisting) " (replacing existing)" else " (keeping existing)"
+        "add_meal_log" -> {
+            val srcNote = if (sourceLogId != null) " (based on meal $sourceLogId)" else ""
+            val macroBits = listOfNotNull(
+                calories?.let { "${it} kcal" },
+                proteinGrams?.let { "p:${it}g" },
+                carbsGrams?.let { "c:${it}g" },
+                fatGrams?.let { "f:${it}g" }
+            ).joinToString(" ")
+            val ingNote = ingredients?.let { " [${it.joinToString(", ")}]" } ?: ""
+            "Log meal \"${title ?: "?"}\" for \"$habit\" on $date at $time$srcNote " +
+                (if (macroBits.isNotEmpty()) "($macroBits)" else "") + ingNote +
+                " (+1 habit increment)"
+        }
         else -> "$type $habit $date $value ${times.joinToString(", ")}"
     }
 }
@@ -110,7 +136,9 @@ class AiAssistantController(
     private val habitsRepo: HabitsRepository,
     private val configProvider: () -> AiAssistantConfig,
     private val fileUriProvider: () -> String?,
-    private val onDatabaseChanged: () -> Unit
+    private val onDatabaseChanged: () -> Unit,
+    /** Names of habits with the "Meal" type enabled (meal log store access). */
+    private val mealHabitsProvider: () -> Set<String> = { emptySet() }
 ) {
     companion object {
         private const val TAG = "AiAssistant"
@@ -127,6 +155,8 @@ class AiAssistantController(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val timestampRepo = HabitTimestampRepository(context)
+    /** Read/write access to the per-habit meal log store (meal-type habits). */
+    private val mealLogRepo = MealLogRepository(context)
     /** Read-only access to the user's daily travel-location history. */
     private val locationRepo = com.example.tail.data.LocationRepository(context)
 
@@ -164,12 +194,10 @@ class AiAssistantController(
 
     private fun greetingMessage() = AiChatMessage(
         "assistant",
-        "Hi! I can make habit database changes for you — just describe " +
-            "what you need.\n\nExample: \"I tracked programming today but forgot " +
-            "to log my standing sessions — create standing sessions at the same " +
-            "times as my programming sessions today.\"\n\nI'll show you exactly " +
-            "what I plan to change and wait for your confirmation. A backup is " +
-            "saved before anything is touched."
+        "Hi! I can inspect and change your habit data — meals, sessions, " +
+            "counts, timestamps, travel history. Just describe what you need.\n\n" +
+            "I'll show you exactly what I plan to change and wait for your " +
+            "confirmation. A backup is saved before anything is touched."
     )
 
     // ── Public API ───────────────────────────────────────────────────────
@@ -507,6 +535,7 @@ class AiAssistantController(
                 "list_habits" -> {
                     val db = loadDb(fileUri)
                     val today = LocalDate.now().toString()
+                    val mealHabits = mealHabitsProvider()
                     val arr = JSONArray()
                     db.keys
                         .filter { !isInternalValueKey(it) && !isAppLink(it) }
@@ -515,9 +544,58 @@ class AiAssistantController(
                             arr.put(JSONObject().apply {
                                 put("habit", habit)
                                 put("today_value", db[habit]?.get(today) ?: 0)
+                                put("is_meal_habit", habit in mealHabits)
                             })
                         }
                     JSONObject().put("habits", arr).toString()
+                }
+                "get_meal_logs" -> {
+                    val habit = args.optString("habit")
+                    val from = args.optString("from_date", "")
+                    val to = args.optString("to_date", "")
+                    if (habit !in mealHabitsProvider()) {
+                        return JSONObject()
+                            .put("error", "'$habit' is not a meal-type habit. Meal " +
+                                "details are only recorded for meal habits " +
+                                "(see is_meal_habit in list_habits).")
+                            .toString()
+                    }
+                    val zoned = java.time.ZoneId.systemDefault()
+                    val arr = JSONArray()
+                    mealLogRepo.loadLogs(habit).forEach { log ->
+                        val zdt = java.time.Instant.ofEpochMilli(log.timestamp).atZone(zoned)
+                        val dateStr = zdt.toLocalDate().toString()
+                        if ((from.isEmpty() || dateStr >= from) && (to.isEmpty() || dateStr <= to)) {
+                            arr.put(JSONObject().apply {
+                                put("id", log.id)
+                                put("date", dateStr)
+                                put("time", zdt.toLocalTime().format(TIME_FMT))
+                                put("title", log.title)
+                                log.summary?.let { put("summary", it) }
+                                put("calories", log.calories)
+                                put("protein_grams", log.macronutrients.proteinGrams)
+                                put("carbs_grams", log.macronutrients.carbsGrams)
+                                put("fat_grams", log.macronutrients.fatGrams)
+                                if (log.ingredientsDetected.isNotEmpty()) {
+                                    put("ingredients", JSONArray(log.ingredientsDetected))
+                                }
+                                put("is_vegan_verified", log.isVeganVerified)
+                                log.healthNotes?.let { put("health_notes", it) }
+                                log.voiceTranscript?.let { put("voice_transcript", it) }
+                                log.macroRatings?.let {
+                                    put("macro_ratings", JSONObject().apply {
+                                        put("protein", it.protein)
+                                        put("carbs", it.carbs)
+                                        put("fat", it.fat)
+                                    })
+                                }
+                            })
+                        }
+                    }
+                    JSONObject()
+                        .put("habit", habit)
+                        .put("count", arr.length())
+                        .put("meal_logs", arr).toString()
                 }
                 "get_habit_values" -> {
                     val habit = args.optString("habit")
@@ -562,6 +640,22 @@ class AiAssistantController(
         withContext(Dispatchers.IO) { writeBackupFiles(fileUri, plan) }
         refreshBackupInfo()
 
+        // 2a. Meal log operations FIRST — each add_meal_log creates the meal
+        // record, increments the habit count (below) and stamps a session
+        // timestamp (synthesized into the timestamp phase) — mirroring what
+        // a meal tap does in the app.
+        val mealOps = plan.operations.filter { it.type == "add_meal_log" }
+        val synthesizedTsOps = mutableListOf<AiPlanOp>()
+        for (op in mealOps) {
+            applyMealLogOp(op)
+            synthesizedTsOps += AiPlanOp(
+                type = "add_timestamps",
+                habit = op.habit,
+                date = op.date,
+                times = listOf(op.time)
+            )
+        }
+
         // 2. Apply habitsdb operations: explicit value writes PLUS the
         // habitsdb side of copy_timestamps. Durations/counts live in value
         // slots here (minutes:<habit>, secondary_value*:<habit>, the primary
@@ -569,7 +663,7 @@ class AiAssistantController(
         // mirror them too or minutes are silently lost.
         val dbOps = plan.operations.filter { it.type == "set_habit_value" }
         val copyOps = plan.operations.filter { it.type == "copy_timestamps" }
-        if (dbOps.isNotEmpty() || copyOps.isNotEmpty()) {
+        if (dbOps.isNotEmpty() || copyOps.isNotEmpty() || mealOps.isNotEmpty()) {
             val loadResult = habitsRepo.loadDatabaseResult(fileUri, context)
             if (loadResult !is HabitsLoadResult.Success) {
                 throw IllegalStateException("could not re-load habitsdb before writing")
@@ -578,6 +672,13 @@ class AiAssistantController(
             for (op in dbOps) {
                 val entries = mutable.getOrPut(op.habit) { mutableMapOf() }.toMutableMap()
                 entries[op.date] = op.value ?: 0
+                mutable[op.habit] = entries.toSortedMap()
+            }
+            // Each add_meal_log increments the meal habit's daily count by 1 —
+            // exactly like tapping the meal habit card in the app.
+            for (op in mealOps) {
+                val entries = mutable.getOrPut(op.habit) { mutableMapOf() }.toMutableMap()
+                entries[op.date] = (entries[op.date] ?: 0) + 1
                 mutable[op.habit] = entries.toSortedMap()
             }
             // copy_timestamps — app-side batch copy. The model never lists
@@ -613,7 +714,9 @@ class AiAssistantController(
         }
 
         // 4. Apply timestamp operations, grouped per habit+date in one write.
-        val tsOps = plan.operations.filter { it.type != "set_habit_value" && it.type != "copy_timestamps" }
+        val tsOps = plan.operations.filter {
+            it.type != "set_habit_value" && it.type != "copy_timestamps" && it.type != "add_meal_log"
+        } + synthesizedTsOps
         val applied = mutableListOf<String>()
         for ((habit, date) in tsOps.groupBy({ it.habit }, { it.date }).flatMap { (h, dates) ->
             dates.distinct().map { h to it }
@@ -648,6 +751,40 @@ class AiAssistantController(
 
     // ── Backup / restore ─────────────────────────────────────────────────
 
+    /** Creates the MealLog for one add_meal_log operation (template-aware). */
+    private fun applyMealLogOp(op: AiPlanOp) {
+        val ts = LocalDateTime.of(
+            LocalDate.parse(op.date),
+            LocalTime.parse(op.time)
+        ).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+        // Template: an existing meal log to clone the specifics from
+        // (e.g. "dinner same as lunch but without the avocado").
+        val template = op.sourceLogId?.let { id ->
+            op.sourceHabit?.let { src -> mealLogRepo.loadLogs(src).find { it.id == id } }
+        }
+
+        val log = MealLog(
+            id = java.util.UUID.randomUUID().toString(),
+            habitId = op.habit,
+            timestamp = ts,
+            title = op.title ?: template?.title ?: "Unnamed Meal",
+            summary = op.summary ?: template?.summary,
+            calories = op.calories ?: template?.calories ?: 0,
+            macronutrients = Macronutrients(
+                proteinGrams = op.proteinGrams ?: template?.macronutrients?.proteinGrams ?: 0.0,
+                carbsGrams = op.carbsGrams ?: template?.macronutrients?.carbsGrams ?: 0.0,
+                fatGrams = op.fatGrams ?: template?.macronutrients?.fatGrams ?: 0.0
+            ),
+            ingredientsDetected = op.ingredients ?: template?.ingredientsDetected ?: emptyList(),
+            isVeganVerified = template?.isVeganVerified ?: false,
+            healthNotes = template?.healthNotes,
+            isManual = true,
+            countedIncrement = true
+        )
+        mealLogRepo.addLog(log)
+    }
+
     private fun backupDir(): File = File(context.filesDir, BACKUP_DIR)
 
     /** The SAF URI string of habitsdb.txt, or null when no file is selected. */
@@ -663,6 +800,11 @@ class AiAssistantController(
         val tsFile = File(context.filesDir, "habit_timestamps.json")
         if (tsFile.exists()) tsFile.copyTo(File(dir, BACKUP_TS), overwrite = true)
         else File(dir, BACKUP_TS).writeText("{}")
+        // meal logs (whole directory of per-habit JSON files)
+        val mealBackupDir = File(dir, "meal_logs")
+        mealBackupDir.deleteRecursively()
+        File(context.filesDir, "meal_logs").takeIf { it.exists() }
+            ?.copyRecursively(mealBackupDir, overwrite = true)
         // metadata
         val now = System.currentTimeMillis()
         File(dir, BACKUP_META).writeText(
@@ -688,6 +830,12 @@ class AiAssistantController(
 
         if (tsBackup.exists()) {
             tsBackup.copyTo(File(context.filesDir, "habit_timestamps.json"), overwrite = true)
+        }
+        // meal logs
+        val mealBackup = File(dir, "meal_logs")
+        if (mealBackup.exists()) {
+            File(context.filesDir, "meal_logs").deleteRecursively()
+            mealBackup.copyTo(File(context.filesDir, "meal_logs"), overwrite = true)
         }
         return true
     }
@@ -719,7 +867,20 @@ class AiAssistantController(
         append("value slots — minutes:<habit> and secondary_value*:<habit> — holding minutes and ")
         append("extra per-date values; get_habit_values exposes them when present.\n")
         append("2. Timestamps store: habit name -> date -> list of \"HH:mm:ss\" strings. Each ")
-        append("timestamp marks ONE session/increment of that habit at that time of day.\n\n")
+        append("timestamp marks ONE session/increment of that habit at that time of day.\n")
+        append("3. Meal log store (only for meal-type habits — see is_meal_habit in list_habits): ")
+        append("each logged meal has a full record: title, summary, calories, protein/carbs/fat ")
+        append("grams, ingredients, vegan flag, health notes. Read them with get_meal_logs. For ")
+        append("a meal habit, a timestamp is when the meal was eaten and the habitsdb count is ")
+        append("the number of meals that day.\n\n")
+        append("MEAL HABITS\n")
+        append("- When the user describes a meal (e.g. \"my dinner at 7pm was the same as lunch ")
+        append("but without the avocado\"), fetch the reference meal with get_meal_logs, then ")
+        append("propose an add_meal_log operation — either fully explicit, or copying via ")
+        append("source_habit + source_log_id and overriding only the fields that differ ")
+        append("(e.g. ingredients minus the avocado, adjusted calories). add_meal_log ")
+        append("automatically increments the habit count and records the session timestamp at ")
+        append("the given time — do NOT add separate counter/timestamp operations for it.\n\n")
         append("RULES\n")
         append("- Only use habit names returned by list_habits. Never invent or guess names.\n")
         append("- Inspect the data with the read-only tools before planning changes.\n")
@@ -743,6 +904,7 @@ class AiAssistantController(
         append("  {\"type\":\"add_timestamps\",\"habit\":\"...\",\"date\":\"YYYY-MM-DD\",\"times\":[\"HH:MM:SS\",...]} — add session timestamps\n")
         append("  {\"type\":\"remove_timestamps\",\"habit\":\"...\",\"date\":\"YYYY-MM-DD\",\"times\":[\"HH:MM:SS\",...]} — remove specific timestamps\n")
         append("  {\"type\":\"set_timestamps\",\"habit\":\"...\",\"date\":\"YYYY-MM-DD\",\"times\":[\"HH:MM:SS\",...]} — replace ALL timestamps of that day\n")
+        append("  {\"type\":\"add_meal_log\",\"habit\":\"...\",\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM:SS\",\"title\":\"...\",\"summary\":\"...\",\"calories\":<int>,\"protein_grams\":<num>,\"carbs_grams\":<num>,\"fat_grams\":<num>,\"ingredients\":[\"...\"],\"source_habit\":\"...\",\"source_log_id\":\"...\"} — log a meal for a meal-type habit. source_habit + source_log_id clone another meal's specifics; any explicit field overrides the copied value; omitted fields are inherited. Also counts +1 on the habit and stamps the timestamp.\n")
         append("- BATCH RULES: when the user wants one habit's sessions mirrored onto another ")
         append("habit (e.g. \"create Standing sessions at the same times as my Programming ")
         append("sessions today\"), ALWAYS use copy_timestamps — NEVER enumerate the individual ")
@@ -811,6 +973,16 @@ class AiAssistantController(
                 put("to_date", JSONObject().put("type", "string").put("description", "YYYY-MM-DD inclusive, optional"))
             },
             emptyList()
+        )
+        fn(
+            "get_meal_logs",
+            "Get the full meal records of a meal-type habit: per meal the id, date, time, title, summary, calories, macros (protein/carbs/fat grams), ingredients, vegan flag and health notes. Supports an optional inclusive date range. Use this before proposing add_meal_log operations and to answer questions about what the user ate.",
+            JSONObject().apply {
+                put("habit", JSONObject().put("type", "string").put("description", "meal-type habit name"))
+                put("from_date", JSONObject().put("type", "string").put("description", "YYYY-MM-DD inclusive, optional"))
+                put("to_date", JSONObject().put("type", "string").put("description", "YYYY-MM-DD inclusive, optional"))
+            },
+            listOf("habit")
         )
         fn(
             "propose_plan",
@@ -919,8 +1091,23 @@ class AiAssistantController(
             val value = if (op.has("value") && !op.isNull("value")) op.optInt("value") else null
             val sourceHabit = op.optString("source_habit").ifBlank { null }
             val replaceExisting = op.optBoolean("replace_existing", false)
+            val time = op.optString("time").ifBlank { "12:00:00" }
+            val title = op.optString("title").ifBlank { null }
+            val summary = op.optString("summary").ifBlank { null }
+            val calories = if (op.has("calories") && !op.isNull("calories")) op.optInt("calories") else null
+            val proteinGrams = if (op.has("protein_grams") && !op.isNull("protein_grams")) op.optDouble("protein_grams") else null
+            val carbsGrams = if (op.has("carbs_grams") && !op.isNull("carbs_grams")) op.optDouble("carbs_grams") else null
+            val fatGrams = if (op.has("fat_grams") && !op.isNull("fat_grams")) op.optDouble("fat_grams") else null
+            val ingredients = op.optJSONArray("ingredients")?.let { arr ->
+                (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotBlank() }
+            }
+            val sourceLogId = op.optString("source_log_id").ifBlank { null }
             if (habit.isNotBlank()) {
-                ops += AiPlanOp(type, habit, date, value, times, sourceHabit, replaceExisting)
+                ops += AiPlanOp(
+                    type, habit, date, value, times, sourceHabit, replaceExisting,
+                    time, title, summary, calories ?: value, proteinGrams, carbsGrams, fatGrams,
+                    ingredients, sourceLogId
+                )
             }
         }
         return AiPlan(description, ops)

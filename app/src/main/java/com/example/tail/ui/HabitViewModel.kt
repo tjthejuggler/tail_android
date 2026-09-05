@@ -4039,7 +4039,8 @@ class HabitViewModel(
                 )
             },
             fileUriProvider = { _settings.value.fileUri.takeIf { it.isNotEmpty() } },
-            onDatabaseChanged = { refreshAfterExternalDbChange() }
+            onDatabaseChanged = { refreshAfterExternalDbChange() },
+            mealHabitsProvider = { _settings.value.mealHabits }
         )
     }
 
