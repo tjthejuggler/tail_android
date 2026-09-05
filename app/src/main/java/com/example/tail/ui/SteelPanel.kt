@@ -336,7 +336,11 @@ internal fun Modifier.ghostGlassSquares(
     // (drawContent) so the lizard is never painted BEHIND them — the old
     // draw order (ghost squares → lizard → content) let the real habit
     // buttons cover the lizard, which read as "lizard not showing up".
-    var drawLizard: (() -> Unit)? = null
+    // NOTE: the drawLizard slot itself must live INSIDE the draw phase
+    // (reset to null every frame) — declared here it persisted across
+    // frames, so once the gate closed the STALE fully-lit lambda from the
+    // last lit frame kept being re-invoked, pinning the lizard on screen
+    // until the next shimmer. That was the whole "lizard never leaves" bug.
     val clipPath = remember { Path() }
     // Window-space y of this panel — the grid anchor publishes its own so all
     // panels share ONE lattice phase anchored to the real grid's first row.
@@ -350,6 +354,9 @@ internal fun Modifier.ghostGlassSquares(
             }
         }
         .drawWithContent {
+            // Reset EVERY frame: the deferred lizard paint exists only for
+            // the frames whose gate was open (see the gate block below).
+            var drawLizard: (() -> Unit)? = null
             if (tile != null) {
                 // Mirror the real grid's geometry: 4.dp outer padding, 2.dp
                 // per-cell padding, and 6.dp rounded corners — the LOGICAL
@@ -361,6 +368,13 @@ internal fun Modifier.ghostGlassSquares(
                 val side = (cell - 2 * cellPad).toInt().coerceAtLeast(1)
                 val sweep = shimmerSweep()
                 val dir = shimmerDirection()
+                // EXPERIMENT (LIZARD_IN): the fully-lit hold is a wall-clock
+                // deadline in the shared target — no parameter plumbing; the
+                // ticking hold ticker (driver side) guarantees fresh frames
+                // for exactly 2000 ms, then this reads false and the lizard
+                // is dark no matter what the sweep lingers at.
+                val holdActive =
+                    System.currentTimeMillis() < LizardShimmerTarget.holdEndMs
 
                 // Vanishing point — the centre of the WINDOW (global
                 // coordinates), shared by every panel so the projected
@@ -625,9 +639,21 @@ internal fun Modifier.ghostGlassSquares(
                         // sweep — split across the subdivided wall squares
                         // — instead of one row-sized u-slice that flashed
                         // the whole wall at once.
+                        // EXPERIMENT (LIZARD_IN): pass the DRAWN centre x as
+                        // its flat-lattice column equivalent. Deep-wall tiles
+                        // are compressed toward the vanishing point, so their
+                        // lattice column no longer matches where they are
+                        // drawn — aiming by raw column collapsed the ring
+                        // well inboard of the lizard. colF pins the wave to
+                        // true screen position; at depth 1 it equals c, so
+                        // the surface stays seamless.
+                        val colF =
+                            ((minOf(px0t, px0b) + maxOf(px1t, px1b)) / 2f -
+                                outerPad) / cell - 0.5f
                         val u = dir.u(
                             gridRow, c,
-                            yN = (sy0 + sy1) / 2f / windowH
+                            yN = (sy0 + sy1) / 2f / windowH,
+                            colF = colF
                         )
                         // Global brightness boost applied to every ghost square,
                         // on top of the depth fade and shimmer alike.
@@ -739,7 +765,38 @@ internal fun Modifier.ghostGlassSquares(
                 // whose bounds contain the lizard's centre, so adjacent
                 // chrome panels never double-paint it.
                 val vpyLocal = vpy - topY
-                if (pitLizard && lizard != null && lizardContent != null && sweep > 0f) {
+                // EXPERIMENT (LIZARD_IN): the gate is OPEN during the wave
+                // (sweep > 0, ratchet fill-in) OR during the explicit hold
+                // deadline (fully lit) — and ONLY for the lizard directions.
+                // The restored random idle shimmers run with NO lizard at
+                // all, exactly like the original behaviour.
+                val lizardShimmerActive =
+                    dir == ShimmerDirection.LIZARD_IN ||
+                        dir == ShimmerDirection.LIZARD_OUT
+                if (pitLizard && lizard != null && lizardContent != null &&
+                    lizardShimmerActive && (sweep > 0f || holdActive)
+                ) {
+                    // EXPERIMENT (temporary): the lizard's illumination is a
+                    // RATCHET, not the moving band. The front sweeps from
+                    // 1+BAND down to -BAND; a sliver lights while the front
+                    // is within BAND of its u and STAYS lit once the front
+                    // has passed below it — so the lizard fills up and
+                    // remains fully illuminated (for the 2 s hold) while the
+                    // shimmer itself keeps travelling and disappears.
+                    // During the explicit hold the front is pinned far BELOW
+                    // every u, so every sliver's ratcheted proximity is 1 →
+                    // the whole lizard reads fully lit. Multiplied by the
+                    // alpha cap below, this makes the hold the lizard's
+                    // BRIGHTEST state.
+                    val lizardFront = if (holdActive) -2f * IDLE_SHIMMER_BAND
+                    else (1f + IDLE_SHIMMER_BAND) - sweep * (1f + 2f * IDLE_SHIMMER_BAND)
+                    // EXPERIMENT (LIZARD_OUT): during the DEPARTURE leg the
+                    // lizard does NOT ratchet — his slivers ride the plain
+                    // moving band on the reversed coordinate (u = 1 − d), so
+                    // his light is carried AWAY with the expanding wavefront
+                    // (centre drains first, exactly inverse of the fill-up)
+                    // and he ends dark exactly when the wave leaves.
+                    val lizardDraining = dir == ShimmerDirection.LIZARD_OUT
                     // A new shimmer leg starts whenever the sweep value jumps
                     // backwards (snapTo(0) after reaching ~1). The perch is
                     // re-rolled only every OTHER leg: a shimmer cycle is
@@ -763,7 +820,14 @@ internal fun Modifier.ghostGlassSquares(
                         // variants that actually FIT the current occupancy;
                         // when NOTHING fits we KEEP the previous perch
                         // instead of going blank.
-                        if (perchState.legSeen % 2 == 0 || versionChanged ||
+                        // EXPERIMENT (temporary): the perch is rolled ONLY on
+                        // ARRIVAL legs (LIZARD_IN). The hold and the LIZARD_OUT
+                        // departure keep the SAME lizard — his light drains
+                        // away from the spot he actually occupies. A fresh
+                        // random spawn is rolled when the next cycle's
+                        // arrival leg begins.
+                        val arrivalLeg = dir == ShimmerDirection.LIZARD_IN
+                        if ((newLeg && arrivalLeg) || versionChanged ||
                             staleVariant || perchState.perch == null
                         ) {
                             perchState.perch = randomLizardPerch(
@@ -798,6 +862,18 @@ internal fun Modifier.ghostGlassSquares(
                         val xLeft0 = outerPad + perch.col * cell + inset
                         val xRight0 = outerPad + (perch.col + perch.cols) * cell - inset
                         val centerGlobalY = (topB + botB) / 2f
+                        // EXPERIMENT (temporary): publish this perch as the
+                        // LIZARD_IN shimmer's convergence target so the wave
+                        // heads exactly to where the lizard spawned. Same
+                        // values from every panel (shared perch state), so
+                        // multi-panel publication is idempotent.
+                        LizardShimmerTarget.yN = centerGlobalY / windowH
+                        LizardShimmerTarget.rowN = (
+                            ((centerGlobalY - anchorTop) / cell) +
+                                SHIMMER_VIRTUAL_MARGIN
+                            ) / SHIMMER_VERTICAL_SPAN
+                        LizardShimmerTarget.col =
+                            (perch.col + perch.cols / 2f).toInt()
                         if (centerGlobalY >= topY && centerGlobalY < topY + size.height) {
                             val dstW = xRight0 - xLeft0
                             val dstH = botB - topB
@@ -835,8 +911,21 @@ internal fun Modifier.ghostGlassSquares(
                                     val r0i = rowF.toInt()
                                     val u = dir.u(r0i, c0, yN) * (1f - f) +
                                         dir.u(r0i, c0 + 1, yN) * f
-                                    val proximity = idleShimmerAlpha(sweep, u) /
-                                        IDLE_SHIMMER_MAX_ALPHA
+                                    // EXPERIMENT (LIZARD_IN): during the hold
+                                    // the slivers draw at FULL alpha (1.0);
+                                    // during the wave the legacy 0.45 cap
+                                    // keeps the reveal faint.
+                                    // Departure: plain band on the reversed u —
+                                    // the light leaves with the wavefront.
+                                    // Arrival/hold: the fill-up ratchet.
+                                    val proximity = if (lizardDraining) {
+                                        idleShimmerAlpha(sweep, u) /
+                                            IDLE_SHIMMER_MAX_ALPHA
+                                    } else {
+                                        (((u + IDLE_SHIMMER_BAND) - lizardFront) /
+                                            IDLE_SHIMMER_BAND).coerceIn(0f, 1f)
+                                    }
+                                    val alphaCap = if (holdActive) 1f else 0.45f
                                     if (proximity <= 0.01f) continue
                                     val srcX = (variant.srcX + s.toFloat() / nx * variant.srcW).toInt()
                                         .coerceAtMost(variant.srcX + variant.srcW - 1)
@@ -856,13 +945,22 @@ internal fun Modifier.ghostGlassSquares(
                                                 (swS + 0.99f).toInt(),
                                                 (chh + 0.99f).toInt()
                                             ),
-                                            alpha = (proximity * 0.45f).coerceIn(0f, 1f)
+                                            alpha = (proximity * alphaCap).coerceIn(0f, 1f)
                                         )
                                     }
                                 }
                             }
                         }
                     } else if (vpyLocal >= 0f && vpyLocal < size.height) {
+                        // EXPERIMENT (temporary): horizon-fallback lizard —
+                        // publish the vanishing point as the convergence
+                        // target for the LIZARD_IN shimmer.
+                        LizardShimmerTarget.yN = vpy / windowH
+                        LizardShimmerTarget.rowN = (
+                            ((vpy - anchorTop) / cell) +
+                                SHIMMER_VIRTUAL_MARGIN
+                            ) / SHIMMER_VERTICAL_SPAN
+                        LizardShimmerTarget.col = ((vpx - outerPad) / cell - 0.5f).toInt()
                     // Content-aware placement: the strip is scaled to a FIXED
                     // height (exactly like the widget fills its bar height),
                     // so each tier's lizard keeps its TRUE relative size —
@@ -924,8 +1022,13 @@ internal fun Modifier.ghostGlassSquares(
                             val yN = yCenterG / windowH
                             val u = dir.u(0, c0, yN) * (1f - f) +
                                 dir.u(0, c0 + 1, yN) * f
-                            val proximity = idleShimmerAlpha(sweep, u) /
-                                IDLE_SHIMMER_MAX_ALPHA
+                            val proximity = if (lizardDraining) {
+                                idleShimmerAlpha(sweep, u) /
+                                    IDLE_SHIMMER_MAX_ALPHA
+                            } else {
+                                (((u + IDLE_SHIMMER_BAND) - lizardFront) /
+                                    IDLE_SHIMMER_BAND).coerceIn(0f, 1f)
+                            }
                             if (proximity <= 0.01f) continue
                             val sx = (s.toFloat() / nx * lizard.width).toInt()
                             val sy = (j.toFloat() / ny * lizard.height).toInt()

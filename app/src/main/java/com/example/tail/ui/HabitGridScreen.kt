@@ -329,7 +329,17 @@ internal enum class ShimmerDirection {
     TOP_TO_BOTTOM,
     BOTTOM_TO_TOP,
     CENTER_OUT,
-    EDGES_IN;
+    EDGES_IN,
+    // EXPERIMENT (temporary): outside → the lizard's random spawn point.
+    // Same radial family as EDGES_IN, but distance is measured from the
+    // shared LizardShimmerTarget published by SteelPanel when the perch is
+    // rolled, instead of the screen center.
+    LIZARD_IN,
+    // EXPERIMENT (temporary): the departure — the same radial wave
+    // re-expanding FROM the lizard's spot back out to the edges. The
+    // lizard drains following it (his light is carried away with the
+    // expanding wavefront).
+    LIZARD_OUT;
 
     /** The direction whose wave retraces this one in reverse. */
     val opposite: ShimmerDirection
@@ -344,6 +354,8 @@ internal enum class ShimmerDirection {
             BOTTOM_TO_TOP -> TOP_TO_BOTTOM
             CENTER_OUT -> EDGES_IN
             EDGES_IN -> CENTER_OUT
+            LIZARD_IN -> LIZARD_OUT
+            LIZARD_OUT -> LIZARD_IN
         }
 
     /** Normalized sweep coordinate of a cell: 1 = lit first, 0 = lit last.
@@ -368,7 +380,7 @@ internal enum class ShimmerDirection {
      * wall-square — instead of one logical-row-sized u-slice that lit the
      * whole wall in a single flash.
      */
-    fun u(row: Int, col: Int, yN: Float?): Float {
+    fun u(row: Int, col: Int, yN: Float? = null, colF: Float? = null): Float {
         val rN = yN ?: ((row + SHIMMER_VIRTUAL_MARGIN) / SHIMMER_VERTICAL_SPAN)
         val colN = (col + SHIMMER_VIRTUAL_COL_MARGIN) /
             ((GRID_COLUMNS - 1) + 2 * SHIMMER_VIRTUAL_COL_MARGIN)
@@ -395,6 +407,8 @@ internal enum class ShimmerDirection {
             BOTTOM_TO_TOP -> rN
             CENTER_OUT -> 1f - centerDistance(rN, col)
             EDGES_IN -> centerDistance(rN, col)
+            LIZARD_IN -> targetDistance(rN, col, yN, colF)
+            LIZARD_OUT -> 1f - targetDistance(rN, col, yN, colF)
         }
     }
 
@@ -411,6 +425,53 @@ internal enum class ShimmerDirection {
             ((GRID_COLUMNS - 1) / 2f + SHIMMER_VIRTUAL_COL_MARGIN)
         return kotlin.math.sqrt(drN * drN + dcN * dcN) / kotlin.math.sqrt(2f)
     }
+
+    /**
+     * EXPERIMENT (temporary): distance from the lizard's random spawn point,
+     * published by SteelPanel's draw phase into [LizardShimmerTarget] each
+     * time a perch is rolled.
+     *
+     * [colF] (when non-null, passed by the perspective wall/ghost tiles) is
+     * the FLAT-LATTICE COLUMN EQUIVALENT of the tile's DRAWN centre x — i.e.
+     * which flat-lattice column would sit at that screen x. The deep wall is
+     * compressed toward the vanishing point (depth 0.18), so a wall tile's
+     * lattice column no longer matches where it is drawn; aiming by the raw
+     * lattice column made the collapse ring land well inboard of the lizard,
+     * worse the further he sat from the centre. At depth 1 colF equals the
+     * true column, so the wave stays seamless with the flat grid; deep in,
+     * it keeps the ring at the tile's true screen position.
+     */
+    internal fun targetDistance(rN: Float, col: Int, yN: Float?, colF: Float?): Float {
+        // Vertical: use whichever frame matches the caller (grid cells →
+        // grid-row frame via rowN, screen-frame callers → yN).
+        val tY = yN?.let { LizardShimmerTarget.yN } ?: LizardShimmerTarget.rowN
+        val drN = (rN - tY) * 2f * 0.95f
+        val dcN = ((colF ?: col.toFloat()) - LizardShimmerTarget.col) /
+            ((GRID_COLUMNS - 1) / 2f + SHIMMER_VIRTUAL_COL_MARGIN)
+        return kotlin.math.sqrt(drN * drN + dcN * dcN) / kotlin.math.sqrt(2f)
+    }
+}
+
+/**
+ * EXPERIMENT (temporary): shared spawn point of the LIZARD_IN shimmer.
+ * SteelPanel publishes the lizard's actual perch (or horizon fallback)
+ * here in normalized screen-y + lattice-column coordinates.
+ */
+internal object LizardShimmerTarget {
+    var yN: Float = 0.5f
+    /** Same spawn point in the GRID-ROW frame (for u() calls without yN). */
+    var rowN: Float = 0.5f
+    var col: Int = (GRID_COLUMNS - 1) / 2
+
+    /**
+     * EXPERIMENT (temporary): wall-clock deadline (System.currentTimeMillis)
+     * until which the lizard is held FULLY lit. While "now < holdEndMs" the
+     * draw gate is open and illumination is forced to 1; at/after the
+     * deadline the lizard is dark regardless of the sweep value. Read
+     * directly by every SteelPanel draw phase — no parameter plumbing.
+     */
+    @Volatile
+    var holdEndMs: Long = 0L
 }
 
 /**
@@ -569,35 +630,93 @@ fun HabitGridScreen(
     // recomposes the grid.
     val shimmerInteractionGen = remember { mutableIntStateOf(0) }
     val shimmerSweep = remember { Animatable(0f) }
+    // EXPERIMENT (LIZARD_IN): ticks 0→1 over the 2 s fully-lit hold. Its
+    // only job is to make the draw phase re-run every vsync during the hold
+    // (a bare delay() produces no frames at all); the ACTUAL gate is the
+    // wall-clock deadline in LizardShimmerTarget.holdEndMs.
+    val lizardHoldTicker = remember { Animatable(0f) }
+    // EXPERIMENT: bumped when a habit square is clicked to be incremented —
+    // the ONLY trigger for the lizard shimmer cycle.
+    val lizardShimmerGen = remember { mutableIntStateOf(0) }
     val shimmerDirection = remember { mutableStateOf(ShimmerDirection.BOTTOM_RIGHT_TO_TOP_LEFT) }
     LaunchedEffect(Unit) {
         snapshotFlow { shimmerInteractionGen.intValue }.collectLatest {
             try {
                 shimmerSweep.snapTo(0f)
                 delay(kotlin.random.Random.nextLong(IDLE_SHIMMER_GAP_MIN_MS, IDLE_SHIMMER_GAP_MAX_MS + 1))
+                // Original random idle shimmer — RESTORED. A random direction
+                // sweeps forward, its opposite retraces immediately with no
+                // gap, then a new random direction after another random gap.
+                // The two lizard directions are EXCLUDED, and SteelPanel's
+                // lizard gate is closed for them — these waves are pure
+                // light with NO lizard, exactly like the original shimmers.
+                val idleDirections = ShimmerDirection.entries.filter {
+                    it != ShimmerDirection.LIZARD_IN &&
+                        it != ShimmerDirection.LIZARD_OUT
+                }
                 while (true) {
-                    val forward = ShimmerDirection.entries.random()
-                    // Forward leg — sweep in the randomly chosen direction.
+                    val forward = idleDirections.random()
                     shimmerDirection.value = forward
                     shimmerSweep.snapTo(0f)
                     shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
-                    // Return leg — the opposite wave follows immediately with no
-                    // gap, retracing the sweep back to where it came from.
+                    // Return leg — the opposite wave retraces immediately.
                     shimmerDirection.value = forward.opposite
                     shimmerSweep.snapTo(0f)
                     shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
-                    // Quiet period before the next random direction is chosen.
+                    // Quiet period before the next random direction.
                     delay(kotlin.random.Random.nextLong(IDLE_SHIMMER_GAP_MIN_MS, IDLE_SHIMMER_GAP_MAX_MS + 1))
                 }
             } finally {
                 // Cancellation (a new interaction restarts the cycle via
-                // collectLatest) must NEVER freeze the wave mid-screen —
-                // snapping the sweep to its END pushes the wave front fully
-                // off the lattice so every tile goes dark before the next
-                // quiet period, instead of a half-finished band parking and
-                // glowing in place until the next cycle.
-                shimmerSweep.snapTo(1f)
+                // collectLatest) must NEVER freeze the wave mid-screen.
+                // EXPERIMENT fix: snap to 0, NOT 1 — the ratcheted lizard is
+                // lit by every front position (it only ever fills up), so the
+                // only way to extinguish it is the sweep > 0 draw gate; at
+                // sweep 0 the band front (1 + band) also sits above every
+                // tile's u, so the lattice is dark too. The old snapTo(1f)
+                // parked the sweep at its END after any touch, which left the
+                // lizard FULLY LIT for the whole 5–15 s idle gap — the
+                // "stays visible far too long" bug.
+                shimmerSweep.snapTo(0f)
             }
+        }
+    }
+
+    // EXPERIMENT: the lizard shimmer cycle — triggered ONLY by tapping a
+    // habit square to increment it (lizardShimmerGen is bumped at the
+    // increment sites). The tap itself also bumps shimmerInteractionGen,
+    // which cancels any in-flight idle wave (collectLatest) before this
+    // starts, so the two never overlap.
+    //  1. LIZARD_IN: wave from the outside in, converging on the lizard's
+    //     spawn; he fills up (ratchet) as the front passes.
+    //  2. Hold: EXACTLY 2 real seconds fully lit (the ticking Animatable
+    //     re-runs the draw phase every vsync; the gate is the wall-clock
+    //     holdEndMs deadline).
+    //  3. LIZARD_OUT: the same wave re-expanding FROM the lizard's spot —
+    //     the perch is NOT re-rolled, so the same lizard drains away.
+    LaunchedEffect(lizardShimmerGen.intValue) {
+        if (lizardShimmerGen.intValue == 0) return@LaunchedEffect
+        try {
+            shimmerDirection.value = ShimmerDirection.LIZARD_IN
+            shimmerSweep.snapTo(0f)
+            LizardShimmerTarget.holdEndMs = 0L
+            shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
+            LizardShimmerTarget.holdEndMs = System.currentTimeMillis() + 2_000L
+            lizardHoldTicker.snapTo(0f)
+            lizardHoldTicker.animateTo(1f, tween(2_000, easing = LinearEasing))
+            LizardShimmerTarget.holdEndMs = 0L
+            shimmerDirection.value = ShimmerDirection.LIZARD_OUT
+            shimmerSweep.snapTo(0f)
+            shimmerSweep.animateTo(1f, tween(IDLE_SHIMMER_SWEEP_MS, easing = LinearEasing))
+            // Dark: the departing front is fully off the lattice.
+            shimmerSweep.snapTo(0f)
+        } finally {
+            // A second quick tap restarts this effect (cancelling this
+            // coroutine mid-cycle). Sweep 0 closes the lizard draw gate
+            // (sweep > 0 false, hold deadline 0) so a cancelled cycle can
+            // never freeze a half-lit lizard on screen.
+            LizardShimmerTarget.holdEndMs = 0L
+            shimmerSweep.snapTo(0f)
         }
     }
 
@@ -1493,6 +1612,9 @@ fun HabitGridScreen(
                                         // Normal increment without roll forward — always
                                         // record a timestamp when incrementing for today.
                                         viewModel.incrementHabit(habit.name, 1, recordTimestamp = isToday)
+                                        // EXPERIMENT: a click-increment is the ONLY
+                                        // trigger for the lizard shimmer cycle.
+                                        lizardShimmerGen.intValue++
                                         // Manually incrementing the linked Puzzle Rush habit
                                         // = back-filling a rush run the timer missed: open
                                         // the same report overlay the bubble uses, in manual
