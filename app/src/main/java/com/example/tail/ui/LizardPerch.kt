@@ -31,9 +31,21 @@ import kotlin.math.ceil
 /** Which side of the lizard's footprint the clung-to surface is on. */
 internal enum class PerchSurface { BELOW, ABOVE, LEFT, RIGHT }
 
-/** One baked orientation of the lizard strip + its cell-footprint. */
+/**
+ * One placed lizard pose.
+ *
+ * PHASE 1 (legacy strip): the 8 rotated/mirrored variants of the tier strip,
+ * footprint derived from the bitmap aspect, one surface per variant.
+ *
+ * PHASE 2 (generated poses): full N×M cell canvases carrying their own
+ * metadata — `dummyCells` are the canvas cells that must land on OCCUPIED
+ * habit squares (the baked "dummy squares" were chroma-keyed out of the
+ * bitmap), `lizardCells` the canvas cells that must be EMPTY (the lizard's
+ * footprint). The pose is drawn at true flat-grid geometry so one canvas
+ * cell == one lattice cell, pixel-exact with the real habit squares.
+ */
 internal data class LizardVariant(
-    /** The rotated/mirrored strip as an ImageBitmap. */
+    /** The rotated/mirrored strip or full pose canvas as an ImageBitmap. */
     val bitmap: ImageBitmap,
     /** Visible-content bounding box inside [bitmap] (source px). */
     val srcX: Int,
@@ -46,7 +58,12 @@ internal data class LizardVariant(
     /** Which side of the footprint the surface must be on. */
     val surface: PerchSurface,
     /** True when this is a wall-climbing (vertical) pose. */
-    val vertical: Boolean
+    val vertical: Boolean,
+    /** Canvas cells (row*cols+col) that must be OCCUPIED habits. */
+    val dummyCells: Set<Int> = emptySet(),
+    /** When true the bitmap is a FULL cell canvas (one canvas px per cell
+     *  division known via [canvasCols]/[canvasRows]) rather than a strip. */
+    val isPoseCanvas: Boolean = false
 )
 
 /**
@@ -61,6 +78,24 @@ internal data class LizardPerch(
     val rows: Int,
     val cols: Int
 )
+
+/**
+ * PROCESS-WIDE perch state, shared by EVERY panel that draws the ghost
+ * lizard. Each chrome panel (top bar > location row > tab row > grid) runs
+ * the same draw phase on one shared lattice; with per-panel remember{} state
+ * each panel kept its OWN roll counter and sweep history, so a single leg
+ * could show one spot on the grid panel and another on the tab row, and the
+ * forward+return pairing broke. With ONE shared object: whichever panel
+ * draws first in a frame performs the leg transition, the others see the
+ * updated lastSweepValue and no-op, and every panel renders the SAME perch
+ * for the whole forward+return leg pair.
+ */
+internal object SharedPerchState {
+    var perch: LizardPerch? = null
+    var legSeen: Int = -1
+    var versionSeen: Long = -1L
+    var lastSweepValue: Float = 1f
+}
 
 /** Shared scene state published by the real habit grid. */
 internal object GhostSceneState {
@@ -193,9 +228,41 @@ internal fun randomLizardPerch(
         return true
     }
 
-    val candidates = ArrayList<LizardPerch>()
+    // Candidates are collected PER VARIANT first: a variant with zero valid
+    // spots is excluded from the draw entirely, so the random pick can never
+    // land on a lizard that "doesn't fit anywhere" (which used to leave the
+    // shimmer blank).
+    val perVariant = ArrayList<List<LizardPerch>>(variants.size)
+    var total = 0
     variants.forEachIndexed { vi, v ->
-        if (v.rows >= GRID_ROWS || v.cols >= GRID_COLUMNS) return@forEachIndexed
+        if (v.rows >= GRID_ROWS || v.cols >= GRID_COLUMNS) {
+            perVariant.add(emptyList()); return@forEachIndexed
+        }
+        val spots = ArrayList<LizardPerch>()
+        if (v.isPoseCanvas) {
+            // PHASE 2 pose canvas: the canvas must be placed so its chroma
+            // "dummy square" cells coincide with REAL habit squares and its
+            // remaining (lizard) cells are empty. The physical surface is
+            // INSIDE the canvas (the lizard stands on the dummy mass), so
+            // no external surface row is checked.
+            val dummies = v.dummyCells
+            for (c in 0..GRID_COLUMNS - v.cols) {
+                for (r in 0..GRID_ROWS - v.rows) {
+                    var ok = true
+                    for (i in r until r + v.rows) {
+                        for (j in c until c + v.cols) {
+                            val isDummy = dummies.contains(
+                                (i - r) * v.cols + (j - c)
+                            )
+                            if (isDummy != occ(i, j)) { ok = false; break }
+                        }
+                        if (!ok) break
+                    }
+                    if (ok) spots.add(LizardPerch(vi, r, c, v.rows, v.cols))
+                }
+            }
+            perVariant.add(spots); total += spots.size; return@forEachIndexed
+        }
         when (v.surface) {
             PerchSurface.BELOW, PerchSurface.ABOVE -> {
                 for (c in 0..GRID_COLUMNS - v.cols) {
@@ -206,7 +273,7 @@ internal fun randomLizardPerch(
                         var solid = true
                         for (j in c until c + v.cols) if (!occ(r + surfaceRow, j)) { solid = false; break }
                         if (solid && footprintFree(r, c, v.rows, v.cols)) {
-                            candidates.add(LizardPerch(vi, r, c, v.rows, v.cols))
+                            spots.add(LizardPerch(vi, r, c, v.rows, v.cols))
                         }
                     }
                 }
@@ -221,11 +288,125 @@ internal fun randomLizardPerch(
                         for (i in r until r + v.rows) if (!occ(i, wallCol)) { solid = false; break }
                     }
                     if (solid && footprintFree(r, c, v.rows, v.cols)) {
-                        candidates.add(LizardPerch(vi, r, c, v.rows, v.cols))
+                        spots.add(LizardPerch(vi, r, c, v.rows, v.cols))
                     }
                 }
             }
         }
+        perVariant.add(spots); total += spots.size
     }
-    return candidates.randomOrNull()
+    if (total == 0) return null
+    // Variant-proportional pick: first choose a spot uniformly among ALL
+    // valid spots (equivalent to weighting variants by how many places they
+    // fit) — a variant with zero spots can never be chosen.
+    var n = kotlin.random.Random.nextInt(total)
+    for (spots in perVariant) {
+        if (n < spots.size) return spots[n]
+        n -= spots.size
+    }
+    return null
+}
+
+/** Source pixels per grid cell in the generated pose canvases. */
+internal const val POSE_PX_PER_CELL = 512
+
+/** Metadata for one generated pose bitmap, decoded from the manifest. */
+internal data class PoseAsset(
+    val bitmap: ImageBitmap,
+    val cellRows: List<String>
+)
+
+/**
+ * PHASE 2 — build pose variants from the generated `lizard_pose_t{tier}_p*`
+ * bitmaps. Each pose canvas is an exact N-cols × M-rows grid of cells
+ * (512 src px/cell); the manifest tells us N and M and which cells held the
+ * chroma-keyed dummy squares ("1" in the row strings).
+ *
+ * Physical model: the dummy squares form a solid ground mass the lizard
+ * stands on (generated poses are all top-facing), so the surface side is
+ * BELOW for every current pose: the cells of the canvas's bottom dummy row
+ * must land on OCCUPIED habit squares. The solver treats the WHOLE canvas as
+ * the footprint — its dummy cells must coincide with real habits and its
+ * remaining (lizard) cells must be empty — which is exactly the placement
+ * contract of the generation prompts.
+ *
+ * Wall-edge climbing (LEFT/RIGHT) and hanging (ABOVE) remain covered by the
+ * phase-1 strip variants, which callers always bake alongside the poses.
+ */
+internal fun buildPoseVariants(
+    poses: List<PoseAsset>
+): List<LizardVariant> {
+    val out = ArrayList<LizardVariant>(poses.size)
+    for (pose in poses) {
+        val bmp = pose.bitmap.asAndroidBitmap()
+        val canvasCols = bmp.width / POSE_PX_PER_CELL
+        val canvasRows = bmp.height / POSE_PX_PER_CELL
+        if (canvasCols == 0 || canvasRows == 0) continue
+        if (pose.cellRows.size < canvasRows) continue
+        val dummies = HashSet<Int>()
+        for (r in 0 until canvasRows) {
+            val rowStr = pose.cellRows[r]
+            for (c in 0 until canvasCols) {
+                if (c < rowStr.length && rowStr[c] == '1') {
+                    dummies.add(r * canvasCols + c)
+                }
+            }
+        }
+        out.add(
+            LizardVariant(
+                bitmap = bmp.asImageBitmap(),
+                srcX = 0,
+                srcY = 0,
+                srcW = bmp.width,
+                srcH = bmp.height,
+                rows = canvasRows.coerceAtMost(GRID_ROWS),
+                cols = canvasCols.coerceAtMost(GRID_COLUMNS),
+                surface = PerchSurface.BELOW,
+                vertical = false,
+                dummyCells = dummies,
+                isPoseCanvas = true
+            )
+        )
+    }
+    return out
+}
+
+/**
+ * Load every generated pose for [tier]: `lizard_pose_t{tier}_p{NN}` drawables
+ * plus their manifest metadata from `assets/lizard_pose_manifest.json`
+ * ({"tiers": {"1": [{"file", "cols", "rows", "cells": ["010", ...]}, ...]}}).
+ * Missing drawables are skipped; a missing/corrupt manifest yields an empty
+ * list (the caller then falls back to the phase-1 strip variants only).
+ */
+internal fun loadLizardPoseAssets(
+    context: android.content.Context,
+    tier: Int
+): List<PoseAsset> {
+    val manifest = runCatching {
+        context.assets.open("lizard_pose_manifest.json").bufferedReader()
+            .use { it.readText() }
+    }.getOrNull() ?: return emptyList()
+    val root = org.json.JSONObject(manifest)
+    val tiers = root.optJSONObject("tiers") ?: return emptyList()
+    val arr = tiers.optJSONArray(tier.toString()) ?: return emptyList()
+    val out = ArrayList<PoseAsset>(arr.length())
+    for (i in 0 until arr.length()) {
+        val obj = arr.optJSONObject(i) ?: continue
+        val name = obj.optString("file")
+        if (name.isEmpty()) continue
+        val resId = context.resources.getIdentifier(
+            name, "drawable", context.packageName
+        )
+        if (resId == 0) continue
+        val bmp = android.graphics.BitmapFactory.decodeResource(
+            context.resources, resId
+        ) ?: continue
+        val cells = ArrayList<String>(obj.optInt("rows", 0))
+        val cellsArr = obj.optJSONArray("cells")
+        if (cellsArr != null) {
+            for (j in 0 until cellsArr.length()) cells.add(cellsArr.getString(j))
+        }
+        out.add(PoseAsset(bitmap = bmp.asImageBitmap(), cellRows = cells))
+    }
+    return out
 }

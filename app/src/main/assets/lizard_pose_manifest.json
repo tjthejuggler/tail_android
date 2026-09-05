@@ -1,0 +1,290 @@
+{
+  "px_per_cell": 512,
+  "tiers": {
+    "1": [
+      {
+        "file": "lizard_pose_t1_p00",
+        "name": "walk",
+        "cols": 2,
+        "rows": 2,
+        "anchored": "below",
+        "bulk": [
+          0.3,
+          0.45
+        ],
+        "dummies": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ],
+        "cells": [
+          "00",
+          "11"
+        ]
+      },
+      {
+        "file": "lizard_pose_t1_p01",
+        "name": "face_on",
+        "cols": 2,
+        "rows": 2,
+        "anchored": "below",
+        "bulk": [
+          0.55,
+          0.75
+        ],
+        "dummies": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ],
+        "cells": [
+          "00",
+          "11"
+        ]
+      },
+      {
+        "file": "lizard_pose_t1_p02",
+        "name": "curled",
+        "cols": 2,
+        "rows": 3,
+        "anchored": "below",
+        "bulk": [
+          0.7,
+          0.95
+        ],
+        "dummies": [
+          [
+            2,
+            0
+          ],
+          [
+            2,
+            1
+          ]
+        ],
+        "cells": [
+          "00",
+          "00",
+          "11"
+        ]
+      },
+      {
+        "file": "lizard_pose_t1_p03",
+        "name": "stairs",
+        "cols": 3,
+        "rows": 3,
+        "anchored": "below",
+        "bulk": [
+          0.4,
+          0.58
+        ],
+        "dummies": [
+          [
+            2,
+            0
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            0,
+            2
+          ]
+        ],
+        "cells": [
+          "001",
+          "011",
+          "110"
+        ]
+      },
+      {
+        "file": "lizard_pose_t1_p04",
+        "name": "stretched",
+        "cols": 5,
+        "rows": 2,
+        "anchored": "below",
+        "bulk": [
+          0.3,
+          0.45
+        ],
+        "dummies": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            1,
+            4
+          ]
+        ],
+        "cells": [
+          "00000",
+          "11111"
+        ]
+      },
+      {
+        "file": "lizard_pose_t1_p05",
+        "name": "phone",
+        "cols": 2,
+        "rows": 3,
+        "anchored": "below",
+        "bulk": [
+          0.5,
+          0.7
+        ],
+        "dummies": [
+          [
+            2,
+            0
+          ],
+          [
+            2,
+            1
+          ]
+        ],
+        "cells": [
+          "00",
+          "00",
+          "11"
+        ]
+      },
+      {
+        "file": "lizard_pose_t1_p06",
+        "name": "pipe",
+        "cols": 3,
+        "rows": 2,
+        "anchored": "below",
+        "bulk": [
+          0.35,
+          0.55
+        ],
+        "dummies": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            2
+          ]
+        ],
+        "cells": [
+          "000",
+          "101"
+        ]
+      },
+      {
+        "file": "lizard_pose_t1_p07",
+        "name": "hammock",
+        "cols": 3,
+        "rows": 2,
+        "anchored": "below",
+        "bulk": [
+          0.4,
+          0.6
+        ],
+        "dummies": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            2
+          ]
+        ],
+        "cells": [
+          "000",
+          "101"
+        ]
+      },
+      {
+        "file": "lizard_pose_t1_p08",
+        "name": "pushup",
+        "cols": 2,
+        "rows": 2,
+        "anchored": "below",
+        "bulk": [
+          0.48,
+          0.65
+        ],
+        "dummies": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ],
+        "cells": [
+          "00",
+          "11"
+        ]
+      },
+      {
+        "file": "lizard_pose_t1_p09",
+        "name": "treasure",
+        "cols": 3,
+        "rows": 4,
+        "anchored": "below",
+        "bulk": [
+          0.45,
+          0.65
+        ],
+        "dummies": [
+          [
+            3,
+            0
+          ],
+          [
+            3,
+            1
+          ],
+          [
+            3,
+            2
+          ]
+        ],
+        "cells": [
+          "000",
+          "000",
+          "000",
+          "111"
+        ]
+      }
+    ]
+  }
+}

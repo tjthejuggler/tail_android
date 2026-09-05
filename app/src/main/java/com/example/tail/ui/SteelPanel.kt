@@ -306,18 +306,37 @@ internal fun Modifier.ghostGlassSquares(
     // (~100dp): reads as standing far back against the horizon wall.
     // Drawn at the strip's baked 4:1 aspect.
     val lizardHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { 64.dp.toPx() }
-    // Perching variants (phase 1): the strip baked into the 8 rotations ×
-    // mirrors, each with its grid-cell footprint and required surface side.
+    // Perching variants: PHASE 2 generated poses for the current tier
+    // (lizard_pose_t{tier}_p*, metadata from assets/lizard_pose_manifest.json)
+    // first, then the PHASE 1 strip's 8 rotations × mirrors as the universal
+    // fallback (wall-edge climbing + hanging live only there). A tier with
+    // no generated poses yet simply gets the strip behaviour.
     val lizardVariants = remember(lizard) {
-        if (lizard == null) emptyList() else buildLizardVariants(lizard)
+        if (lizard == null) {
+            emptyList()
+        } else {
+            val tier = com.example.tail.widget.TierStateStore.load(context)
+                .dayTier.coerceIn(0, 12)
+            val poseVariants = try {
+                buildPoseVariants(loadLizardPoseAssets(context, tier))
+            } catch (_: Exception) {
+                emptyList()
+            }
+            poseVariants + buildLizardVariants(lizard)
+        }
     }
-    // Current random perch + the inputs it was computed from, so it stays
-    // stable across frames of one shimmer leg and re-rolls per leg / when
-    // the habit occupancy or the tier variant changes.
-    val perchState = remember { androidx.compose.runtime.mutableStateOf<LizardPerch?>(null) }
-    var perchLegSeen by remember { androidx.compose.runtime.mutableIntStateOf(-1) }
-    var perchVersionSeen by remember { androidx.compose.runtime.mutableLongStateOf(-1L) }
-    var lastSweepValue by remember { androidx.compose.runtime.mutableFloatStateOf(1f) }
+    // Perch state lives in SharedPerchState (process-wide), NOT per-panel:
+    // every chrome panel draws the same shimmer scene, and a per-panel roll
+    // counter made the forward+return leg PAIR show different spots/poses on
+    // different panels. Shared state + shared sweep history means the first
+    // panel to draw in a frame performs the leg transition exactly once and
+    // ALL panels agree on one perch for the whole pair.
+    val perchState = SharedPerchState
+    // The lizard block is DEFERRED: habit squares must draw first
+    // (drawContent) so the lizard is never painted BEHIND them — the old
+    // draw order (ghost squares → lizard → content) let the real habit
+    // buttons cover the lizard, which read as "lizard not showing up".
+    var drawLizard: (() -> Unit)? = null
     val clipPath = remember { Path() }
     // Window-space y of this panel — the grid anchor publishes its own so all
     // panels share ONE lattice phase anchored to the real grid's first row.
@@ -726,28 +745,37 @@ internal fun Modifier.ghostGlassSquares(
                     // re-rolled only every OTHER leg: a shimmer cycle is
                     // always a forward leg + its immediate opposite return
                     // leg, and the lizard stays put for that PAIR, moving to
-                    // a new surface for the next pair.
-                    val newLeg = sweep < lastSweepValue - 0.5f
-                    lastSweepValue = sweep
+                    // a new surface for the next pair. The roll state is
+                    // SHARED process-wide (SharedPerchState) so every panel
+                    // agrees on one spot+pose for the whole pair.
+                    val newLeg = sweep < perchState.lastSweepValue - 0.5f
+                    perchState.lastSweepValue = sweep
                     val occVersion = GhostSceneState.version
-                    val staleVariant = perchState.value != null &&
-                        perchState.value!!.variantIndex >= lizardVariants.size
-                    if (newLeg || perchVersionSeen != occVersion || staleVariant) {
-                        val versionChanged = perchVersionSeen != occVersion
-                        perchVersionSeen = occVersion
-                        perchLegSeen++
+                    val staleVariant = perchState.perch != null &&
+                        perchState.perch!!.variantIndex >= lizardVariants.size
+                    if (newLeg || perchState.versionSeen != occVersion || staleVariant) {
+                        val versionChanged = perchState.versionSeen != occVersion
+                        perchState.versionSeen = occVersion
+                        perchState.legSeen++
                         // Roll on the first leg of each PAIR; keep the perch
                         // for the return leg (unless the habits/tier changed
-                        // underneath us or nothing was ever placed).
-                        if (perchLegSeen % 2 == 0 || versionChanged || staleVariant ||
-                            perchState.value == null
+                        // underneath us). randomLizardPerch now only returns
+                        // variants that actually FIT the current occupancy;
+                        // when NOTHING fits we KEEP the previous perch
+                        // instead of going blank.
+                        if (perchState.legSeen % 2 == 0 || versionChanged ||
+                            staleVariant || perchState.perch == null
                         ) {
-                            perchState.value = randomLizardPerch(
+                            perchState.perch = randomLizardPerch(
                                 lizardVariants, GhostSceneState.occupiedCells
-                            )
+                            ) ?: perchState.perch
                         }
                     }
-                    val perch = perchState.value
+                    // DEFERRED: the actual painting happens AFTER drawContent()
+                    // (see the bottom of this draw phase) so the real habit
+                    // squares can never paint over the lizard.
+                    drawLizard = {
+                    val perch = perchState.perch
                     if (perch != null && perch.variantIndex < lizardVariants.size) {
                         val variant = lizardVariants[perch.variantIndex]
                         // TRUE FLAT-GRID geometry: the perch's footprint is
@@ -761,8 +789,14 @@ internal fun Modifier.ghostGlassSquares(
                         // exactly the empty cell(s), so he is never covered.
                         val topB = anchorTop + perch.row * cell
                         val botB = anchorTop + (perch.row + perch.rows) * cell
-                        val xLeft0 = outerPad + perch.col * cell + cellPad
-                        val xRight0 = outerPad + (perch.col + perch.cols) * cell - cellPad
+                        // Phase-2 pose canvases must align PIXEL-EXACTLY with
+                        // the real lattice: their chroma dummy squares were
+                        // generated to fill whole cells, so no cellPad inset.
+                        // The phase-1 strips keep the inset (their content is
+                        // a loose lizard silhouette, not cell-locked).
+                        val inset = if (variant.isPoseCanvas) 0f else cellPad
+                        val xLeft0 = outerPad + perch.col * cell + inset
+                        val xRight0 = outerPad + (perch.col + perch.cols) * cell - inset
                         val centerGlobalY = (topB + botB) / 2f
                         if (centerGlobalY >= topY && centerGlobalY < topY + size.height) {
                             val dstW = xRight0 - xLeft0
@@ -915,9 +949,15 @@ internal fun Modifier.ghostGlassSquares(
                         }
                     }
                     }
+                    } // end drawLizard deferred block
                 }
             }
+            // 1) panel content + real habit squares first…
             drawContent()
+            // 2) …then the lizard, so it can NEVER be painted behind them
+            // (was: lizard → content, which buried the lizard under the
+            // habit buttons and read as "sometimes not showing up").
+            drawLizard?.invoke()
         }
 }
 
