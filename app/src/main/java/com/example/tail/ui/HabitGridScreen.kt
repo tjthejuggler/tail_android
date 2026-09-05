@@ -3655,6 +3655,18 @@ internal fun HabitGrid(
         repeat(TOTAL_CELLS - habits.size) { add(null) }
     }
 
+    // Publish the real occupancy to the shared ghost-scene state so the
+    // shimmer lizard's perching solver (LizardPerch.kt) knows which cells
+    // are solid habit squares (surfaces to stand on / hang from / climb)
+    // and which are empty (where its footprint must fit).
+    androidx.compose.runtime.SideEffect {
+        GhostSceneState.publish(
+            buildSet {
+                cells.forEachIndexed { i, h -> if (h != null) add(i) }
+            }
+        )
+    }
+
     val isMovePending = movePendingSourceIndex >= 0
 
     LazyVerticalGrid(

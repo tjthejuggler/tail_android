@@ -306,6 +306,18 @@ internal fun Modifier.ghostGlassSquares(
     // (~100dp): reads as standing far back against the horizon wall.
     // Drawn at the strip's baked 4:1 aspect.
     val lizardHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { 64.dp.toPx() }
+    // Perching variants (phase 1): the strip baked into the 8 rotations ×
+    // mirrors, each with its grid-cell footprint and required surface side.
+    val lizardVariants = remember(lizard) {
+        if (lizard == null) emptyList() else buildLizardVariants(lizard)
+    }
+    // Current random perch + the inputs it was computed from, so it stays
+    // stable across frames of one shimmer leg and re-rolls per leg / when
+    // the habit occupancy or the tier variant changes.
+    val perchState = remember { androidx.compose.runtime.mutableStateOf<LizardPerch?>(null) }
+    var perchLegSeen by remember { androidx.compose.runtime.mutableIntStateOf(-1) }
+    var perchVersionSeen by remember { androidx.compose.runtime.mutableLongStateOf(-1L) }
+    var lastSweepValue by remember { androidx.compose.runtime.mutableFloatStateOf(1f) }
     val clipPath = remember { Path() }
     // Window-space y of this panel — the grid anchor publishes its own so all
     // panels share ONE lattice phase anchored to the real grid's first row.
@@ -683,37 +695,140 @@ internal fun Modifier.ghostGlassSquares(
                     for (gridRow in kFirst..kLast) drawSquareRow(gridRow)
                 }
 
-                // ── Pit-floor lizard ──────────────────────────────────────
-                // The tier-bar widget's lizard (today's tier variant, the
-                // same transparent 4:1 strip the widget draws) sits ON the
-                // flat wall at the bottom of the pit — the horizon band at
-                // the window midline. It is INVISIBLE at rest and lights up
-                // EXACTLY where/when the wall's own shimmer line passes:
+                // ── Lizard — random perched placement ──────────────────────
+                // The tier-bar widget's lizard (today's tier variant) now
+                // behaves like a real lizard under gravity: on every shimmer
+                // LEG (the sweep value resets to 0) a new random PERCH is
+                // rolled from every physically-valid spot — standing on top
+                // of habit squares, hanging under them, or climbing a stack
+                // of squares / the screen's left-right edges. Footprints are
+                // per-variant cell rectangles (see LizardPerch.kt), so
+                // small-tier lizards fit into more spots than big ones and
+                // future pose variants need no changes here.
                 //
-                //  · The lizard is drawn smaller than on the widget (64dp
-                //    vs the ~100dp widget bar) so it reads as sitting far
-                //    back against the horizon wall.
-                //  · The strip is sliced into thin vertical slices. Each
-                //    slice's on-screen x is mapped back to a LOGICAL
-                //    lattice column through the SAME perspective projection
-                //    the wall tiles use (inverse-projected at the horizon's
-                //    depth), so the slice samples the wave precisely where
-                //    the compressed wall tile beside it samples it — the
-                //    reveal is locked, time- and space-wise, to the wall's
-                //    thin shimmer line. A vertical wave lights the whole
-                //    horizon row (lizard included) at once, exactly like
-                //    the row of wall tiles; horizontal / diagonal / radial
-                //    waves sweep across it slice group by slice group, in
-                //    perfect step with the neighbouring wall tiles.
-                //  · Brightness peaks below 1 so it stays a faint thing at
-                //    the back of the pit, matching the deep tiles.
+                // If NO spot fits (e.g. an almost-empty screen) the legacy
+                // centred horizon placement is kept as fallback.
                 //
-                // Drawn only by the ONE panel whose bounds contain the
-                // horizon, so adjacent chrome panels never double-paint it.
+                // The strip is sliced into sliver-cells that each sample the
+                // wave at their own fractional lattice (row, col) — the same
+                // mapping the wall/ghost tiles use — so the reveal stays
+                // locked, time- and space-wise, to the shimmer line. The
+                // lizard is INVISIBLE at rest (drawn only when the wave is
+                // passing) and brightness peaks below 1 so it stays faint.
+                //
+                // Whichever block is active is drawn only by the ONE panel
+                // whose bounds contain the lizard's centre, so adjacent
+                // chrome panels never double-paint it.
                 val vpyLocal = vpy - topY
-                if (pitLizard && lizard != null && lizardContent != null && sweep > 0f &&
-                    vpyLocal >= 0f && vpyLocal < size.height
-                ) {
+                if (pitLizard && lizard != null && lizardContent != null && sweep > 0f) {
+                    // A new shimmer leg starts whenever the sweep value jumps
+                    // backwards (snapTo(0) after reaching ~1). The perch is
+                    // re-rolled only every OTHER leg: a shimmer cycle is
+                    // always a forward leg + its immediate opposite return
+                    // leg, and the lizard stays put for that PAIR, moving to
+                    // a new surface for the next pair.
+                    val newLeg = sweep < lastSweepValue - 0.5f
+                    lastSweepValue = sweep
+                    val occVersion = GhostSceneState.version
+                    val staleVariant = perchState.value != null &&
+                        perchState.value!!.variantIndex >= lizardVariants.size
+                    if (newLeg || perchVersionSeen != occVersion || staleVariant) {
+                        val versionChanged = perchVersionSeen != occVersion
+                        perchVersionSeen = occVersion
+                        perchLegSeen++
+                        // Roll on the first leg of each PAIR; keep the perch
+                        // for the return leg (unless the habits/tier changed
+                        // underneath us or nothing was ever placed).
+                        if (perchLegSeen % 2 == 0 || versionChanged || staleVariant ||
+                            perchState.value == null
+                        ) {
+                            perchState.value = randomLizardPerch(
+                                lizardVariants, GhostSceneState.occupiedCells
+                            )
+                        }
+                    }
+                    val perch = perchState.value
+                    if (perch != null && perch.variantIndex < lizardVariants.size) {
+                        val variant = lizardVariants[perch.variantIndex]
+                        // TRUE FLAT-GRID geometry: the perch's footprint is
+                        // mapped through the LOGICAL lattice (anchorTop +
+                        // row*cell / outerPad + col*cell) — the same mapping
+                        // the REAL habit buttons occupy — NOT the perspective-
+                        // compressed projection. The compressed rows drift
+                        // away from the real buttons deeper in, which used to
+                        // paint the lizard partially BEHIND neighbouring
+                        // habit squares; on the flat mapping his footprint is
+                        // exactly the empty cell(s), so he is never covered.
+                        val topB = anchorTop + perch.row * cell
+                        val botB = anchorTop + (perch.row + perch.rows) * cell
+                        val xLeft0 = outerPad + perch.col * cell + cellPad
+                        val xRight0 = outerPad + (perch.col + perch.cols) * cell - cellPad
+                        val centerGlobalY = (topB + botB) / 2f
+                        if (centerGlobalY >= topY && centerGlobalY < topY + size.height) {
+                            val dstW = xRight0 - xLeft0
+                            val dstH = botB - topB
+                            val sliver = (cell * minDepth).coerceAtLeast(1f)
+                            val nx = ceil(dstW / sliver).toInt().coerceIn(12, 160)
+                            val ny = ceil(dstH / sliver).toInt().coerceIn(1, 160)
+                            val cw = dstW / nx
+                            val chh = dstH / ny
+                            for (j in 0 until ny) {
+                                val y0g = topB + j * chh
+                                val y1g = y0g + chh
+                                val yCenterG = y0g + chh / 2f
+                                // Flat column edges — identical for every
+                                // sliver row (no perspective trapezoid: the
+                                // lizard sits in the surface plane, exactly
+                                // where the real habit squares are).
+                                val xLeft = xLeft0
+                                val xRight = xRight0
+                                if (xRight < 0f || xLeft > size.width) continue
+                                val dx0 = xLeft + (xRight - xLeft) * 0f
+                                val dy0 = y0g - topY
+                                // Fractional lattice coords for the wave:
+                                // the sliver interpolates across the
+                                // footprint's lattice span.
+                                val rowF = perch.row + (j + 0.5f) / ny * perch.rows
+                                val yN = yCenterG / windowH
+                                val dyl = dy0
+                                for (s in 0 until nx) {
+                                    val sx0 = xLeft + s * (xRight - xLeft) / nx
+                                    val swS = (xRight - xLeft) / nx
+                                    if (sx0 + swS < 0f || sx0 > size.width) continue
+                                    val colF = perch.col + (s + 0.5f) / nx * perch.cols
+                                    val c0 = colF.toInt()
+                                    val f = colF - c0
+                                    val r0i = rowF.toInt()
+                                    val u = dir.u(r0i, c0, yN) * (1f - f) +
+                                        dir.u(r0i, c0 + 1, yN) * f
+                                    val proximity = idleShimmerAlpha(sweep, u) /
+                                        IDLE_SHIMMER_MAX_ALPHA
+                                    if (proximity <= 0.01f) continue
+                                    val srcX = (variant.srcX + s.toFloat() / nx * variant.srcW).toInt()
+                                        .coerceAtMost(variant.srcX + variant.srcW - 1)
+                                    val srcY = (variant.srcY + j.toFloat() / ny * variant.srcH).toInt()
+                                        .coerceAtMost(variant.srcY + variant.srcH - 1)
+                                    val srcWpx = (variant.srcW.toFloat() / nx).toInt()
+                                        .coerceAtLeast(1)
+                                    val srcHpx = (variant.srcH.toFloat() / ny).toInt()
+                                        .coerceAtLeast(1)
+                                    clipRect(sx0, dyl, sx0 + swS, dyl + chh) {
+                                        drawImage(
+                                            image = variant.bitmap,
+                                            srcOffset = IntOffset(srcX, srcY),
+                                            srcSize = IntSize(srcWpx, srcHpx),
+                                            dstOffset = IntOffset(sx0.toInt(), dyl.toInt()),
+                                            dstSize = IntSize(
+                                                (swS + 0.99f).toInt(),
+                                                (chh + 0.99f).toInt()
+                                            ),
+                                            alpha = (proximity * 0.45f).coerceIn(0f, 1f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else if (vpyLocal >= 0f && vpyLocal < size.height) {
                     // Content-aware placement: the strip is scaled to a FIXED
                     // height (exactly like the widget fills its bar height),
                     // so each tier's lizard keeps its TRUE relative size —
@@ -798,6 +913,7 @@ internal fun Modifier.ghostGlassSquares(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }
