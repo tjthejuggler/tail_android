@@ -384,7 +384,7 @@ fun SettingsScreen(
                     title = "Notifications",
                     summary = "App stats records · habit asks",
                     icon = Icons.Filled.Notifications,
-                    accent = BorderGreen
+                    accent = BorderPink
                 ) {
                     NotificationsSettingsSection(viewModel = viewModel, settings = settings)
                 }
@@ -396,7 +396,7 @@ fun SettingsScreen(
                     title = "Overlays & Tools",
                     summary = "Stats overlay · floating bubble · debug mode",
                     icon = Icons.Filled.Layers,
-                    accent = BorderPink
+                    accent = BorderYellow
                 ) {
                     StatsOverlaySettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
@@ -423,7 +423,7 @@ fun SettingsScreen(
                     title = "Wallpaper",
                     summary = "Points-driven wallpaper from an image folder",
                     icon = Icons.Filled.Wallpaper,
-                    accent = BorderYellow
+                    accent = BorderWhite
                 ) {
                     WallpaperSettingsSection(
                         context = context,
@@ -440,7 +440,7 @@ fun SettingsScreen(
                     title = "Habit Features",
                     summary = "AI icons · meal engine · AI assistant · vision memory · advice banner",
                     icon = Icons.Filled.AutoAwesome,
-                    accent = BorderWhite
+                    accent = BorderWhiteRed
                 ) {
                     AiIconSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
@@ -460,7 +460,7 @@ fun SettingsScreen(
                     title = "Backup & Recovery",
                     summary = "Backups · Google Drive · automatic snapshots",
                     icon = Icons.Filled.Backup,
-                    accent = BorderWhiteRed
+                    accent = BorderWhiteOrange
                 ) {
                     BackupSettingsSection(
                         backupManager = backupManager,
@@ -538,7 +538,18 @@ private fun SettingsCategory(
     // mostly-white card with subtle red accents and thin red hairline borders.
     val dark = isSystemInDarkTheme()
     val whiteTier = accent == BorderWhite
-    val postWhite = accent == BorderWhiteRed
+    // Post-white tiers (near-white card + vivid base-colour accents/hairlines):
+    // White+Red, White+Orange, … — each maps to its vivid base colour.
+    val postWhiteBase = when (accent) {
+        BorderWhiteRed -> BorderRed
+        BorderWhiteOrange -> BorderOrange
+        BorderWhiteGreen -> BorderGreen
+        BorderWhiteBlue -> BorderBlue
+        BorderWhitePink -> BorderPink
+        BorderWhiteYellow -> BorderYellow
+        else -> null
+    }
+    val postWhite = postWhiteBase != null
     val cardColor = when {
         postWhite -> lerp(
             MaterialTheme.colorScheme.surfaceVariant,
@@ -552,13 +563,13 @@ private fun SettingsCategory(
         )
     }
     val border = when {
-        // Post-white: thin, quietly red hairline.
-        postWhite -> BorderStroke(0.75.dp, BorderRed.copy(alpha = if (dark) 0.45f else 0.35f))
+        // Post-white: thin, quietly tinted hairline in the tier's base colour.
+        postWhite -> BorderStroke(0.75.dp, postWhiteBase!!.copy(alpha = if (dark) 0.45f else 0.35f))
         whiteTier -> BorderStroke(1.dp, Color.White.copy(alpha = if (dark) 0.55f else 0.70f))
         else -> BorderStroke(1.dp, accent.copy(alpha = if (dark) 0.60f else 0.50f))
     }
     val iconTint = when {
-        postWhite -> BorderRed.copy(alpha = 0.90f)
+        postWhite -> postWhiteBase!!.copy(alpha = 0.90f)
         whiteTier && dark -> BorderWhite
         whiteTier -> MaterialTheme.colorScheme.outline
         // Glass is near-white — fall back to a theme gray so the icon stays visible.
@@ -566,7 +577,7 @@ private fun SettingsCategory(
         else -> accent
     }
     val iconBg = when {
-        postWhite -> BorderRed.copy(alpha = if (dark) 0.16f else 0.10f)
+        postWhite -> postWhiteBase!!.copy(alpha = if (dark) 0.16f else 0.10f)
         whiteTier -> Color.White.copy(alpha = if (dark) 0.22f else 0.65f)
         else -> accent.copy(alpha = if (dark) 0.30f else 0.18f)
     }
@@ -599,10 +610,10 @@ private fun SettingsCategory(
                         .clip(RoundedCornerShape(12.dp))
                         .background(iconBg)
                         .then(
-                            // Post-white: echo the card's thin red hairline on the icon chip.
+                            // Post-white: echo the card's thin hairline on the icon chip.
                             if (postWhite) Modifier.border(
                                 width = 0.75.dp,
-                                color = BorderRed.copy(alpha = if (dark) 0.35f else 0.30f),
+                                color = postWhiteBase!!.copy(alpha = if (dark) 0.35f else 0.30f),
                                 shape = RoundedCornerShape(12.dp)
                             ) else Modifier
                         ),

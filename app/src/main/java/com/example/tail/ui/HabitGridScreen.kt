@@ -226,8 +226,9 @@ internal const val TOTAL_CELLS = 80
 // near-black pixels):
 //  • TileAccent* — the EXACT chromatic average shade (used for the active
 //    button containers).
-//  • TileVivid*  — same hue + saturation, luminance raised to ~75% so the
-//    colour actually reads against the dark bar (used for icon tints).
+//  • TileVivid*  — the tile's genuine average HUE with the saturation pushed
+//    up (×1.6, capped) and brightness at 0.80, so each tint stays true to its
+//    tile colour while reading clearly against the dark bar.
 private val TileAccentRed = Color(0xFF4F1F18)
 private val TileAccentOrange = Color(0xFF5B3922)
 private val TileAccentGreen = Color(0xFF274D3C)
@@ -236,13 +237,13 @@ private val TileAccentYellow = Color(0xFF715C12)
 private val TileAccentPink = Color(0xFF621947)
 private val TileAccentGlass = Color(0xFF282E36)
 
-private val TileVividRed = Color(0xFFBF4B3A)
-private val TileVividOrange = Color(0xFFBF7847)
-private val TileVividGreen = Color(0xFF61BF95)
-private val TileVividBlue = Color(0xFF6B8BBF)
-private val TileVividYellow = Color(0xFFBF9C1E)
-private val TileVividPink = Color(0xFFBF318B)
-private val TileVividGlass = Color(0xFF8EA3BF)
+private val TileVividRed = Color(0xFFCC1A00)
+private val TileVividOrange = Color(0xFFCC5200)
+private val TileVividGreen = Color(0xFF2BCC84)
+private val TileVividBlue = Color(0xFF3D73CC)
+private val TileVividYellow = Color(0xFFCC9F00)
+private val TileVividPink = Color(0xFFCC0081)
+private val TileVividGlass = Color(0xFF779CCC)
 
 // How long the finger must hover a screen tab (while dragging a habit in
 // edit mode) before the drag switches over to that screen.
