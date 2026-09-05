@@ -41,6 +41,22 @@ import kotlin.math.floor
 import kotlin.math.pow
 
 /**
+ * Fractional (0..1) geometry of the VISIBLE (non-transparent) content inside
+ * a tier-bar lizard strip. The strips are baked 4:1 with a widget-oriented
+ * left pad that varies per tier (up to ~71% of the width on tier 0), so the
+ * wall draw pass uses these fractions — instead of the strip's own centre —
+ * to place the actual lizard precisely on the horizon's vanishing point.
+ */
+internal data class LizardContentGeom(
+    /** Content-centre x as a fraction of strip width. */
+    val centerX: Float,
+    /** Content-centre y as a fraction of strip height. */
+    val centerY: Float,
+    /** Content height as a fraction of strip height. */
+    val heightFrac: Float
+)
+
+/**
  * Dark AI-generated steel panel background. Each surface uses its own
  * distinct texture:
  *
@@ -248,6 +264,43 @@ internal fun Modifier.ghostGlassSquares(
         if (resId != 0) {
             BitmapFactory.decodeResource(context.resources, resId)?.asImageBitmap()
         } else null
+    }
+    // Content-aware geometry: the widget strips carry a baked-in LEFT pad
+    // (small tiers have up to ~71% empty width) so the WIDGET can inset the
+    // curled tail. Centering the raw 4:1 strip would therefore place the
+    // visible lizard far off-centre on the wall. We scan the alpha bounding
+    // box ONCE per bitmap and expose the content's fractional centre/height
+    // so the draw pass below can centre the VISIBLE lizard precisely.
+    val lizardContent = remember(lizard) {
+        if (lizard == null) null
+        else {
+            val w = lizard.width
+            val h = lizard.height
+            val pixels = IntArray(w * h)
+            lizard.readPixels(pixels)
+            var l = w; var t = h; var r = -1; var b = -1
+            var y = 0
+            while (y < h) {
+                val rowOff = y * w
+                var x = 0
+                while (x < w) {
+                    if (pixels[rowOff + x] ushr 24 != 0) {
+                        if (x < l) l = x
+                        if (x > r) r = x
+                        if (y < t) t = y
+                        if (y > b) b = y
+                    }
+                    x++
+                }
+                y++
+            }
+            if (r < l) null // fully transparent safety net
+            else LizardContentGeom(
+                centerX = (l + r + 1) / 2f / w,
+                centerY = (t + b + 1) / 2f / h,
+                heightFrac = (b - t + 1).toFloat() / h
+            )
+        }
     }
     // Slightly SMALLER than the tier-bar widget's height-filling lizard
     // (~100dp): reads as standing far back against the horizon wall.
@@ -658,13 +711,23 @@ internal fun Modifier.ghostGlassSquares(
                 // Drawn only by the ONE panel whose bounds contain the
                 // horizon, so adjacent chrome panels never double-paint it.
                 val vpyLocal = vpy - topY
-                if (pitLizard && lizard != null && sweep > 0f &&
+                if (pitLizard && lizard != null && lizardContent != null && sweep > 0f &&
                     vpyLocal >= 0f && vpyLocal < size.height
                 ) {
+                    // Content-aware placement: the strip is scaled to a FIXED
+                    // height (exactly like the widget fills its bar height),
+                    // so each tier's lizard keeps its TRUE relative size —
+                    // the young tiers' small lizards stay small, the big
+                    // tiers' lizards fill the strip. Only the POSITION is
+                    // content-aware: the destination is offset so the
+                    // content's centre (not the padded strip's centre) sits
+                    // on the vanishing point (vpx, vpy). Without this, the
+                    // small tiers' baked left pad shifts the lizard far to
+                    // the right of centre.
                     val lzH = lizardHeightPx
                     val lzW = lzH * 4f
-                    val lzLeft = vpx - lzW / 2f
-                    val lzTop = vpyLocal - lzH / 2f
+                    val lzLeft = vpx - lzW * lizardContent.centerX
+                    val lzTop = vpyLocal - lzH * lizardContent.centerY
                     // The lizard is sampled as a 2D GRID of square
                     // sliver-cells — one compressed wall tile (cell × the
                     // horizon's depth factor) on EACH side — so the reveal
