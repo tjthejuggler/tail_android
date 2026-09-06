@@ -45,3 +45,37 @@ python3 compose_final.py     # PIL only; fills final/
 
 `compose_final.py` verifies every output is 1440x3088 and prints an offset
 summary; rerun it alone any time to rebuild `final/` from `raw/`.
+
+## Lizard tier strips (widget)
+
+`tier_bar_lizard_t{0..12}.png` in `app/src/main/res/drawable-nodpi/` are the
+widget's metallic mecha-lizard strip variants. Built by `gen_lizard_tiers.py`
+/ `recolor_lizard_combos.py` / `gen_lizard_ages.py`; pose art comes from
+`gen_lizard_poses.py` (separate assets, untouched by the strip tools).
+
+### 2026-09-06 ascension upgrade (`upgrade_ascended_lizards.py`)
+
+User verdict: t7 was a flat hue-recolor of t6 (boring), and the t8..t12
+ladder didn't monotonically escalate (t10/t11/t12 also had green/cyan
+ornament contamination). `upgrade_ascended_lizards.py` regenerated
+t7..t12 from the approved t6 elder as identity reference with a cumulative
+ascension grammar:
+
+| tier | persona | features |
+|---|---|---|
+| 7 | crimson warrior | blade crests, seam veins, eye ring, pauldrons |
+| 8 | forge-master | + furnace chest core, sparks, exhaust vents |
+| 9 | grove-mage | + frond canopy, tail vines, spore motes |
+| 10 | storm-savant | + halo tail rings, lightning arcs, orbiting shards |
+| 11 | heart-mender | + lotus head corona, aurora ribbons, gem heart |
+| 12 | sun-king | + solar crown rays, stacked halos, gold filigree cape |
+
+Each tier keeps all previous features. Pipeline: wide chroma canvas →
+`google/gemini-3-pro-image` edit (Nano Banana Pro) → hue-based chroma key →
+despill (re-hues cyan/green contamination to the tier accent; skipped for
+t9/t10 whose accents legitimately live in those bands) → validation
+(vertical-crop check, accent dominance, green ban) → 2048x512 black strip,
+right-anchored, stretch ladder 1.28→1.34 → user-matte alpha (black flood
+fill). Originals backed up in `raw/ascend_backup/`; cached raws in
+`raw/ascend/` allow `--reprocess` with zero API calls. Poses/manifest/Kotlin
+untouched.
