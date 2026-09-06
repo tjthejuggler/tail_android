@@ -759,7 +759,8 @@ internal fun Modifier.ghostGlassSquares(
                 // mapping the wall/ghost tiles use — so the reveal stays
                 // locked, time- and space-wise, to the shimmer line. The
                 // lizard is INVISIBLE at rest (drawn only when the wave is
-                // passing) and brightness peaks below 1 so it stays faint.
+                // passing) and now draws at FULL brightness while lit so he
+                // is clearly visible when he shows up.
                 //
                 // Whichever block is active is drawn only by the ONE panel
                 // whose bounds contain the lizard's centre, so adjacent
@@ -911,10 +912,11 @@ internal fun Modifier.ghostGlassSquares(
                                     val r0i = rowF.toInt()
                                     val u = dir.u(r0i, c0, yN) * (1f - f) +
                                         dir.u(r0i, c0 + 1, yN) * f
-                                    // EXPERIMENT (LIZARD_IN): during the hold
-                                    // the slivers draw at FULL alpha (1.0);
-                                    // during the wave the legacy 0.45 cap
-                                    // keeps the reveal faint.
+                                    // EXPERIMENT (LIZARD_IN): the slivers draw
+                                    // at FULL alpha (1.0) both during the
+                                    // reveal wave and the hold — the lizard
+                                    // should be clearly VISIBLE when he shows
+                                    // up, not a faint background ghost.
                                     // Departure: plain band on the reversed u —
                                     // the light leaves with the wavefront.
                                     // Arrival/hold: the fill-up ratchet.
@@ -925,7 +927,7 @@ internal fun Modifier.ghostGlassSquares(
                                         (((u + IDLE_SHIMMER_BAND) - lizardFront) /
                                             IDLE_SHIMMER_BAND).coerceIn(0f, 1f)
                                     }
-                                    val alphaCap = if (holdActive) 1f else 0.45f
+                                    val alphaCap = 1f
                                     if (proximity <= 0.01f) continue
                                     val srcX = (variant.srcX + s.toFloat() / nx * variant.srcW).toInt()
                                         .coerceAtMost(variant.srcX + variant.srcW - 1)
@@ -1046,7 +1048,7 @@ internal fun Modifier.ghostGlassSquares(
                                         (cw + 0.99f).toInt(),
                                         (chh + 0.99f).toInt()
                                     ),
-                                    alpha = (proximity * 0.45f).coerceIn(0f, 1f)
+                                    alpha = proximity.coerceIn(0f, 1f)
                                 )
                             }
                         }
