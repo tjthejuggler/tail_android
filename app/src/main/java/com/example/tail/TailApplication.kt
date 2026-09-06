@@ -31,5 +31,11 @@ class TailApplication : Application() {
         // increment — even with no UI alive — refreshes the launcher
         // icon's daily-points tier colour.
         com.example.tail.ui.HabitIncrementBus.install(this)
+
+        // Keep the home-screen widgets in sync with the pending-notification
+        // list: both widgets repaint on every change — asks created (count
+        // up) or answered/read anywhere (count down) — so the tier-bar badge
+        // never goes stale behind the app's back.
+        com.example.tail.widget.WidgetNotificationSync.start(this)
     }
 }

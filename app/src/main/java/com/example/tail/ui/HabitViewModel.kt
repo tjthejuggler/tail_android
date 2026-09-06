@@ -497,7 +497,18 @@ class HabitViewModel(
     internal val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
 
-    internal val _isLoading = MutableStateFlow(false)
+    /**
+     * Starts TRUE so the very first composed frame is the full-background
+     * loading animation (Orrery spinner + ghost glass lattice) rather than
+     * the "Go to Settings" gate — which otherwise flashed for a moment on
+     * cold start while DataStore settings were still hydrating (the default
+     * AppSettings has an empty fileUri, and this flag used to default false).
+     * The settings collector in the init block releases this to false ONLY
+     * when it confirms no habitsdb.txt is configured (a genuinely fresh
+     * install); every real load path owns the true→false transition inside
+     * catchUpAndLoad.
+     */
+    internal val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     internal val _errorMessage = MutableStateFlow<String?>(null)
@@ -923,6 +934,15 @@ class HabitViewModel(
                     } else if (s.habitOrder.isNotEmpty()) {
                         _habitOrder.value = s.habitOrder
                     }
+                }
+                // Fresh-install release: once settings have hydrated with NO
+                // habitsdb.txt configured there is nothing to load, so drop
+                // the startup loading state and let the grid show the
+                // "Go to Settings" gate. With a file configured this never
+                // fires and the spinner stays up until catchUpAndLoad below
+                // completes — no more gate flash on cold start.
+                if (s.fileUri.isEmpty()) {
+                    _isLoading.value = false
                 }
                 // Only load from file on first settings emission (app start)
                 if (s.fileUri.isNotEmpty() && lastLoadedUri.isEmpty()) {
