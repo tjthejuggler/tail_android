@@ -238,7 +238,9 @@ fun HabitViewModel.beginHabitDrag(index: Int) {
  */
 fun HabitViewModel.commitHabitMove(fromIdx: Int, toIdx: Int) {
     if (fromIdx == toIdx) return
-    viewModelScope.launch { applyMove(fromIdx, toIdx) }
+    // Drag commit: never select the destination — the edit drawer must not
+    // open just because the habit was moved (see applyMove).
+    viewModelScope.launch { applyMove(fromIdx, toIdx, selectDestination = false) }
 }
 
 /**
@@ -298,6 +300,9 @@ fun HabitViewModel.commitCrossScreenDrag(habitName: String, targetScreenIndex: I
 
     _habitScreens.value = screens
     _activeScreenIndex.value = targetScreenIndex
+    // Drag commit: clear any stale selection — on the new screen the old
+    // index would point at an unrelated cell and open the wrong edit drawer.
+    _selectedEditIndex.value = -1
     viewModelScope.launch {
         rebuildHabitList()
         persistScreens(screens, targetScreenIndex)
@@ -322,9 +327,11 @@ fun HabitViewModel.commitCrossScreenDrag(habitName: String, targetScreenIndex: I
  * - If [toIdx] is occupied by another habit: shift that habit and all subsequent
  *   habits one position to the right until an empty slot (or end of list) is found.
  *
- * After the move the selection lands on [toIdx].
+ * After the move the selection lands on [toIdx] when [selectDestination] is true
+ * (tap-to-move); when false (drag commit) the selection is cleared so the edit
+ * drawer does NOT open on the moved habit.
  */
-internal suspend fun HabitViewModel.applyMove(fromIdx: Int, toIdx: Int) {
+internal suspend fun HabitViewModel.applyMove(fromIdx: Int, toIdx: Int, selectDestination: Boolean = true) {
     if (fromIdx == toIdx) return
 
     val screens = _habitScreens.value
@@ -368,7 +375,7 @@ internal suspend fun HabitViewModel.applyMove(fromIdx: Int, toIdx: Int) {
         val updatedScreen = screen.copy(habitNames = current)
         val updatedScreens = screens.toMutableList().also { it[screenIdx] = updatedScreen }
         _habitScreens.value = updatedScreens
-        _selectedEditIndex.value = toIdx
+        _selectedEditIndex.value = if (selectDestination) toIdx else -1
         rebuildHabitList()
         persistScreens(updatedScreens)
     } else {
@@ -402,7 +409,7 @@ internal suspend fun HabitViewModel.applyMove(fromIdx: Int, toIdx: Int) {
         }
 
         _habitOrder.value = current
-        _selectedEditIndex.value = toIdx
+        _selectedEditIndex.value = if (selectDestination) toIdx else -1
         rebuildHabitList()
         isSavingOrder = true
         viewModelScope.launch {
