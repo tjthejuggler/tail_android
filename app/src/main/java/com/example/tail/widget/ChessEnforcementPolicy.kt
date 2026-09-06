@@ -256,6 +256,30 @@ object ChessEnforcementPolicy {
     }
 
     /**
+     * True while a YELLOW or GREEN trust window is live — the latest test
+     * is still inside its [ChessReadinessEngine.SESSION_VALIDITY_MS]
+     * window. Enforcement OFF counts as "unrestricted" (true) so the gate
+     * never hides anything when the whole feature is disabled.
+     *
+     * UI gate for the floating bubble's habit picker: without a live
+     * window (no test / failed test / stale test) the non-readiness
+     * habits are not offered — only the readiness test itself.
+     */
+    fun hasLiveTrustWindow(context: android.content.Context): Boolean {
+        return try {
+            if (ChessReadinessStore.enforcementEnabledAt(context) <= 0L) return true
+            val last = ChessReadinessStore.loadHistory(context)
+                .maxByOrNull { it.timestamp } ?: return false
+            val now = System.currentTimeMillis()
+            now - last.timestamp < ChessReadinessEngine.SESSION_VALIDITY_MS &&
+                (last.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name ||
+                    last.state == ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * Convenience wrapper for Android callers: loads every input from
      * [ChessReadinessStore] synchronously (SharedPreferences — safe on the
      * accessibility callback path) and evaluates [evaluate] at "now".

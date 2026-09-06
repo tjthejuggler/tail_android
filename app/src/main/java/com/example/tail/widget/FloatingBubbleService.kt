@@ -365,6 +365,13 @@ class FloatingBubbleService : Service() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
+        // Install the Chess Guard wall hooks (same process): the full-screen
+        // "readiness test required" notice opens the wizard through this
+        // callback, and the YELLOW warning's habit buttons start timers via
+        // this one. Late-bound so a wall shown before the bubble came up
+        // (accessibility path) still works once this service exists.
+        ChessGuardWallOverlay.onReadinessTestRequested = { openChessReadiness() }
+        ChessGuardWallOverlay.onHabitStart = { habit -> startTimerForHabit(habit) }
         // Start the PC widget event queue poll (short first delay so a
         // freshly-started bubble picks up queued events quickly).
         handler.postDelayed(pcEventPollRunnable, 5_000L)
@@ -438,6 +445,13 @@ class FloatingBubbleService : Service() {
             }
         }
         chessReadinessActive = intent?.getBooleanExtra(EXTRA_CHESS_READINESS, false) == true
+        // Mirror the chess-app habits into the Chess Guard YELLOW warning so
+        // its full-screen "start any chess habit" buttons stay in sync —
+        // including the late-arrival case where the warning was already on
+        // screen before this (re)start delivered the habit list.
+        if (chessReadinessActive) {
+            ChessGuardWallOverlay.updateChessHabitButtons(triggerHabitNames)
+        }
 
         if (intent != null) {
             // Remember the configuration so a sticky restart after a process
@@ -1949,9 +1963,20 @@ class FloatingBubbleService : Service() {
     private fun showHabitPickerMenu() {
         if (habitMenuView != null) return
         val habits = triggerHabitNames
-        // Show the menu when several habits share the trigger app OR when the
-        // Chess Readiness option is available (even with 0 or 1 habits).
-        if (habits.size < 2 && !chessReadinessActive) return
+        // Trust-window gate: WITHOUT a live YELLOW/GREEN window (no test
+        // taken, failed, or stale) the non-readiness habits are not offered
+        // — the menu shows the readiness test only. With a window (or with
+        // enforcement off, which counts as unrestricted) everything shows.
+        val trustWindowLive = ChessEnforcementPolicy.hasLiveTrustWindow(this)
+        val offeredHabits = if (chessReadinessActive && !trustWindowLive) {
+            emptyList()
+        } else {
+            habits
+        }
+        // Show the menu when several habits share the trigger app, when a
+        // habit is offered, or when the Chess Readiness option is available
+        // (even with 0 or 1 habits).
+        if (offeredHabits.size < 2 && !chessReadinessActive) return
 
         val density = resources.displayMetrics.density
         fun Int.dp(): Int = (this * density).toInt()
@@ -2027,7 +2052,7 @@ class FloatingBubbleService : Service() {
 
         }
 
-        habits.forEachIndexed { index, habit ->
+        offeredHabits.forEachIndexed { index, habit ->
             val item = TextView(this).apply {
                 text = habit
                 textSize = 15f
@@ -2047,7 +2072,7 @@ class FloatingBubbleService : Service() {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                bottomMargin = if (index == habits.lastIndex) 0 else 6.dp()
+                bottomMargin = if (index == offeredHabits.lastIndex) 0 else 6.dp()
             })
         }
 

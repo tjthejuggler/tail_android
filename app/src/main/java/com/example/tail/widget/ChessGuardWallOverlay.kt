@@ -65,6 +65,36 @@ object ChessGuardWallOverlay {
     private var testRequiredWm: WindowManager? = null
     private var testRequiredView: LinearLayout? = null
 
+    // ──────────────────────────────────────────────────────────────────────
+    //  Hooks into FloatingBubbleService (same process, set on service start)
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * Fired by the test-required wall's "Start readiness test" button.
+     * [FloatingBubbleService] installs the hook (it owns the readiness
+     * wizard overlays). Read at CLICK time: a wall that appeared before
+     * the bubble service came up (accessibility path wins the race)
+     * still works once the hook arrives — about one trigger-service
+     * poll later.
+     */
+    @Volatile
+    var onReadinessTestRequested: (() -> Unit)? = null
+
+    /** Fired by the YELLOW warning's habit buttons — starts that habit's timer. */
+    @Volatile
+    var onHabitStart: ((String) -> Unit)? = null
+
+    /**
+     * Chess-app trigger habits offered as start buttons on the YELLOW
+     * warning. [FloatingBubbleService] keeps this in sync with its own
+     * trigger habits on every service start over the chess app.
+     */
+    @Volatile
+    var chessHabitNames: List<String> = emptyList()
+
+    /** Button column inside the live YELLOW warning (null when not shown). */
+    private var warningHabitBox: LinearLayout? = null
+
     private val tick = object : Runnable {
         override fun run() {
             val context = appContext
@@ -253,11 +283,62 @@ object ChessGuardWallOverlay {
     }
 
     /**
+     * Refreshes the YELLOW warning's chess-habit start buttons from
+     * [chessHabitNames] — rebuilding them in place when the warning is
+     * already on screen (the bubble service may have started after the
+     * accessibility path showed the wall, so the habit list arrives late).
+     */
+    fun updateChessHabitButtons(names: List<String>) {
+        chessHabitNames = names
+        val box = warningHabitBox ?: return
+        box.removeAllViews()
+        if (names.isEmpty()) {
+            box.visibility = View.GONE
+            return
+        }
+        buildYellowHabitButtons(box)
+        box.visibility = View.VISIBLE
+        // Re-layout: the window was sized while the button column was gone.
+        try {
+            val wm = warningWm
+            val view = warningView
+            if (wm != null && view != null) wm.updateViewLayout(view, view.layoutParams)
+        } catch (_: Exception) { /* window already gone */ }
+    }
+
+    /** Fills [box] with one "▶ habit" start button per chess-app habit. */
+    private fun buildYellowHabitButtons(box: LinearLayout) {
+        val context = box.context
+        val density = context.resources.displayMetrics.density
+        chessHabitNames.forEach { habit ->
+            val start = Button(context).apply {
+                text = "▶ $habit"
+                setOnClickListener {
+                    // The timer chip must not fight the full-screen warning
+                    // — dismiss first, then start the habit's timer.
+                    dismissWarning()
+                    onHabitStart?.invoke(habit)
+                }
+            }
+            box.addView(
+                start,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = (density * 8).toInt()
+                    gravity = Gravity.CENTER_HORIZONTAL
+                }
+            )
+        }
+    }
+
+    /**
      * Full-screen YELLOW entry warning — NOT a block. Shown when the chess
      * app opens during a YELLOW session: casual play is allowed, but the
      * message spells out that one rated game triggers the automatic
-     * 24-hour lockout. Dismissable ("Got it" button). A live tick keeps
-     * the "next readiness test" line counting down and flips it to
+     * 24-hour lockout. Offers a start button for each chess-app habit
+     * (see [updateChessHabitButtons]) plus a "Got it" dismiss. A live tick
+     * keeps the "next readiness test" line counting down and flips it to
      * "available now" the moment the re-test gate opens.
      */
     fun showWarning(context: Context): Boolean {
@@ -296,6 +377,12 @@ object ChessGuardWallOverlay {
             gravity = Gravity.CENTER
             setPadding(0, pad / 2, 0, 0)
         }
+        val habitBox = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            visibility = if (chessHabitNames.isEmpty()) View.GONE else View.VISIBLE
+        }
+        if (chessHabitNames.isNotEmpty()) buildYellowHabitButtons(habitBox)
         val gotIt = Button(context).apply {
             text = "Got it — casual only"
             setOnClickListener { dismissWarning() }
@@ -319,6 +406,12 @@ object ChessGuardWallOverlay {
             )
             addView(
                 nextTest,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                habitBox,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 )
@@ -349,6 +442,7 @@ object ChessGuardWallOverlay {
             warningView = root
             warningContext = context.applicationContext
             warningCountdownView = nextTest
+            warningHabitBox = habitBox
             nextTest.text = formatNextTestLine(context)
                 ?: "⏱ Next readiness test: check the readiness widget."
             handler.removeCallbacks(warningTick)
@@ -366,8 +460,9 @@ object ChessGuardWallOverlay {
      * the app opens (the test lives inside it), but the user is told up
      * front that the readiness test must come BEFORE anything else. A
      * rated game played in this state still triggers the 24-hour
-     * [ChessEnforcementPolicy.PENALTY_DURATION_MS] lockout. Dismissable
-     * ("Take the test" button).
+     * [ChessEnforcementPolicy.PENALTY_DURATION_MS] lockout. Buttons:
+     * "Start readiness test" (opens the wizard via [onReadinessTestRequested])
+     * and a plain "Dismiss" that just closes the notice.
      */
     fun showTestRequiredWarning(context: Context): Boolean {
         if (!Settings.canDrawOverlays(context)) return false
@@ -397,8 +492,17 @@ object ChessGuardWallOverlay {
             gravity = Gravity.CENTER
             setPadding(0, pad, 0, 0)
         }
-        val gotIt = Button(context).apply {
-            text = "Got it — test first"
+        val startTest = Button(context).apply {
+            text = "▶ Start readiness test"
+            setOnClickListener {
+                dismissTestRequiredWarning()
+                // Late-bound: null only in the seconds before the bubble
+                // service has installed the hook (see [onReadinessTestRequested]).
+                onReadinessTestRequested?.invoke()
+            }
+        }
+        val dismiss = Button(context).apply {
+            text = "Dismiss"
             setOnClickListener { dismissTestRequiredWarning() }
         }
         val root = LinearLayout(context).apply {
@@ -419,10 +523,16 @@ object ChessGuardWallOverlay {
                 )
             )
             addView(
-                gotIt,
+                startTest,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 ).apply { topMargin = pad; gravity = Gravity.CENTER_HORIZONTAL }
+            )
+            addView(
+                dismiss,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = pad / 2; gravity = Gravity.CENTER_HORIZONTAL }
             )
         }
         val params = WindowManager.LayoutParams(
@@ -462,13 +572,14 @@ object ChessGuardWallOverlay {
         testRequiredWm = null
     }
 
-    /** Removes the YELLOW warning (Got it button or service gone). */
+    /** Removes the YELLOW warning (Got it / habit button or service gone). */
     fun dismissWarning() {
         handler.removeCallbacks(warningTick)
         val view = warningView
         warningView = null
         warningContext = null
         warningCountdownView = null
+        warningHabitBox = null
         if (view != null) {
             try {
                 warningWm?.removeView(view)
