@@ -612,6 +612,18 @@ internal fun HabitViewModel.sendHabitIncrementedBroadcast(habitName: String, amo
 }
 
 
+/** Toggles whether [habitName] appears on the lock-screen habit list widget. */
+fun HabitViewModel.toggleLockWidgetHabit(habitName: String) {
+    viewModelScope.launch {
+        val current = _settings.value.lockWidgetExcludedHabits.toMutableSet()
+        val wasEnabled = habitName !in current
+        if (wasEnabled) current.add(habitName) else current.remove(habitName)
+        settingsRepo.saveLockWidgetExcludedHabits(current)
+        _settings.value = _settings.value.copy(lockWidgetExcludedHabits = current)
+        HabitListWidgetProvider.refreshAll(context)
+    }
+}
+
 /** Toggles whether [habitName] appears as a timer square on the PC widget. */
 fun HabitViewModel.togglePcWidgetHabit(habitName: String) {
     viewModelScope.launch {

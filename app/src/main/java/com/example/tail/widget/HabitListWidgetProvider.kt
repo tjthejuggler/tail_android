@@ -332,6 +332,13 @@ class HabitListWidgetProvider : AppWidgetProvider() {
     private fun buildExpandedViews(context: Context, widgetId: Int): RemoteViews {
         val rv = RemoteViews(context.packageName, R.layout.widget_expanded)
 
+        // Sticky "Add Note" bar — opens the note composer over the lock
+        // screen; on confirm it prepends to the configured voice-note markdown.
+        rv.setOnClickPendingIntent(
+            R.id.widget_add_note_button,
+            notePendingIntent(context, widgetId)
+        )
+
         val intent = Intent(context, HabitListRemoteViewsService::class.java).apply {
             putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
             data = Uri.parse(toUri(Intent.URI_INTENT_SCHEME))
@@ -519,6 +526,21 @@ class HabitListWidgetProvider : AppWidgetProvider() {
         return PendingIntent.getBroadcast(
             context,
             widgetId * 10 + action.hashCode().and(0x7),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /** Launches [WidgetNoteActivity] (note composer) from the expanded widget. */
+    private fun notePendingIntent(context: Context, widgetId: Int): PendingIntent {
+        val intent = Intent(context, WidgetNoteActivity::class.java).apply {
+            action = WidgetNoteActivity.ACTION_SHOW
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            data = Uri.parse("tail-widget://note/$widgetId")
+        }
+        return PendingIntent.getActivity(
+            context,
+            widgetId * 10 + 3,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

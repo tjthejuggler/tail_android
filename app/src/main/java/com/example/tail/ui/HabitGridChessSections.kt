@@ -557,6 +557,49 @@ internal fun PcWidgetToggleSection(
     }
 }
 
+/**
+ * Lock-screen widget toggle for the habit edit panel — includes/excludes the
+ * habit from the lock-screen habit list widget. Inverted-membership storage:
+ * every habit is included by default, so this switch starts ON and unticking
+ * hides the habit from the widget's expanded list.
+ * Extracted to its own composable to keep [EditModeControlBar] under the
+ * JVM method-size limit (same pattern as [PcWidgetToggleSection]).
+ */
+
+
+@Composable
+internal fun LockWidgetToggleSection(
+    isIncluded: Boolean,
+    onToggle: () -> Unit
+) {
+    Spacer(modifier = Modifier.height(6.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "🔒 Lock Screen Widget", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isIncluded) "Shown in the lock-screen widget list"
+                       else "Hidden from the lock-screen widget",
+                color = if (isIncluded) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isIncluded,
+            onCheckedChange = { onToggle() },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66BB6A),
+                checkedTrackColor = Color(0xFF1B5E20),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+}
+
 // ── Restore-from-backup confirmation (single habit) ───────────────────────────
 
 /**

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Expanded habit list widget. Header + scrollable ListView fed by
-  HabitListRemoteViewsService. No close button — the widget auto-collapses
+  Expanded habit list widget. Sticky "Add Note" header + scrollable ListView
+  fed by HabitListRemoteViewsService. No close button — the widget auto-collapses
   when the screen turns off.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -12,17 +12,20 @@
     android:background="@drawable/widget_panel_bg"
     android:padding="6dp">
 
-    <!-- Header -->
+    <!-- Sticky "Add Note" bar — always pinned above the scrollable list -->
     <TextView
+        android:id="@+id/widget_add_note_button"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingStart="6dp"
-        android:paddingEnd="6dp"
-        android:paddingBottom="4dp"
-        android:text="Habits"
-        android:textColor="#FFD700"
+        android:layout_marginBottom="4dp"
+        android:gravity="center"
+        android:paddingTop="7dp"
+        android:paddingBottom="7dp"
+        android:text="✎  Add Note"
+        android:textColor="#111111"
         android:textSize="13sp"
-        android:textStyle="bold" />
+        android:textStyle="bold"
+        android:background="@drawable/widget_add_note_bg" />
 
     <!-- Scrollable habit list -->
     <ListView

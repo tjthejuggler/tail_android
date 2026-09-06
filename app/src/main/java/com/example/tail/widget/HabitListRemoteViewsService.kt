@@ -129,7 +129,10 @@ private class HabitListFactory(
         }
 
         val disabled = settings.disabledHabits
-        val available = canonical.filter { it !in disabled }.distinct()
+        val lockExcluded = settings.lockWidgetExcludedHabits
+        // Excluded via the per-habit "🔒 Lock Screen Widget" toggle (default ON
+        // → excluded set is normally empty). disabledHabits is the global hide.
+        val available = canonical.filter { it !in disabled && it !in lockExcluded }.distinct()
 
         val availableSet = available.toHashSet()
 

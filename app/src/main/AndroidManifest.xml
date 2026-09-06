@@ -555,7 +555,7 @@
         <receiver
             android:name=".widget.HabitListWidgetProvider"
             android:exported="true"
-            android:label="Tail habits">
+            android:label="Tail Lock Screen">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <!-- Custom actions used by the widget itself -->
@@ -628,6 +628,25 @@
             android:noHistory="true"
             android:taskAffinity=""
             android:launchMode="singleTask"
+            android:theme="@style/Theme.Tail.Transparent" />
+
+        <!--
+            WidgetNoteActivity: transparent trampoline launched by the sticky
+            "✎ Add Note" bar at the top of the expanded lock-screen widget.
+            Shows a Compose note composer; on confirm the note is prepended to
+            the voice-note markdown file (voiceNoteFileUri) in the same
+            "## timestamp" entry format SmartVoiceService uses. showWhenLocked
+            + turnScreenOn so it also works from the actual lock screen.
+        -->
+        <activity
+            android:name=".widget.WidgetNoteActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:theme="@style/Theme.Tail.Transparent" />
 
         <!--

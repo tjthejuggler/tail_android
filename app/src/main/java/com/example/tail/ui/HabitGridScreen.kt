@@ -1974,11 +1974,17 @@ fun HabitGridScreen(
                         },
                         pcWidgetContent = {
                             if (selectedHabitName != null) {
-                                PcWidgetToggleSection(
-                                    isOnPcWidget = selectedHabitName in settings.pcWidgetHabits,
-                                    syncConfigured = settings.garminProxyUrl.isNotEmpty(),
-                                    onToggle = { viewModel.togglePcWidgetHabit(selectedHabitName) }
-                                )
+                                Column {
+                                    PcWidgetToggleSection(
+                                        isOnPcWidget = selectedHabitName in settings.pcWidgetHabits,
+                                        syncConfigured = settings.garminProxyUrl.isNotEmpty(),
+                                        onToggle = { viewModel.togglePcWidgetHabit(selectedHabitName) }
+                                    )
+                                    LockWidgetToggleSection(
+                                        isIncluded = selectedHabitName !in settings.lockWidgetExcludedHabits,
+                                        onToggle = { viewModel.toggleLockWidgetHabit(selectedHabitName) }
+                                    )
+                                }
                             }
                         },
                         garminMonthlyData = garminMonthlyData,

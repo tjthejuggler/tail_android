@@ -22,6 +22,10 @@ private val KEY_FILE_URI = stringPreferencesKey("file_uri")
 private val KEY_SCREENS_RELAY_FILE_URI = stringPreferencesKey("screens_relay_file_uri")
 // PC floating widget sync (noteVault/tail/ folder shared via Syncthing)
 private val KEY_PC_WIDGET_HABITS = stringSetPreferencesKey("pc_widget_habits")
+// Lock-screen widget exclusions — habits hidden from the lock-screen habit
+// list widget. Inverted membership: a habit is INCLUDED unless its name is
+// in this set, so the per-habit toggle defaults to ON with zero stored data.
+private val KEY_LOCK_WIDGET_EXCLUDED_HABITS = stringSetPreferencesKey("lock_widget_excluded_habits")
 // In-app stats overlay (StatsOverlayService) master switch
 private val KEY_STATS_OVERLAY_ENABLED = booleanPreferencesKey("stats_overlay_enabled")
 
@@ -924,6 +928,7 @@ class SettingsRepository(private val context: Context) {
             fileUri = prefs[KEY_FILE_URI] ?: "",
             screensRelayFileUri = prefs[KEY_SCREENS_RELAY_FILE_URI] ?: "",
             pcWidgetHabits = prefs[KEY_PC_WIDGET_HABITS] ?: emptySet(),
+            lockWidgetExcludedHabits = prefs[KEY_LOCK_WIDGET_EXCLUDED_HABITS] ?: emptySet(),
             statsOverlayEnabled = prefs[KEY_STATS_OVERLAY_ENABLED] ?: false,
             appStatsRecordNotificationsEnabled = prefs[KEY_APP_STATS_RECORD_NOTIFS] ?: true,
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
@@ -1105,6 +1110,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits shown on the PC floating bubble widget. */
     suspend fun savePcWidgetHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_PC_WIDGET_HABITS] = habits }
+    }
+
+    /** Saves the set of habits EXCLUDED from the lock-screen habit list widget. */
+    suspend fun saveLockWidgetExcludedHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_LOCK_WIDGET_EXCLUDED_HABITS] = habits }
     }
 
 

@@ -832,6 +832,14 @@ data class AppSettings(
      */
     val pcWidgetHabits: Set<String> = emptySet(),
     /**
+     * Habits EXCLUDED from the lock-screen habit list widget. Inverted
+     * membership (like disabledHabits): every habit is included by default,
+     * so the per-habit edit-panel toggle starts ON and only adds a name here
+     * when the user switches it off. The widget's list service filters these
+     * out when building its rows.
+     */
+    val lockWidgetExcludedHabits: Set<String> = emptySet(),
+    /**
      * Master switch for the in-app stats overlay (StatsOverlayService).
      * When true, a small always-on-top bar shows the today / avg7 / avg30
      * numbers, each tier-coloured. Geometry (position / width) is persisted
