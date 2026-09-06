@@ -1594,6 +1594,10 @@ fun HabitGridScreen(
                                                     recordTimestamp = isToday,
                                                     customEndDate = confirmedEndDate
                                                 )
+                                                // Popup-gated increment: the roll-forward
+                                                // confirmation was submitted — now the
+                                                // lizard shimmer may fire.
+                                                lizardShimmerGen.intValue++
                                                 // Show increment toast with edit-time option
                                                 incrementToastVersion++
                                                 incrementToastHabit = habit.name
@@ -2595,6 +2599,10 @@ fun HabitGridScreen(
                 viewModel.incrementHabit(habit.name, amount, recordTimestamp = isToday)
                 viewModel.recordRecentIncrementAmount(habit.name, amount)
                 dialogHabit = null
+                // Popup-gated increment: the lizard shimmer fires only now,
+                // when the custom-amount dialog is actually submitted — not
+                // on the square tap that opened it.
+                lizardShimmerGen.intValue++
                 // Show increment toast with edit-time option (same as normal increment)
                 incrementToastVersion++
                 incrementToastHabit = habit.name
@@ -2625,6 +2633,9 @@ fun HabitGridScreen(
                 onConfirm = { increments ->
                     viewModel.saveSubtypeIncrement(habit.name, increments)
                     subtypeDialogHabit = null
+                    // Popup-gated increment: the lizard shimmer fires only
+                    // now, on subtype dialog submission.
+                    lizardShimmerGen.intValue++
                 },
                 onDismiss = { subtypeDialogHabit = null }
             )
@@ -2640,6 +2651,9 @@ fun HabitGridScreen(
             onConfirm = { weightGrams, reps, machine, exerciseName ->
                 viewModel.saveWeightsEntry(habit.name, weightGrams, reps, machine, exerciseName)
                 weightsDialogHabit = null
+                // Popup-gated increment: the lizard shimmer fires only now,
+                // on weights dialog submission.
+                lizardShimmerGen.intValue++
             },
             onDismiss = { weightsDialogHabit = null }
         )
@@ -2705,6 +2719,10 @@ fun HabitGridScreen(
                                 viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { _ ->
                                     // Don't reopen the dialog - just dismiss it
                                     textInputDialogState = null
+                                    // Popup-gated increment confirmed: fire the
+                                    // lizard shimmer now that every dialog in the
+                                    // chain (text input + roll-forward) is settled.
+                                    lizardShimmerGen.intValue++
                                     // Show increment toast with edit-time option
                                     incrementToastVersion++
                                     incrementToastHabit = state.habit.name
@@ -2724,6 +2742,9 @@ fun HabitGridScreen(
                 } else {
                     viewModel.saveTextEntries(state.habit.name, entries, dateForEntry, entryTime)
                     textInputDialogState = null
+                    // Popup-gated increment: the lizard shimmer fires only
+                    // now, on text-input dialog submission.
+                    lizardShimmerGen.intValue++
                     // Show increment toast with edit-time option
                     incrementToastVersion++
                     incrementToastHabit = state.habit.name

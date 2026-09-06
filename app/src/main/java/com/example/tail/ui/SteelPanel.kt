@@ -256,10 +256,16 @@ internal fun Modifier.ghostGlassSquares(
     // Pit-floor lizard — the SAME tier variant the tier-bar widget is
     // showing right now (dayTier from TierStateStore, which the widget
     // refreshes on every repaint), as a transparent-background strip.
-    val lizard: ImageBitmap? = if (!pitLizard) null else remember {
-        val tier = com.example.tail.widget.TierStateStore.load(context).dayTier
+    // The tier is re-read on EVERY recomposition and the bitmap decode is
+    // keyed on it: the old unconditional remember{} froze whatever tier was
+    // current at first composition, so a later tier change (widget repaint,
+    // day rollover) left the shimmer showing the STALE lizard colour while
+    // the widget already showed the new one.
+    val dayTier = com.example.tail.widget.TierStateStore.load(context)
+        .dayTier.coerceIn(0, 12)
+    val lizard: ImageBitmap? = if (!pitLizard) null else remember(dayTier) {
         val resId = context.resources.getIdentifier(
-            "tier_bar_lizard_t${tier.coerceIn(0, 12)}", "drawable", context.packageName
+            "tier_bar_lizard_t$dayTier", "drawable", context.packageName
         )
         if (resId != 0) {
             BitmapFactory.decodeResource(context.resources, resId)?.asImageBitmap()
@@ -311,14 +317,12 @@ internal fun Modifier.ghostGlassSquares(
     // first, then the PHASE 1 strip's 8 rotations × mirrors as the universal
     // fallback (wall-edge climbing + hanging live only there). A tier with
     // no generated poses yet simply gets the strip behaviour.
-    val lizardVariants = remember(lizard) {
+    val lizardVariants = remember(lizard, dayTier) {
         if (lizard == null) {
             emptyList()
         } else {
-            val tier = com.example.tail.widget.TierStateStore.load(context)
-                .dayTier.coerceIn(0, 12)
             val poseVariants = try {
-                buildPoseVariants(loadLizardPoseAssets(context, tier))
+                buildPoseVariants(loadLizardPoseAssets(context, dayTier))
             } catch (_: Exception) {
                 emptyList()
             }
@@ -536,6 +540,27 @@ internal fun Modifier.ghostGlassSquares(
                     )
                 }
 
+                // NO GRID ON THE FROZEN LIZARD: once the lizard is fully
+                // revealed (the 2 s hold after the LIZARD_IN wave), the ghost
+                // tiles under his perch footprint are suppressed so no lattice
+                // reads on/through him while he sits there. During the reveal
+                // wave itself (and the LIZARD_OUT drain) the tiles keep
+                // drawing — the grid sweeping over him as he lights up is the
+                // intended effect. Flat-grid footprint rect in GLOBAL coords
+                // (l, t, r, b), identical mapping to the lizard's own paint.
+                val lizardSuppress = if (
+                    holdActive && dir == ShimmerDirection.LIZARD_IN
+                ) {
+                    SharedPerchState.perch?.let { p ->
+                        floatArrayOf(
+                            outerPad + p.col * cell,
+                            anchorTop + p.row * cell,
+                            outerPad + (p.col + p.cols) * cell,
+                            anchorTop + (p.row + p.rows) * cell
+                        )
+                    }
+                } else null
+
                 fun drawSquareRow(gridRow: Int) {
                     // Row boundary depths (evaluated on the boundary lines,
                     // shared with the neighbouring rows).
@@ -676,6 +701,13 @@ internal fun Modifier.ghostGlassSquares(
                             val left = minOf(p00x, p10x)
                             val right = maxOf(p01x, p11x)
                             if (right - left < 1f) continue
+                            // Skip tiles that fall inside the frozen lizard's
+                            // footprint (see lizardSuppress above). Tile y
+                            // range here is GLOBAL (sy0/sy1), x is window-wide.
+                            if (lizardSuppress != null &&
+                                left < lizardSuppress[2] && right > lizardSuppress[0] &&
+                                sy0 < lizardSuppress[3] && sy1 > lizardSuppress[1]
+                            ) continue
                             // Rounded corners on the trapezoid: at the
                             // surface (depth 1) the radius matches the real
                             // habit squares' 6.dp, so flat ghost squares are
@@ -878,6 +910,34 @@ internal fun Modifier.ghostGlassSquares(
                         if (centerGlobalY >= topY && centerGlobalY < topY + size.height) {
                             val dstW = xRight0 - xLeft0
                             val dstH = botB - topB
+                            // HOLD FAST-PATH: once he is fully lit (the 2 s
+                            // frozen hold) the sliver mosaic is replaced by ONE
+                            // whole-image draw. The mosaic's per-sliver integer
+                            // truncation leaves hairline seams that read as a
+                            // grid ON the lizard while he sits frozen; a single
+                            // drawImage has no seams. The slivers remain the
+                            // mechanism for the reveal wave and the LIZARD_OUT
+                            // drain, where the per-cell lighting IS the effect.
+                            val holdFastPath = holdActive && !lizardDraining
+                            if (holdFastPath) {
+                                clipRect(xLeft0, topB - topY, xRight0, botB - topY) {
+                                    drawImage(
+                                        image = variant.bitmap,
+                                        srcOffset = IntOffset(variant.srcX, variant.srcY),
+                                        srcSize = IntSize(variant.srcW, variant.srcH),
+                                        dstOffset = IntOffset(
+                                            xLeft0.toInt(),
+                                            (topB - topY).toInt()
+                                        ),
+                                        dstSize = IntSize(
+                                            (dstW + 0.99f).toInt(),
+                                            (dstH + 0.99f).toInt()
+                                        ),
+                                        alpha = 1f
+                                    )
+                                }
+                            }
+                            if (!holdFastPath) {
                             val sliver = (cell * minDepth).coerceAtLeast(1f)
                             val nx = ceil(dstW / sliver).toInt().coerceIn(12, 160)
                             val ny = ceil(dstH / sliver).toInt().coerceIn(1, 160)
@@ -951,6 +1011,7 @@ internal fun Modifier.ghostGlassSquares(
                                         )
                                     }
                                 }
+                            }
                             }
                         }
                     } else if (vpyLocal >= 0f && vpyLocal < size.height) {
