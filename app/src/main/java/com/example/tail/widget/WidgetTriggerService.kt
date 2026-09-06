@@ -153,6 +153,16 @@ class WidgetTriggerService : Service() {
      *  (several habits can share one trigger app). */
     private var habitsByPackage: Map<String, List<String>> = emptyMap()
 
+    /**
+     * Habits with the "Persistent Timer" sub-option of Use Widget enabled.
+     * A still-running timer for one of these habits is NOT stopped when the
+     * trigger app is left — it keeps running (across app switches and
+     * screen-off) and the bubble reappears over the trigger app or over the
+     * Tail app itself (tail mode) until the user stops it.
+     */
+    @Volatile
+    private var persistentHabits: Set<String> = emptySet()
+
     /** Package of the Chess Readiness app (null when feature is off/unset). */
     private var chessReadinessPackage: String? = null
 
@@ -182,6 +192,10 @@ class WidgetTriggerService : Service() {
 
     /** Whether the bubble is currently shown. */
     private var bubbleActive = false
+
+    /** True while the bubble is showing over Tail in "tail mode"
+     *  (displaying a persistent timer started in another app). */
+    private var bubbleTailMode = false
 
     /** True after a guard-bypass warning fired for the CURRENT chess
      *  session (reset when the chess app leaves the foreground). */
@@ -270,6 +284,10 @@ class WidgetTriggerService : Service() {
             habitsByPackage = newByPackage
             chessReadinessPackage = newChessPkg
             mediaHabitsByPackage = newMediaByPackage
+            // Only meaningful for habits that still have the widget feature
+            // enabled (stale entries are ignored).
+            persistentHabits = settings.widgetPersistentTimerHabits intersect
+                settings.widgetTriggerHabits
             Log.d(
                 TAG,
                 "Watched packages loaded: $newPackages (chess readiness: $newChessPkg, " +
@@ -396,9 +414,19 @@ class WidgetTriggerService : Service() {
             )
         }
 
-        // Ignore our own app coming to the foreground
+        // Our own app coming to the foreground: WITHOUT a running persistent
+        // timer the bubble simply hides (previous behaviour). WITH one, the
+        // bubble shows (or flips to) "tail mode" — it appears over Tail with
+        // the timed habit's icon and live elapsed time so the timer can be
+        // seen and stopped from inside Tail too.
         if (foregroundPkg == packageName) {
-            if (bubbleActive) {
+            val tailHabit = findRunningPersistentHabit()
+            if (tailHabit != null) {
+                if (!bubbleActive || !bubbleTailMode) {
+                    Log.d(TAG, "Tail is foreground — showing bubble in tail mode for '$tailHabit'")
+                    startTailModeBubble(tailHabit)
+                }
+            } else if (bubbleActive) {
                 Log.d(TAG, "Tail is foreground — hiding bubble")
                 stopBubble(stopRunningTimer = true)
             }
@@ -440,7 +468,7 @@ class WidgetTriggerService : Service() {
                         warnGuardBypassed()
                     }
                 }
-                if (!bubbleActive) {
+                if (!bubbleActive || bubbleTailMode) {
                     Log.d(TAG, "Trigger app detected ($foregroundPkg) — showing bubble")
                     startBubble(
                         habitsByPackage[foregroundPkg].orEmpty(),
@@ -448,7 +476,21 @@ class WidgetTriggerService : Service() {
                     )
                 }
             } else {
-                if (bubbleActive) {
+                // ── Persistent Timer: the bubble STAYS on screen ─────────
+                // While a persistent habit's timer runs, the bubble remains
+                // visible over EVERY app (launcher, other apps, Tail) until
+                // the user stops it — it is never hidden on app switches.
+                val persistentHabit = findRunningPersistentHabit()
+                if (persistentHabit != null) {
+                    if (!bubbleActive && !FloatingBubbleService.stoppedByUser) {
+                        // Dismissed earlier (or service restarted): bring the
+                        // bubble back — the timer is still going. A DELIBERATE
+                        // user dismissal (drag to X) is respected; re-entering
+                        // the trigger app always restores the bubble.
+                        Log.d(TAG, "Persistent timer running — showing bubble for '$persistentHabit'")
+                        startTailModeBubble(persistentHabit)
+                    }
+                } else if (bubbleActive) {
                     Log.d(TAG, "Trigger app left — hiding bubble, stopping timer if running")
                     stopBubble(stopRunningTimer = true)
                 }
@@ -580,10 +622,17 @@ class WidgetTriggerService : Service() {
                 putStringArrayListExtra(FloatingBubbleService.EXTRA_HABIT_NAMES, ArrayList(triggerHabits))
             }
             putExtra(FloatingBubbleService.EXTRA_CHESS_READINESS, chessReadiness)
+            // Persistent habits keep the bubble visible over ALL apps while
+            // their timer runs (and attempt to draw over the lock screen).
+            putExtra(
+                FloatingBubbleService.EXTRA_PERSISTENT_MODE,
+                triggerHabits.any { it in persistentHabits }
+            )
         }
         try {
             startForegroundService(intent)
             bubbleActive = true
+            bubbleTailMode = false
         } catch (e: Exception) {
             // Blocked (e.g. background FGS restriction). Clear the cached
             // foreground package so the next poll re-evaluates and retries
@@ -595,6 +644,37 @@ class WidgetTriggerService : Service() {
     }
 
     /**
+     * Starts (or re-purposes) the bubble in "tail mode": Tail itself is the
+     * foreground app (or a persistent timer was revived after an app
+     * switch) and a persistent timer is still running. The bubble shows with
+     * the timed habit's icon, the live elapsed time and tap-to-stop — and
+     * stays visible over EVERY app until the timer is stopped.
+     */
+    private fun startTailModeBubble(habit: String) {
+        val intent = Intent(this, FloatingBubbleService::class.java).apply {
+            action = FloatingBubbleService.ACTION_TAIL_MODE
+            putExtra(FloatingBubbleService.EXTRA_HABIT_NAME, habit)
+            putExtra(FloatingBubbleService.EXTRA_PERSISTENT_MODE, habit in persistentHabits)
+        }
+        try {
+            startForegroundService(intent)
+            bubbleActive = true
+            bubbleTailMode = true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start tail-mode bubble — will retry", e)
+            bubbleTailMode = false
+        }
+    }
+
+    /**
+     * Returns the first habit that currently has a RUNNING timer AND the
+     * "Persistent Timer" sub-option enabled — a timer that must survive app
+     * switches and be shown over Tail. Null when none qualifies.
+     */
+    private fun findRunningPersistentHabit(): String? =
+        persistentHabits.firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
+
+    /**
      * Tells the bubble service to hide itself. When [stopRunningTimer] is
      * true (the trigger app left the foreground) a still-running habit timer
      * is stopped and recorded first; false (monitor shutdown / trigger apps
@@ -603,6 +683,7 @@ class WidgetTriggerService : Service() {
      */
     private fun stopBubble(stopRunningTimer: Boolean = false) {
         if (!bubbleActive) return
+        bubbleTailMode = false
         val stopAction = if (stopRunningTimer) {
             FloatingBubbleService.ACTION_TRIGGER_APP_LEFT
         } else {

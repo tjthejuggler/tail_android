@@ -191,6 +191,7 @@ data class SettingsSection(
     val widgetTriggerHabits: List<String> = emptyList(),
     val widgetTriggerApps: Map<String, String> = emptyMap(),
     val widgetTimerMinutesPrimary: List<String> = emptyList(),
+    val widgetPersistentTimerHabits: List<String> = emptyList(),
     val chessReadinessEnabled: Boolean = false,
     val chessReadinessApp: String = "",
     val gdriveAutoEnabled: Boolean = false,

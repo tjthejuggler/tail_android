@@ -254,6 +254,9 @@ private val KEY_WIDGET_TRIGGER_HABITS = stringSetPreferencesKey("widget_trigger_
 private val KEY_WIDGET_TRIGGER_APPS = stringPreferencesKey("widget_trigger_apps")
 // Widget-timer habits where minutes (not sessions) is the primary value
 private val KEY_WIDGET_TIMER_MINUTES_PRIMARY = stringSetPreferencesKey("widget_timer_minutes_primary")
+// Habits with the "Persistent Timer" sub-option of Use Widget enabled —
+// their bubble timer keeps running across app switches / screen-off.
+private val KEY_WIDGET_PERSISTENT_TIMER_HABITS = stringSetPreferencesKey("widget_persistent_timer_habits")
 // Habits with the first-class minutes value explicitly enabled (opt-in toggle)
 private val KEY_MINUTES_ENABLED_HABITS = stringSetPreferencesKey("minutes_enabled_habits")
 // Per-habit fallback source for minutes-primary habits (habit → none/sessions/value2),
@@ -1035,6 +1038,7 @@ class SettingsRepository(private val context: Context) {
             widgetTriggerHabits = prefs[KEY_WIDGET_TRIGGER_HABITS] ?: emptySet(),
             widgetTriggerApps = decodeFileUriMap(prefs[KEY_WIDGET_TRIGGER_APPS] ?: ""),
             widgetTimerMinutesPrimary = prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] ?: emptySet(),
+            widgetPersistentTimerHabits = prefs[KEY_WIDGET_PERSISTENT_TIMER_HABITS] ?: emptySet(),
             minutesEnabledHabits = prefs[KEY_MINUTES_ENABLED_HABITS] ?: emptySet(),
             minutesPrimaryFallbacks = decodeFileUriMap(prefs[KEY_MINUTES_PRIMARY_FALLBACKS] ?: ""),
             mediaHabits = prefs[KEY_MEDIA_HABITS] ?: emptySet(),
@@ -1767,6 +1771,16 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of widget-timer habits where minutes is the primary value. */
     suspend fun saveWidgetTimerMinutesPrimary(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] = habits }
+    }
+
+    /**
+     * Saves the set of habits with the "Persistent Timer" sub-option of the
+     * Use Widget feature enabled. The bubble timer for these habits keeps
+     * running when the trigger app leaves the foreground (it is only stopped
+     * by the user, and it reappears over the trigger app / the Tail app).
+     */
+    suspend fun saveWidgetPersistentTimerHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_WIDGET_PERSISTENT_TIMER_HABITS] = habits }
     }
 
     /** Saves the set of habits with the minutes value explicitly enabled. */

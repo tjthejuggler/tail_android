@@ -2139,6 +2139,8 @@ fun HabitGridScreen(
                         widgetTriggerApps = settings.widgetTriggerApps,
                         onToggleWidgetTrigger = { name -> viewModel.toggleWidgetTrigger(name) },
                         onSetWidgetTriggerApp = { name -> widgetTriggerPickerHabit = name },
+                        widgetPersistentTimerHabits = settings.widgetPersistentTimerHabits,
+                        onTogglePersistentTimer = { name -> viewModel.toggleWidgetPersistentTimer(name) },
                         hasUsageAccess = viewModel.hasUsageAccess(),
                         onRequestUsageAccess = { viewModel.openUsageAccessSettings() },
                         widgetTimerMinutesPrimary = settings.widgetTimerMinutesPrimary,

@@ -1160,11 +1160,15 @@ fun HabitViewModel.toggleWidgetTrigger(habitName: String) {
         val current = _settings.value.widgetTriggerHabits
         val newHabits: Set<String>
         val newApps: Map<String, String>
+        // Disabling the widget feature also drops the persistent-timer
+        // sub-option — it is meaningless without a trigger app.
+        var newPersistent = _settings.value.widgetPersistentTimerHabits
 
         if (habitName in current) {
             // Disabling — remove from both sets
             newHabits = current - habitName
             newApps = _settings.value.widgetTriggerApps - habitName
+            newPersistent = newPersistent - habitName
         } else {
             // Enabling — add to habits set
             newHabits = current + habitName
@@ -1173,6 +1177,9 @@ fun HabitViewModel.toggleWidgetTrigger(habitName: String) {
 
         settingsRepo.saveWidgetTriggerHabits(newHabits)
         settingsRepo.saveWidgetTriggerApps(newApps)
+        if (newPersistent != _settings.value.widgetPersistentTimerHabits) {
+            settingsRepo.saveWidgetPersistentTimerHabits(newPersistent)
+        }
         // Connecting a habit to the phone bubble timer forces minutes ON
         // — the bubble timer feeds the habit's `minutes:` slot.
         var minutes = _settings.value.minutesEnabledHabits
@@ -1185,9 +1192,29 @@ fun HabitViewModel.toggleWidgetTrigger(habitName: String) {
         _settings.value = _settings.value.copy(
             widgetTriggerHabits = newHabits,
             widgetTriggerApps = newApps,
+            widgetPersistentTimerHabits = newPersistent,
             minutesEnabledHabits = minutes
         )
 
+        updateWidgetTriggerService()
+    }
+}
+
+/**
+ * Toggles the "Persistent Timer" sub-option of the Use Widget feature for
+ * [habitName]. When enabled, the habit's bubble timer keeps running after the
+ * trigger app leaves the foreground (instead of being auto-stopped and
+ * recorded) and the bubble reappears — with the live elapsed time — over the
+ * trigger app and over the Tail app itself until the user stops the timer.
+ */
+fun HabitViewModel.toggleWidgetPersistentTimer(habitName: String) {
+    viewModelScope.launch {
+        val current = _settings.value.widgetPersistentTimerHabits
+        val newPersistent = if (habitName in current) current - habitName else current + habitName
+        settingsRepo.saveWidgetPersistentTimerHabits(newPersistent)
+        _settings.value = _settings.value.copy(widgetPersistentTimerHabits = newPersistent)
+        // The running monitor caches the persistent-habit set — it MUST be
+        // refreshed or the auto-stop keeps using the stale (old) decision.
         updateWidgetTriggerService()
     }
 }
@@ -1728,6 +1755,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
                 widgetTriggerHabits = settings.widgetTriggerHabits.replaceElement(oldName, newName),
                 widgetTriggerApps = settings.widgetTriggerApps.replaceKey(oldName, newName),
                 widgetTimerMinutesPrimary = settings.widgetTimerMinutesPrimary.replaceElement(oldName, newName),
+                widgetPersistentTimerHabits = settings.widgetPersistentTimerHabits.replaceElement(oldName, newName),
                 minutesEnabledHabits = settings.minutesEnabledHabits.replaceElement(oldName, newName),
                 minutesPrimaryFallbacks = settings.minutesPrimaryFallbacks.replaceKey(oldName, newName),
                 mapMainHabit = if (settings.mapMainHabit == oldName) newName else settings.mapMainHabit
@@ -1798,6 +1826,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             settingsRepo.saveWidgetTriggerHabits(newSettings.widgetTriggerHabits)
             settingsRepo.saveWidgetTriggerApps(newSettings.widgetTriggerApps)
             settingsRepo.saveWidgetTimerMinutesPrimary(newSettings.widgetTimerMinutesPrimary)
+            settingsRepo.saveWidgetPersistentTimerHabits(newSettings.widgetPersistentTimerHabits)
             settingsRepo.saveMinutesEnabledHabits(newSettings.minutesEnabledHabits)
             settingsRepo.saveMinutesPrimaryFallbacks(newSettings.minutesPrimaryFallbacks)
             settingsRepo.saveMapMainHabit(newSettings.mapMainHabit)

@@ -201,7 +201,9 @@ internal fun WidgetTriggerSection(
     onToggleWidgetTrigger: (String) -> Unit,
     onSetWidgetTriggerApp: (String) -> Unit,
     hasUsageAccess: Boolean,
-    onRequestUsageAccess: () -> Unit
+    onRequestUsageAccess: () -> Unit,
+    widgetPersistentTimerHabits: Set<String> = emptySet(),
+    onTogglePersistentTimer: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val isEnabled = habitName in widgetTriggerHabits
@@ -301,6 +303,38 @@ internal fun WidgetTriggerSection(
                         color = Color(0xFF66CCFF)
                     )
                 }
+            }
+
+            // Persistent Timer sub-option: keep the timer running when the
+            // trigger app is left — the bubble returns (with the elapsed
+            // time) over the trigger app and over Tail until stopped.
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "⏱️ Persistent Timer", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                    Text(
+                        text = if (habitName in widgetPersistentTimerHabits)
+                            "Timer keeps running across apps — stop it from the bubble"
+                        else
+                            "Timer auto-stops when the app is left",
+                        color = if (habitName in widgetPersistentTimerHabits) Color(0xFF66BB6A) else Color(0xFF888888),
+                        fontSize = 10.sp
+                    )
+                }
+                Switch(
+                    checked = habitName in widgetPersistentTimerHabits,
+                    onCheckedChange = { onTogglePersistentTimer(habitName) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color(0xFF44BBFF),
+                        checkedTrackColor = Color(0xFF003355),
+                        uncheckedThumbColor = Color(0xFF888888),
+                        uncheckedTrackColor = Color(0xFF333333)
+                    )
+                )
             }
 
             // Primary value selection lives in the universal PrimaryValueSection
@@ -1840,6 +1874,10 @@ internal fun EditModeControlBar(
     onToggleWidgetTrigger: (String) -> Unit = {},
     /** Called when the user taps to select/change the trigger app. */
     onSetWidgetTriggerApp: (String) -> Unit = {},
+    /** Habits with the "Persistent Timer" sub-option of Use Widget enabled. */
+    widgetPersistentTimerHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the "Persistent Timer" sub-option. */
+    onTogglePersistentTimer: (String) -> Unit = {},
     /** Whether the user has granted Usage Access permission. */
     hasUsageAccess: Boolean = true,
     /** Called when the user taps to grant Usage Access. */
@@ -3151,7 +3189,9 @@ internal fun EditModeControlBar(
                         onToggleWidgetTrigger = onToggleWidgetTrigger,
                         onSetWidgetTriggerApp = onSetWidgetTriggerApp,
                         hasUsageAccess = hasUsageAccess,
-                        onRequestUsageAccess = onRequestUsageAccess
+                        onRequestUsageAccess = onRequestUsageAccess,
+                        widgetPersistentTimerHabits = widgetPersistentTimerHabits,
+                        onTogglePersistentTimer = onTogglePersistentTimer
                     )
 
                     // ── PC Widget (desktop bubble widget) ─────────────────────

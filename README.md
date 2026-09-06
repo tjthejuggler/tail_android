@@ -1,12 +1,28 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-05T15:57Z
+**Last updated:** 2026-09-06T07:55Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---31e8e7a8
+
+## 2026-09-06T07:55Z — Persistent Timer v2: bubble stays up everywhere
+- New per-habit "⏱️ Persistent Timer" sub-toggle inside the existing "🫧 Use Widget"
+  section (edit panel). Stored as `widgetPersistentTimerHabits` in DataStore, included
+  in backups, rename-safe, and auto-cleared when Use Widget is disabled. Toggling it
+  refreshes the running monitor immediately (the stale-config bug that kept auto-stopping
+  the timer is fixed).
+- With it ON and a timer RUNNING, the bubble now STAYS ON SCREEN over every app —
+  launcher, other apps, Tail — until the timer is stopped. The monitor revives the
+  bubble if its process dies (deliberate drag-to-dismiss is respected).
+- The timer chip gains the timed HABIT'S OWN ICON above the time in persistent mode
+  (same icon resolution as the habit grid: app icons, text glyphs, built-in icons).
+- Both the bubble and the chip windows carry FLAG_SHOW_WHEN_LOCKED — best-effort
+  attempt to stay visible over the lock screen (some OEM keyguards block overlays).
+- Tapping the bubble (anywhere) stops + records the timer with the usual increment
+  flash, then dismisses. Long-press does the same.
 
 ## 2026-09-05T15:57Z — Shimmer lizard Phase 3: ALL 13 tiers have pose art (144 poses)
 

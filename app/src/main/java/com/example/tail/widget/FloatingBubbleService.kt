@@ -24,6 +24,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -38,9 +39,15 @@ import com.example.tail.data.GarminType
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.appIconMonochromeOf
+import com.example.tail.data.appPackageNameOf
 import com.example.tail.data.bridgeConnectionFrom
 import com.example.tail.data.dateString
+import com.example.tail.data.loadAppIconBitmap
+import com.example.tail.data.renderTextIconBitmap
 import com.example.tail.data.secondaryValueKey
+import com.example.tail.data.textIconCharOf
+import com.example.tail.ui.getHabitIconRes
 import com.example.tail.ui.HabitIncrementBus
 import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
@@ -79,6 +86,17 @@ class FloatingBubbleService : Service() {
          */
         private const val LINGER_STOP_DELAY_MS = 3500L
 
+        /** Habit icon size inside the persistent timer chip (dp). */
+        private const val CHIP_ICON_SIZE_DP = 22
+
+        /**
+         * Asks the bubble/chip windows to draw over the lock screen.
+         * Best-effort: honoured for TYPE_APPLICATION_OVERLAY on most
+         * devices, but some OEM keyguards block overlays regardless.
+         */
+        @Suppress("DEPRECATION")
+        private val LOCK_FLAGS = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+
         /** dp → px helper */
         private fun Int.dp(resources: Resources): Int =
             TypedValue.applyDimension(
@@ -89,6 +107,14 @@ class FloatingBubbleService : Service() {
 
         /** Action to stop the bubble from anywhere (e.g. notification action). */
         const val ACTION_STOP_BUBBLE = "com.example.tail.widget.STOP_BUBBLE"
+
+        /**
+         * Action sent by [WidgetTriggerService] when Tail itself is in the
+         * foreground AND a persistent timer (started in another app) is still
+         * running: the bubble shows over Tail in "tail mode" — with the timed
+         * habit's icon, the live elapsed time and tap-to-stop.
+         */
+        const val ACTION_TAIL_MODE = "com.example.tail.widget.TAIL_MODE"
 
         /**
          * Action sent by [WidgetTriggerService] when the trigger app left the
@@ -105,6 +131,12 @@ class FloatingBubbleService : Service() {
 
         /** Intent extra: true when the trigger app is the Chess Readiness app. */
         const val EXTRA_CHESS_READINESS = "chess_readiness"
+
+        /**
+         * Intent extra: true when the bubble should stay visible over ALL
+         * apps while its timer runs (the "Persistent Timer" sub-option).
+         */
+        const val EXTRA_PERSISTENT_MODE = "persistent_mode"
 
         /**
          * True while this service is alive. Lets [WidgetTriggerService] detect
@@ -149,8 +181,35 @@ class FloatingBubbleService : Service() {
     /** True when the bubble was opened over the Chess Readiness app. */
     private var chessReadinessActive = false
 
+    /**
+     * Tail mode: Tail itself is the foreground app and the bubble is showing
+     * a persistent timer that was started in ANOTHER app. The bubble displays
+     * the habit's icon + live elapsed time; tapping it stops and records the
+     * timer (and dismisses the bubble).
+     */
+    private var tailMode = false
+
     // ── Timer chip overlay (live elapsed time above the bubble) ───────────
     private var timerChipView: TextView? = null
+
+    /** The bubble's icon ImageView — swapped to the habit's icon in tail mode. */
+    private var bubbleIconView: ImageView? = null
+
+    /**
+     * True while the running timer belongs to a habit with the "Persistent
+     * Timer" sub-option: the bubble stays visible over ALL apps until the
+     * timer is stopped, and the chip shows the habit icon above the time.
+     */
+    private var persistentMode = false
+
+    /** Vertical stack (habit icon + time) shown in place of the plain chip. */
+    private var timerChipContainer: View? = null
+
+    /** Habit icon inside [timerChipContainer] (persistent mode only). */
+    private var timerChipIconView: ImageView? = null
+
+    /** Total chip window height (icon + time in persistent mode). */
+    private var timerChipTotalHeightPx = 0
 
     // ── V3 survival gate panel (side banner next to the bubble) ──────────
     private var survivalPanelView: LinearLayout? = null
@@ -325,14 +384,40 @@ class FloatingBubbleService : Service() {
                 handleTriggerAppLeft()
                 return START_NOT_STICKY
             }
+            ACTION_TAIL_MODE -> {
+                // Tail is the foreground app and a persistent timer started
+                // in another app is still running — show the bubble over Tail
+                // with that habit's icon + live elapsed time. Tapping stops
+                // and records the timer (then the bubble dismisses itself).
+                handler.removeCallbacks(delayedStopRunnable)
+                startGeneration++
+                noteRestarted()
+                tailMode = true
+                persistentMode = intent.getBooleanExtra(EXTRA_PERSISTENT_MODE, false)
+                val habit = intent.getStringExtra(EXTRA_HABIT_NAME)
+                if (habit != null) {
+                    triggerHabitNames = listOf(habit)
+                    triggerHabitName = habit
+                    chessReadinessActive = false
+                    try {
+                        BubbleStateStore.save(this, triggerHabitNames, false)
+                    } catch (_: Exception) { /* prefs are best-effort */ }
+                }
+                if (bubbleView == null) showBubble() else applyTailModeVisuals()
+                return START_STICKY
+            }
         }
 
         // A (re)start cancels any pending linger-stop scheduled when the
         // trigger app was last left (the user re-entered it during the flash
-        // linger) — the bubble is back in business.
+        // linger) — the bubble is back in business. A normal (re)start also
+        // leaves tail mode — only ACTION_TAIL_MODE keeps it.
         handler.removeCallbacks(delayedStopRunnable)
         startGeneration++
         noteRestarted()
+        tailMode = false
+        // The "stay visible over everything" mode comes from the monitor.
+        persistentMode = intent?.getBooleanExtra(EXTRA_PERSISTENT_MODE, false) ?: false
 
         // Remember which habits' trigger app opened the bubble (for the timer).
         // Several habits can share one trigger app; if so, the first tap shows
@@ -407,7 +492,10 @@ class FloatingBubbleService : Service() {
             layoutParamsType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+                // Persistent-timer bubbles (and chips) try to stay visible
+                // over the lock screen — best-effort, OEM keyguards may block.
+                LOCK_FLAGS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -437,6 +525,7 @@ class FloatingBubbleService : Service() {
                 // Circular background behind the icon
                 background = createCircularBackground()
             }
+            bubbleIconView = imageView
 
             addView(ring, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -488,9 +577,13 @@ class FloatingBubbleService : Service() {
         }
 
         // If the habit's timer is already running (e.g. the bubble was hidden
-        // while the trigger app was left), resume the live timer display.
+        // while the trigger app was left, or this is a tail-mode bubble over
+        // Tail showing a persistent timer from another app), resume the live
+        // timer display — and in tail mode swap the icon to the habit's own.
         val habit = triggerHabitName
-        if (habit != null && WidgetTimerStore.isTimerRunning(this, habit)) {
+        if (tailMode) {
+            applyTailModeVisuals()
+        } else if (habit != null && WidgetTimerStore.isTimerRunning(this, habit)) {
             setBubbleRunningVisuals(running = true)
             showTimerChip()
         }
@@ -521,6 +614,61 @@ class FloatingBubbleService : Service() {
     /** Toggles the bubble's "timer running" look (green ring while running). */
     private fun setBubbleRunningVisuals(running: Boolean) {
         bubbleRingView?.background = createRingDrawable(running)
+    }
+
+    /**
+     * Applies tail-mode visuals: swaps the bubble's app icon for the timed
+     * habit's own icon (custom app/text/default icon, exactly as it appears
+     * in the habit grid) and starts the live elapsed-time chip. Falls back to
+     * keeping the Tail launcher icon when the habit has no resolvable icon.
+     */
+    private fun applyTailModeVisuals() {
+        val habit = triggerHabitName ?: return
+        hideHabitPickerMenu()
+        setHabitIconOnBubble(habit)
+        setBubbleRunningVisuals(running = true)
+        hideTimerChip()
+        showTimerChip()
+    }
+
+    /**
+     * Resolves [habit]'s icon (custom app icon / text glyph / built-in
+     * resource / map default) and shows it on the bubble. Best-effort: on any
+     * failure the existing (Tail launcher) icon is left untouched.
+     */
+    private fun setHabitIconOnBubble(habit: String) {
+        val iconView = bubbleIconView ?: return
+        try {
+            serviceScope.launch(Dispatchers.IO) {
+                val settings = settingsRepo.settingsFlow.first()
+                val iconName = settings.habitIcons[habit]
+                val appPkg = appPackageNameOf(iconName)
+                val textChar = textIconCharOf(iconName)
+                val size = bubbleSize - 8.dp(resources)
+                val drawable: android.graphics.drawable.Drawable? = when {
+                    appPkg != null -> {
+                        val bmp = loadAppIconBitmap(applicationContext, appPkg, appIconMonochromeOf(iconName))
+                        bmp?.let { android.graphics.drawable.BitmapDrawable(resources, it) }
+                    }
+                    textChar != null -> {
+                        val bmp = renderTextIconBitmap(textChar, size)
+                        android.graphics.drawable.BitmapDrawable(resources, bmp)
+                    }
+                    else -> getHabitIconRes(habit, settings.habitIcons)?.let {
+                        resources.getDrawable(it, theme)
+                    }
+                }
+                if (drawable != null) {
+                    runOnUiThread { iconView.setImageDrawable(drawable) }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("FloatingBubbleService", "Habit icon load failed: ${e.message}")
+        }
+    }
+
+    private fun runOnUiThread(block: () -> Unit) {
+        handler.post(block)
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -836,6 +984,21 @@ class FloatingBubbleService : Service() {
             return
         }
 
+        // Tail mode: the bubble exists solely to show/stop a persistent
+        // timer that was started in another app. Tap = stop & record (then
+        // dismiss once the increment flash has shown); if the timer already
+        // ended some other way, just dismiss.
+        if (tailMode) {
+            val tailHabit = triggerHabitName
+            if (tailHabit != null && WidgetTimerStore.isTimerRunning(this, tailHabit)) {
+                stopTimerAndRecord(tailHabit) { scheduleLingerStop() }
+            } else {
+                noteDeliberateStop()
+                stopSelf()
+            }
+            return
+        }
+
         val habit = triggerHabitName
         if (habit == null) {
             if (chessReadinessActive || triggerHabitNames.size > 1) {
@@ -876,6 +1039,17 @@ class FloatingBubbleService : Service() {
         } catch (e: Exception) { /* no vibrator */ }
 
         val habit = triggerHabitName
+        if (tailMode) {
+            // Already inside Tail — stop & record, then linger out the
+            // increment flash before dismissing the bubble.
+            if (habit != null && WidgetTimerStore.isTimerRunning(this, habit)) {
+                stopTimerAndRecord(habit) { scheduleLingerStop() }
+            } else {
+                noteDeliberateStop()
+                stopSelf()
+            }
+            return
+        }
         if (habit != null && WidgetTimerStore.isTimerRunning(this, habit)) {
             // Record first, then open Tail once the write has landed —
             // opening immediately would race the app's startup DB load
@@ -926,13 +1100,23 @@ class FloatingBubbleService : Service() {
     /**
      * Shows the live elapsed-time pill anchored above the bubble (or directly
      * below it when the bubble sits at the very top of the screen).
+     *
+     * In persistent mode the chip is a vertical stack: the timed HABIT's icon
+     * sits above the time, so the floating timer is identifiable at a glance
+     * no matter which app it is floating over.
      */
     private fun showTimerChip() {
         if (timerChipView != null) return
         val habit = triggerHabitName ?: return
 
         val density = resources.displayMetrics.density
-        val chip = TextView(this).apply {
+        val chipBg = GradientDrawable().apply {
+            setColor(0xEE161616.toInt())
+            cornerRadius = 14f * density
+            setStroke(1, 0xFF334455.toInt())
+        }
+
+        val timeText = TextView(this).apply {
             text = WidgetTimerStore.formatElapsed(
                 WidgetTimerStore.elapsedMillis(this@FloatingBubbleService, habit)
             )
@@ -940,45 +1124,114 @@ class FloatingBubbleService : Service() {
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             typeface = Typeface.MONOSPACE
-            background = GradientDrawable().apply {
-                setColor(0xEE161616.toInt())
-                cornerRadius = 14f * density
-                setStroke(1, 0xFF334455.toInt())
-            }
         }
-        timerChipView = chip
+        timerChipView = timeText
+
+        val chipView: View = if (persistentMode) {
+            // Persistent mode: habit icon above the time.
+            timerChipTotalHeightPx = timerChipHeight + CHIP_ICON_SIZE_DP.dp(resources) + 4.dp(resources)
+            val icon = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                // Show the Tail icon immediately; swapped to the habit's own
+                // icon as soon as it resolves (off the main thread).
+                val iconRes = resources.getIdentifier(
+                    "ic_launcher_foreground_custom", "drawable", packageName
+                )
+                if (iconRes != 0) setImageResource(iconRes)
+            }
+            timerChipIconView = icon
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                background = chipBg
+                addView(
+                    icon,
+                    LinearLayout.LayoutParams(
+                        CHIP_ICON_SIZE_DP.dp(resources), CHIP_ICON_SIZE_DP.dp(resources)
+                    ).apply { topMargin = 3.dp(resources) }
+                )
+                addView(
+                    timeText,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, timerChipHeight
+                    )
+                )
+            }
+        } else {
+            timerChipTotalHeightPx = timerChipHeight
+            timeText.apply { background = chipBg }
+        }
 
         val params = WindowManager.LayoutParams(
             bubbleSize, // same width as the bubble → stays centered on it
-            timerChipHeight,
+            timerChipTotalHeightPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+                LOCK_FLAGS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
         }
 
         try {
-            windowManager.addView(chip, params)
+            windowManager.addView(chipView, params)
+            timerChipContainer = chipView
             positionTimerChip()
+            if (persistentMode) setHabitIconOnChip(habit)
             handler.removeCallbacks(timerTickRunnable)
             handler.postDelayed(timerTickRunnable, 500L)
         } catch (e: Exception) {
             timerChipView = null
+            timerChipIconView = null
+            timerChipContainer = null
+        }
+    }
+
+    /**
+     * Resolves [habit]'s icon and swaps it into the persistent-mode chip
+     * (icon above the time). Best-effort: keeps the placeholder on failure.
+     */
+    private fun setHabitIconOnChip(habit: String) {
+        val iconView = timerChipIconView ?: return
+        try {
+            serviceScope.launch(Dispatchers.IO) {
+                val settings = settingsRepo.settingsFlow.first()
+                val iconName = settings.habitIcons[habit]
+                val appPkg = appPackageNameOf(iconName)
+                val textChar = textIconCharOf(iconName)
+                val size = CHIP_ICON_SIZE_DP.dp(resources)
+                val drawable: android.graphics.drawable.Drawable? = when {
+                    appPkg != null -> loadAppIconBitmap(applicationContext, appPkg, appIconMonochromeOf(iconName))
+                        ?.let { android.graphics.drawable.BitmapDrawable(resources, it) }
+                    textChar != null -> android.graphics.drawable.BitmapDrawable(
+                        resources, renderTextIconBitmap(textChar, size)
+                    )
+                    else -> getHabitIconRes(habit, settings.habitIcons)?.let {
+                        resources.getDrawable(it, theme)
+                    }
+                }
+                if (drawable != null) {
+                    handler.post { iconView.setImageDrawable(drawable) }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("FloatingBubbleService", "Chip icon load failed: ${e.message}")
         }
     }
 
     /** Removes the timer chip overlay and stops the live tick updates. */
     private fun hideTimerChip() {
         handler.removeCallbacks(timerTickRunnable)
-        timerChipView?.let {
+        timerChipContainer?.let {
             try {
                 windowManager.removeView(it)
             } catch (e: Exception) { /* already removed */ }
         }
+        timerChipContainer = null
         timerChipView = null
+        timerChipIconView = null
     }
 
     /**
@@ -987,12 +1240,12 @@ class FloatingBubbleService : Service() {
      * moves — drag, snap animation, or chip creation.
      */
     private fun positionTimerChip() {
-        val chip = timerChipView ?: return
+        val chip = timerChipContainer ?: return
         val params = chip.layoutParams as? WindowManager.LayoutParams ?: return
         val gap = 8.dp(resources)
         params.x = bubbleParams.x
-        params.y = if (bubbleParams.y - timerChipHeight - gap >= 0) {
-            bubbleParams.y - timerChipHeight - gap
+        params.y = if (bubbleParams.y - timerChipTotalHeightPx - gap >= 0) {
+            bubbleParams.y - timerChipTotalHeightPx - gap
         } else {
             bubbleParams.y + bubbleSize + gap
         }

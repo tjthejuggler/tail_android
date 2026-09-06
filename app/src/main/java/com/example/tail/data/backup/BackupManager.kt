@@ -851,6 +851,7 @@ class BackupManager(
         settingsRepo.saveWidgetTriggerHabits(s.widgetTriggerHabits.toSet())
         settingsRepo.saveWidgetTriggerApps(s.widgetTriggerApps)
         settingsRepo.saveWidgetTimerMinutesPrimary(s.widgetTimerMinutesPrimary.toSet())
+        settingsRepo.saveWidgetPersistentTimerHabits(s.widgetPersistentTimerHabits.toSet())
         settingsRepo.saveChessReadinessEnabled(s.chessReadinessEnabled)
         settingsRepo.saveChessReadinessApp(s.chessReadinessApp)
         settingsRepo.saveGdriveAutoEnabled(s.gdriveAutoEnabled)
@@ -1230,6 +1231,7 @@ class BackupManager(
         widgetTriggerHabits = s.widgetTriggerHabits.toList(),
         widgetTriggerApps = s.widgetTriggerApps,
         widgetTimerMinutesPrimary = s.widgetTimerMinutesPrimary.toList(),
+        widgetPersistentTimerHabits = s.widgetPersistentTimerHabits.toList(),
         chessReadinessEnabled = s.chessReadinessEnabled,
         chessReadinessApp = s.chessReadinessApp,
         gdriveAutoEnabled = s.gdriveAutoEnabled,

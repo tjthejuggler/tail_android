@@ -1499,6 +1499,18 @@ data class AppSettings(
      */
     val widgetTriggerApps: Map<String, String> = emptyMap(),
 
+    /**
+     * Habits with the "Persistent Timer" sub-option enabled (a sub-option of
+     * the Use Widget feature). Normally the bubble stops-and-records a still
+     * running timer the moment the trigger app leaves the foreground. For
+     * habits in this set the timer KEEPS RUNNING instead: it survives app
+     * switches, the screen turning off and the bubble being hidden, and the
+     * bubble reappears (with the elapsed time) when the trigger app — or the
+     * Tail app itself — comes back to the foreground.
+     * Only meaningful for habits in [widgetTriggerHabits].
+     */
+    val widgetPersistentTimerHabits: Set<String> = emptySet(),
+
     // ── Chess Readiness settings ───────────────────────────────────────────
     /**
      * Whether the Chess Readiness feature is enabled (global toggle in the
