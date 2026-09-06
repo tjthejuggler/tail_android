@@ -1,21 +1,14 @@
 package com.example.tail.ui
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.roundToInt
 
 /**
@@ -99,6 +92,12 @@ import kotlin.math.roundToInt
  * The renderers live in [HabitLoadingLayers.kt] (shared primitives and
  * global flourishes), [HabitLoadingMonthly.kt], [HabitLoadingWeekly.kt]
  * and [HabitLoadingDaily.kt].
+ *
+ * FRAME PRODUCTION: every frame is drawn on a dedicated render thread into a
+ * GPU canvas on a SurfaceView surface, composited directly by SurfaceFlinger
+ * (see [HabitLoadingThreaded.kt] / [OrreryRenderView]). The main thread is
+ * never involved in producing OR displaying frames, so database streaming,
+ * DataStore reads, WorkManager and GC pauses cannot stutter the spin.
  */
 
 /**
@@ -244,6 +243,16 @@ internal object GrandeurThresholds {
 /**
  * The tiered loading animation ("The Orrery II").
  *
+ * RENDERING MODEL — "ALWAYS SMOOTH, NO MATTER WHAT": frames are produced on
+ * a dedicated render thread ([OrreryRenderView], driven by a background
+ * Choreographer drawing into a GPU canvas on a SurfaceView surface) and are
+ * composited directly by SurfaceFlinger — completely decoupled from the
+ * main thread for BOTH production and display. Database streaming, DataStore
+ * reads, WorkManager and GC pauses can stall the UI thread all they like —
+ * the orrery keeps playing at vsync rate. The previous Compose-Canvas
+ * implementation produced every frame on the UI thread and stuttered
+ * whenever background loading work ran.
+ *
  * @param monthlyAverage 30-day average daily points — primary form & colour.
  * @param weeklyAverage  7-day average daily points — halo form & colour.
  * @param todayPoints    today's total points — central spark colour.
@@ -274,14 +283,6 @@ fun HabitLoadingSpinner(
         )
         frozen
     }
-    val monthColor = tierAccent(tiers.monthly)
-    val weekColor = tierAccent(tiers.weekly)
-    val dayColor = tierAccent(tiers.daily)
-    // The vivid combo hues — for plain tiers these simply equal the body
-    // colour; for the white+colour tiers they carry the coloured half.
-    val monthCombo = tierComboAccent(tiers.monthly)
-    val weekCombo = tierComboAccent(tiers.weekly)
-    val dayCombo = tierComboAccent(tiers.daily)
 
     // The canvas itself swells with grandeur — a slow ease-in so mid
     // tiers stay modest and the summit feels earned. The classical range
@@ -293,112 +294,14 @@ fun HabitLoadingSpinner(
         1.65f * Math.pow((gClassical / 18f).toDouble(), 1.25).toFloat() +
         0.70f * Math.pow((gTranscendent / 14f).toDouble(), 1.15).toFloat()
 
-    val transition = rememberInfiniteTransition(label = "habitSpinner")
+    // Tiers are frozen for the session, so the view footprint in dp is
+    // constant too: the TextureView is sized once and the render thread
+    // never needs main-thread layout information again.
+    val densityPxPerDp = LocalDensity.current.density
 
-    // Continuous 0→1 phase, one full revolution per 1400ms — core rotation.
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1400, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase"
+    AndroidView(
+        modifier = modifier.size(size * growth),
+        factory = { context -> OrreryRenderView(context) },
+        update = { view -> view.configure(tiers, densityPxPerDp) }
     )
-    // Slower secondary phase for counter-rotation, satellites and shimmer.
-    val phase2 by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase2"
-    )
-    // Very slow precession for halo rotation and sparkle-cross drift.
-    val phase3 by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 5200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase3"
-    )
-    // Fast shimmer for twinkles, flickers and stardust.
-    val phase4 by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase4"
-    )
-    // Breathing 0→1→0 for pulses and glows.
-    val breathe by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "breathe"
-    )
-    // Slow, deep breath for the grandest glows and totality pulses.
-    val breathe2 by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2300, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "breathe2"
-    )
-
-    Canvas(modifier = modifier.size(size * growth)) {
-        val ctx = LoadingPaintContext(
-            c = center,
-            radius = this.size.minDimension / 2f,
-            tiers = tiers,
-            monthColor = monthColor,
-            weekColor = weekColor,
-            dayColor = dayColor,
-            monthCombo = monthCombo,
-            weekCombo = weekCombo,
-            dayCombo = dayCombo,
-            phase = phase,
-            phase2 = phase2,
-            phase3 = phase3,
-            phase4 = phase4,
-            breathe = breathe,
-            breathe2 = breathe2
-        )
-        val g = tiers.grandeur
-
-        // ── Global flourishes (behind) ─────────────────────────────────
-        if (g >= GrandeurThresholds.NEBULA) drawNebula(ctx)
-        if (g >= GrandeurThresholds.STARFIELD) drawStarfield(ctx)
-        if (g >= GrandeurThresholds.CORONA) drawCorona(ctx)
-        if (g >= GrandeurThresholds.AURORA) drawAurora(ctx)
-        if (g >= GrandeurThresholds.CONSTELLATION) drawConstellation(ctx)
-
-        // ── The three personal layers ──────────────────────────────────
-        drawWeeklyHalo(ctx)   // outer orbital system, in the weekly colour
-        drawMonthlyCore(ctx)  // the central archetype, in the monthly colour
-        drawDailySpark(ctx)   // the small central accent, in the daily colour
-
-        // ── Rewards ────────────────────────────────────────────────────
-        if (tiers.resonant) drawResonance(ctx)
-
-        // ── Global flourishes (in front) ───────────────────────────────
-        if (g >= GrandeurThresholds.SHOOTING_STARS) drawShootingStars(ctx)
-        if (g >= GrandeurThresholds.SPECTRUM_CROWN) drawSpectrumCrown(ctx)
-        if (g == GrandeurThresholds.TOTALITY || g >= GrandeurThresholds.TRANSCENDENCE) {
-            drawTotality(ctx)
-        }
-        if (g >= GrandeurThresholds.POLAR_JETS) drawPolarJets(ctx)
-        if (g >= GrandeurThresholds.HALO_OF_HALOS) drawHaloOfHalos(ctx)
-        if (g >= GrandeurThresholds.TRANSCENDENCE) drawTranscendence(ctx)
-    }
 }

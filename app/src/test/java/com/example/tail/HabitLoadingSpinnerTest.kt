@@ -4,6 +4,8 @@ import com.example.tail.ui.GrandeurThresholds
 import com.example.tail.ui.LoadingMetrics
 import com.example.tail.ui.habitPointsTier
 import com.example.tail.ui.loadingTiers
+import com.example.tail.ui.orreryBreath
+import com.example.tail.ui.orreryPhase
 import com.example.tail.ui.patronageFrom
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -220,5 +222,53 @@ class HabitLoadingSpinnerTest {
     @Test
     fun `the theoretical maximum is thirty six`() {
         assertEquals(36, loadingTiers(LoadingMetrics(98.0, 98.0, 98)).grandeur)
+    }
+
+    // ── Off-main-thread animation clock ────────────────────────────────────
+    //
+    // The spinner's frames are produced on a dedicated render thread (see
+    // HabitLoadingThreaded.kt / OrreryRenderView) so main-thread work can
+    // never stutter the animation. These clock helpers replace the Compose
+    // infiniteRepeatable tweens and must reproduce their exact curves.
+
+    @Test
+    fun `sawtooth phase restarts every period`() {
+        // One full 0→1 sweep across the period, then restart.
+        assertEquals(0.0f, orreryPhase(0.0, 1400))
+        assertEquals(0.5f, orreryPhase(700.0, 1400), 1e-6f)
+        assertEquals(0.25f, orreryPhase(350.0, 1400), 1e-6f)
+        assertEquals(0.0f, orreryPhase(1400.0, 1400), 1e-6f)
+        assertEquals(0.5f, orreryPhase(2100.0, 1400), 1e-6f)
+        // Nearing the end of the cycle, always within [0, 1).
+        assertEquals(0.99f, orreryPhase(1386.0, 1400), 1e-3f)
+    }
+
+    @Test
+    fun `breathe ping-pongs between zero and one each cycle`() {
+        // Forward leg climbs 0→1 with the FastOutSlowIn ease.
+        assertEquals(0f, orreryBreath(0.0, 1100), 1e-4f)
+        assertEquals(1f, orreryBreath(1100.0, 1100), 1e-4f)
+        // Reverse leg descends 1→0, mirroring the OUTPUT (1 - ease(x)).
+        assertEquals(1f, orreryBreath(1100.0 + 1.0, 1100), 1e-2f)
+        assertEquals(0f, orreryBreath(2200.0, 1100), 1e-4f)
+        // Second cycle restarts cleanly.
+        assertEquals(0f, orreryBreath(2200.0 + 1.0, 1100), 1e-2f)
+        // The forward leg is strictly monotonic (easing curves never dip).
+        var prev = orreryBreath(0.0, 1100)
+        for (step in 1..10) {
+            val v = orreryBreath(step * 110.0, 1100)
+            assertTrue("forward leg must be monotonic at $step", v >= prev)
+            prev = v
+        }
+    }
+
+    @Test
+    fun `breathe reverse leg mirrors output not input`() {
+        // FastOutSlowIn is NOT symmetric: ease(0.25) != 1 - ease(0.75).
+        // The reverse leg must be 1 - ease(x), matching Compose Reverse;
+        // a mirrored-INPUT implementation would fail this assertion.
+        val forward = orreryBreath(275.0, 1100)                    // ease(0.25)
+        val reverse = orreryBreath(1100.0 + 275.0, 1100)           // 1 - ease(0.25)
+        assertEquals(1f, forward + reverse, 1e-4f)
     }
 }
