@@ -28,6 +28,8 @@ private val KEY_PC_WIDGET_HABITS = stringSetPreferencesKey("pc_widget_habits")
 private val KEY_LOCK_WIDGET_EXCLUDED_HABITS = stringSetPreferencesKey("lock_widget_excluded_habits")
 // In-app stats overlay (StatsOverlayService) master switch
 private val KEY_STATS_OVERLAY_ENABLED = booleanPreferencesKey("stats_overlay_enabled")
+// Floating bubble: full-screen menu overlay when the bubble opens (opt-in)
+private val KEY_BUBBLE_FULL_SCREEN_MENU = booleanPreferencesKey("bubble_full_screen_menu")
 
 // App-stats record notifications master switch
 private val KEY_APP_STATS_RECORD_NOTIFS = booleanPreferencesKey("app_stats_record_notifications_enabled")
@@ -933,6 +935,7 @@ class SettingsRepository(private val context: Context) {
             pcWidgetHabits = prefs[KEY_PC_WIDGET_HABITS] ?: emptySet(),
             lockWidgetExcludedHabits = prefs[KEY_LOCK_WIDGET_EXCLUDED_HABITS] ?: emptySet(),
             statsOverlayEnabled = prefs[KEY_STATS_OVERLAY_ENABLED] ?: false,
+            bubbleFullScreenMenu = prefs[KEY_BUBBLE_FULL_SCREEN_MENU] ?: false,
             appStatsRecordNotificationsEnabled = prefs[KEY_APP_STATS_RECORD_NOTIFS] ?: true,
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
@@ -1094,6 +1097,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveStatsOverlayEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[KEY_STATS_OVERLAY_ENABLED] = enabled
+        }
+    }
+
+    /** Saves the floating bubble's "full-screen menu on open" subsetting. */
+    suspend fun saveBubbleFullScreenMenu(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_BUBBLE_FULL_SCREEN_MENU] = enabled
         }
     }
 

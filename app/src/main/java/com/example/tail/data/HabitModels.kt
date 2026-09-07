@@ -846,6 +846,13 @@ data class AppSettings(
      * separately by the service itself in SharedPreferences.
      */
     val statsOverlayEnabled: Boolean = false,
+    /**
+     * Floating bubble subsetting: when true, a fresh bubble stint over a
+     * trigger app with no timer running opens a full-screen overlay that
+     * offers the same options as the bubble's picker menu (plus a dismiss).
+     * Opt-in — the user is not timing every app stint.
+     */
+    val bubbleFullScreenMenu: Boolean = false,
 
     /**
      * Master switch for the app-stats record notifications ("close to a

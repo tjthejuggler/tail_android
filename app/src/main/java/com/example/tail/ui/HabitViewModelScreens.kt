@@ -1227,6 +1227,19 @@ fun HabitViewModel.toggleWidgetPersistentTimer(habitName: String) {
 }
 
 /**
+ * Toggles the floating bubble's "Full-screen menu on bubble open"
+ * sub-setting. When enabled, a fresh bubble stint over a trigger app with
+ * no timer running opens a full-screen overlay offering the same options
+ * as the bubble's picker menu (see [com.example.tail.widget.FloatingBubbleService]).
+ */
+fun HabitViewModel.setBubbleFullScreenMenu(enabled: Boolean) {
+    viewModelScope.launch {
+        settingsRepo.saveBubbleFullScreenMenu(enabled)
+        _settings.value = _settings.value.copy(bubbleFullScreenMenu = enabled)
+    }
+}
+
+/**
  * Sets the trigger app [packageName] for [habitName].
  * The habit should already be in [AppSettings.widgetTriggerHabits].
  */

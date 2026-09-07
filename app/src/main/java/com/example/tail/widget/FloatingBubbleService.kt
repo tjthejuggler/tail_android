@@ -26,6 +26,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -264,6 +265,9 @@ class FloatingBubbleService : Service() {
     // ── Habit picker menu (several habits share one trigger app) ──────────
     private var habitMenuView: LinearLayout? = null
 
+    // ── Full-screen menu overlay (opt-in "start a session?" prompt) ───────
+    private var fullScreenMenuView: LinearLayout? = null
+
     // ── Increment flash message (shown after a session is recorded) ──────
     private var flashView: LinearLayout? = null
     private val flashDismissRunnable = Runnable { hideIncrementFlash() }
@@ -472,6 +476,10 @@ class FloatingBubbleService : Service() {
 
         if (bubbleView == null) {
             showBubble()
+            // Opt-in subsetting: a fresh stint over a trigger app with no
+            // timer running can open the full-screen "start a session?"
+            // overlay (the bubble menu's options, big-screen edition).
+            maybeShowFullScreenMenu()
         }
 
         return START_STICKY
@@ -488,6 +496,7 @@ class FloatingBubbleService : Service() {
         survivalResultPopup = null
         hideSurvivalPanel()
         hideHabitPickerMenu()
+        hideFullScreenMenu()
         hideIncrementFlash()
         handler.removeCallbacks(pcEventPollRunnable)
         serviceScope.cancel()
@@ -2127,6 +2136,179 @@ class FloatingBubbleService : Service() {
             } catch (e: Exception) { /* already removed */ }
         }
         habitMenuView = null
+    }
+
+    // Full-screen menu overlay (opt-in subsetting).
+
+    /**
+     * Opt-in subsetting ("Full-screen menu on bubble open"): when the bubble
+     * starts a fresh stint over a trigger app with NO timer running, show a
+     * full-screen overlay offering the same options as the bubble's picker
+     * menu — one start button per habit plus the Chess entries when the
+     * trigger app is the Chess Readiness app — styled like the chess entry
+     * warnings. The point is friction-aware nudging: the prompt appears the
+     * moment the timed app opens, but a plain "Not now" dismisses it, so
+     * stints that are not meant to be timed cost one tap. OFF by default.
+     */
+    private fun maybeShowFullScreenMenu() {
+        if (!fullScreenMenuWouldOfferChoice()) return
+        // Never fight a timer that is already going, a wizard that owns the
+        // bubble, or a due puzzle-rush report.
+        if (triggerHabitNames.any { WidgetTimerStore.isTimerRunning(this, it) }) return
+        if (chessReadinessActive && ChessReadinessStore.loadSession(this) != null) return
+        if (ChessPuzzleRushStore.loadPending(this) != null) return
+        serviceScope.launch {
+            val settings = settingsRepo.settingsFlow.first()
+            if (!settings.bubbleFullScreenMenu) return@launch
+            handler.post { showFullScreenMenu() }
+        }
+    }
+
+    /**
+     * The overlay is only meaningful when the picker menu would have
+     * something to offer: a Chess option (readiness app) or 2+ habits on
+     * the trigger app — the same gate [showHabitPickerMenu] applies. A
+     * single-habit app has no choice to make, so no prompt.
+     */
+    private fun fullScreenMenuWouldOfferChoice(): Boolean {
+        val trustWindowLive = ChessEnforcementPolicy.hasLiveTrustWindow(this)
+        val offeredHabits = if (chessReadinessActive && !trustWindowLive) {
+            emptyList()
+        } else {
+            triggerHabitNames
+        }
+        return chessReadinessActive || offeredHabits.size >= 2
+    }
+
+    /** Builds and shows the full-screen overlay window. No-op when up. */
+    private fun showFullScreenMenu() {
+        if (fullScreenMenuView != null) return
+        val density = resources.displayMetrics.density
+        fun Int.fsdp(): Int = (this * density).toInt()
+        val pad = 24.fsdp()
+
+        val title = TextView(this).apply {
+            text = "🫧 Start a session?"
+            textSize = 26f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+        val message = TextView(this).apply {
+            text = "This app is one of your trigger apps.\n" +
+                "Pick what you are here to do — or carry on untimed."
+            textSize = 15f
+            setTextColor(Color.parseColor("#E5E7EB"))
+            gravity = Gravity.CENTER
+            setPadding(0, pad / 2, 0, 0)
+        }
+
+        val optionBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(0, pad, 0, 0)
+        }
+        fun addOption(text: String, bg: Int, stroke: Int, onClick: () -> Unit) {
+            val item = TextView(this).apply {
+                this.text = text
+                textSize = 16f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(14.fsdp(), 12.fsdp(), 14.fsdp(), 12.fsdp())
+                background = GradientDrawable().apply {
+                    setColor(bg)
+                    cornerRadius = 10f * density
+                    if (stroke != 0) setStroke(1, stroke)
+                }
+                setOnClickListener {
+                    hideFullScreenMenu()
+                    onClick()
+                }
+            }
+            optionBox.addView(item, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8.fsdp() })
+        }
+
+        // Exactly the bubble picker menu's options, full-screen edition:
+        // chess entries first (prominent), then one button per habit.
+        if (chessReadinessActive) {
+            if (ChessPhase2Store.ratedPlayAuthorized(this)) {
+                addOption("♟ Chess Status", 0xFF1A2A3A.toInt(), 0xFF5588AA.toInt()) {
+                    openChessStatus()
+                }
+            } else {
+                val resuming = ChessReadinessStore.loadSession(this) != null
+                addOption(
+                    if (resuming) "♟ Chess Readiness ▸ resume" else "♟ Chess Readiness",
+                    0xFF2A1A3A.toInt(), 0xFF8866CC.toInt()
+                ) {
+                    openChessReadiness()
+                }
+            }
+        }
+        val trustWindowLive = ChessEnforcementPolicy.hasLiveTrustWindow(this)
+        val offeredHabits = if (chessReadinessActive && !trustWindowLive) {
+            emptyList()
+        } else {
+            triggerHabitNames
+        }
+        offeredHabits.forEach { habit ->
+            addOption("▶ $habit", 0xFF1A2A3A.toInt(), 0) {
+                startTimerForHabit(habit)
+            }
+        }
+
+        val dismiss = Button(this).apply {
+            text = "✕ Not now"
+            setOnClickListener { hideFullScreenMenu() }
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#F1101018"))
+            setPadding(pad, pad, pad, pad)
+            addView(title, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(message, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(optionBox, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(dismiss, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = pad / 2; gravity = Gravity.CENTER_HORIZONTAL })
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.CENTER }
+
+        try {
+            windowManager.addView(root, params)
+            fullScreenMenuView = root
+        } catch (_: Exception) { /* overlay failed */ }
+    }
+
+    /** Removes the full-screen menu overlay. */
+    private fun hideFullScreenMenu() {
+        fullScreenMenuView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) { /* already removed */ }
+        }
+        fullScreenMenuView = null
     }
 
     // ──────────────────────────────────────────────────────────────────────
