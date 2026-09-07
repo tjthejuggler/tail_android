@@ -54,11 +54,32 @@ class AiIconRepository(private val context: Context) {
         return if (file.exists()) file else null
     }
 
+    /**
+     * Process-wide decode cache so habit-grid cells never re-decode the same
+     * PNG twice (e.g. every time a screen switch composes a new set of
+     * squares). Keyed on (iconId, file lastModified) so a regenerated icon
+     * file still invalidates its stale bitmap.
+     */
+    private val bitmapCache = HashMap<Pair<String, Long>, Bitmap>()
+
     /** Loads a Bitmap for the given icon id, or null if not found. */
     fun loadBitmap(iconId: String): Bitmap? {
         val file = getIconFile(iconId) ?: return null
+        val key = iconId to file.lastModified()
+        synchronized(bitmapCache) {
+            bitmapCache[key]?.let { return it }
+        }
         return try {
-            BitmapFactory.decodeFile(file.absolutePath)
+            val decoded = BitmapFactory.decodeFile(file.absolutePath)
+            if (decoded != null) {
+                synchronized(bitmapCache) {
+                    // Opportunistic size cap: icons are tiny, so a handful of
+                    // screens' worth of entries is a few MB at most.
+                    if (bitmapCache.size > 64) bitmapCache.clear()
+                    bitmapCache[key] = decoded
+                }
+            }
+            decoded
         } catch (e: Exception) {
             Log.e("AiIconRepo", "Failed to decode $iconId", e)
             null

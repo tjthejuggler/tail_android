@@ -508,7 +508,9 @@ internal suspend fun HabitViewModel.rebuildHabitList() = rebuildMutex.withLock {
         }
         _habits.value = newList
         _todayPoints.value = newList.sumOf { it.todayCount }
-        var freshMetrics = getLoadingMetrics(targetDate)
+        // 30-day × per-habit scan — keep it off the main thread so the
+        // frame that swaps in the new screen's squares is never blocked.
+        var freshMetrics = withContext(Dispatchers.Default) { getLoadingMetrics(targetDate) }
         // The daily spark mirrors the app-open spinner: both derive from
         // the same DB totals, so every spinner in the app — grid, map,
         // reloads — renders the same tiers.

@@ -121,7 +121,27 @@ class AppIconRepository(private val context: Context) {
  * uncropped adaptive icon keeps its launcher padding (glyph in the middle of
  * a 108 dp canvas) and renders noticeably small at the 20 dp habit-cell size.
  */
+/**
+ * Process-wide cache for [loadAppIconBitmap] results: the PackageManager
+ * lookup plus crop/greyscale processing is expensive, and habit-grid cells
+ * re-run it every time a screen switch composes a fresh set of squares.
+ * Keyed on package + variant; an app icon changing after an app update
+ * requires a process restart to refresh, which is fine for a tile glyph.
+ */
+private val appIconBitmapCache = HashMap<String, Bitmap?>()
+
 fun loadAppIconBitmap(context: Context, packageName: String, monochrome: Boolean): Bitmap? {
+    val cacheKey = "$packageName|$monochrome"
+    if (appIconBitmapCache.containsKey(cacheKey)) return appIconBitmapCache[cacheKey]
+    val bitmap = loadAppIconBitmapUncached(context, packageName, monochrome)
+    synchronized(appIconBitmapCache) {
+        if (appIconBitmapCache.size > 128) appIconBitmapCache.clear()
+        appIconBitmapCache[cacheKey] = bitmap
+    }
+    return bitmap
+}
+
+private fun loadAppIconBitmapUncached(context: Context, packageName: String, monochrome: Boolean): Bitmap? {
     return try {
         val drawable = context.packageManager.getApplicationIcon(packageName)
         // Adaptive-icon monochrome layer, when the app provides one (API 33+).

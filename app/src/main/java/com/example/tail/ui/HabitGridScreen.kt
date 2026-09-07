@@ -599,6 +599,7 @@ fun HabitGridScreen(
     // Display list for the grid: the real habits, or the live drag preview.
     val displayHabits = computeDragDisplayHabits(habits, dragState, activeScreenIndex)
 
+
     val garminMonthlyData by viewModel.garminMonthlyData.collectAsState()
     val githubSyncStatus by viewModel.githubSyncStatus.collectAsState()
     val highlightedHabit by viewModel.highlightedHabit.collectAsState()

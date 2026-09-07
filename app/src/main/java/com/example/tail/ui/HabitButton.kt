@@ -95,6 +95,15 @@ enum class HabitSpecialBadge { MOVIE, MEAL, GARMIN, CHESS, WEIGHTS }
  * When [isSelected] is true, a highlight border is shown.
  */
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * Process-wide cache for the per-tier brushed-metal texture tiles. Decoding
+ * is cheap per tile but the OLD code decoded one per habit cell on every
+ * composition, so switching screens re-decoded ~30 PNGs on the main thread
+ * before the new squares (and the tab highlight in the same frame) could
+ * draw. There are only 7 tiles; cache them once per process.
+ */
+private val metalTileCache = HashMap<Int, ImageBitmap?>()
+
 @Composable
 fun HabitButton(
     habit: Habit,
@@ -306,7 +315,11 @@ fun HabitButton(
             else -> 0
         }
         if (res == 0) null
-        else BitmapFactory.decodeResource(context.resources, res)?.asImageBitmap()
+        else synchronized(metalTileCache) {
+            metalTileCache.getOrPut(res) {
+                BitmapFactory.decodeResource(context.resources, res)?.asImageBitmap()
+            }
+        }
     }
     val metallicMod = if (metalTile != null) {
         Modifier.drawWithContent {
