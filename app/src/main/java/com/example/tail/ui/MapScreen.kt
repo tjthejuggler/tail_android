@@ -68,6 +68,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.unit.Dp
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,6 +84,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -323,6 +329,16 @@ fun MapScreen(
 
     // ── "All" mode: show secondary locations on map + clock ─────────────────
     var showAll by remember { mutableStateOf(true) }
+
+    // ── Timeline range start (left marker on the slider) ─────────────────────
+    // Days before this date are hidden from the map and greyed out on the
+    // timeline. null = marker sits at the very beginning (nothing hidden).
+    var rangeStartDate by remember { mutableStateOf<LocalDate?>(null) }
+    val rangeStart = rangeStartDate ?: firstDate
+
+    // ── Map selection: node / travel-line picked by tapping ─────────────────
+    var selectedNodeDate by remember { mutableStateOf<LocalDate?>(null) }
+    var selectedSegmentDates by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
 
     // ── Secondary stepping state ────────────────────────────────────────────
     // null = currently viewing the day's PRIMARY (whole-number label).
@@ -792,6 +808,13 @@ fun MapScreen(
                         secondaryByDate = if (showAll) secondaryByDate else emptyMap(),
                         accent = accent,
                         speed = speed,
+                        rangeStart = rangeStart,
+                        selectedNodeDate = selectedNodeDate,
+                        selectedSegmentDates = selectedSegmentDates,
+                        onMapTap = { node, segs ->
+                            selectedNodeDate = node
+                            selectedSegmentDates = segs
+                        },
                         onSizeChanged = { mapSize = it }
                     )
 
@@ -876,7 +899,9 @@ fun MapScreen(
                     isPlaying = false
                     // Slider scrub always returns to the day's primary view.
                     secondaryStepIndex = null
-                    viewModel.navigateToDate(newDate)
+                    // Never scrub earlier than the range-start marker.
+                    val clamped = if (newDate.isBefore(rangeStart)) rangeStart else newDate
+                    viewModel.navigateToDate(clamped)
                 },
                 onStepDay = { delta ->
                     isPlaying = false
@@ -911,7 +936,7 @@ fun MapScreen(
                             // LAST distinct secondary (or primary if none).
                             else -> {
                                 val target = selectedDate.minusDays(1)
-                                val clamped = if (target.isBefore(firstDate)) firstDate else target
+                                val clamped = if (target.isBefore(rangeStart)) rangeStart else target
                                 if (clamped != selectedDate) {
                                     viewModel.navigateToDate(clamped)
                                     val prevSecs = secondaryByDate[clamped]
@@ -950,9 +975,17 @@ fun MapScreen(
                     }
                 },
                 isPlaying = isPlaying,
-                onTogglePlay = { isPlaying = !isPlaying },
+                onTogglePlay = {
+                    // Play always starts from the range-start marker.
+                    if (!isPlaying && selectedDate.isBefore(rangeStart)) {
+                        viewModel.navigateToDate(rangeStart)
+                    }
+                    isPlaying = !isPlaying
+                },
                 speed = speed,
                 onSpeedChange = { newIndex -> speedIndex = newIndex },
+                rangeStart = rangeStart,
+                onRangeStartChange = { rangeStartDate = it },
                 accent = accent
             )
         }
@@ -1148,6 +1181,10 @@ private fun WorldMapWithMarker(
     secondaryByDate: Map<LocalDate, List<SecondaryLocation>>,
     accent: Color,
     speed: Float = 2f,
+    rangeStart: LocalDate = LocalDate.MIN,
+    selectedNodeDate: LocalDate? = null,
+    selectedSegmentDates: Set<LocalDate> = emptySet(),
+    onMapTap: (node: LocalDate?, segments: Set<LocalDate>) -> Unit = { _, _ -> },
     onSizeChanged: (Size) -> Unit = {}
 ) {
     val effectiveSpeed = if (speed == -1f) 240f else speed
@@ -1196,6 +1233,85 @@ private fun WorldMapWithMarker(
     // Last reported dominant country (bbox covers >50% of the screen) —
     // drives the country facts section in the side panel.
     var lastDominantCountry by remember { mutableStateOf<String?>(null) }
+
+    // ── Tap hit-testing for node/line selection ─────────────────────────────
+    // Converts a screen tap into map coordinates, finds the nearest trail
+    // node (screen-space radius) or the nearest travel segment, and reports
+    // the selection upward. Tapping anywhere else reports an empty selection.
+    // Kept fresh across recompositions via rememberUpdatedState so the
+    // pointerInput(Unit) gesture handler always calls the latest closure.
+    val currentOnMapTap by rememberUpdatedState(onMapTap)
+    val handleMapTap by rememberUpdatedState<(Offset) -> Unit>({ tapPos ->
+        val scale = zoomScale.coerceAtLeast(1f)
+        val trail = allCoordsTrail.entries
+            .filter { !it.key.isBefore(rangeStart) && !it.key.isAfter(selectedDate) && dotColorsByDate[it.key] != null }
+            .sortedBy { it.key }
+        if (scale < 8f || trail.isEmpty() || lastSize == Size.Zero) {
+            android.util.Log.d("MapTap", "clear: scale=$scale trail=${trail.size}")
+            currentOnMapTap(null, emptySet())
+        } else {
+            val mx = (tapPos.x - zoomOffset.x) / scale
+            val my = (tapPos.y - zoomOffset.y) / scale
+            // 1) Node hit — nearest visited dot within ~28 screen px.
+            var bestDate: LocalDate? = null
+            var bestDist = 28f / scale
+            for ((d, c) in trail) {
+                val dx = lonToX(c.second, lastSize.width) - mx
+                val dy = latToY(c.first, lastSize.height) - my
+                val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                if (dist < bestDist) { bestDist = dist; bestDate = d }
+            }
+            if (bestDate != null) {
+                // Selecting a node selects EVERY line coming in or out of it:
+                // any segment with an endpoint at (approximately) the tapped
+                // node's coordinates — repeat visits to the same place count
+                // too. Coordinates compare in map pixels (~3 screen px).
+                val nodeCoord = trail.first { it.key == bestDate }.value
+                val nx = lonToX(nodeCoord.second, lastSize.width)
+                val ny = latToY(nodeCoord.first, lastSize.height)
+                val eps = 3f / scale
+                val segs = mutableSetOf<LocalDate>()
+                for (i in 1 until trail.size) {
+                    val p1 = trail[i - 1].value
+                    val p2 = trail[i].value
+                    val x1 = lonToX(p1.second, lastSize.width)
+                    val y1 = latToY(p1.first, lastSize.height)
+                    val x2 = lonToX(p2.second, lastSize.width)
+                    val y2 = latToY(p2.first, lastSize.height)
+                    val touches = (kotlin.math.abs(x1 - nx) < eps && kotlin.math.abs(y1 - ny) < eps) ||
+                        (kotlin.math.abs(x2 - nx) < eps && kotlin.math.abs(y2 - ny) < eps)
+                    if (touches) segs.add(trail[i].key)
+                }
+                android.util.Log.d("MapTap", "node hit: $bestDate segs=$segs")
+                currentOnMapTap(bestDate, segs)
+            } else {
+                // 2) Segment hit — point-to-segment distance < ~16 screen px.
+                var hitSeg: LocalDate? = null
+                var bestLine = 16f / scale
+                for (i in 1 until trail.size) {
+                    val p1 = trail[i - 1].value
+                    val p2 = trail[i].value
+                    var x1 = lonToX(p1.second, lastSize.width)
+                    var x2 = lonToX(p2.second, lastSize.width)
+                    if (x2 - x1 > lastSize.width / 2f) x2 -= lastSize.width
+                    if (x2 - x1 < -lastSize.width / 2f) x2 += lastSize.width
+                    val y1 = latToY(p1.first, lastSize.height)
+                    val y2 = latToY(p2.first, lastSize.height)
+                    val vx = x2 - x1
+                    val vy = y2 - y1
+                    val len2 = vx * vx + vy * vy
+                    val t = if (len2 < 1e-6f) 0f
+                        else (((mx - x1) * vx + (my - y1) * vy) / len2).coerceIn(0f, 1f)
+                    val dx = x1 + vx * t - mx
+                    val dy = y1 + vy * t - my
+                    val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                    if (dist < bestLine) { bestLine = dist; hitSeg = trail[i].key }
+                }
+                android.util.Log.d("MapTap", "seg hit: $hitSeg")
+                currentOnMapTap(hitSeg, if (hitSeg != null) setOf(hitSeg) else emptySet())
+            }
+        }
+    })
 
     LaunchedEffect(currentCoords, lastSize) {
         if (currentCoords == null || lastSize == Size.Zero) return@LaunchedEffect
@@ -1281,7 +1397,7 @@ private fun WorldMapWithMarker(
 
                             if (prevPinchDist > 0f) {
                                 val zoom = dist / prevPinchDist
-                                val newScale = (zoomScale * zoom).coerceIn(1f, 250f)
+                                val newScale = (zoomScale * zoom).coerceIn(1f, 1000f)
                                 if (newScale > 1f) {
                                     val scaleRatio = newScale / zoomScale
                                     val pan = Offset(
@@ -1325,11 +1441,16 @@ private fun WorldMapWithMarker(
                         event.changes.forEach { it.consume() }
                     }
 
-                    // Tap detection: not a transform, short duration, small movement
-                    val upTime = System.currentTimeMillis()
+                    // Tap detection: not a transform, short duration, small movement.
+                    // NOTE: must use the same clock as firstDown.uptimeMillis
+                    // (elapsed-since-boot), NOT System.currentTimeMillis() —
+                    // mixing epoch time with uptime made every duration look
+                    // like centuries and no tap was ever recognised.
+                    val upTime = android.os.SystemClock.uptimeMillis()
                     val isTap = !isTransform && (upTime - downTime) < 300 && totalMovement < 20f
 
                     if (isTap) {
+                        handleMapTap(pointerPositions.values.firstOrNull() ?: firstDown.position)
                         if (upTime - lastTapUpTime < 300) {
                             // Double tap → reset zoom
                             zoomScale = 1f
@@ -1418,19 +1539,21 @@ private fun WorldMapWithMarker(
             drawPath(path, color = borderColor, style = Stroke(width = 0.7f / zoomScale))
         }
 
-        // Equator + prime meridian — faint guides.
+        // Equator + prime meridian — faint guides. Stroke divided by
+        // zoomScale so these unimportant reference lines keep a constant
+        // hairline thickness on screen instead of thickening with the zoom.
         val gridColor = Color(0xFF1A1A1A)
         drawLine(
             color = gridColor,
             start = Offset(0f, size.height / 2f),
             end = Offset(size.width, size.height / 2f),
-            strokeWidth = 0.5f
+            strokeWidth = 0.5f / zoomScale
         )
         drawLine(
             color = gridColor,
             start = Offset(size.width / 2f, 0f),
             end = Offset(size.width / 2f, size.height),
-            strokeWidth = 0.5f
+            strokeWidth = 0.5f / zoomScale
         )
 
         // Trail of visited dots — only show dots for days up to the selected
@@ -1438,15 +1561,125 @@ private fun WorldMapWithMarker(
         // Each dot is locked to the accent colour of its own day.
         // Skip dots when color is null (hide zero days feature).
         for ((date, coord) in allCoordsTrail) {
-            if (date.isAfter(selectedDate)) continue
+            if (date.isAfter(selectedDate) || date.isBefore(rangeStart)) continue
             val dotColor = dotColorsByDate[date]
             if (dotColor == null) continue  // Skip hidden zero days
             val (lat, lon) = coord
+            val center = Offset(lonToX(lon, size.width), latToY(lat, size.height))
             drawCircle(
-                color = dotColor.copy(alpha = 0.55f),
-                radius = 2.0f * dotGrow / zoomScale,
-                center = Offset(lonToX(lon, size.width), latToY(lat, size.height))
+                color = if (date == selectedNodeDate) dotColor else dotColor.copy(alpha = 0.55f),
+                radius = (if (date == selectedNodeDate) 3.2f else 2.0f) * dotGrow / zoomScale,
+                center = center
             )
+            // Selection halo around the tapped node — outer white ring +
+            // inner accent ring, clearly visible at any zoom level.
+            if (date == selectedNodeDate) {
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.9f),
+                    radius = 9f * dotGrow / zoomScale,
+                    center = center,
+                    style = Stroke(width = 1.5f / zoomScale)
+                )
+                drawCircle(
+                    color = dotColor,
+                    radius = 6f * dotGrow / zoomScale,
+                    center = center,
+                    style = Stroke(width = 1.5f / zoomScale)
+                )
+            }
+        }
+
+        // ── Travel arrows ────────────────────────────────────────────────────
+        // Once zoomed in close (zoom ≥ 8×), connect consecutive visited days
+        // with very thin lines carrying a small arrowhead, showing the
+        // direction of travel from one place to the next. Strokes and
+        // arrowheads are divided by zoomScale for constant on-screen size.
+        // SELECTED segments (via tap) are always drawn — at any zoom level —
+        // brighter and slightly thicker, so a picked travel line stays
+        // visible even when zooming back out.
+        val arrowTrail = allCoordsTrail.entries
+            .filter { !it.key.isBefore(rangeStart) && !it.key.isAfter(selectedDate) && dotColorsByDate[it.key] != null }
+            .sortedBy { it.key }
+        if (arrowTrail.size >= 2 && (zoomScale >= 8f || selectedSegmentDates.isNotEmpty())) {
+            fun drawSegment(
+                prev: Pair<Double, Double>,
+                cur: Pair<Double, Double>,
+                lineColor: Color,
+                arrowStroke: Float,
+                headLen: Float
+            ) {
+                val y1 = latToY(prev.first, size.height)
+                val x1 = lonToX(prev.second, size.width)
+                val y2 = latToY(cur.first, size.height)
+                var x2 = lonToX(cur.second, size.width)
+                // World wrap: take the shortest path like the marker anim does.
+                if (x2 - x1 > size.width / 2f) x2 -= size.width
+                if (x2 - x1 < -size.width / 2f) x2 += size.width
+                // Draw the segment three times (shifted by ±map width) so
+                // wrapped paths stay visible on both screen edges.
+                for (shiftPx in listOf(-size.width, 0f, size.width)) {
+                    val sx1 = x1 + shiftPx
+                    val sx2 = x2 + shiftPx
+                    drawLine(
+                        color = lineColor,
+                        start = Offset(sx1, y1),
+                        end = Offset(sx2, y2),
+                        strokeWidth = arrowStroke
+                    )
+                    // Arrowhead at 2/3 along the segment, pointing at the
+                    // direction of travel.
+                    val t = 0.6667f
+                    val ax = sx1 + (sx2 - sx1) * t
+                    val ay = y1 + (y2 - y1) * t
+                    var dx = sx2 - sx1
+                    var dy = y2 - y1
+                    val len = kotlin.math.sqrt(dx * dx + dy * dy)
+                    if (len < 1f) continue
+                    dx /= len; dy /= len
+                    val nx = -dy
+                    val ny = dx
+                    val wing = headLen * 0.5f
+                    val headPath = Path().apply {
+                        moveTo(ax + dx * headLen, ay + dy * headLen)
+                        lineTo(ax - nx * wing, ay - ny * wing)
+                        lineTo(ax + nx * wing, ay + ny * wing)
+                        close()
+                    }
+                    drawPath(headPath, color = lineColor)
+                }
+            }
+            for (i in 1 until arrowTrail.size) {
+                val curDate = arrowTrail[i].key
+                val isSelected = curDate in selectedSegmentDates
+                if (!isSelected && zoomScale < 8f) continue
+                val baseColor = dotColorsByDate[curDate] ?: Color(0xFF888888)
+                if (isSelected) {
+                    // Soft wide glow underneath + bold full-opacity line on
+                    // top, so a selected travel line is unmistakable.
+                    drawSegment(
+                        prev = arrowTrail[i - 1].value,
+                        cur = arrowTrail[i].value,
+                        lineColor = baseColor.copy(alpha = 0.30f),
+                        arrowStroke = 5f / zoomScale,
+                        headLen = 16f / zoomScale
+                    )
+                    drawSegment(
+                        prev = arrowTrail[i - 1].value,
+                        cur = arrowTrail[i].value,
+                        lineColor = baseColor.copy(alpha = 1f),
+                        arrowStroke = 2.4f / zoomScale,
+                        headLen = 16f / zoomScale
+                    )
+                } else {
+                    drawSegment(
+                        prev = arrowTrail[i - 1].value,
+                        cur = arrowTrail[i].value,
+                        lineColor = baseColor.copy(alpha = 0.45f),
+                        arrowStroke = 0.8f / zoomScale,
+                        headLen = 11.2f / zoomScale
+                    )
+                }
+            }
         }
 
         // Secondary location dots — smaller, slightly more transparent dots
@@ -1454,7 +1687,7 @@ private fun WorldMapWithMarker(
         // Only shown for days up to the selected date.
         // Skip dots when color is null (hide zero days feature).
         for ((date, secondaries) in secondaryByDate) {
-            if (date.isAfter(selectedDate)) continue
+            if (date.isAfter(selectedDate) || date.isBefore(rangeStart)) continue
             val secColor = dotColorsByDate[date]
             if (secColor == null) continue  // Skip hidden zero days
             for (sec in secondaries) {
@@ -1597,7 +1830,7 @@ private fun WorldMapWithMarker(
             }
             val drawnPlaces = HashSet<String>()
             for ((date, coord) in allCoordsTrail) {
-                if (date.isAfter(selectedDate)) continue
+                if (date.isAfter(selectedDate) || date.isBefore(rangeStart)) continue
                 // Label is the city part of "City, Region, Country".
                 val label = labelForDate(date)?.split(",")?.firstOrNull()?.trim()
                 if (label.isNullOrBlank() || !drawnPlaces.add(label)) continue
@@ -2496,6 +2729,8 @@ private fun TimelineBar(
     onTogglePlay: () -> Unit,
     speed: Float,
     onSpeedChange: (Int) -> Unit,
+    rangeStart: LocalDate,
+    onRangeStartChange: (LocalDate) -> Unit,
     accent: Color,
     clockTimeMinutes: Int? = null,
     dayHasSecondaries: Boolean = false
@@ -2515,7 +2750,7 @@ private fun TimelineBar(
     } else {
         String.format("%.1f", daysFromStart.toDouble())
     }
-    val canStepBack = selectedDate.isAfter(firstDate)
+    val canStepBack = selectedDate.isAfter(rangeStart)
     val canStepForward = selectedDate.isBefore(lastDate)
 
     Column(
@@ -2568,21 +2803,110 @@ private fun TimelineBar(
             }
             
             Spacer(Modifier.width(8.dp))
-            // Slider takes the rest of the row
-            Slider(
-                value = daysFromStart.toFloat(),
-                valueRange = 0f..totalDays.coerceAtLeast(1).toFloat(),
-                onValueChange = { v ->
-                    val newDate = firstDate.plusDays(v.toLong())
-                    onScrub(newDate)
-                },
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = accent,
-                    activeTrackColor = accent.darker(0.8f),
-                    inactiveTrackColor = Color(0xFF333333)
+            // Slider takes the rest of the row. A second, draggable "range
+            // start" marker (same look as the main thumb) sits on the same
+            // track: everything to its left is greyed out on the timeline and
+            // hidden from the map, and playback starts from it.
+            BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                val thumbInset = 10.dp
+                val trackSpan = (maxWidth - thumbInset * 2).coerceAtLeast(1.dp)
+                val totalForFrac = totalDays.coerceAtLeast(1)
+                val startFrac = (java.time.temporal.ChronoUnit.DAYS
+                    .between(firstDate, rangeStart)
+                    .coerceIn(0L, totalForFrac.toLong()).toFloat() / totalForFrac)
+                val markerXDp = thumbInset + trackSpan * startFrac
+                Slider(
+                    value = daysFromStart.toFloat(),
+                    valueRange = 0f..totalDays.coerceAtLeast(1).toFloat(),
+                    onValueChange = { v ->
+                        val newDate = firstDate.plusDays(v.toLong())
+                        onScrub(newDate)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = accent,
+                        activeTrackColor = accent.darker(0.8f),
+                        inactiveTrackColor = Color(0xFF333333)
+                    )
                 )
-            )
+                // Grey bar + marker drawn over the slider's active track.
+                Canvas(modifier = Modifier.matchParentSize()) {
+                    val barH = 4.dp.toPx()
+                    val cy = size.height / 2f
+                    val markerX = markerXDp.toPx()
+                    drawRect(
+                        color = Color(0xFF333333),
+                        topLeft = Offset(0f, cy - barH / 2f),
+                        size = androidx.compose.ui.geometry.Size(markerX, barH)
+                    )
+                    drawCircle(
+                        color = Color(0xFF141414),
+                        radius = 10.dp.toPx(),
+                        center = Offset(markerX, cy)
+                    )
+                    drawCircle(
+                        color = accent,
+                        radius = 8.dp.toPx(),
+                        center = Offset(markerX, cy)
+                    )
+                }
+                // ── Drag-only gesture layer for BOTH markers ─────────────────
+                // A plain tap anywhere on the track does nothing — markers
+                // only move when a drag STARTS near them (within ~24dp). The
+                // overlay also swallows every pointer event, so the Material
+                // slider underneath never snaps its thumb to a random tap.
+                val mainMarkerXDp = thumbInset + trackSpan *
+                    (daysFromStart.toFloat() / totalForFrac)
+                val markerXs by rememberUpdatedState<Pair<Dp, Dp>>(markerXDp to mainMarkerXDp)
+                val handleMarkerDrag by rememberUpdatedState({ xDp: Dp, isStart: Boolean ->
+                    val frac = ((xDp - thumbInset) / trackSpan).coerceIn(0f, 1f)
+                    val d = firstDate.plusDays((frac * totalForFrac).toLong())
+                    if (isStart) {
+                        // The start marker can never pass the main marker.
+                        val nd = if (d.isAfter(selectedDate)) selectedDate else d
+                        onRangeStartChange(nd)
+                    } else {
+                        val nd = when {
+                            d.isBefore(rangeStart) -> rangeStart
+                            d.isAfter(lastDate) -> lastDate
+                            else -> d
+                        }
+                        onScrub(nd)
+                    }
+                })
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .pointerInput(firstDate, totalForFrac) {
+                            var activeStart: Boolean? = null
+                            fun near(x: Dp, m: Dp) = kotlin.math.abs((x - m).value) <= 24f
+                            detectDragGestures(
+                                onDragStart = { off ->
+                                    val x = off.x.toDp()
+                                    val (sx, mx) = markerXs
+                                    val nearStart = near(x, sx)
+                                    val nearMain = near(x, mx)
+                                    activeStart = when {
+                                        nearStart && nearMain ->
+                                            (x - sx).value <= (x - mx).value
+                                        nearStart -> true
+                                        nearMain -> false
+                                        else -> null  // too far from either marker
+                                    }
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val isStart = activeStart
+                                    if (isStart != null) {
+                                        handleMarkerDrag(change.position.x.toDp(), isStart)
+                                    }
+                                },
+                                onDragEnd = { activeStart = null },
+                                onDragCancel = { activeStart = null }
+                            )
+                        }
+                )
+            }
             Spacer(Modifier.width(4.dp))
             // ── Step-by-day controls (sit right next to the day counter) ──
             RepeatIconButton(
