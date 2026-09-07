@@ -79,3 +79,16 @@ right-anchored, stretch ladder 1.28→1.34 → user-matte alpha (black flood
 fill). Originals backed up in `raw/ascend_backup/`; cached raws in
 `raw/ascend/` allow `--reprocess` with zero API calls. Poses/manifest/Kotlin
 untouched.
+
+### 2026-09-06 t7 POSE re-roll (matching the new crimson warrior)
+
+After the strip upgrade above, tier 7's 12 pose canvases still showed the OLD
+hue-recolor lizard. Re-ran `gen_lizard_poses.py --tier 7 --only N` once per
+pose (N = 0..11, one at a time with visual QA after each); the pipeline used
+the NEW crimson-warrior strip as the identity reference automatically.
+Rerolls needed: p02 curled (3× — erase-notch/floating defects), p08 armory
+(3× — undersized lizard), p09 shield_wall (2× — undersized). All finals
+verified: exact 512px/cell grid geometry, 75–94% transparent, no blue-key
+spill, manifest `tiers.7` regenerated (12 poses, correct dummy cells/bulk
+bands). OLD t7 poses + raws + manifest snapshot backed up in
+`raw/poses_backup_t7_20260906/` for rollback.

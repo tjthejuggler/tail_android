@@ -1017,7 +1017,13 @@ POSES_BY_TIER = {
                  "kneeling to adjust one of a row of tiny solar "
                  "panels on slim stalks planted on the block like "
                  "flowers, angling its face upward, gardener's "
-                 "delicacy"),
+                 "delicacy",
+                 layout="ONLY TWO squares exist in the whole image: "
+                        "row 3 column 1 and row 3 column 2. Every other "
+                        "grid cell is flat empty background — no second "
+                        "row of squares, no other squares anywhere. Both "
+                        "the chameleon AND the solar panels stand on the "
+                        "top edges of exactly those two squares."),
         _upright("star_scale",
                  "steadying a small brass balance scale with one "
                  "claw while two tiny glowing golden stars sit in "
@@ -1036,6 +1042,7 @@ POSES_BY_TIER = {
                  "block — tiny planets on slender arms circling a "
                  "central golden sphere, one claw mid-turn, tracing "
                  "the heavens"),
+        # NOTE: bulk band includes the memento pile he stands on.
         _stage("hoard_finale",
                "standing triumphant atop his ultimate hoard piled on "
                "the platform blocks — a great golden sun disc "
@@ -1043,7 +1050,7 @@ POSES_BY_TIER = {
                "age heaped around: a tiny anvil, a flask, a small "
                "sword, a mini guitar, a music box — one claw raised "
                "high, the legendary finale pose",
-               bulk=(0.55, 1.3),
+               bulk=(0.55, 2.4),
                avoid="Every memento keeps its own normal material "
                      "colours and the sun disc gleams his golden "
                      "accent — nothing cyan, nothing green, nothing "

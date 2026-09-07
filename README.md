@@ -1,12 +1,16 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-06T07:55Z
+**Last updated:** 2026-09-07T05:00Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---31e8e7a8
+
+## 2026-09-07T05:00Z — Ascended lizard poses finished: transplant mode for t11/t12
+- **🦎 The pose-art upgrade for the white-combo tiers is COMPLETE** — after the 2026-09-06 strip-art ascension (`upgrade_ascended_lizards.py`), tiers 7–10 + t11 p00–p07 were regenerated from scratch, and the remaining 16 poses (t11 p08–p11, all of t12) now carry the NEW lizard art too. Per user direction these were NOT re-imagined: [`wallpaper_gen/transplant_poses.py`](wallpaper_gen/transplant_poses.py:1) sends a TWO-image edit to ppq.ai — image 1 = the APPROVED old raw generation (restored from `wallpaper_gen/raw/poses_backup_t8_t12_20260906/`, same chroma scheme as the current keys), image 2 = the new tier strip's lizard alpha-cropped onto the tier's flat bg-key colour — with a "reproduce image 1 exactly, but the chameleon becomes the image-2 character" prompt. The result runs the UNCHANGED standard postprocess/verify/manifest path (grid align, hue keying, despill, size normalizer, per-cell erase). Old finals stay backed up in `poses_backup_t8_t12_20260906/finals/` and in git history.
+- Transplants needed exactly the same verify() retry loops as fresh generation (bulk-band rejects on quilt/conductor/orrery, top-edge clip on t12 walk). Two systematic rejects had root causes in the APPROVED old compositions themselves: t12 p07 solar_garden's old raw drew a 3×2 square grid with the lizard on the upper row (the def declares one bottom dummy row → every faithful transplant "floated"; fixed deterministically by [`fix_t12_p07_rebase.py`](wallpaper_gen/fix_t12_p07_rebase.py:1), which keys + re-composites the cached raw onto the real dummy row, then `--reprocess`), and t12 p11 hoard_finale's memento pile towers ~2 cells (band was authored for the lizard alone → `bulk` widened to (0.55, 2.4) with a NOTE, same pattern as curled/throne/phoenix_egg). Pose defs gained an optional `layout` clause (honoured by both [`prompt_for()`](wallpaper_gen/gen_lizard_poses.py:184) and the transplant prompt) for composition overrides. All 16 finals: verify() clean + vision-audited (one lizard, props intact, correct pose, no chroma contamination).
 
 ## 2026-09-06T07:55Z — Persistent Timer v2: bubble stays up everywhere
 - New per-habit "⏱️ Persistent Timer" sub-toggle inside the existing "🫧 Use Widget"

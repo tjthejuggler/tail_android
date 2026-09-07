@@ -221,6 +221,7 @@ def prompt_for(p: dict, tier: int) -> str:
         f"- The chameleon must fit fully inside the canvas without touching "
         f"the outer edges, and must never overlap or cover a {sq_word} "
         f"square except where it grips its surface.\n"
+        + (f"- LAYOUT OVERRIDE: {p['layout']}\n" if p.get("layout") else "")
         + (f"- {p['avoid']}\n" if p.get("avoid") else "")
         + f"Output the edited image."
     )
