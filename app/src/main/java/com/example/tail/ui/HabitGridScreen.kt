@@ -2265,19 +2265,26 @@ fun HabitGridScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 48.dp)
         ) {
+            // Movie asks carry "HH:mm:ss|<minutes>" in the payload — the
+            // time feeds the meta label, the file-derived minutes seed the
+            // editable Length wheel (partial watches can be logged shorter).
+            val flashMovieMinutes = if (ask.type == HabitNotification.TYPE_MOVIE) {
+                HabitNotification.parseMoviePayload(ask.payload).second.takeIf { it > 0 } ?: 0
+            } else null
             HabitAskFlash(
                 title = ask.title,
                 question = ask.question,
                 metaLabel = when {
                     ask.type == HabitNotification.TYPE_MOVIE && ask.payload.isNotBlank() ->
-                        "at ${ask.payload}"
+                        "at ${ask.payload.substringBefore('|')}"
                     else -> ask.habitName
                 },
                 visible = true,
-                onConfirm = {
+                editableMovieMinutes = flashMovieMinutes,
+                onConfirm = { minutesOverride ->
                     flashAsk = null
                     flashCycle++
-                    viewModel.answerNotification(ask, yes = true) { entryTime ->
+                    viewModel.answerNotification(ask, yes = true, minutesOverride = minutesOverride) { entryTime ->
                         if (ask.type == HabitNotification.TYPE_MOVIE && entryTime != null) {
                             // Show the standard increment toast so the time can
                             // still be edited / made timeless, like a manual entry.
@@ -2420,6 +2427,7 @@ fun HabitGridScreen(
                 fullTs.takeLast(8) to text
             },
             isMealHabit = habitName in settings.mealHabits,
+            isMovieHabit = habitName in settings.bridgeMovieHabits,
             canEditText = habitName in settings.textInputHabits,
             isMinutesPrimary = viewModel.isMinutesPrimaryHabit(habitName),
             minutesByTime = timestampEditorMinutes,
@@ -3144,7 +3152,9 @@ fun HabitGridScreen(
     if (showNotificationsDialog) {
         NotificationsDialog(
             notifications = notifications,
-            onAnswer = { ask, yes -> viewModel.answerNotification(ask, yes) },
+            onAnswer = { ask, yes, minutesOverride ->
+                viewModel.answerNotification(ask, yes, minutesOverride)
+            },
             onDismiss = { showNotificationsDialog = false },
             onOpenAppStats = {
                 showNotificationsDialog = false

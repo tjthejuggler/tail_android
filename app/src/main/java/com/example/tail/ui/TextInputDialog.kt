@@ -114,8 +114,12 @@ fun TextInputDialog(
     var selectedMinute by remember { mutableIntStateOf(initialMinute) }
     var showTimePicker by remember { mutableStateOf(false) }
 
-    // Length (minutes) state — wheel-based, only for movie-bridge suggestions
-    val hasLengthSuggestion = suggestedMinutes != null
+    // Length (minutes) state — wheel-based, for movie-bridge suggestions.
+    // Becomes available also once a recent movie is picked, so a partially
+    // watched film can be logged with custom minutes even without a live
+    // suggestion.
+    var lengthAvailable by remember { mutableStateOf(suggestedMinutes != null) }
+    val hasLengthSuggestion = lengthAvailable
     var lengthMinutes by remember { mutableIntStateOf(suggestedMinutes ?: 0) }
     var showLengthPicker by remember { mutableStateOf(false) }
     // Same guard as the text: a late length suggestion only applies until
@@ -211,6 +215,11 @@ fun TextInputDialog(
                                         .clickable {
                                             userEditedText = true
                                             inputText = movie.title
+                                            // Picking a recent movie makes the
+                                            // Length row available (seeded from
+                                            // the file length when known) so
+                                            // the minutes can be overridden.
+                                            lengthAvailable = true
                                             movie.totalWatchMin?.takeIf { it > 0 }?.let {
                                                 lengthTouched = true
                                                 lengthMinutes = it

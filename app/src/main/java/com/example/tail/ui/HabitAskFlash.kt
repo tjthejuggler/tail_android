@@ -19,6 +19,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,9 +45,14 @@ const val HABIT_ASK_FLASH_SECONDS = 12
  *
  * @param title Headline (movie title or habit name)
  * @param question The yes/no question (e.g. "Watched this?")
- * @param metaLabel Optional extra info (e.g. "113 min" or "Scheduled 22:00")
+ * @param metaLabel Optional extra info (e.g. "113 min" or "Scheduled 22:0" +
+ *   the entry time)
  * @param visible Whether the flash is currently showing
- * @param onConfirm "Yes" — applies the yes effect everywhere
+ * @param editableMovieMinutes Non-null for movie asks: the file-derived watch
+ *   length, shown in an editable Length wheel so a partial watch can be
+ *   logged with the actually-watched minutes.
+ * @param onConfirm "Yes" — applies the yes effect everywhere; carries the
+ *   (possibly edited) minutes override for movie asks
  * @param onDismiss "No" — applies the no effect everywhere
  * @param modifier Optional modifier for positioning (e.g. alignment in a Box)
  */
@@ -53,11 +62,17 @@ fun HabitAskFlash(
     question: String,
     metaLabel: String?,
     visible: Boolean,
-    onConfirm: () -> Unit,
+    editableMovieMinutes: Int? = null,
+    onConfirm: (minutesOverride: Int?) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     onHide: () -> Unit = {}
 ) {
+    // Editable watch length for movie asks — seeded from the file length;
+    // whatever is set here rides along with the Yes.
+    var minutes by remember(title) {
+        mutableIntStateOf(editableMovieMinutes ?: 0)
+    }
     // Auto-hide after the timeout — the ask is NOT answered here; it keeps
     // waiting in the notification center (and as a system notification).
     LaunchedEffect(visible) {
@@ -119,6 +134,16 @@ fun HabitAskFlash(
                         color = Color(0xFF888888)
                     )
                 }
+                // Editable length (movie asks only) — partial watches can be
+                // logged with the actually-watched minutes instead of the
+                // full file length.
+                if (editableMovieMinutes != null) {
+                    MovieMinutesWheelRow(
+                        minutes = minutes,
+                        onMinutesChange = { minutes = it }
+                    )
+                }
+
                 // Buttons row — always on its own line below the question
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -127,7 +152,7 @@ fun HabitAskFlash(
                     Box(
                         modifier = Modifier
                             .background(Color(0xFF1B5E20), RoundedCornerShape(6.dp))
-                            .clickable(onClick = onConfirm)
+                            .clickable { onConfirm(editableMovieMinutes?.let { minutes }) }
                             .padding(horizontal = 14.dp, vertical = 4.dp)
                     ) {
                         Text(

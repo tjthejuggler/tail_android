@@ -85,6 +85,9 @@ fun TimestampEditorDialog(
     textEntries: Map<String, String> = emptyMap(),
     /** True for meal habits — the pencil opens the meal editor instead. */
     isMealHabit: Boolean = false,
+    /** True for movie-bridge habits — the card editor shows an editable
+     *  Length wheel that rewrites the "(N min)" annotation of the text. */
+    isMovieHabit: Boolean = false,
     /** True when the habit has a text log (text field shown in card edit mode). */
     canEditText: Boolean = false,
     /** True when minutes is the habit's PRIMARY value — the per-timestamp
@@ -149,8 +152,18 @@ fun TimestampEditorDialog(
         text = {
             Column {
                 // Minutes-primary habits summarise the day in minutes (the
-                // primary value), not in increment units.
-                val totalMinutes = groups.sumOf { (minutesByTime[it.time] ?: it.amount).coerceAtLeast(0) }
+                // primary value), not in increment units. Movie habits take
+                // the minutes straight from the "(N min)" annotations — the
+                // same source the minutes slot re-syncs from — so the total
+                // always equals the sum of the individual movie lengths.
+                val totalMinutes = if (isMovieHabit) {
+                    groups.sumOf {
+                        (parseMovieMinutesAnnotation(textEntries[it.time].orEmpty())
+                            ?: minutesByTime[it.time] ?: it.amount).coerceAtLeast(0)
+                    }
+                } else {
+                    groups.sumOf { (minutesByTime[it.time] ?: it.amount).coerceAtLeast(0) }
+                }
                 Text(
                     text = when {
                         timestamps.isEmpty() && groups.isNotEmpty() ->
@@ -211,9 +224,13 @@ fun TimestampEditorDialog(
                                     text = textEntries[group.time].orEmpty(),
                                     isEditing = editingCard == group.time,
                                     isMealHabit = isMealHabit,
+                                    isMovieHabit = isMovieHabit,
                                     canEditText = canEditText,
                                     isMinutesPrimary = isMinutesPrimary,
-                                    displayAmount = if (isMinutesPrimary) {
+                                    displayAmount = if (isMovieHabit) {
+                                        parseMovieMinutesAnnotation(textEntries[group.time].orEmpty())
+                                            ?: minutesByTime[group.time] ?: group.amount
+                                    } else if (isMinutesPrimary) {
                                         minutesByTime[group.time] ?: group.amount
                                     } else group.amount,
                                     onStartEditTime = {
@@ -343,6 +360,7 @@ private fun TimestampCard(
     text: String,
     isEditing: Boolean,
     isMealHabit: Boolean,
+    isMovieHabit: Boolean,
     canEditText: Boolean,
     isMinutesPrimary: Boolean,
     displayAmount: Int,
@@ -359,6 +377,11 @@ private fun TimestampCard(
     // so re-entering edit mode never shows a stale amount or text.
     var amountText by remember(group.time, displayAmount) { mutableStateOf(displayAmount.toString()) }
     var editText by remember(group.time, text) { mutableStateOf(text) }
+    // Watch length for movie entries — seeded from the "(N min)" annotation
+    // (0 when the entry has none), edited with the shared wheel.
+    var movieMinutes by remember(group.time, text) {
+        mutableIntStateOf(parseMovieMinutesAnnotation(text) ?: 0)
+    }
 
     Column(
         modifier = Modifier
@@ -488,7 +511,10 @@ private fun TimestampCard(
         if (isEditing) {
             Spacer(modifier = Modifier.height(6.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Movie habits: no amount/minutes stepper — the editable Length
+            // wheel above is authoritative and the minutes total re-syncs
+            // from it automatically.
+            if (!isMovieHabit) Row(verticalAlignment = Alignment.CenterVertically) {
                 if (!isMinutesPrimary) {
                     Text("Amount:", fontSize = 12.sp, color = Color(0xFF999999))
                     Spacer(modifier = Modifier.width(8.dp))
@@ -531,6 +557,17 @@ private fun TimestampCard(
                 ) { Text("+", color = Color(0xFFAAAAAA), fontSize = 14.sp) }
             }
 
+            // Editable watch length (movie habits) — the wheel rewrites the
+            // "(N min)" annotation on Save, and the minutes slot re-syncs
+            // from it (HabitViewModel.syncMovieMinutesSlot).
+            if (isMovieHabit && canEditText) {
+                Spacer(modifier = Modifier.height(6.dp))
+                MovieMinutesWheelRow(
+                    minutes = movieMinutes,
+                    onMinutesChange = { movieMinutes = it }
+                )
+            }
+
             if (canEditText) {
                 Spacer(modifier = Modifier.height(6.dp))
                 OutlinedTextField(
@@ -566,7 +603,14 @@ private fun TimestampCard(
                         .background(Color(0xFF004488), RoundedCornerShape(6.dp))
                         .clickable {
                             val n = (amountText.toIntOrNull() ?: displayAmount).coerceAtLeast(0)
-                            onSaveEditInfo(n, editText.trim())
+                            // Movie habits: fold the edited length back into
+                            // the text as the "(N min)" annotation.
+                            val textOut = if (isMovieHabit && canEditText) {
+                                withMovieMinutesAnnotation(editText.trim(), movieMinutes)
+                            } else {
+                                editText.trim()
+                            }
+                            onSaveEditInfo(n, textOut)
                         }
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 ) { Text("Save", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }

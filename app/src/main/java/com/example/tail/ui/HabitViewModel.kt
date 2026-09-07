@@ -2074,7 +2074,14 @@ class HabitViewModel(
                         }
                     }
                 }
-                
+
+                // Movie-bridge habits: the day's minutes total is the sum of
+                // the "(N min)" annotations, so an edited/deleted entry must
+                // re-sync the minutes slot (and timestamps) automatically.
+                if (isMovieBridgeHabit(habitName)) {
+                    syncMovieTimestamps(habitName)
+                    syncMovieMinutesSlot(habitName)
+                }
                 onComplete()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to update text entry: ${e.message}"
@@ -2124,7 +2131,13 @@ class HabitViewModel(
                         )
                     }
                 }
-                
+
+                // Movie-bridge habits: recompute the day's minutes total
+                // from the "(N min)" annotations after the write.
+                if (isMovieBridgeHabit(habitName)) {
+                    syncMovieTimestamps(habitName)
+                    syncMovieMinutesSlot(habitName)
+                }
                 onComplete()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to set text entry: ${e.message}"
@@ -2174,6 +2187,12 @@ class HabitViewModel(
                     }
                 }
 
+                // Movie-bridge habits: a deleted entry removes its "(N min)"
+                // annotation from the day's total — re-sync automatically.
+                if (isMovieBridgeHabit(habitName)) {
+                    syncMovieTimestamps(habitName)
+                    syncMovieMinutesSlot(habitName)
+                }
                 onComplete()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to delete text entry: ${e.message}"
@@ -3950,6 +3969,7 @@ class HabitViewModel(
     fun answerNotification(
         ask: HabitNotification,
         yes: Boolean,
+        minutesOverride: Int? = null,
         onEntryLogged: (String?) -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -3966,8 +3986,12 @@ class HabitViewModel(
                                 java.time.LocalTime.now()
                             }
                         } ?: java.time.LocalTime.now()
-                        val text = if (payloadMinutes > 0) {
-                            "${ask.title} ($payloadMinutes min)"
+                        // The length annotation can be overridden at answer
+                        // time (partial watch) — the minutes slot re-syncs
+                        // from whatever lands in the text.
+                        val minutes = minutesOverride ?: payloadMinutes
+                        val text = if (minutes > 0) {
+                            "${ask.title} ($minutes min)"
                         } else {
                             ask.title
                         }

@@ -19,6 +19,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,7 +48,7 @@ private val ASK_TIME_FMT = DateTimeFormatter.ofPattern("MMM d · HH:mm")
 @Composable
 fun NotificationsDialog(
     notifications: List<HabitNotification>,
-    onAnswer: (HabitNotification, Boolean) -> Unit,
+    onAnswer: (HabitNotification, Boolean, Int?) -> Unit,
     onDismiss: () -> Unit,
     /** Opens the App Stats screen; used by the app-stats record notices. */
     onOpenAppStats: () -> Unit = {}
@@ -110,13 +114,26 @@ fun NotificationsDialog(
     }
 }
 
-/** One pending ask with its Yes/No buttons (a single OK for info notices). */
+/**
+ * One pending ask with its Yes/No buttons (a single OK for info notices).
+ * Movie asks also show the editable Length wheel — the file-derived watch
+ * length by default, overridable for partially-watched movies.
+ */
 @Composable
 private fun NotificationAskRow(
     ask: HabitNotification,
-    onAnswer: (HabitNotification, Boolean) -> Unit,
+    onAnswer: (HabitNotification, Boolean, Int?) -> Unit,
     onOpenAppStats: () -> Unit = {}
 ) {
+    // Editable watch length for movie asks (partial watches).
+    var movieMinutes by remember(ask.id) {
+        mutableIntStateOf(
+            if (ask.type == HabitNotification.TYPE_MOVIE) {
+                HabitNotification.parseMoviePayload(ask.payload).second
+            } else 0
+        )
+    }
+    val isMovie = ask.type == HabitNotification.TYPE_MOVIE
     val emoji = when (ask.type) {
         HabitNotification.TYPE_MOVIE -> "🎬"
         HabitNotification.TYPE_INFO -> "⚠️"
@@ -154,6 +171,14 @@ private fun NotificationAskRow(
             fontSize = 12.sp
         )
         Spacer(modifier = Modifier.height(8.dp))
+        // Editable length (movie asks only).
+        if (isMovie) {
+            MovieMinutesWheelRow(
+                minutes = movieMinutes,
+                onMinutesChange = { movieMinutes = it }
+            )
+        }
+
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -164,7 +189,7 @@ private fun NotificationAskRow(
                 Box(
                     modifier = Modifier
                         .background(Color(0xFF1B5E20), RoundedCornerShape(6.dp))
-                        .clickable { onAnswer(ask, true) }
+                        .clickable { onAnswer(ask, true, null) }
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Text("✓ OK", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -173,7 +198,7 @@ private fun NotificationAskRow(
                 Box(
                     modifier = Modifier
                         .background(Color(0xFF1B5E20), RoundedCornerShape(6.dp))
-                        .clickable { onAnswer(ask, true) }
+                        .clickable { onAnswer(ask, true, if (isMovie) movieMinutes else null) }
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Text("✓ Yes", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -181,7 +206,7 @@ private fun NotificationAskRow(
                 Box(
                     modifier = Modifier
                         .background(Color(0xFF5A1A1A), RoundedCornerShape(6.dp))
-                        .clickable { onAnswer(ask, false) }
+                        .clickable { onAnswer(ask, false, null) }
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Text("✗ No", color = Color(0xFFFF8888), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
