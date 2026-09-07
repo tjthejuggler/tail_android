@@ -2145,6 +2145,10 @@ fun HabitGridScreen(
                         onSetWidgetTriggerApp = { name -> widgetTriggerPickerHabit = name },
                         widgetPersistentTimerHabits = settings.widgetPersistentTimerHabits,
                         onTogglePersistentTimer = { name -> viewModel.toggleWidgetPersistentTimer(name) },
+                        bubbleFullScreenApps = settings.bubbleFullScreenApps,
+                        onToggleFullScreenMenu = { name, enabled ->
+                            viewModel.setBubbleFullScreenMenu(name, enabled)
+                        },
                         hasUsageAccess = viewModel.hasUsageAccess(),
                         onRequestUsageAccess = { viewModel.openUsageAccessSettings() },
                         widgetTimerMinutesPrimary = settings.widgetTimerMinutesPrimary,

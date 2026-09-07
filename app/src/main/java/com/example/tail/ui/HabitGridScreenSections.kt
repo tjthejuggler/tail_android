@@ -203,19 +203,30 @@ internal fun WidgetTriggerSection(
     hasUsageAccess: Boolean,
     onRequestUsageAccess: () -> Unit,
     widgetPersistentTimerHabits: Set<String> = emptySet(),
-    onTogglePersistentTimer: (String) -> Unit = {}
+    onTogglePersistentTimer: (String) -> Unit = {},
+    /** Trigger apps with the "Full-screen menu on bubble open" sub-option. */
+    bubbleFullScreenApps: Set<String> = emptySet(),
+    /** Called when the user toggles the full-screen menu sub-option (habitName, enabled). */
+    onToggleFullScreenMenu: (String, Boolean) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val isEnabled = habitName in widgetTriggerHabits
     val triggerPkg = widgetTriggerApps[habitName]
 
-    // Resolve the trigger app's display label
+    // Resolve the trigger app's display label + icon
     val triggerLabel = remember(triggerPkg) {
         triggerPkg?.let { pkg ->
             try {
                 val pm = context.packageManager
                 pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
             } catch (e: Exception) { pkg }
+        }
+    }
+    val triggerIcon = remember(triggerPkg) {
+        triggerPkg?.let { pkg ->
+            try {
+                drawableToBitmapForDialog(context.packageManager.getApplicationIcon(pkg))
+            } catch (e: Exception) { null }
         }
     }
 
@@ -282,6 +293,14 @@ internal fun WidgetTriggerSection(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (triggerIcon != null) {
+                    Image(
+                        bitmap = triggerIcon.asImageBitmap(),
+                        contentDescription = triggerLabel,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = "Trigger App", color = Color(0xFFAAAAAA), fontSize = 11.sp)
                     Text(
@@ -335,6 +354,43 @@ internal fun WidgetTriggerSection(
                         uncheckedTrackColor = Color(0xFF333333)
                     )
                 )
+            }
+
+            // Full-screen menu sub-option: keyed by TRIGGER APP, so every
+            // habit sharing this habit's trigger app shares the same switch
+            // state (turning it on/off for one flips it for all of them).
+            // When on, a fresh bubble stint over the app with no timer
+            // running opens a full-screen "start a session?" overlay.
+            if (triggerPkg != null) {
+                val fullScreenOn = triggerPkg in bubbleFullScreenApps
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "🖥️ Full-Screen Menu", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                        Text(
+                            text = if (fullScreenOn)
+                                "Bubble opens a full-screen choice (shared by all habits on this app)"
+                            else
+                                "Prompt disabled for this app's bubble",
+                            color = if (fullScreenOn) Color(0xFF66BB6A) else Color(0xFF888888),
+                            fontSize = 10.sp
+                        )
+                    }
+                    Switch(
+                        checked = fullScreenOn,
+                        onCheckedChange = { onToggleFullScreenMenu(habitName, it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF44BBFF),
+                            checkedTrackColor = Color(0xFF003355),
+                            uncheckedThumbColor = Color(0xFF888888),
+                            uncheckedTrackColor = Color(0xFF333333)
+                        )
+                    )
+                }
             }
 
             // Primary value selection lives in the universal PrimaryValueSection
@@ -1878,6 +1934,10 @@ internal fun EditModeControlBar(
     widgetPersistentTimerHabits: Set<String> = emptySet(),
     /** Called when the user toggles the "Persistent Timer" sub-option. */
     onTogglePersistentTimer: (String) -> Unit = {},
+    /** Trigger apps with the "Full-screen menu on bubble open" sub-option. */
+    bubbleFullScreenApps: Set<String> = emptySet(),
+    /** Called when the user toggles the full-screen menu sub-option (habitName, enabled). */
+    onToggleFullScreenMenu: (String, Boolean) -> Unit = { _, _ -> },
     /** Whether the user has granted Usage Access permission. */
     hasUsageAccess: Boolean = true,
     /** Called when the user taps to grant Usage Access. */
@@ -3191,7 +3251,9 @@ internal fun EditModeControlBar(
                         hasUsageAccess = hasUsageAccess,
                         onRequestUsageAccess = onRequestUsageAccess,
                         widgetPersistentTimerHabits = widgetPersistentTimerHabits,
-                        onTogglePersistentTimer = onTogglePersistentTimer
+                        onTogglePersistentTimer = onTogglePersistentTimer,
+                        bubbleFullScreenApps = bubbleFullScreenApps,
+                        onToggleFullScreenMenu = onToggleFullScreenMenu
                     )
 
                     // ── PC Widget (desktop bubble widget) ─────────────────────

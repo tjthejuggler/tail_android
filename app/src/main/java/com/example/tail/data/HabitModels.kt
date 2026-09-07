@@ -847,12 +847,15 @@ data class AppSettings(
      */
     val statsOverlayEnabled: Boolean = false,
     /**
-     * Floating bubble subsetting: when true, a fresh bubble stint over a
-     * trigger app with no timer running opens a full-screen overlay that
-     * offers the same options as the bubble's picker menu (plus a dismiss).
-     * Opt-in — the user is not timing every app stint.
+     * Trigger apps (package names) with the floating bubble "Full-screen
+     * menu on bubble open" sub-option enabled. Keyed by TRIGGER APP, not
+     * by habit, so every habit sharing the app shares one switch: turning
+     * it on/off for any of them flips it for all of them. When the app's
+     * package is in this set, a fresh bubble stint over it (no timer
+     * running) opens a full-screen overlay offering the same options as
+     * the bubble's picker menu (plus a dismiss).
      */
-    val bubbleFullScreenMenu: Boolean = false,
+    val bubbleFullScreenApps: Set<String> = emptySet(),
 
     /**
      * Master switch for the app-stats record notifications ("close to a

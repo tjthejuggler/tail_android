@@ -2159,25 +2159,26 @@ class FloatingBubbleService : Service() {
         if (ChessPuzzleRushStore.loadPending(this) != null) return
         serviceScope.launch {
             val settings = settingsRepo.settingsFlow.first()
-            if (!settings.bubbleFullScreenMenu) return@launch
+            // Per-trigger-app opt-in: the overlay only appears over apps the
+            // user explicitly enabled (shared by all habits on that app).
+            val triggerPkg = settings.widgetTriggerApps.entries
+                .firstOrNull { it.key in triggerHabitNames }?.value
+            if (triggerPkg == null || triggerPkg !in settings.bubbleFullScreenApps) return@launch
             handler.post { showFullScreenMenu() }
         }
     }
 
     /**
-     * The overlay is only meaningful when the picker menu would have
-     * something to offer: a Chess option (readiness app) or 2+ habits on
-     * the trigger app — the same gate [showHabitPickerMenu] applies. A
-     * single-habit app has no choice to make, so no prompt.
+     * The overlay must have something to offer: at least one trigger habit
+     * to time, or a Chess option (readiness app). Unlike [showHabitPickerMenu]
+     * there is NO 2+ habit requirement — the per-app toggle IS the opt-in,
+     * and a single-habit app is the primary use case ("did I start the
+     * timer yet?").
      */
     private fun fullScreenMenuWouldOfferChoice(): Boolean {
+        if (triggerHabitNames.isNotEmpty()) return true
         val trustWindowLive = ChessEnforcementPolicy.hasLiveTrustWindow(this)
-        val offeredHabits = if (chessReadinessActive && !trustWindowLive) {
-            emptyList()
-        } else {
-            triggerHabitNames
-        }
-        return chessReadinessActive || offeredHabits.size >= 2
+        return chessReadinessActive && trustWindowLive
     }
 
     /** Builds and shows the full-screen overlay window. No-op when up. */

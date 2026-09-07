@@ -400,11 +400,7 @@ fun SettingsScreen(
                 ) {
                     StatsOverlaySettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
-                    FloatingBubbleSettingsSection(
-                        viewModel = viewModel,
-                        settings = settings,
-                        context = context
-                    )
+                    FloatingBubbleSettingsSection(context = context)
                     SettingsSubSectionDivider()
                     TierBarWidgetSettingsSection(
                         context = context,
@@ -2436,16 +2432,13 @@ private fun StatsOverlaySettingsSection(
 }
 
 /**
- * Floating Bubble settings section — launch button for the overlay bubble
- * plus the "Full-screen menu on bubble open" sub-setting. The bubble floats
- * over other apps and can be dragged around or dismissed.
+ * Floating Bubble settings section — launch button for the overlay bubble.
+ * The bubble floats over other apps and can be dragged around or dismissed.
+ * (The "Full-screen menu" sub-setting lives per-habit in the edit panel's
+ * Use Widget section, keyed by trigger app.)
  */
 @Composable
-private fun FloatingBubbleSettingsSection(
-    viewModel: HabitViewModel,
-    settings: com.example.tail.data.AppSettings,
-    context: Context
-) {
+private fun FloatingBubbleSettingsSection(context: Context) {
     val hasPermission = remember {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             android.provider.Settings.canDrawOverlays(context)
@@ -2485,27 +2478,6 @@ private fun FloatingBubbleSettingsSection(
             Text("Launch Floating Bubble")
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Full-screen menu on bubble open", fontSize = 14.sp)
-                Text(
-                    text = "When the bubble opens over a trigger app (and no timer is " +
-                        "running), show a full-screen overlay with the same options as " +
-                        "the bubble menu — plus a ✕ dismiss, so untimed stints stay " +
-                        "one tap away. Off by default.",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = settings.bubbleFullScreenMenu,
-                onCheckedChange = { viewModel.setBubbleFullScreenMenu(it) }
-            )
-        }
     }
 }
 

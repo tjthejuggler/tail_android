@@ -28,8 +28,9 @@ private val KEY_PC_WIDGET_HABITS = stringSetPreferencesKey("pc_widget_habits")
 private val KEY_LOCK_WIDGET_EXCLUDED_HABITS = stringSetPreferencesKey("lock_widget_excluded_habits")
 // In-app stats overlay (StatsOverlayService) master switch
 private val KEY_STATS_OVERLAY_ENABLED = booleanPreferencesKey("stats_overlay_enabled")
-// Floating bubble: full-screen menu overlay when the bubble opens (opt-in)
-private val KEY_BUBBLE_FULL_SCREEN_MENU = booleanPreferencesKey("bubble_full_screen_menu")
+// Floating bubble "Full-screen menu on bubble open" - set of TRIGGER APP
+// package names the prompt is enabled for (habits sharing an app share it).
+private val KEY_BUBBLE_FULL_SCREEN_APPS = stringSetPreferencesKey("bubble_full_screen_apps")
 
 // App-stats record notifications master switch
 private val KEY_APP_STATS_RECORD_NOTIFS = booleanPreferencesKey("app_stats_record_notifications_enabled")
@@ -935,7 +936,7 @@ class SettingsRepository(private val context: Context) {
             pcWidgetHabits = prefs[KEY_PC_WIDGET_HABITS] ?: emptySet(),
             lockWidgetExcludedHabits = prefs[KEY_LOCK_WIDGET_EXCLUDED_HABITS] ?: emptySet(),
             statsOverlayEnabled = prefs[KEY_STATS_OVERLAY_ENABLED] ?: false,
-            bubbleFullScreenMenu = prefs[KEY_BUBBLE_FULL_SCREEN_MENU] ?: false,
+            bubbleFullScreenApps = prefs[KEY_BUBBLE_FULL_SCREEN_APPS] ?: emptySet(),
             appStatsRecordNotificationsEnabled = prefs[KEY_APP_STATS_RECORD_NOTIFS] ?: true,
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
@@ -1100,10 +1101,13 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    /** Saves the floating bubble's "full-screen menu on open" subsetting. */
-    suspend fun saveBubbleFullScreenMenu(enabled: Boolean) {
+    /**
+     * Saves the set of trigger apps with the floating bubble's
+     * "Full-screen menu on bubble open" sub-option enabled.
+     */
+    suspend fun saveBubbleFullScreenApps(apps: Set<String>) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_BUBBLE_FULL_SCREEN_MENU] = enabled
+            prefs[KEY_BUBBLE_FULL_SCREEN_APPS] = apps
         }
     }
 
