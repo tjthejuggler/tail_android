@@ -1,5 +1,7 @@
 package com.example.tail.widget
 
+import java.time.Instant
+import java.time.ZoneId
 import kotlin.math.abs
 
 /**
@@ -70,8 +72,12 @@ import kotlin.math.abs
  * [ChessReadinessOverlay].
  *
  * Rate-limiting rules (anti "test-hunting"):
- *  - Max 8 tests per rolling 24-hour window.
- *  - Last test Green/Yellow → strict 60-minute cool-down.
+ *  - Max 8 tests per CALENDAR DAY — the counter resets at local midnight
+ *    (a rolling 24 h window made yesterday's evening burst eat into
+ *    today's allowance, which felt like a bug).
+ *  - Last test Green/Yellow → blocked until the authorization itself
+ *    expires ([SESSION_VALIDITY_MS] — re-test unlocks exactly when the
+ *    previous pass runs out).
  *  - Last test Red → mandatory 30/60/120-minute biological rest break
  *    (scaled by how poor the attempt was) before a re-test is allowed.
  */
@@ -79,7 +85,7 @@ object ChessReadinessEngine {
 
     // ── Constants ──────────────────────────────────────────────────────────
 
-    /** Max Phase 1 tests allowed per rolling 24-hour window. */
+    /** Max Phase 1 tests allowed per calendar day (resets at local midnight). */
     const val MAX_DAILY_TESTS = 8
 
     /** Cool-down after a Green/Yellow result (ms). */
@@ -533,8 +539,23 @@ object ChessReadinessEngine {
     // ── Rate limiting ──────────────────────────────────────────────────────
 
     /**
-     * Validates the test attempt against the 24 h cap and the cool-down /
-     * rest-period rules. Pure function of [history] and [now].
+     * The start-of-today boundary (local midnight) as epoch ms. The daily
+     * cap counts tests submitted ON the current calendar day — so a burst
+     * of tests yesterday evening never eats into today's allowance.
+     */
+    fun startOfDay(now: Long, zone: ZoneId = ZoneId.systemDefault()): Long =
+        Instant.ofEpochMilli(now).atZone(zone).toLocalDate().atStartOfDay(zone)
+            .toInstant().toEpochMilli()
+
+    /**
+     * Validates the test attempt against the CALENDAR-DAY cap and the
+     * cool-down / rest-period rules. Pure function of [history] and [now].
+     *
+     * Re-test rule (both post-pass and post-fail): once the previous test's
+     * lock/authorization window has fully expired, a NEW test is allowed —
+     * no hidden second lock. For a passed test that window is the
+     * authorization validity ([SESSION_VALIDITY_MS]): you may re-test the
+     * moment the previous pass stops authorizing play.
      *
      * Whether the last test "passed" is decided by its RECORDED state name
      * (the adaptive decision at the time), not a fixed score — records
@@ -542,14 +563,14 @@ object ChessReadinessEngine {
      * legacy ≥ 70 heuristic.
      */
     fun checkGate(history: List<ReadinessTest>, now: Long): GateStatus {
-        val testsLast24h = history.filter { now - it.timestamp < 24L * 60 * 60 * 1000 }
-        if (testsLast24h.size >= MAX_DAILY_TESTS) {
-            // The oldest test inside the rolling 24 h window ages out first —
-            // that moment is the earliest the cap can lift.
-            val retryAt = testsLast24h.minOf { it.timestamp } + 24L * 60 * 60 * 1000
+        val dayStart = startOfDay(now)
+        val testsToday = history.filter { it.timestamp in dayStart..now }
+        if (testsToday.size >= MAX_DAILY_TESTS) {
+            // The cap lifts at local midnight, when the calendar day resets.
+            val retryAt = startOfDay(now) + 24L * 60 * 60 * 1000
             return GateStatus.Blocked(
                 GateError.MaxDailyTests(
-                    "Maximum of $MAX_DAILY_TESTS readiness tests allowed per 24 hours " +
+                    "Maximum of $MAX_DAILY_TESTS readiness tests allowed per day " +
                         "to prevent test fatigue. Next test in ${formatWait(retryAt - now)}.",
                     retryAt
                 )
@@ -566,17 +587,20 @@ object ChessReadinessEngine {
         }
 
         return if (lastPassed) {
-            if (timeSinceLast < COOLDOWN_MS) {
-                val retryAt = lastTest.timestamp + COOLDOWN_MS
-                val minsRemaining = ((COOLDOWN_MS - timeSinceLast) / 60000L).toInt() + 1
+            // Re-test unlocks when the previous authorization EXPIRES — the
+            // user may have left before playing; once the pass stops
+            // authorizing play a fresh test is possible.
+            if (timeSinceLast < SESSION_VALIDITY_MS) {
+                val retryAt = lastTest.timestamp + SESSION_VALIDITY_MS
+                val minsRemaining = ((SESSION_VALIDITY_MS - timeSinceLast) / 60000L).toInt() + 1
                 GateStatus.Blocked(
                     GateError.CooldownActive(
-                        "Session active or cool-down in progress. Please wait " +
-                            "$minsRemaining more minute(s).",
+                        "Session still active — a new test unlocks when this one " +
+                            "expires ($minsRemaining more minute(s)).",
                         retryAt
                     )
                 )
-            } else GateStatus.Allowed(testsLast24h.size)
+            } else GateStatus.Allowed(testsToday.size)
         } else {
             val restMs = restPeriodForScore(lastTest.ccrs)
             if (timeSinceLast < restMs) {
@@ -589,7 +613,7 @@ object ChessReadinessEngine {
                         retryAt
                     )
                 )
-            } else GateStatus.Allowed(testsLast24h.size)
+            } else GateStatus.Allowed(testsToday.size)
         }
     }
 

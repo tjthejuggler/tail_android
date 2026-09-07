@@ -538,7 +538,8 @@ class ChessReadinessEngineTest {
     }
 
     @Test
-    fun `eight tests in 24 hours blocks the ninth`() {
+    fun `eight tests today block the ninth until midnight`() {
+        // 8 tests spread over TODAY (1–8 h ago, all after local midnight)
         val history = (1..8).map {
             test(NOW - it * 60L * 60 * 1000, 90, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
         }
@@ -548,12 +549,17 @@ class ChessReadinessEngineTest {
             (status as ChessReadinessEngine.GateStatus.Blocked).error
                 is ChessReadinessEngine.GateError.MaxDailyTests
         )
-        // retryAt = oldest test in the window + 24 h → NOW - 8 h + 24 h
-        assertEquals(NOW + 16L * 60 * 60 * 1000, status.error.retryAt)
+        // The calendar-day cap lifts at local midnight.
+        assertEquals(
+            ChessReadinessEngine.startOfDay(NOW) + DAY,
+            status.error.retryAt
+        )
     }
 
     @Test
-    fun `tests older than 24 hours do not count toward the cap`() {
+    fun `tests from yesterday do not count toward today's cap`() {
+        // 8 tests YESTERDAY (yesterday's evening burst) + 1 old — the
+        // calendar-day reset means today's allowance is untouched.
         val history = listOf(
             test(NOW - 25L * 60 * 60 * 1000, 90),
             test(NOW - 26L * 60 * 60 * 1000, 90),
@@ -567,6 +573,36 @@ class ChessReadinessEngineTest {
         assertTrue(
             ChessReadinessEngine.checkGate(history, NOW)
                 is ChessReadinessEngine.GateStatus.Allowed
+        )
+    }
+
+    @Test
+    fun `a re-test unlocks once the previous pass expires`() {
+        // A GREEN pass authorizes SESSION_VALIDITY_MS (60 min); 61 min after
+        // the pass the authorization has expired → a fresh test is allowed.
+        val history = listOf(
+            test(NOW - 61L * 60 * 1000, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
+        )
+        assertTrue(
+            ChessReadinessEngine.checkGate(history, NOW)
+                is ChessReadinessEngine.GateStatus.Allowed
+        )
+    }
+
+    @Test
+    fun `cooldown now tracks the session validity window`() {
+        // 30 min after a GREEN pass → still inside the authorization window.
+        val history = listOf(
+            test(NOW - 30L * 60 * 1000, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
+        )
+        val status = ChessReadinessEngine.checkGate(history, NOW)
+        assertTrue(status is ChessReadinessEngine.GateStatus.Blocked)
+        val error = (status as ChessReadinessEngine.GateStatus.Blocked).error
+        assertTrue(error is ChessReadinessEngine.GateError.CooldownActive)
+        // retryAt = test + SESSION_VALIDITY_MS
+        assertEquals(
+            NOW - 30L * 60 * 1000 + ChessReadinessEngine.SESSION_VALIDITY_MS,
+            error.retryAt
         )
     }
 

@@ -249,6 +249,19 @@ class FloatingBubbleService : Service() {
     /** Percentile win already secured this run (run continues regardless). */
     private var survivalPctWon = false
 
+    /**
+     * Guaranteed target already reached mid-run. The verdict is SECURED but
+     * the run keeps going to the full 5:00 cap (data for future readiness
+     * modelling) — the user can end it early with ■ FINISH & SAVE.
+     */
+    private var survivalGatePassed = false
+
+    /** Elapsed run time (ms) when the guaranteed target was reached (0 = never). */
+    private var survivalTargetReachedMs = 0L
+
+    /** ■ FINISH & SAVE button — hidden until the gate target is reached. */
+    private var survivalFinishButton: TextView? = null
+
     /** Slot INSIDE the bubble's window where the survival banner is attached. */
     private var survivalSlot: FrameLayout? = null
 
@@ -1477,6 +1490,26 @@ class FloatingBubbleService : Service() {
             }
             panel.addView(survivalPctText, vMargin())
 
+            // GATE-SECURED override (replaces the pass caption once the
+            // guaranteed target is reached) + ■ FINISH & SAVE — the run
+            // CONTINUES to the 5:00 cap for data, but the user may bank the
+            // pass and start playing right away.
+            survivalFinishButton = TextView(this).apply {
+                text = "■  FINISH & SAVE (gate secured — keep going or bank it)"
+                gravity = Gravity.CENTER
+                textSize = 10f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(0xFF88FF88.toInt())
+                setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
+                background = GradientDrawable().apply {
+                    setColor(0xFF1E5631.toInt())
+                    cornerRadius = 10f * density
+                }
+                setOnClickListener { finishSurvivalRun(ChessReadinessV3Engine.Verdict.PASS) }
+                visibility = if (survivalGatePassed) View.VISIBLE else View.GONE
+            }
+            panel.addView(survivalFinishButton, vMargin(top = 4))
+
             // Caption ABOVE the buttons; the buttons carry only the ✓ / ✕
             // glyph but are LARGE (52×48 dp) so they are easy to hit mid-drill.
             val caption = TextView(this).apply {
@@ -1550,6 +1583,8 @@ class FloatingBubbleService : Service() {
         survivalPuzzleStartMs = survivalRunStartMs
         survivalPassed = 0
         survivalPctWon = false
+        survivalGatePassed = false
+        survivalTargetReachedMs = 0L
         val past = ChessReadinessV3Store.loadResults(this).map { it.puzzlesPassed }
         survivalPctTarget = ChessReadinessV3Engine.percentileTarget(past)
         survivalPassAt = ChessReadinessV3Engine.effectivePassTarget(survivalTarget, past)
@@ -1606,13 +1641,24 @@ class FloatingBubbleService : Service() {
         )
         val passed = survivalPassed
         survivalPassed = passed + 1
-        // The run ALWAYS continues to the guaranteed target — the P70 bar
-        // never ends it early, so the logged score reflects the true max.
+        // The guaranteed target SECURES the gate but does NOT end the run —
+        // the run keeps going to the full 5:00 cap so the extra puzzles feed
+        // the readiness dataset (accuracy + time-to-target are both logged).
+        // The user can bank the pass early with ■ FINISH & SAVE.
         if (ChessReadinessV3Engine.onPass(passed, survivalTarget)) {
-            finishSurvivalRun(ChessReadinessV3Engine.Verdict.PASS)
+            survivalGatePassed = true
+            survivalTargetReachedMs =
+                (now - survivalRunStartMs).coerceAtLeast(0L)
+            survivalFinishButton?.visibility = View.VISIBLE
+            survivalCounterText?.text = "$survivalPassed / $survivalTarget ✓ — keep going"
+            Toast.makeText(
+                this,
+                "♟ Gate secured at ${formatSurvivalClock(survivalTargetReachedMs)} — " +
+                    "run continues to 5:00 (FINISH & SAVE to bank the pass)",
+                Toast.LENGTH_SHORT
+            ).show()
         } else {
-            // Percentile win: secured but NOT terminal — the run continues
-            // up to the absolute guaranteed target.
+            // Percentile win: secured but NOT terminal — the run continues.
             if (!survivalPctWon &&
                 ChessReadinessV3Engine.percentileReached(survivalPassed, survivalPctTarget)
             ) {
@@ -1628,8 +1674,8 @@ class FloatingBubbleService : Service() {
                 ).show()
             }
             survivalCounterText?.text = "%02d / %d".format(survivalPassed + 1, survivalTarget)
-            survivalPuzzleStartMs = now
         }
+        survivalPuzzleStartMs = now
     }
 
     private fun onSurvivalFail() {
@@ -1676,7 +1722,8 @@ class FloatingBubbleService : Service() {
             puzzlesPassed = survivalPassed,
             survivalDurationMs = elapsed,
             reflex = survivalReflex,
-            variant = survivalVariant
+            variant = survivalVariant,
+            targetReachedMs = survivalTargetReachedMs
         )
         // Verdict POPUP: tells the user the outcome and — unless the run put
         // them in RED (kicked out of chess entirely) — offers continuing the
@@ -1749,6 +1796,14 @@ class FloatingBubbleService : Service() {
                     "$survivalPassed / $survivalTarget"
             )
             keyValue("Run time", formatSurvivalClock(elapsed) + " / 5:00 cap")
+            // How long the guaranteed target took — the readiness-model
+            // datapoint (to be paired with reflex + passive metrics later).
+            if (survivalGatePassed) {
+                keyValue(
+                    "Time to gate target",
+                    formatSurvivalClock(survivalTargetReachedMs) + " ($survivalTarget puzzles)"
+                )
+            }
             if (survivalPctWon) keyValue("Percentile win", "P70 ✓ secured")
             spacer(6)
             when {
@@ -1907,6 +1962,7 @@ class FloatingBubbleService : Service() {
         survivalStopwatchText = null
         survivalTotalText = null
         survivalPctText = null
+        survivalFinishButton = null
     }
 
     /** Current on-screen width of the bubble window (bubble + banner). */

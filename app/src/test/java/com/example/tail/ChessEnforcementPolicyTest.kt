@@ -177,16 +177,35 @@ class ChessEnforcementPolicyTest {
 
     @Test
     fun `daily test cap blocks`() {
-        // 8 tests inside the rolling 24 h window (150-min spacing keeps
-        // even the oldest at 1200 min < 1440 min).
+        // 8 tests TODAY (one per minute after local midnight) → the
+        // calendar-day cap blocks until midnight.
+        val dayStart = ChessReadinessEngine.startOfDay(now)
         val history = (1..8).map {
-            test(it * 150L, 90, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)
+            test((now - (dayStart + it * minute)) / minute, 90,
+                ChessReadinessEngine.ReadinessState.GREEN_LIGHT)
         }
         val decision = evaluate(history = history)
         assertTrue(decision is ChessEnforcementPolicy.Decision.Block)
         assertEquals(
             ChessEnforcementPolicy.Reason.DAILY_CAP,
             (decision as ChessEnforcementPolicy.Decision.Block).reason
+        )
+    }
+
+    @Test
+    fun `yesterday's burst does not trigger today's cap`() {
+        // 8 tests all BEFORE today → the calendar-day reset means the cap
+        // is untouched; the oldest is a long-expired pass → trust window.
+        val dayStart = ChessReadinessEngine.startOfDay(now)
+        val history = (1..8).map {
+            test((now - (dayStart - it * minute)) / minute, 90,
+                ChessReadinessEngine.ReadinessState.GREEN_LIGHT)
+        }
+        val decision = evaluate(history = history)
+        assertTrue(decision is ChessEnforcementPolicy.Decision.Allow)
+        assertEquals(
+            ChessEnforcementPolicy.Reason.TEST_AVAILABLE,
+            (decision as ChessEnforcementPolicy.Decision.Allow).reason
         )
     }
 

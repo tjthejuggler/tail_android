@@ -152,8 +152,6 @@ class ChessReadinessV3EngineTest {
         // Reflex failure is the harshest (120-min severe rung).
         assertEquals(20, ChessReadinessV3Engine.syntheticCcrs(Verdict.FAIL_REFLEX))
     }
-}
-
     // ── Dual win: 70th-percentile personal target ─────────────────────────
 
     @Test
@@ -197,3 +195,4 @@ class ChessReadinessV3EngineTest {
         // Only the absolute target terminates
         assertTrue(ChessReadinessV3Engine.onPass(14, absolute))
     }
+}

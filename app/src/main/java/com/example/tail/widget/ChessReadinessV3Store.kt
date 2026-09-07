@@ -114,7 +114,14 @@ object ChessReadinessV3Store {
         val reflexFalseStarts: Int,
         val reflexMeanRtMs: Double?,
         /** Chess type this test authorized (bullet/blitz/rapid/chess960). */
-        val variant: String? = null
+        val variant: String? = null,
+        /**
+         * Elapsed run time when the guaranteed target was reached (ms).
+         * 0 = never reached. The run continues past the target to the
+         * 5:00 cap for data, so this pairs with [survivalDurationMs] to
+         * show how much extra drilling happened after banking the gate.
+         */
+        val targetReachedMs: Long = 0L
     )
 
     fun appendResult(context: Context, record: V3ResultRecord) {
@@ -132,6 +139,7 @@ object ChessReadinessV3Store {
             put("durationMs", record.survivalDurationMs)
             put("lapses", record.reflexLapses)
             put("falseStarts", record.reflexFalseStarts)
+            if (record.targetReachedMs > 0) put("targetReachedMs", record.targetReachedMs)
             record.reflexMeanRtMs?.let { put("meanRtMs", it) }
             record.variant?.let { put("variant", it) }
         })
@@ -159,7 +167,8 @@ object ChessReadinessV3Store {
                     reflexMeanRtMs = if (o.has("meanRtMs") && !o.isNull("meanRtMs"))
                         o.optDouble("meanRtMs") else null,
                     variant = if (o.has("variant") && !o.isNull("variant"))
-                        o.optString("variant") else null
+                        o.optString("variant") else null,
+                    targetReachedMs = o.optLong("targetReachedMs", 0L)
                 )
             }
         } catch (_: Exception) {
@@ -334,7 +343,8 @@ object ChessReadinessV3Recorder {
         puzzlesPassed: Int,
         survivalDurationMs: Long,
         reflex: ChessReadinessV3Engine.ReflexSummary?,
-        variant: String? = null
+        variant: String? = null,
+        targetReachedMs: Long = 0L
     ) {
         val now = System.currentTimeMillis()
         val stateName = ChessReadinessV3Engine.stateNameFor(verdict)
@@ -357,7 +367,8 @@ object ChessReadinessV3Recorder {
                 reflexLapses = reflex?.lapses ?: 0,
                 reflexFalseStarts = reflex?.falseStarts ?: 0,
                 reflexMeanRtMs = reflex?.meanRtMs,
-                variant = variant
+                variant = variant,
+                targetReachedMs = targetReachedMs
             )
         )
         if (survivalDurationMs > 0) {
