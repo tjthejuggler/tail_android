@@ -26,13 +26,13 @@ import com.example.tail.R
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
-import com.example.tail.data.SpotifyDetector
+import com.example.tail.ipc.SpotifyDetector
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.SubtypeTimedMigrator
-import com.example.tail.data.SpotifyTrack
+import com.example.tail.ipc.SpotifyTrack
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
-import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.data.HabitIncrementBus
 import com.example.tail.ui.VoiceNoteBus
 import com.example.tail.ui.VoiceTranscriptBus
 import kotlinx.coroutines.CoroutineScope

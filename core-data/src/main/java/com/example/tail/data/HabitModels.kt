@@ -1,7 +1,7 @@
 package com.example.tail.data
 
-import com.example.tail.wallpaper.WallpaperMetric
-import com.example.tail.wallpaper.WallpaperTarget
+import com.example.tail.data.WallpaperMetric
+import com.example.tail.data.WallpaperTarget
 import kotlin.math.roundToInt
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1545,7 +1545,7 @@ data class AppSettings(
      * vigilance test and cognitive-load ACWR). Both versions share the
      * same history, Chess Guard enforcement and game-audit rules.
      */
-    val chessReadinessVersion: String = "v1",
+    val chessReadinessVersion: String = "v3",
 
     /**
      * Which POST-GAME (Phase 2) audit engine shared rated games run
@@ -1556,7 +1556,7 @@ data class AppSettings(
      * Independent of [chessReadinessVersion] — any pre-game version can be
      * combined with any post-game version.
      */
-    val chessPhase2Version: String = "v1",
+    val chessPhase2Version: String = "v4",
 
     /**
      * Widget-timer habits where MINUTES is the primary value.

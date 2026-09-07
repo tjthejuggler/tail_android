@@ -1,5 +1,6 @@
 package com.example.tail.ui
 
+import com.example.tail.data.ChessReadinessEngine
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import androidx.compose.foundation.Canvas
@@ -97,7 +98,6 @@ import com.example.tail.data.computeReadinessStats
 import com.example.tail.data.computeWinRateByCcrsBand
 import com.example.tail.widget.ChessPhase2Store
 import com.example.tail.widget.ChessPhase2V2Store
-import com.example.tail.widget.ChessReadinessEngine
 import com.example.tail.widget.ChessReadinessLogStore
 import com.example.tail.widget.ChessReadinessSystemChanges
 import com.example.tail.widget.ChessReadinessV2Store

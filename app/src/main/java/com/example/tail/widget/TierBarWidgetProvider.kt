@@ -24,7 +24,7 @@ import com.example.tail.data.HabitsRepository
 import com.example.tail.data.NotificationStore
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.computeTaskerStats
-import com.example.tail.ui.habitPointsTier
+import com.example.tail.data.habitPointsTier
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate

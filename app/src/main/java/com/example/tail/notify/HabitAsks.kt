@@ -11,7 +11,7 @@ import com.example.tail.data.NotificationStore
 import com.example.tail.data.OmdbService
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
-import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.data.HabitIncrementBus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import java.time.LocalDate

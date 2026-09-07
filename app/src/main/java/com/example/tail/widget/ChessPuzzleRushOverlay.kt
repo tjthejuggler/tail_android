@@ -1,5 +1,6 @@
 package com.example.tail.widget
 
+import com.example.tail.data.ChessReadinessEngine
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
@@ -12,7 +13,7 @@ import android.widget.Toast
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.PuzzleRushSessionRecord
 import com.example.tail.data.SettingsRepository
-import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.data.HabitIncrementBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

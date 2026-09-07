@@ -69,7 +69,7 @@ typealias DailyStatsMap = Map<String, ChessComDailyStats>
  * For games with increment, we estimate total game time as base_time since
  * we don't have move count without PGN parsing. This is a reasonable approximation.
  */
-internal fun estimateGameMinutes(timeControl: String): Double {
+fun estimateGameMinutes(timeControl: String): Double {
     if (timeControl.contains("/")) return 0.0 // daily/correspondence game
     val parts = timeControl.split("+")
     val baseSeconds = parts.firstOrNull()?.toDoubleOrNull() ?: return 0.0
@@ -84,7 +84,7 @@ internal fun estimateGameMinutes(timeControl: String): Double {
  *   - Blitz: base time >= 180 and < 600 seconds (3 to <10 min)
  *   - Rapid: base time >= 600 seconds (10+ min)
  */
-internal fun classifyByTimeControl(timeControl: String): ChessComType? {
+fun classifyByTimeControl(timeControl: String): ChessComType? {
     if (timeControl.contains("/")) return null // daily/correspondence
     val baseSeconds = timeControl.split("+").firstOrNull()?.toDoubleOrNull() ?: return null
     return when {
@@ -99,7 +99,7 @@ internal fun classifyByTimeControl(timeControl: String): ChessComType? {
  * game type. Only counts games where the user participated (matches username).
  * Pure function — unit-testable without Android dependencies.
  */
-internal fun computeDailyChessStats(
+fun computeDailyChessStats(
     games: List<ChessComGame>,
     username: String,
     zone: ZoneId = ZoneId.systemDefault()
@@ -154,7 +154,7 @@ internal fun computeDailyChessStats(
  * Returns fewer (or no) entries when the raw game list is missing or short;
  * callers fill any shortfall with sync-time stamps.
  */
-internal fun newGameEndTimes(
+fun newGameEndTimes(
     games: List<ChessComGame>,
     username: String,
     type: ChessComType,

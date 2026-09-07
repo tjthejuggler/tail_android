@@ -3,6 +3,7 @@ package com.example.tail.ui
 // Split out of HabitViewModel.kt (2026-08-29) to keep individual
 // Kotlin source files small enough for IR lowering on this machine.
 
+import com.example.tail.data.HabitIncrementBus
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -115,8 +116,8 @@ import com.example.tail.data.parseDate
 import com.example.tail.data.HABIT_ORDER
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import com.example.tail.wallpaper.WallpaperMetric
-import com.example.tail.wallpaper.WallpaperTarget
+import com.example.tail.data.WallpaperMetric
+import com.example.tail.data.WallpaperTarget
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow

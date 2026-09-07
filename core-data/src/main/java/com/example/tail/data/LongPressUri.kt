@@ -88,7 +88,7 @@ fun normalizeLongPressUri(raw: String): String {
  * escapes. Iterates by code point so non-ASCII (incl. emoji) encode
  * correctly.
  */
-internal fun encodeIllegalUriChars(uri: String): String = buildString {
+fun encodeIllegalUriChars(uri: String): String = buildString {
     var i = 0
     while (i < uri.length) {
         val c = uri[i]

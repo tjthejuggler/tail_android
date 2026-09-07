@@ -30,7 +30,25 @@ class TailApplication : Application() {
         // Attach the app context to the increment bus so every habit
         // increment — even with no UI alive — refreshes the launcher
         // icon's daily-points tier colour.
-        com.example.tail.ui.HabitIncrementBus.install(this)
+        com.example.tail.data.HabitIncrementBus.install(this)
+
+        // Install the UI-side hooks the data layer invokes via AppHooks —
+        // widget refresh and points-driven wallpaper updates — so the data
+        // module stays free of widget/wallpaper compile-time dependencies.
+        com.example.tail.data.AppHooks.refreshWidgets = { ctx ->
+            try {
+                com.example.tail.widget.HabitListWidgetProvider.refreshAll(ctx)
+                com.example.tail.widget.TierBarWidgetProvider.refreshAll(ctx)
+            } catch (_: Exception) {
+            }
+        }
+        com.example.tail.data.AppHooks.refreshWallpaperAfterSave = { ctx, db ->
+            try {
+                com.example.tail.wallpaper.WallpaperRefresher.onDatabaseSaved(ctx, db)
+            } catch (e: Exception) {
+                Log.w("TailApp", "post-save wallpaper refresh failed: ${e.message}")
+            }
+        }
 
         // Keep the home-screen widgets in sync with the pending-notification
         // list: both widgets repaint on every change — asks created (count

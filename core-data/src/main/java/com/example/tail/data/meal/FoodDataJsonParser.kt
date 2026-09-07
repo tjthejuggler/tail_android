@@ -74,7 +74,7 @@ object FoodDataJsonParser {
      * (fence-stripped) text, the first balanced object/array (skips
      * preamble), and a best-effort repair when the text is truncated.
      */
-    internal fun jsonCandidates(content: String): List<String> {
+    fun jsonCandidates(content: String): List<String> {
         val stripped = stripCodeFences(content).trim()
         if (stripped.isEmpty()) return emptyList()
         val candidates = mutableListOf(stripped)
@@ -87,7 +87,7 @@ object FoodDataJsonParser {
     }
 
     /** Strips ```json ... ``` or ``` ... ``` fences from the content. */
-    internal fun stripCodeFences(text: String): String {
+    fun stripCodeFences(text: String): String {
         val trimmed = text.trim()
         if (!trimmed.startsWith("```")) return trimmed
         // Remove opening fence (with optional language tag)
@@ -102,7 +102,7 @@ object FoodDataJsonParser {
      * [start], or null when the block never closes (truncation) or the
      * brackets are unbalanced.
      */
-    internal fun balancedSubstringFrom(text: String, start: Int): String? {
+    fun balancedSubstringFrom(text: String, start: Int): String? {
         var depth = 0
         var inString = false
         var escaped = false
@@ -136,7 +136,7 @@ object FoodDataJsonParser {
      * tail, and closes the still-open brackets. Returns null when the text
      * is already balanced (nothing to repair) or nothing usable remains.
      */
-    internal fun repairTruncatedJson(text: String): String? {
+    fun repairTruncatedJson(text: String): String? {
         val stack = ArrayDeque<Char>()
         var inString = false
         var escaped = false

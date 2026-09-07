@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
-import com.example.tail.ui.habitPointsTier
+import com.example.tail.data.habitPointsTier
 import kotlinx.coroutines.flow.first
 import java.time.LocalDate
 

@@ -67,7 +67,7 @@ private const val SECONDARY_DEDUP_METERS = 250.0
  * reverse-geocode to the same coarse label even though they're not the
  * same physical place.
  */
-internal fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     val r = 6371000.0  // Earth radius in metres
     val dLat = Math.toRadians(lat2 - lat1)
     val dLon = Math.toRadians(lon2 - lon1)

@@ -1,5 +1,6 @@
 package com.example.tail.data
 
+import com.example.tail.data.ChessReadinessEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -19,9 +20,9 @@ import java.time.ZonedDateTime
 class ChessReadinessStatsCalculatorTest {
 
     private val zone = ZoneId.of("UTC")
-    private val green = com.example.tail.widget.ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name
-    private val yellow = com.example.tail.widget.ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name
-    private val red = com.example.tail.widget.ChessReadinessEngine.ReadinessState.RED_LIGHT.name
+    private val green = com.example.tail.data.ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name
+    private val yellow = com.example.tail.data.ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name
+    private val red = com.example.tail.data.ChessReadinessEngine.ReadinessState.RED_LIGHT.name
 
     private fun ms(date: String, hour: Int, minute: Int = 0): Long =
         ZonedDateTime.of(LocalDate.parse(date), LocalTime.of(hour, minute), zone)

@@ -17,7 +17,7 @@ import com.example.tail.data.MediaLibraryRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.ipc.MusicNotificationListenerService
-import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.data.HabitIncrementBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

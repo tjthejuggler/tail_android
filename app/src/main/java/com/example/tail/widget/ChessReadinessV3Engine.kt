@@ -1,5 +1,6 @@
 package com.example.tail.widget
 
+import com.example.tail.data.ChessReadinessEngine
 import kotlin.math.roundToInt
 
 /**

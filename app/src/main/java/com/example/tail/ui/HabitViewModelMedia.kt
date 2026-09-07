@@ -4,6 +4,7 @@ package com.example.tail.ui
 // Split out of HabitViewModel.kt (2026-08-29) to keep individual
 // Kotlin source files small enough for IR lowering on this machine.
 
+import com.example.tail.data.HabitIncrementBus
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -116,8 +117,8 @@ import com.example.tail.data.parseDate
 import com.example.tail.data.HABIT_ORDER
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import com.example.tail.wallpaper.WallpaperMetric
-import com.example.tail.wallpaper.WallpaperTarget
+import com.example.tail.data.WallpaperMetric
+import com.example.tail.data.WallpaperTarget
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -275,7 +276,7 @@ fun HabitViewModel.setMediaApp(habitName: String, packageName: String) {
  * media playback detection.
  */
 fun HabitViewModel.hasNotificationListenerAccess(): Boolean =
-    com.example.tail.data.SpotifyDetector.isNotificationListenerEnabled(context)
+    com.example.tail.ipc.SpotifyDetector.isNotificationListenerEnabled(context)
 
 /**
  * Opens the system notification-access settings screen so the user can
@@ -288,7 +289,7 @@ fun HabitViewModel.hasNotificationListenerAccess(): Boolean =
  * grant access for automatic media playback detection.
  */
 fun HabitViewModel.openNotificationListenerSettings() {
-    com.example.tail.data.SpotifyDetector.openNotificationListenerSettings(context)
+    com.example.tail.ipc.SpotifyDetector.openNotificationListenerSettings(context)
 }
 
 // ── Media per-show breakdown (edit screen podcast removal) ─────────────

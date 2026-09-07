@@ -725,7 +725,7 @@ fun HourlyV2ReadinessChartPopup(
                 if (h.testCount > 0) (h.passRate / 100f).toFloat() else 0f
             V2HourMetric.RT ->
                 if (h.avgMeanRtMs != null && h.pvtCount > 0)
-                    (h.avgMeanRtMs.toFloat() / maxValue).coerceIn(0f, 1f) else 0f
+                    (h.avgMeanRtMs!!.toFloat() / maxValue).coerceIn(0f, 1f) else 0f
         }
         val topLabel = when (metric) {
             V2HourMetric.CCRS ->
@@ -734,7 +734,7 @@ fun HourlyV2ReadinessChartPopup(
                 if (h.testCount > 0) "${h.passRate.roundToInt()}%" else ""
             V2HourMetric.RT ->
                 if (h.avgMeanRtMs != null && h.pvtCount > 0)
-                    h.avgMeanRtMs.roundToInt().toString() else ""
+                    h.avgMeanRtMs!!.roundToInt().toString() else ""
         }
         HourBar(
             hour = h.hour,

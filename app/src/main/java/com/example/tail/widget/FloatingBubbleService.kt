@@ -49,7 +49,7 @@ import com.example.tail.data.renderTextIconBitmap
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.textIconCharOf
 import com.example.tail.ui.getHabitIconRes
-import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.data.HabitIncrementBus
 import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -2375,8 +2375,6 @@ class FloatingBubbleService : Service() {
     // Shown directly through the WindowManager ON TOP of the chess app — no
     // activity is started, so the chess app stays the focused, dominant app;
     // closing a dialog hands focus straight back to it.
-    private var chessReadinessOverlay: ChessReadinessOverlay? = null
-    private var chessReadinessV2Overlay: ChessReadinessV2Overlay? = null
     private var chessReadinessV3Overlay: ChessReadinessV3Overlay? = null
     private var chessStatusOverlay: ChessStatusOverlay? = null
     private var chessPuzzleRushOverlay: ChessPuzzleRushOverlay? = null
@@ -2391,32 +2389,17 @@ class FloatingBubbleService : Service() {
         try {
             chessStatusOverlay?.dismiss()
             chessStatusOverlay = null
-            chessReadinessOverlay?.dismiss()
-            chessReadinessOverlay = null
-            chessReadinessV2Overlay?.dismiss()
-            chessReadinessV2Overlay = null
             chessReadinessV3Overlay?.dismiss()
             chessReadinessV3Overlay = null
-            when {
-                ChessReadinessV2Store.isV3(this) ->
-                    chessReadinessV3Overlay = ChessReadinessV3Overlay(this) {
-                        armSurvivalPanel()
-                    }.also { it.show() }
-                ChessReadinessV2Store.isV2(this) ->
-                    chessReadinessV2Overlay = ChessReadinessV2Overlay(this).also { it.show() }
-                else ->
-                    chessReadinessOverlay = ChessReadinessOverlay(this).also { it.show() }
-            }
+            chessReadinessV3Overlay = ChessReadinessV3Overlay(this) {
+                armSurvivalPanel()
+            }.also { it.show() }
         } catch (e: Exception) { /* never crash the bubble */ }
     }
 
     /** Shows the chess status popup as a floating overlay dialog. */
     private fun openChessStatus() {
         try {
-            chessReadinessOverlay?.dismiss()
-            chessReadinessOverlay = null
-            chessReadinessV2Overlay?.dismiss()
-            chessReadinessV2Overlay = null
             chessReadinessV3Overlay?.dismiss()
             chessReadinessV3Overlay = null
             chessStatusOverlay?.dismiss()
@@ -2427,10 +2410,6 @@ class FloatingBubbleService : Service() {
     /** Shows the Puzzle Rush end-of-session report overlay dialog. */
     private fun openPuzzleRushReport() {
         try {
-            chessReadinessOverlay?.dismiss()
-            chessReadinessOverlay = null
-            chessReadinessV2Overlay?.dismiss()
-            chessReadinessV2Overlay = null
             chessReadinessV3Overlay?.dismiss()
             chessReadinessV3Overlay = null
             chessStatusOverlay?.dismiss()
@@ -2442,13 +2421,9 @@ class FloatingBubbleService : Service() {
 
     /** Removes any open chess overlay dialog (e.g. when the service dies). */
     private fun dismissChessOverlays() {
-        try { chessReadinessOverlay?.dismiss() } catch (_: Exception) {}
-        try { chessReadinessV2Overlay?.dismiss() } catch (_: Exception) {}
         try { chessReadinessV3Overlay?.dismiss() } catch (_: Exception) {}
         try { chessStatusOverlay?.dismiss() } catch (_: Exception) {}
         try { chessPuzzleRushOverlay?.dismiss() } catch (_: Exception) {}
-        chessReadinessOverlay = null
-        chessReadinessV2Overlay = null
         chessReadinessV3Overlay = null
         chessStatusOverlay = null
         chessPuzzleRushOverlay = null

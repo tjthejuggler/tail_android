@@ -116,8 +116,8 @@ import com.example.tail.data.parseDate
 import com.example.tail.data.HABIT_ORDER
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import com.example.tail.wallpaper.WallpaperMetric
-import com.example.tail.wallpaper.WallpaperTarget
+import com.example.tail.data.WallpaperMetric
+import com.example.tail.data.WallpaperTarget
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -753,7 +753,7 @@ fun HabitViewModel.testVisionEndpoint() {
             } else if (result.classification == com.example.tail.data.meal.VisionClassification.FOOD_MEAL &&
                        result.foodData != null
             ) {
-                val fd = result.foodData
+                val fd = result.foodData!!
                 _mealTestState.value = HabitViewModel.MealTestState(
                     isSuccess = true,
                     message = "✅ Success! Detected: ${fd.title}\n" +

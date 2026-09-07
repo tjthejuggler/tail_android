@@ -2,7 +2,7 @@ package com.example.tail
 
 import com.example.tail.ui.GrandeurThresholds
 import com.example.tail.ui.LoadingMetrics
-import com.example.tail.ui.habitPointsTier
+import com.example.tail.data.habitPointsTier
 import com.example.tail.ui.loadingTiers
 import com.example.tail.ui.orreryBreath
 import com.example.tail.ui.orreryPhase

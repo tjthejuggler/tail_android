@@ -1,5 +1,6 @@
 package com.example.tail.ui
 
+import com.example.tail.data.habitPointsTier
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -112,24 +113,6 @@ data class LoadingMetrics(
     val weeklyAverage: Double,
     val todayPoints: Int
 )
-
-/** Maps a point total to its 0-based tier index (0 = red … 12 = white/yellow).
- *  Boundaries match [PointTierColors.TIERS] exactly. */
-fun habitPointsTier(points: Int): Int = when {
-    points >= 98 -> 12
-    points >= 91 -> 11
-    points >= 84 -> 10
-    points >= 77 -> 9
-    points >= 70 -> 8
-    points >= 63 -> 7
-    points >= 56 -> 6
-    points >= 49 -> 5
-    points >= 42 -> 4
-    points >= 31 -> 3
-    points >= 21 -> 2
-    points >= 14 -> 1
-    else         -> 0
-}
 
 /**
  * The body colour for a tier index. Plain tiers (0–6) use the vivid

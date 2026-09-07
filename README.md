@@ -718,3 +718,21 @@ Notes:
 - **Refinement (same day):** removed the in-test variant picker — the chess type is now chosen once in Settings (v3 section, default chess960) via `ChessReadinessV3Store.selectedVariant`. Pass logic is no longer a hard cutoff: the rating-derived target is the GUARANTEED-play number, but a run below it still passes at the user's own 70th-percentile history (`effectivePassTarget`), never below the hard floor (60% of target, `floorTarget`). Curve recalibrated to `round((rating − 600) / 30)` clamped 8–28 (812→8, 926→11, 1113→17, 1200→20, 1500+→28).
 - **Popup clarity fix:** when the P70 percentile bar ends a run below the guaranteed target, the verdict popup now shows "N — pass bar M (your P70; guaranteed T)" and the live counter counts to the enforced bar; the Step-2 intro notes the P70 relaxation and hard minimum.
 - **P70 semantics finalized:** the run now ALWAYS continues to the guaranteed rating-derived target (never terminates early at the P70 bar), so logged scores reflect the true max for future percentiles. The P70 bar only rescues a terminal event — a strike or the 5-minute timeout — when the solved count is already at/above it (never below the hard floor). E.g. target 20, P70 19: failing puzzle 20 with 19 solved still passes.
+
+## 2026-09-07 — Build-performance refactor: :core-data module split
+
+- Extracted the data layer (66 files, ~26.7k lines) from `:app` into a new `:core-data` Android library module. `:app` shrank from ~123k to ~96k lines of Kotlin; data-layer changes no longer recompile the app/UI module.
+- Broke all data→app reverse dependencies:
+  - `HabitIncrementBus` moved ui→data; `ChessReadinessEngine` moved widget→data; `habitPointsTier` moved ui→data (`data/PointsTiers.kt`); `WallpaperMetric`/`WallpaperTarget` moved wallpaper→data (`data/WallpaperEnums.kt`); `SpotifyDetector`/`SpotifyPlaybackHelper` moved data→ipc.
+  - New `data/AppHooks` indirection (installed in `TailApplication.onCreate`) replaces direct calls from data to `HabitListWidgetProvider`/`TierBarWidgetProvider`/`WallpaperRefresher`.
+- Enabled `org.gradle.parallel=true` + `org.gradle.caching=true` (multi-module now). Added root `build.gradle.kts` with plugin aliases.
+- `material-icons-extended` kept: 35 icons in use, mostly outside the core set; removal would require hand-written vectors.
+- Verified: `assembleDebug` + all 704 unit tests green.
+
+## 2026-09-07 — Chess readiness: old engine versions retired
+
+- Pre-game readiness is now v3-only (reflex + Puzzle Rush Survival): `ChessReadinessV2Store.readinessVersion()` always returns "v3"; the v1/v2/v3 picker, the ViewModel setters and the DataStore save functions were removed.
+- Post-game audit is now v4-only (data-derived overlay on the v3 hybrid): `ChessPhase2V2Store.phase2Version()` always returns "v4"; picker/setters removed.
+- Deleted `ChessReadinessV2Overlay` (524 lines) and gutted `ChessReadinessOverlay` down to the shared `ChessHabitCredit` helper (-540 lines); FloatingBubbleService now opens the V3 overlay unconditionally.
+- NOTE: the v1/v2 ENGINE objects remain — v3/v4 are layered on top of them (v4 refines v3, v3 builds on v2/v1 types), so they cannot be deleted without redesigning the engines. Same for the old `GameOutcome.Audited/AuditedV2` branches in the reconciler/status UI.
+- Verified: all 704 unit tests pass. `installDebug` blocked by offline ADB device (wireless debugging needs refresh on the phone).

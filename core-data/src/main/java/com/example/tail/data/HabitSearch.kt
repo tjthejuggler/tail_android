@@ -386,7 +386,7 @@ object HabitSearcher {
      * YYYY-MM-DD, optionally prefixed with markdown #'s) followed by chunks
      * separated by blank lines or ",,," separator lines.
      */
-    internal fun parseDatedChunks(lines: List<String>): List<Pair<String, String>> {
+    fun parseDatedChunks(lines: List<String>): List<Pair<String, String>> {
         val out = mutableListOf<Pair<String, String>>()
         var currentDate: String? = null
         val currentChunk = mutableListOf<String>()

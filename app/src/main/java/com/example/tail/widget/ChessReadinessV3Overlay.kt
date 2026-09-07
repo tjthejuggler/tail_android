@@ -1,5 +1,6 @@
 package com.example.tail.widget
 
+import com.example.tail.data.ChessReadinessEngine
 import com.example.tail.widget.ChessReadinessV3Engine.Verdict
 import java.time.Instant
 import java.time.ZoneId

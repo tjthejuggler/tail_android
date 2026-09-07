@@ -17,7 +17,7 @@ import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
-import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.data.HabitIncrementBus
 import com.example.tail.ui.TextInputDialog
 import com.example.tail.ui.theme.TailTheme
 import kotlinx.coroutines.flow.first

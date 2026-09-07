@@ -1,6 +1,6 @@
 package com.example.tail.data
 
-import com.example.tail.widget.ChessReadinessEngine
+import com.example.tail.data.ChessReadinessEngine
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -486,11 +486,11 @@ private fun prettyType(type: String): String =
  * speed — so all of a variant's games, across all speeds, merge into one
  * pool with one continuous rating chain.
  */
-internal fun ratingPoolKey(variant: String, type: String): String =
+fun ratingPoolKey(variant: String, type: String): String =
     if (variant.equals("chess", ignoreCase = true)) "$variant|$type" else variant.lowercase()
 
 /** Display label for a [ratingPoolKey]: "Standard · Blitz" or just "Chess960". */
-internal fun ratingPoolLabel(key: String): String {
+fun ratingPoolLabel(key: String): String {
     val idx = key.indexOf('|')
     return if (idx < 0) prettyVariant(key)
     else "${prettyVariant(key.substring(0, idx))} · ${prettyType(key.substring(idx + 1))}"

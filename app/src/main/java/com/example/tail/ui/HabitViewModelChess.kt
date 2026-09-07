@@ -115,8 +115,8 @@ import com.example.tail.data.parseDate
 import com.example.tail.data.HABIT_ORDER
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import com.example.tail.wallpaper.WallpaperMetric
-import com.example.tail.wallpaper.WallpaperTarget
+import com.example.tail.data.WallpaperMetric
+import com.example.tail.data.WallpaperTarget
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -214,37 +214,6 @@ fun HabitViewModel.setChessReadinessApp(packageName: String) {
     }
 }
 
-/**
- * Switches the chess readiness engine between "v1" (the original
- * diagnostic), "v2" (the neurobiological gate) and "v3" (the reflex +
- * puzzle rush survival gate). Persisted to DataStore and mirrored into
- * the synchronous v2 prefs store so the floating bubble service can
- * branch without reading DataStore on the window-manager path.
- */
-
-
-/**
- * Switches the chess readiness engine between "v1" (the original
- * diagnostic), "v2" (the neurobiological gate) and "v3" (the reflex +
- * puzzle rush survival gate). Persisted to DataStore and mirrored into
- * the synchronous v2 prefs store so the floating bubble service can
- * branch without reading DataStore on the window-manager path.
- */
-fun HabitViewModel.setChessReadinessVersion(version: String) {
-    viewModelScope.launch {
-        val normalized = when (version) {
-            com.example.tail.widget.ChessReadinessV2Store.VERSION_V2 ->
-                com.example.tail.widget.ChessReadinessV2Store.VERSION_V2
-            com.example.tail.widget.ChessReadinessV2Store.VERSION_V3 ->
-                com.example.tail.widget.ChessReadinessV2Store.VERSION_V3
-            else -> com.example.tail.widget.ChessReadinessV2Store.VERSION_V1
-        }
-        settingsRepo.saveChessReadinessVersion(normalized)
-        _settings.value = _settings.value.copy(chessReadinessVersion = normalized)
-        com.example.tail.widget.ChessReadinessV2Store.saveReadinessVersion(context, normalized)
-    }
-}
-
 /** Status line for the survival-PB Chess.com sync button (settings UI). */
 
 
@@ -278,43 +247,6 @@ fun HabitViewModel.syncSurvivalPbFromChessCom() {
         } catch (e: Exception) {
             _survivalPbSyncStatus.value = "⚠ Sync failed: ${e.message ?: "network error"}"
         }
-    }
-}
-
-/**
- * Switches the POST-GAME (Phase 2) audit engine between "v1" (the
- * adaptive ΔE/strain evidence model) and "v2" (the research-report
- * system: fatigue ceiling, loss-streak stop rules, tilt vector, ACWR,
- * hysteresis). Persisted to DataStore and mirrored into the synchronous
- * v2 prefs store so the share-sheet reconciler can branch without
- * reading DataStore. Fully independent of the pre-game readiness
- * version — the two toggles combine freely.
- */
-
-
-/**
- * Switches the POST-GAME (Phase 2) audit engine between "v1" (the
- * adaptive ΔE/strain evidence model) and "v2" (the research-report
- * system: fatigue ceiling, loss-streak stop rules, tilt vector, ACWR,
- * hysteresis). Persisted to DataStore and mirrored into the synchronous
- * v2 prefs store so the share-sheet reconciler can branch without
- * reading DataStore. Fully independent of the pre-game readiness
- * version — the two toggles combine freely.
- */
-fun HabitViewModel.setChessPhase2Version(version: String) {
-    viewModelScope.launch {
-        val normalized = when (version) {
-            com.example.tail.widget.ChessPhase2V2Store.VERSION_V2 ->
-                com.example.tail.widget.ChessPhase2V2Store.VERSION_V2
-                com.example.tail.widget.ChessPhase2V2Store.VERSION_V3 ->
-                    com.example.tail.widget.ChessPhase2V2Store.VERSION_V3
-                com.example.tail.widget.ChessPhase2V2Store.VERSION_V4 ->
-                    com.example.tail.widget.ChessPhase2V2Store.VERSION_V4
-                else -> com.example.tail.widget.ChessPhase2V2Store.VERSION_V1
-        }
-        settingsRepo.saveChessPhase2Version(normalized)
-        _settings.value = _settings.value.copy(chessPhase2Version = normalized)
-        com.example.tail.widget.ChessPhase2V2Store.savePhase2Version(context, normalized)
     }
 }
 

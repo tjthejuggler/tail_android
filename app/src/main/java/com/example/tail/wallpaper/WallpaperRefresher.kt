@@ -1,5 +1,7 @@
 package com.example.tail.wallpaper
 
+import com.example.tail.data.WallpaperMetric
+import com.example.tail.data.WallpaperTarget
 import android.app.WallpaperManager
 import android.content.Context
 import android.graphics.BitmapFactory
@@ -18,44 +20,8 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import kotlin.math.roundToInt
 
-/**
- * Which point statistic drives the wallpaper choice.
- *
- * All three values come from [computeTaskerStats] — the single source of
- * truth for today / avg7 / avg30 point totals (same numbers as the stats
- * overlay and the old Tasker relay).
- */
-enum class WallpaperMetric(val label: String) {
-    TODAY("Today's points"),
-    WEEKLY("7-day average"),
-    MONTHLY("30-day average");
-
-    companion object {
-        /** Decodes a persisted enum name, falling back to TODAY. */
-        fun fromName(raw: String?): WallpaperMetric =
-            entries.firstOrNull { it.name == raw } ?: TODAY
-    }
-
-    /** Extracts this metric's value from the computed stats. */
-    fun select(stats: TaskerStats): Double = when (this) {
-        TODAY -> stats.today.toDouble()
-        WEEKLY -> stats.avg7
-        MONTHLY -> stats.avg30
-    }
-}
-
-/** Which wallpaper surface(s) the image is applied to. */
-enum class WallpaperTarget(val label: String) {
-    SYSTEM("Home screen"),
-    LOCK("Lock screen"),
-    BOTH("Both");
-
-    companion object {
-        /** Decodes a persisted enum name, falling back to SYSTEM. */
-        fun fromName(raw: String?): WallpaperTarget =
-            entries.firstOrNull { it.name == raw } ?: SYSTEM
-    }
-}
+// Wallpaper enums (WallpaperMetric / WallpaperTarget) moved to
+// com.example.tail.data.WallpaperEnums.kt on 2026-09-07 — imported above.
 
 // ── Pure resolution logic (unit-tested) ─────────────────────────────────────
 

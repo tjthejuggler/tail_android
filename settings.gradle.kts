@@ -21,4 +21,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "tail"
 include(":app")
+include(":core-data")
  

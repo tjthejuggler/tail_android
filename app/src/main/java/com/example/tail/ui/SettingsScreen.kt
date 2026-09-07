@@ -110,9 +110,9 @@ import com.example.tail.data.backup.GoogleDriveManager
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.widget.ChessReadinessStore
 import com.example.tail.wallpaper.WallpaperAlarmReceiver
-import com.example.tail.wallpaper.WallpaperMetric
+import com.example.tail.data.WallpaperMetric
 import com.example.tail.wallpaper.WallpaperRefresher
-import com.example.tail.wallpaper.WallpaperTarget
+import com.example.tail.data.WallpaperTarget
 import com.example.tail.ui.AdviceDialog
 import com.example.tail.ui.AdviceViewModel
 import kotlinx.coroutines.launch
@@ -2643,100 +2643,12 @@ private fun ChessReadinessSettingsSection(
 
         // Associated app picker (only when enabled)
         if (enabled) {
-            // Readiness engine version selector (v1 / v2 / v3)
-            Spacer(modifier = Modifier.height(12.dp))
-            Text("Readiness Test Version", fontSize = 14.sp)
-            Text(
-                "v1 — the original sleep / clarity / puzzles / rush diagnostic.\n" +
-                    "v2 — neurobiological gate: Garmin HRV & resting-HR Z-scores, " +
-                    "a 3-minute vigilance test (PVT-B) and cognitive load balancing " +
-                    "(ACWR).\n" +
-                    "v3 — reflex + survival gate: a 2-minute reflex test (PVT-B) " +
-                    "followed by a Puzzle Rush Survival session — solve real " +
-                    "puzzles in the chess app and tap PASS per solve; one strike " +
-                    "or the 5-minute cap fails the gate. The target scales with " +
-                    "your CURRENT rating in the chess type selected below " +
-                    "(PB is only the fallback when the rating is unknown). " +
-                    "Below the guaranteed target, a pass is still possible at " +
-                    "your own 70th-percentile history — but never under the " +
-                    "hard minimum. " +
-                    "All versions share the same history, Chess Guard " +
-                    "enforcement and game-audit rules.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            listOf(
-                "v1" to "v1 — Original diagnostic",
-                "v2" to "v2 — Neurobiological gate",
-                "v3" to "v3 — Reflex + Puzzle Rush Survival"
-            ).forEach { (value, label) ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = settings.chessReadinessVersion == value,
-                        onClick = { viewModel.setChessReadinessVersion(value) }
-                    )
-                    Text(label, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-
-            // Post-game (Phase 2) audit engine selector — independent of the
-            // pre-game readiness version above (any combination works).
-            Spacer(modifier = Modifier.height(12.dp))
-            Text("Post-Game Audit Version", fontSize = 14.sp)
-            Text(
-                "Which engine audits every shared rated game — the check that " +
-                    "decides whether you keep playing, land in the yellow zone or " +
-                    "the red zone.\n" +
-                    "v1 — adaptive ΔE/strain evidence model (a single loss never " +
-                    "ends the session; accumulated underperformance does).\n" +
-                    "v2 — research-report system: 120-min fatigue ceiling, " +
-                    "loss-streak stop rules (2 → yellow, 3 → red), tilt vector " +
-                    "from your personal speed + accuracy Z-scores with a " +
-                    "late-evening circadian adjustment, 7:28-day workload ratio " +
-                    "and yellow-state hysteresis. Works with either readiness " +
-                    "test version; Chess Guard enforcement is shared.\n" +
-                    "v3 — hybrid: v2's rules with ΔE-weighted loss streaks " +
-                    "(expected losses count 1.5, upsets 0.5), v1's strain " +
-                    "accumulator with a readiness buffer, a readiness-scaled " +
-                    "fatigue ceiling, and REAL unforced-blunder counts from " +
-                    "desktop Stockfish via the Tail bridge (needs the bridge " +
-                    "URL + token below; away from the PC the blunder rule " +
-                    "simply stays inactive and everything else still works).\n" +
-                    "v4 — data-derived: v3's hybrid audit with every threshold " +
-                    "computed from your 6,500+ analyzed games (recency-" +
-                    "weighted): personal per-time-control fatigue bars, a " +
-                    "continuous loss-weight curve, your own circadian curve " +
-                    "and a data-derived rest prescription. The profile is " +
-                    "built on the PC (chess-coach build_v4_profile.py) and " +
-                    "served via the bridge; without it v4 falls back to " +
-                    "exact v3 behavior.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            listOf(
-                "v1" to "v1 — Adaptive ΔE / strain audit",
-                "v2" to "v2 — Tilt / fatigue / loss-chasing system",
-                "v3" to "v3 — Hybrid + desktop Stockfish blunders",
-                "v4" to "v4 — Data-derived personal thresholds"
-            ).forEach { (value, label) ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = settings.chessPhase2Version == value,
-                        onClick = { viewModel.setChessPhase2Version(value) }
-                    )
-                    Text(label, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
+            // Pre-game readiness: v3 (reflex + Puzzle Rush Survival) and
+            // post-game audit: v4 (data-derived personal thresholds) are the
+            // only engines — the v1/v2 selectors were retired 2026-09-07.
 
             // v3 diagnostics — one tap verifies phone → bridge → Stockfish.
-            if (settings.chessPhase2Version == "v3" ||
-                settings.chessPhase2Version == "v4") {
+            run {
                 val analysisTestStatus by viewModel.chessAnalysisTestStatus.collectAsState()
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(

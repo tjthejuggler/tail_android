@@ -7,7 +7,7 @@ import com.example.tail.data.AppSettings
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SubtypeDataRepository
-import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.data.HabitIncrementBus
 import java.time.LocalDate
 
 private const val TAG = "VisionHabitExec"

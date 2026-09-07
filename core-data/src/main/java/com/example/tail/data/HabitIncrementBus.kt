@@ -1,7 +1,7 @@
-package com.example.tail.ui
+package com.example.tail.data
 
 import android.content.Context
-import com.example.tail.data.LauncherIconTierManager
+
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,7 +53,7 @@ object HabitIncrementBus {
             LauncherIconTierManager.refreshFromDatabase(ctx)
             // Same debounced pass also refreshes the full-width tier bar
             // widget (background colour + point total) if one is placed.
-            com.example.tail.widget.TierBarWidgetProvider.refreshAll(ctx)
+            AppHooks.refreshWidgets?.invoke(ctx)
         }
     }
 }

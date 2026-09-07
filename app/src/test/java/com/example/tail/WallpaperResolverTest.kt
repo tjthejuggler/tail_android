@@ -1,8 +1,8 @@
 package com.example.tail
 
 import com.example.tail.data.TaskerStats
-import com.example.tail.wallpaper.WallpaperMetric
-import com.example.tail.wallpaper.WallpaperTarget
+import com.example.tail.data.WallpaperMetric
+import com.example.tail.data.WallpaperTarget
 import com.example.tail.wallpaper.dominantImagePrefix
 import com.example.tail.wallpaper.parseIndexedImageName
 import com.example.tail.wallpaper.resolveImageIndex

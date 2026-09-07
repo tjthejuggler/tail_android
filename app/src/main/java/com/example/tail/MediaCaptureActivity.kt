@@ -79,7 +79,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
-import com.example.tail.data.SpotifyDetector
+import com.example.tail.ipc.SpotifyDetector
 import com.example.tail.data.meal.Macronutrients
 import com.example.tail.data.meal.MealLog
 import com.example.tail.data.meal.MealLogRepository
@@ -93,7 +93,7 @@ import com.example.tail.data.meal.VisionProcessingWorker
 import com.example.tail.data.meal.VisionQueueRepository
 import com.example.tail.data.meal.VisionResult
 import com.example.tail.ipc.SmartVoiceService
-import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.data.HabitIncrementBus
 import com.example.tail.ui.VoiceNoteBus
 import com.example.tail.ui.VoiceTranscriptBus
 import kotlinx.coroutines.Dispatchers

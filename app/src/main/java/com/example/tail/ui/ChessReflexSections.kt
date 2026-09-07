@@ -294,16 +294,16 @@ fun ReflexSection(
                 StatRow(
                     "Fastest hour",
                     "%02d:00 — %s".format(
-                        s.fastestHour,
-                        s.hourly[s.fastestHour].avgMeanRtMs?.let { "%.0f ms".format(it) } ?: "—"
+                        s.fastestHour ?: 0,
+                        s.hourly[s.fastestHour ?: 0].avgMeanRtMs?.let { "%.0f ms".format(it) } ?: "—"
                     ),
                     valueColor = GreenValue
                 )
                 StatRow(
                     "Slowest hour",
                     "%02d:00 — %s".format(
-                        s.slowestHour,
-                        s.hourly[s.slowestHour].avgMeanRtMs?.let { "%.0f ms".format(it) } ?: "—"
+                        s.slowestHour ?: 0,
+                        s.hourly[s.slowestHour ?: 0].avgMeanRtMs?.let { "%.0f ms".format(it) } ?: "—"
                     ),
                     valueColor = RedValue
                 )

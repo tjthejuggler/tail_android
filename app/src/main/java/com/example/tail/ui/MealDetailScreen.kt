@@ -679,7 +679,7 @@ private fun MealLogCard(log: MealLog, filesDir: File, onClick: () -> Unit) {
                     )
                 } else if (!log.summary.isNullOrBlank()) {
                     Text(
-                        text = log.summary,
+                        text = log.summary!!,
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2

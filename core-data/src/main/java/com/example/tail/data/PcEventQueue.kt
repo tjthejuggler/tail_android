@@ -3,8 +3,7 @@ package com.example.tail.data
 import android.content.Context
 import android.net.Uri
 import android.util.Log
-import com.example.tail.ui.HabitIncrementBus
-import com.example.tail.widget.HabitListWidgetProvider
+import com.example.tail.data.HabitIncrementBus
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.flow.first
@@ -266,7 +265,7 @@ class PcEventQueueProcessor(private val context: Context) {
 
             touchedHabits.forEach { HabitIncrementBus.emit(it) }
             if (touchedHabits.isNotEmpty()) {
-                try { HabitListWidgetProvider.refreshAll(context) } catch (_: Exception) {}
+                try { AppHooks.refreshWidgets?.invoke(context) } catch (_: Exception) {}
             }
         } catch (e: Exception) {
             Log.w(TAG, "PC event queue pass failed: ${e.message}")

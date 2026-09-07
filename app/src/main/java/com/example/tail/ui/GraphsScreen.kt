@@ -541,7 +541,7 @@ fun GraphsPanel(
                                     textEntriesForPoint.forEach { entry ->
                                         val rating = imdbRatingsForPoint[entry]
                                         // Hide the trailing playback URI (spotify:track:…)
-                                        val shownEntry = com.example.tail.data.SpotifyPlaybackHelper
+                                        val shownEntry = com.example.tail.ipc.SpotifyPlaybackHelper
                                             .displayText(entry)
                                         val displayText = if (rating != null) {
                                             "\u2022 $shownEntry  \u2B50 $rating"
@@ -552,7 +552,7 @@ fun GraphsPanel(
                                         // are tappable: Spotify plays the song in the
                                         // background via its MediaSession (notification-
                                         // listener access — the same toggle as detection).
-                                        val isMediaSong = com.example.tail.data.SpotifyPlaybackHelper
+                                        val isMediaSong = com.example.tail.ipc.SpotifyPlaybackHelper
                                             .parseMediaEntry(entry) != null
                                         val songContext = androidx.compose.ui.platform.LocalContext.current
                                         Text(
@@ -567,7 +567,7 @@ fun GraphsPanel(
                                                         indication = null,
                                                         interactionSource = remember { MutableInteractionSource() }
                                                     ) {
-                                                        com.example.tail.data.SpotifyPlaybackHelper
+                                                        com.example.tail.ipc.SpotifyPlaybackHelper
                                                             .playFromEntry(songContext, entry)
                                                     } else Modifier
                                                 )

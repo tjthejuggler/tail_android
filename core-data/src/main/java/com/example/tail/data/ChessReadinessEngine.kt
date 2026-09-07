@@ -1,4 +1,4 @@
-package com.example.tail.widget
+package com.example.tail.data
 
 import java.time.Instant
 import java.time.ZoneId

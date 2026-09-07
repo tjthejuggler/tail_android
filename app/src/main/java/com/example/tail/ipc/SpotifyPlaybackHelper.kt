@@ -1,4 +1,4 @@
-package com.example.tail.data
+package com.example.tail.ipc
 
 import android.content.ComponentName
 import android.content.Context

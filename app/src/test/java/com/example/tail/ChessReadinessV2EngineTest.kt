@@ -1,6 +1,6 @@
 package com.example.tail
 
-import com.example.tail.widget.ChessReadinessEngine
+import com.example.tail.data.ChessReadinessEngine
 import com.example.tail.widget.ChessReadinessV2Engine
 import com.example.tail.widget.ChessReadinessV2Engine.AcwrEvaluation
 import com.example.tail.widget.ChessReadinessV2Engine.AutonomicEvaluation

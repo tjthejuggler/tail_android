@@ -109,7 +109,7 @@ class DatedEntryRepository {
      * Pure function: extracts the text chunks for [targetDate] from [lines].
      * Exposed as internal for testing.
      */
-    internal fun parseChunksForDateInternal(lines: List<String>, targetDate: String): List<String> {
+    fun parseChunksForDateInternal(lines: List<String>, targetDate: String): List<String> {
         // First pass: collect all body lines for the target date
         var inTargetDate = false
         val bodyLines = mutableListOf<String>()
@@ -162,7 +162,7 @@ class DatedEntryRepository {
      * Core parser — pure function operating on a list of strings.
      * Exposed as internal so it can be unit-tested without a real URI.
      */
-    internal fun parseLinesInternal(lines: List<String>): Map<String, Int> {
+    fun parseLinesInternal(lines: List<String>): Map<String, Int> {
         val results = mutableMapOf<String, Int>()
 
         var currentDate: String? = null

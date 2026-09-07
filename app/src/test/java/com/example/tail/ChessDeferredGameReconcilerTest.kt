@@ -1,9 +1,9 @@
 package com.example.tail
 
+import com.example.tail.data.ChessReadinessEngine
 import com.example.tail.widget.ChessDeferredGameReconciler
 import com.example.tail.widget.ChessDeferredGameReconciler.AuditStamp
 import com.example.tail.widget.ChessPhase2Engine
-import com.example.tail.widget.ChessReadinessEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

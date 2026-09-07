@@ -1,5 +1,7 @@
 package com.example.tail.widget
 
+import com.example.tail.data.ChessReadinessEngine
+
 /**
  * ════════════════════════════════════════════════════════════════════════
  *  Chess Guard — hard enforcement policy for the Chess Readiness system

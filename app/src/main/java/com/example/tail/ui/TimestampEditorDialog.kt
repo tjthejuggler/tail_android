@@ -442,14 +442,14 @@ private fun TimestampCard(
             // Media-habit song entries (HH:mm Title — Artist …) are tappable:
             // Spotify plays the song in the background via its MediaSession
             // (notification-listener access — the same toggle as detection).
-            val isMediaSong = com.example.tail.data.SpotifyPlaybackHelper
+            val isMediaSong = com.example.tail.ipc.SpotifyPlaybackHelper
                 .parseMediaEntry(text) != null
             val songContext = androidx.compose.ui.platform.LocalContext.current
             Text(
                 // Hide the trailing playback URI (spotify:track:…) from the
                 // card — the full text stays intact for editing + playback.
                 text = if (isMediaSong)
-                    com.example.tail.data.SpotifyPlaybackHelper.displayText(text)
+                    com.example.tail.ipc.SpotifyPlaybackHelper.displayText(text)
                 else text,
                 fontSize = 12.sp,
                 color = if (isMediaSong) Color(0xFFAADDAA) else Color(0xFFBBBBCC),
@@ -467,7 +467,7 @@ private fun TimestampCard(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() }
                         ) {
-                            com.example.tail.data.SpotifyPlaybackHelper
+                            com.example.tail.ipc.SpotifyPlaybackHelper
                                 .playFromEntry(songContext, text)
                         } else Modifier
                     )

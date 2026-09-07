@@ -50,9 +50,12 @@ object ChessPhase2V2Store {
 
     // ── Version mirror ─────────────────────────────────────────────────────
 
-    /** "v1" (default — the original adaptive audit), "v2" or "v3" (hybrid). */
-    fun phase2Version(context: Context): String =
-        prefs(context).getString(KEY_VERSION, VERSION_V1) ?: VERSION_V1
+    /**
+     * Which post-game engine audits shared games. v1–v3 were retired on
+     * 2026-09-07 — v4 (data-derived overlay on the v3 hybrid) is the only
+     * post-game system now; the stored value is ignored.
+     */
+    fun phase2Version(context: Context): String = VERSION_V4
 
     fun isV2(context: Context): Boolean = phase2Version(context) == VERSION_V2
 

@@ -51,9 +51,12 @@ object ChessReadinessV2Store {
 
     // ── Version mirror ─────────────────────────────────────────────────────
 
-    /** "v1" (default — the original system), "v2" or "v3". */
-    fun readinessVersion(context: Context): String =
-        prefs(context).getString(KEY_VERSION, VERSION_V1) ?: VERSION_V1
+    /**
+     * Which readiness engine the chess flow uses. The v1/v2 engines were
+     * retired on 2026-09-07 — v3 (reflex + Puzzle Rush Survival) is the
+     * only pre-game system now; the stored value is ignored.
+     */
+    fun readinessVersion(context: Context): String = VERSION_V3
 
     fun isV2(context: Context): Boolean = readinessVersion(context) == VERSION_V2
 

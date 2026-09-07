@@ -283,7 +283,7 @@ class HabitsRepository {
                 // accrue. No-op when the feature is disabled or the resolved
                 // image hasn't changed. Never allowed to break the save.
                 try {
-                    com.example.tail.wallpaper.WallpaperRefresher.onDatabaseSaved(context, db)
+                    AppHooks.refreshWallpaperAfterSave?.invoke(context, db)
                 } catch (e: Exception) {
                     Log.w(TAG, "post-save wallpaper refresh failed: ${e.message}")
                 }

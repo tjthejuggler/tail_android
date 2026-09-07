@@ -10,8 +10,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.example.tail.wallpaper.WallpaperMetric
-import com.example.tail.wallpaper.WallpaperTarget
+import com.example.tail.data.WallpaperMetric
+import com.example.tail.data.WallpaperTarget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -1049,9 +1049,9 @@ class SettingsRepository(private val context: Context) {
             mediaApps = decodeFileUriMap(prefs[KEY_MEDIA_APPS] ?: ""),
             chessReadinessEnabled = prefs[KEY_CHESS_READINESS_ENABLED] ?: false,
             chessReadinessApp = prefs[KEY_CHESS_READINESS_APP] ?: "",
-            chessReadinessVersion = prefs[KEY_CHESS_READINESS_VERSION]
+            chessReadinessVersion = "v3"
                 ?.takeIf { it == "v2" } ?: "v1",
-            chessPhase2Version = prefs[KEY_CHESS_PHASE2_VERSION]
+            chessPhase2Version = "v4"
                 ?.takeIf { it == "v2" || it == "v3" || it == "v4" } ?: "v1",
             gdriveAutoEnabled = prefs[KEY_GDRIVE_AUTO_ENABLED] ?: false,
             gdriveAccountName = prefs[KEY_GDRIVE_ACCOUNT_NAME] ?: "",
@@ -1827,24 +1827,6 @@ class SettingsRepository(private val context: Context) {
     /** Saves the package name of the app associated with Chess Readiness. */
     suspend fun saveChessReadinessApp(packageName: String) {
         context.dataStore.edit { prefs -> prefs[KEY_CHESS_READINESS_APP] = packageName }
-    }
-
-    /** Saves which readiness engine the chess flow uses ("v1"/"v2"/"v3"). */
-    suspend fun saveChessReadinessVersion(version: String) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_CHESS_READINESS_VERSION] = when (version) {
-                "v2" -> "v2"
-                "v3" -> "v3"
-                else -> "v1"
-            }
-        }
-    }
-
-    /** Saves which post-game audit engine shared games run through ("v1" or "v2"). */
-    suspend fun saveChessPhase2Version(version: String) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_CHESS_PHASE2_VERSION] = if (version == "v2") "v2" else "v1"
-        }
     }
 
     // ── Google Drive Backup ──────────────────────────────────────────────

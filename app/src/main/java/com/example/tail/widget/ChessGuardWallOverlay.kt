@@ -1,5 +1,6 @@
 package com.example.tail.widget
 
+import com.example.tail.data.ChessReadinessEngine
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color

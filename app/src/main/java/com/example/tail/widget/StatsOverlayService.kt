@@ -37,7 +37,7 @@ import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.computeTaskerStats
 import com.example.tail.ui.HabitsDataChangedBus
-import com.example.tail.ui.HabitIncrementBus
+import com.example.tail.data.HabitIncrementBus
 import com.example.tail.ui.PointTierColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
