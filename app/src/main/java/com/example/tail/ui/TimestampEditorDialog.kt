@@ -250,14 +250,24 @@ fun TimestampEditorDialog(
                                     },
                                     onCancelEditInfo = { editingCard = null },
                                     onSaveEditInfo = { newAmount, newText ->
-                                        if (isMinutesPrimary) {
-                                            // The stepper edited minutes: persist them
-                                            // (and the parent adjusts the day's minutes total).
-                                            if (newAmount != (minutesByTime[group.time] ?: group.amount)) {
-                                                onSetGroupMinutes(group.time, newAmount)
+                                        // Movie habits: the watch length lives in the
+                                        // text's "(N min)" annotation — the minutes slot
+                                        // re-syncs from it (syncMovieMinutesSlot). The
+                                        // amount (instance count) must NEVER take a
+                                        // minutes value: the movie bug (2026-09-08) had
+                                        // the stale chip minutes written into
+                                        // setTimestampCountAtTime, turning "53 min"
+                                        // into 23 phantom watch instances.
+                                        if (!isMovieHabit) {
+                                            if (isMinutesPrimary) {
+                                                // The stepper edited minutes: persist them
+                                                // (and the parent adjusts the day's minutes total).
+                                                if (newAmount != (minutesByTime[group.time] ?: group.amount)) {
+                                                    onSetGroupMinutes(group.time, newAmount)
+                                                }
+                                            } else if (newAmount != group.amount) {
+                                                onSetGroupAmount(group.time, newAmount)
                                             }
-                                        } else if (newAmount != group.amount) {
-                                            onSetGroupAmount(group.time, newAmount)
                                         }
                                         if (canEditText && newText != textEntries[group.time].orEmpty()) {
                                             onUpdateText(group.time, newText)

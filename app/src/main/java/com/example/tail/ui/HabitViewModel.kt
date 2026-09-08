@@ -1898,10 +1898,18 @@ class HabitViewModel(
             if (currentDistinct.size <= desired.size) {
                 timestampRepo.setTimestampsForDay(habitName, date, desired)
             } else {
+                // More stored times than log entries: add any missing log
+                // times AND collapse duplicate stored times down to one each.
+                // Duplicates are corruption, never data: one movie text
+                // entry is exactly one watch instance (the 2026-09-08 bug
+                // wrote a stale minutes value into the timestamp amount,
+                // creating 23 copies of the same second). Extra DISTINCT
+                // times are kept — they may be manual increments.
                 val missing = desired.filter { it !in currentDistinct }
                 if (missing.isNotEmpty()) {
                     timestampRepo.addTimestampsAt(habitName, date, missing)
                 }
+                timestampRepo.setTimestampsForDay(habitName, date, currentDistinct)
             }
         }
     }
