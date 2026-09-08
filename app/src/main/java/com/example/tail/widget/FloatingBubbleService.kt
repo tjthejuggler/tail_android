@@ -1645,7 +1645,13 @@ class FloatingBubbleService : Service() {
         // the run keeps going to the full 5:00 cap so the extra puzzles feed
         // the readiness dataset (accuracy + time-to-target are both logged).
         // The user can bank the pass early with ■ FINISH & SAVE.
-        if (ChessReadinessV3Engine.onPass(passed, survivalTarget)) {
+        // !survivalGatePassed: time-to-target must latch at the FIRST pass
+        // that reaches the target — the run continues past it to 5:00, and
+        // every later pass would otherwise overwrite this readiness
+        // datapoint with a later and later timestamp.
+        if (!survivalGatePassed &&
+            ChessReadinessV3Engine.onPass(passed, survivalTarget)
+        ) {
             survivalGatePassed = true
             survivalTargetReachedMs =
                 (now - survivalRunStartMs).coerceAtLeast(0L)

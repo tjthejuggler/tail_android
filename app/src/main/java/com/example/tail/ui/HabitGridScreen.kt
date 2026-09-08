@@ -1,5 +1,8 @@
 package com.example.tail.ui
 
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.text.toIntOrNull
 import android.Manifest
 import android.app.Activity
@@ -1226,12 +1229,9 @@ fun HabitGridScreen(
                             viewModel.switchScreen(idx)
                         }
                     },
-                    onMoveScreenLeft = if (editMode) { idx ->
-                        viewModel.reorderScreen(idx, idx - 1)
-                    } else null,
-                    onMoveScreenRight = if (editMode) { idx ->
-                        viewModel.reorderScreen(idx, idx + 1)
-                    } else null,
+                    onReorderScreen = { from, to ->
+                        viewModel.reorderScreen(from, to)
+                    },
                     onTabLayout = { idx, rect -> dragState.tabBounds[idx] = rect },
                     scrollState = tabRowScrollState,
                     onRowLayout = { dragState.tabRowBoundsInWindow = it }
@@ -3178,8 +3178,8 @@ internal fun ScreenTabRow(
     editMode: Boolean,
     hiddenScreenIds: Set<String>,
     onTabClick: (Int) -> Unit,
-    onMoveScreenLeft: ((Int) -> Unit)? = null,
-    onMoveScreenRight: ((Int) -> Unit)? = null,
+    /** Live reorder: move screen at [fromIndex] to [toIndex] (long-press drag). */
+    onReorderScreen: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
     /** Reports each tab's window-space bounds (for drag-hover screen switching). */
     onTabLayout: ((index: Int, bounds: Rect) -> Unit)? = null,
     /** Shared scroll state — hoisted so a held-habit drag can auto-scroll the row. */
@@ -3187,6 +3187,26 @@ internal fun ScreenTabRow(
     /** Reports the whole tab row's window-space bounds (edge auto-scroll zones). */
     onRowLayout: ((Rect) -> Unit)? = null
 ) {
+    // ── Long-press drag-to-reorder (works in NORMAL mode) ─────────────────────
+    // Window-space bounds of every chip (hidden blanks included), maintained
+    // via each chip's onGloballyPositioned and used to resolve the drop target.
+    val chipBounds = remember { mutableMapOf<Int, Rect>() }
+    // ORIGINAL index of the chip currently lifted by a long-press drag; -1 = none.
+    var dragTabIndex by remember { mutableIntStateOf(-1) }
+    // Current drop slot as an INSERTION index into the list WITHOUT the lifted
+    // chip (i.e. the position the gap is shown at). -1 = no drag active.
+    var dropTarget by remember { mutableIntStateOf(-1) }
+    // Finger position in window space — the ghost chip follows it.
+    var dragPosition by remember { mutableStateOf(Offset.Zero) }
+    // The scrollable Row's bounds in window space — used for edge auto-scroll
+    // and to convert drag positions into the overlay's local coordinates.
+    var rowRectInWindow by remember { mutableStateOf(Rect.Zero) }
+    // Chip geometry is deterministic — hoisted so the floating ghost can reuse
+    // the exact same size as the real chips.
+    val chipShape = RoundedCornerShape(6.dp)
+    val chipHeight =
+        ((LocalConfiguration.current.screenWidthDp - 8) / GRID_COLUMNS - 4).dp
+    val chipWidth = chipHeight * 1.1f
     // Box wrapper so the tiny scroll-direction arrowheads can float over the
     // row's ends without scrolling away with the content.
     Box(
@@ -3210,10 +3230,75 @@ internal fun ScreenTabRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .horizontalScroll(scrollState)
+            // Measured OUTSIDE horizontalScroll so its window origin stays
+            // stable while the row scrolls (the drag gesture converts local
+            // pointer coords to window coords against this rect).
             .onGloballyPositioned { coords ->
-                onRowLayout?.invoke(Rect(coords.positionInWindow(), coords.size.toSize()))
+                val rect = Rect(coords.positionInWindow(), coords.size.toSize())
+                rowRectInWindow = rect
+                onRowLayout?.invoke(rect)
             }
+            // Long-press anywhere on a chip lifts it into a drag; dragging
+            // over neighbouring chips live-reorders them (normal mode — no
+            // edit mode, no arrows). Attached BEFORE horizontalScroll so its
+            // layout coordinates match the non-scrolling Row origin (window
+            // position = rowRectInWindow.topLeft + local change.position);
+            // the scroll gesture still wins if the finger moves before the
+            // long-press fires, since it consumes the touch-slop first.
+            .pointerInput(screens.size) {
+                val edgeZone = 40.dp.toPx()
+                val scrollSpeed = 6.dp.toPx()
+                // Local position → window position (Row origin is stable).
+                val toWindow: (Offset) -> Offset = { it + rowRectInWindow.topLeft }
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { startOffset ->
+                        val finger = toWindow(startOffset)
+                        // Lift the chip whose centre-x is nearest the finger.
+                        dragTabIndex = chipBounds.entries
+                            .minByOrNull { abs(it.value.center.x - finger.x) }
+                            ?.key ?: -1
+                        // The gap starts exactly where the chip was lifted
+                        // from (same insertion index in the reduced list).
+                        dropTarget = dragTabIndex
+                        dragPosition = finger
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        if (dragTabIndex < 0) return@detectDragGesturesAfterLongPress
+                        val finger = toWindow(change.position)
+                        dragPosition = finger
+                        // Edge auto-scroll while dragging near the row's ends.
+                        if (rowRectInWindow != Rect.Zero) {
+                            when {
+                                finger.x < rowRectInWindow.left + edgeZone ->
+                                    scrollState.dispatchRawDelta(+scrollSpeed)
+                                finger.x > rowRectInWindow.right - edgeZone ->
+                                    scrollState.dispatchRawDelta(-scrollSpeed)
+                            }
+                        }
+                        // GAP PREVIEW (no commit yet): the drop slot is how many
+                        // other chips lie entirely left of the finger — i.e. an
+                        // insertion index into the list without the lifted chip.
+                        dropTarget = chipBounds.entries
+                            .count { (idx, rect) -> idx != dragTabIndex && rect.center.x < finger.x }
+                            .coerceIn(0, screens.size - 1)
+                    },
+                    onDragEnd = {
+                        // Commit ONCE, only if the drop slot differs from the
+                        // chip's original position.
+                        if (dragTabIndex >= 0 && dropTarget != dragTabIndex) {
+                            onReorderScreen(dragTabIndex, dropTarget)
+                        }
+                        dragTabIndex = -1
+                        dropTarget = -1
+                    },
+                    onDragCancel = {
+                        dragTabIndex = -1
+                        dropTarget = -1
+                    }
+                )
+            }
+            .horizontalScroll(scrollState)
             .padding(horizontal = 6.dp, vertical = 1.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -3221,6 +3306,27 @@ internal fun ScreenTabRow(
         screens.forEachIndexed { index, screen ->
             val isActive = index == activeIndex
             val isHidden = screen.id in hiddenScreenIds
+            // ── Gap preview for the active long-press drag ───────────────────
+            // dropTarget is an insertion index in the list WITHOUT the lifted
+            // chip; translate it to the original index the gap goes BEFORE.
+            val gapBeforeOriginal = when {
+                dragTabIndex < 0 -> -1
+                dropTarget > dragTabIndex -> dropTarget + 1
+                else -> dropTarget
+            }
+            if (index == gapBeforeOriginal) {
+                // Empty slot where the chip would land — filled only on release.
+                Box(
+                    modifier = Modifier
+                        .height(chipHeight)
+                        .width(chipWidth)
+                        .clip(chipShape)
+                        .border(1.dp, Color(0xFFFFAA00).copy(alpha = 0.7f), chipShape)
+                )
+            }
+            // The lifted chip is not rendered in the row — it floats under the
+            // finger as a ghost overlay (added at the bottom of this composable).
+            if (index == dragTabIndex) return@forEachIndexed
             // Hidden screens: show a small blank clickable area when not active and not in edit mode
             if (!isActive && isHidden && !editMode) {
                 TextButton(
@@ -3233,19 +3339,15 @@ internal fun ScreenTabRow(
                         .height(32.dp)
                         .width(24.dp)
                         .onGloballyPositioned { coords ->
-                            onTabLayout?.invoke(
-                                index,
-                                Rect(coords.positionInWindow(), coords.size.toSize())
-                            )
+                            val rect = Rect(coords.positionInWindow(), coords.size.toSize())
+                            chipBounds[index] = rect
+                            onTabLayout?.invoke(index, rect)
                         },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                 ) {
                     // Blank — no text, just a clickable area
                 }
                 return@forEachIndexed
-            }
-            if (editMode && isActive && onMoveScreenLeft != null && index > 0) {
-                ScreenTabMoveArrow(arrow = "◀", onClick = { onMoveScreenLeft(index) })
             }
             val label = when {
                 editMode && isActive -> "✎ ${screen.name}"
@@ -3262,15 +3364,8 @@ internal fun ScreenTabRow(
             // instead of TextButton because Material3 silently inflates
             // buttons to the ~48 dp minimum-interactive size, pushing the
             // bottoms past the squares.
-            val chipShape = RoundedCornerShape(6.dp)
-            // screenWidthDp is already in dp: cell = (width − 2×4.dp outer pad)/8,
-            // square = cell − 2×2.dp cell pad.
-            val chipHeight =
-                ((LocalConfiguration.current.screenWidthDp - 8) / GRID_COLUMNS - 4).dp
-            // CONSISTENT chip size: every chip is exactly the old minimum
-            // (slightly wider than tall). Long names shrink their font (down
-            // to 8sp) and then wrap to two lines instead of growing the chip.
-            val chipWidth = chipHeight * 1.1f
+            // (chipShape / chipHeight / chipWidth are hoisted above — the
+            // floating ghost overlay reuses the exact same geometry.)
             // Pick the largest font size (12sp → 8sp) whose two-line layout
             // fits the chip's inner width; falls back to 8sp + 2 lines.
             val textMeasurer = rememberTextMeasurer()
@@ -3314,10 +3409,9 @@ internal fun ScreenTabRow(
                         interactionSource = remember { MutableInteractionSource() }
                     ) { onTabClick(index) }
                     .onGloballyPositioned { coords ->
-                        onTabLayout?.invoke(
-                            index,
-                            Rect(coords.positionInWindow(), coords.size.toSize())
-                        )
+                        val rect = Rect(coords.positionInWindow(), coords.size.toSize())
+                        chipBounds[index] = rect
+                        onTabLayout?.invoke(index, rect)
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -3346,9 +3440,16 @@ internal fun ScreenTabRow(
                     }
                 )
             }
-            if (editMode && isActive && onMoveScreenRight != null && index < screens.size - 1) {
-                ScreenTabMoveArrow(arrow = "▶", onClick = { onMoveScreenRight(index) })
-            }
+        }
+        // Trailing gap when the drop slot is past the last chip.
+        if (dragTabIndex >= 0 && dropTarget == screens.size - 1 && dragTabIndex != screens.size - 1) {
+            Box(
+                modifier = Modifier
+                    .height(chipHeight)
+                    .width(chipWidth)
+                    .clip(chipShape)
+                    .border(1.dp, Color(0xFFFFAA00).copy(alpha = 0.7f), chipShape)
+            )
         }
     }
     // Minimal scroll affordance: a very faint arrowhead at whichever end can
@@ -3370,32 +3471,37 @@ internal fun ScreenTabRow(
             modifier = Modifier.align(Alignment.CenterEnd)
         )
     }
+    // Floating ghost of the lifted chip — follows the finger while the row
+    // below shows only the gap preview; nothing commits until release.
+    if (dragTabIndex in screens.indices) {
+        Box(
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        (dragPosition.x - rowRectInWindow.left - chipWidth.toPx() / 2).roundToInt(),
+                        (dragPosition.y - rowRectInWindow.top - chipHeight.toPx() / 2).roundToInt()
+                    )
+                }
+                .height(chipHeight)
+                .width(chipWidth)
+                .clip(chipShape)
+                .background(Color(0xCC202020))
+                .border(1.25.dp, Color(0xFFFFAA00), chipShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = screens[dragTabIndex].name,
+                fontSize = 10.sp,
+                lineHeight = 10.sp * 1.1f,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 2.dp)
+            )
+        }
     }
-}
-
-/**
- * ◀/▶ reorder arrow shown next to the selected screen tab in edit mode.
- * A plain Text with its own tight background — material3 TextButton
- * enforces a 48dp minimum touch target, which made the highlight much
- * larger than the small arrow glyph.
- */
-
-
-@Composable
-internal fun ScreenTabMoveArrow(
-    arrow: String,
-    onClick: () -> Unit
-) {
-    Text(
-        text = arrow,
-        color = Color(0xFFFFAA00),
-        fontSize = 12.sp,
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF333300))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 3.dp, vertical = 7.dp)
-    )
+    }
 }
 
 // ── Habit grid ────────────────────────────────────────────────────────────────
