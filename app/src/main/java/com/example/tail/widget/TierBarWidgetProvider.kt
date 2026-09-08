@@ -225,15 +225,19 @@ class TierBarWidgetProvider : AppWidgetProvider() {
                     }
                 }
                 // Invisible horizontal touch zones → selected habit screens
-                // (in their tab order). Unused zones are hidden; with none
-                // selected the root tap (open app grid) covers everything.
+                // (in their tab order). A zone can instead be "Main"
+                // ([TierBarWidgetConfig.MAIN], sorted leftmost): it opens
+                // the app exactly like the launcher icon — no explicit
+                // screen extra — so Smart Open picks the contextual screen.
+                // Unused zones are hidden; with none selected the root tap
+                // (open app grid) covers everything.
                 val zoneIds = intArrayOf(
                     R.id.tier_bar_zone_0, R.id.tier_bar_zone_1, R.id.tier_bar_zone_2,
                     R.id.tier_bar_zone_3, R.id.tier_bar_zone_4, R.id.tier_bar_zone_5,
                     R.id.tier_bar_zone_6, R.id.tier_bar_zone_7
                 )
                 val selected = TierBarWidgetConfig.loadScreens(appContext)
-                    .filter { it in 0 until habitScreenCount }
+                    .filter { it == TierBarWidgetConfig.MAIN || it in 0 until habitScreenCount }
                     .sorted()
                 zoneIds.forEachIndexed { i, zoneId ->
                     if (i < selected.size) {
@@ -262,15 +266,21 @@ class TierBarWidgetProvider : AppWidgetProvider() {
             return views
         }
 
-        /** Deep link: open the habit grid on the given screen (tab). */
+        /** Deep link: open the habit grid on the given screen (tab).
+         *  MAIN (-1) sends no extras — a plain open, so Smart Open
+         *  resolves the contextual screen exactly like the app icon. */
         private fun screenPendingIntent(
             context: Context, screenIndex: Int, zoneIndex: Int
         ): PendingIntent {
             val intent = Intent(context, MainActivity::class.java).apply {
-                action = "com.example.tail.TIER_BAR.SCREEN$screenIndex"
+                action = if (screenIndex == TierBarWidgetConfig.MAIN)
+                    "com.example.tail.TIER_BAR.MAIN"
+                else "com.example.tail.TIER_BAR.SCREEN$screenIndex"
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                putExtra(MainActivity.EXTRA_OPEN_ROUTE, "grid")
-                putExtra(MainActivity.EXTRA_OPEN_SCREEN_INDEX, screenIndex)
+                if (screenIndex != TierBarWidgetConfig.MAIN) {
+                    putExtra(MainActivity.EXTRA_OPEN_ROUTE, "grid")
+                    putExtra(MainActivity.EXTRA_OPEN_SCREEN_INDEX, screenIndex)
+                }
             }
             return PendingIntent.getActivity(
                 context,
@@ -586,8 +596,13 @@ object TierBarWidgetConfig {
             .edit().putBoolean(key, enabled).apply()
     }
 
+    /** Touch-zone marker for the "Main" zone: behaves exactly like tapping
+     *  the app icon (Smart Open picks the screen). Sorted leftmost. */
+    const val MAIN = -1
+
     /** Indices of the habit grid screens mapped to the widget's invisible
-     *  horizontal touch zones (stored ordered by tab index). */
+     *  horizontal touch zones (stored ordered by tab index; may contain
+     *  [MAIN]). */
     fun loadScreens(context: Context): List<Int> =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString("touch_screens", "")

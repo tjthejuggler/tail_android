@@ -86,6 +86,19 @@ class MainActivity : ComponentActivity() {
             get() = _screenIndex.intValue
             set(value) { _screenIndex.intValue = value }
     }
+
+    /** Dedup gate for Smart Open: a config-change recreation redelivers the
+     *  SAME intent instance, and it must not re-trigger the smart-open
+     *  guess (which would yank the user off their current screen on
+     *  rotation). Only genuinely fresh plain intents pass. */
+    object SmartOpenGate {
+        @Volatile private var lastIntent: android.content.Intent? = null
+        fun shouldHandle(intent: android.content.Intent): Boolean {
+            if (intent === lastIntent) return false
+            lastIntent = intent
+            return true
+        }
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -213,37 +226,43 @@ private fun TailApp(
     // Deep links from system overlays (e.g. the floating bubble's chess menu):
     // navigate straight to the requested route. Handles both the launch intent
     // and onNewIntent deliveries while the activity is already alive.
+    // A PLAIN open (launcher icon, widget "Main"/grid zone — no extras) gets
+    // the Smart Open guess instead: resolve the contextually-best habit
+    // screen on IO and hand it to the grid like a deep link. Explicit
+    // extras always win; a no-confidence guess falls through silently.
+    val smartOpenScope = androidx.compose.runtime.rememberCoroutineScope()
+    val handleOpenIntent: (android.content.Intent) -> Unit = { intent ->
+        var explicit = false
+        intent.getStringExtra(MainActivity.EXTRA_OPEN_ROUTE)?.let { route ->
+            explicit = true
+            if (navController.currentDestination?.route != route) {
+                navController.navigate(route)
+            }
+        }
+        if (intent.getBooleanExtra(MainActivity.EXTRA_OPEN_NOTIFICATIONS, false)) {
+            explicit = true
+            MainActivity.NotificationsDeepLink.open = true
+        }
+        intent.getIntExtra(MainActivity.EXTRA_OPEN_SCREEN_INDEX, -1).let { idx ->
+            if (idx >= 0) {
+                explicit = true
+                MainActivity.NotificationsDeepLink.screenIndex = idx
+            }
+        }
+        if (!explicit && MainActivity.SmartOpenGate.shouldHandle(intent)) {
+            smartOpenScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val idx = com.example.tail.data.SmartOpenStore.resolveForLaunch(context)
+                if (idx >= 0) MainActivity.NotificationsDeepLink.screenIndex = idx
+            }
+        }
+    }
     val activity = context as? androidx.activity.ComponentActivity
     if (activity != null) {
         androidx.compose.runtime.LaunchedEffect(activity) {
-            activity.intent?.let { intent ->
-                intent.getStringExtra(MainActivity.EXTRA_OPEN_ROUTE)?.let { route ->
-                    if (navController.currentDestination?.route != route) {
-                        navController.navigate(route)
-                    }
-                }
-                if (intent.getBooleanExtra(MainActivity.EXTRA_OPEN_NOTIFICATIONS, false)) {
-                    MainActivity.NotificationsDeepLink.open = true
-                }
-                intent.getIntExtra(MainActivity.EXTRA_OPEN_SCREEN_INDEX, -1).let { idx ->
-                    if (idx >= 0) MainActivity.NotificationsDeepLink.screenIndex = idx
-                }
-            }
+            activity.intent?.let { handleOpenIntent(it) }
         }
         androidx.compose.runtime.DisposableEffect(activity) {
-            val listener = androidx.core.util.Consumer<android.content.Intent> { intent ->
-                intent.getStringExtra(MainActivity.EXTRA_OPEN_ROUTE)?.let { route ->
-                    if (navController.currentDestination?.route != route) {
-                        navController.navigate(route)
-                    }
-                }
-                if (intent.getBooleanExtra(MainActivity.EXTRA_OPEN_NOTIFICATIONS, false)) {
-                    MainActivity.NotificationsDeepLink.open = true
-                }
-                intent.getIntExtra(MainActivity.EXTRA_OPEN_SCREEN_INDEX, -1).let { idx ->
-                    if (idx >= 0) MainActivity.NotificationsDeepLink.screenIndex = idx
-                }
-            }
+            val listener = androidx.core.util.Consumer<android.content.Intent> { handleOpenIntent(it) }
             activity.addOnNewIntentListener(listener)
             onDispose { activity.removeOnNewIntentListener(listener) }
         }

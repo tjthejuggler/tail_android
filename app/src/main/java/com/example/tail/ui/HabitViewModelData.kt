@@ -817,6 +817,15 @@ fun HabitViewModel.incrementHabit(
     val targetDate = date ?: _selectedDate.value
     val affectsVisibleDate = targetDate == _selectedDate.value
 
+    // Smart-open learning: an increment on the active screen for TODAY is
+    // the strongest "I use this screen in this context" signal. Fire-and-
+    // forget on IO — never blocks the tap path.
+    if (targetDate == java.time.LocalDate.now()) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            com.example.tail.data.SmartOpenStore.recordFromApp(context, _activeScreenIndex.value)
+        }
+    }
+
     // Step 1: instant targeted update — just flip todayCount for this one habit.
     // This is O(n) list copy with zero calculations, so it's effectively instant.
     val dateStr = com.example.tail.data.dateString(targetDate)

@@ -2546,6 +2546,27 @@ private fun TierBarWidgetSettingsSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("▶️  Main (smart open — like the app icon)", fontSize = 14.sp)
+                Spacer(modifier = Modifier.weight(1f))
+                Switch(
+                    checked = com.example.tail.widget.TierBarWidgetConfig.MAIN in touchScreens,
+                    onCheckedChange = { enabled ->
+                        touchScreens =
+                            if (enabled) (touchScreens + com.example.tail.widget.TierBarWidgetConfig.MAIN).sorted()
+                            else touchScreens - com.example.tail.widget.TierBarWidgetConfig.MAIN
+                        com.example.tail.widget.TierBarWidgetConfig
+                            .setScreens(context, touchScreens)
+                        scope.launch {
+                            com.example.tail.widget.TierBarWidgetProvider
+                                .refreshAll(context)
+                        }
+                    }
+                )
+            }
             habitScreens.forEachIndexed { idx, screen ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
