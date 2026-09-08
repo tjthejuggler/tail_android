@@ -33,6 +33,7 @@ import com.example.tail.ipc.SpotifyTrack
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
 import com.example.tail.data.HabitIncrementBus
+import com.example.tail.data.assist.AssistActionRepository
 import com.example.tail.ui.VoiceNoteBus
 import com.example.tail.ui.VoiceTranscriptBus
 import kotlinx.coroutines.CoroutineScope
@@ -80,8 +81,25 @@ class SmartVoiceService : Service() {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
 
+    /**
+     * Forced routing mode supplied via [EXTRA_FORCE_MODE]:
+     *  - "assist" → bypass habit/note routing, send the text to the PC
+     *    (quick_capture_assist Roo Code instance) as an ACTION request
+     *  - "habit"  → always route to habit matching (explicit habit submit)
+     *  - "note"   → always save as a note (explicit note submit)
+     *  - null     → normal smart routing (trigger-word density)
+     */
+    private var forceMode: String? = null
+
     /** Captured before SpeechRecognizer starts (which mutes Spotify). */
     private var spotifyTrack: SpotifyTrack? = null
+
+    // Listening-session state kept for an ERROR_AUDIO retry — the mic can
+    // still be held by a just-destroyed recognition session.
+    private var sessionWordToHabits: Map<String, List<String>> = emptyMap()
+    private var sessionSettings: com.example.tail.data.AppSettings? = null
+    private var sessionSpotifyTrack: SpotifyTrack? = null
+    private var audioRetryCount = 0
 
     // ── Service lifecycle ────────────────────────────────────────────────
 
@@ -95,6 +113,11 @@ class SmartVoiceService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A fresh start command may arrive on an instance that is still
+        // shutting down (mic-action button restarts this service right
+        // after stopping it) — clear the stopped flag so the new session
+        // is allowed to run.
+        stopped = false
         // Read Spotify track from intent extras (captured by Activity before mic activation)
         // Fall back to direct detection if not provided (e.g. started from broadcast receiver)
         spotifyTrack = SpotifyDetector.fromIntent(intent)
@@ -124,14 +147,28 @@ class SmartVoiceService : Service() {
                 }
             }
 
+            forceMode = intent?.getStringExtra(EXTRA_FORCE_MODE)?.takeIf { it.isNotBlank() }
+
             if (!suppliedText.isNullOrEmpty()) {
-                Log.i(TAG, "Processing supplied text: \"$suppliedText\"")
+                Log.i(TAG, "Processing supplied text (forceMode=$forceMode): \"$suppliedText\"")
                 handler.post { Toast.makeText(applicationContext, "🧠 Processing: \"$suppliedText\"", Toast.LENGTH_SHORT).show() }
-                routeText(suppliedText, wordToHabits, settings, spotifyTrack)
+                dispatchText(suppliedText, wordToHabits, settings, spotifyTrack)
             } else {
-                Log.i(TAG, "Starting voice listening (smart mode)")
-                handler.post { Toast.makeText(applicationContext, "🧠 Listening…", Toast.LENGTH_SHORT).show() }
-                startListening(wordToHabits, settings, spotifyTrack)
+                Log.i(TAG, "Starting voice listening (smart mode, forceMode=$forceMode)")
+                val listenHint = if (forceMode == "assist") "💻 Listening — PC action…" else "🧠 Listening…"
+                handler.post { Toast.makeText(applicationContext, listenHint, Toast.LENGTH_SHORT).show() }
+                // Tear down any recognizer left over from a previous session
+                // and give the audio device a moment to be released before
+                // starting the new one. Restarting the mic immediately
+                // (stop → start in quick succession, as the mic-action
+                // button does) otherwise fails with MICROPHONE_UNAVAILABLE /
+                // ERROR_AUDIO because the old recognition session still
+                // holds the microphone.
+                try { speechRecognizer?.destroy() } catch (_: Exception) {}
+                speechRecognizer = null
+                handler.postDelayed({
+                    if (!stopped) startListening(wordToHabits, settings, spotifyTrack)
+                }, RECOGNIZER_RESTART_DELAY_MS)
             }
         }
 
@@ -186,6 +223,11 @@ class SmartVoiceService : Service() {
             return
         }
 
+        sessionWordToHabits = wordToHabits
+        sessionSettings = settings
+        sessionSpotifyTrack = capturedSpotifyTrack
+        audioRetryCount = 0
+
         val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
         speechRecognizer = recognizer
 
@@ -230,6 +272,24 @@ class SmartVoiceService : Service() {
                     return
                 }
 
+                // Retry once on ERROR_AUDIO — the microphone may not have
+                // been released yet by the previous recognition session.
+                if (error == SpeechRecognizer.ERROR_AUDIO && audioRetryCount < 2) {
+                    audioRetryCount++
+                    Log.i(TAG, "ERROR_AUDIO — retry $audioRetryCount after mic-release delay")
+                    try { speechRecognizer?.destroy() } catch (_: Exception) {}
+                    speechRecognizer = null
+                    val words = sessionWordToHabits
+                    val sett = sessionSettings
+                    val track = sessionSpotifyTrack
+                    if (sett != null) {
+                        handler.postDelayed({
+                            if (!stopped) startListening(words, sett, track)
+                        }, RECOGNIZER_RESTART_DELAY_MS)
+                        return
+                    }
+                }
+
                 handler.post { Toast.makeText(applicationContext, "🧠 Error: $errorName", Toast.LENGTH_SHORT).show() }
                 stopSelfCleanly()
             }
@@ -265,7 +325,7 @@ class SmartVoiceService : Service() {
                 }
 
                 // Use the best match for routing
-                routeText(matches.first(), wordToHabits, settings, capturedSpotifyTrack)
+                dispatchText(matches.first(), wordToHabits, settings, capturedSpotifyTrack)
             }
 
             override fun onPartialResults(partialResults: Bundle?) {}
@@ -284,6 +344,68 @@ class SmartVoiceService : Service() {
     // ── Smart routing ────────────────────────────────────────────────────
 
     /**
+     * Dispatch entry point honoring [forceMode]: assist sends the text to
+     * the PC, note/habit force their respective paths, null keeps the
+     * normal trigger-word-density smart routing.
+     */
+    private fun dispatchText(
+        text: String,
+        wordToHabits: Map<String, List<String>>,
+        settings: com.example.tail.data.AppSettings,
+        capturedSpotifyTrack: SpotifyTrack?
+    ) {
+        when (forceMode) {
+            "assist" -> handleAsAssistAction(text)
+            "note" -> handleAsNote(text, settings, capturedSpotifyTrack)
+            "habit" -> routeText(text, wordToHabits, settings, capturedSpotifyTrack, forceHabit = true)
+            else -> routeText(text, wordToHabits, settings, capturedSpotifyTrack)
+        }
+    }
+
+    /**
+     * PC ACTION mode — the transcription is NOT checked against habits and
+     * NOT saved as a note. Instead it is queued to the assist JSON file
+     * (same pipeline as the debug bubble), which the PC-side autoshare
+     * watcher submits to the Roo Code instance of the quick_capture_assist
+     * VSCode window.
+     */
+    private fun handleAsAssistAction(text: String) {
+        handler.post { Toast.makeText(applicationContext, "🧠→💻 Sending to PC assist…", Toast.LENGTH_SHORT).show() }
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                AssistActionRepository.submit(applicationContext, text)
+
+                // Completion signal so the hosting quick-capture screen can
+                // close itself (same bus the note path uses).
+                VoiceNoteBus.emit(text)
+
+                handler.post { showAssistSentConfirmation(text) }
+                vibrateNoteConfirmation()
+                handler.postDelayed({ stopSelfCleanly() }, 3500)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to queue assist action: ${e.message}", e)
+                handler.post {
+                    Toast.makeText(applicationContext, "🧠 Error sending to PC: ${e.message}", Toast.LENGTH_LONG).show()
+                    stopSelfCleanly()
+                }
+            }
+        }
+    }
+
+    /** Full-screen confirmation overlay for a sent PC action. */
+    private fun showAssistSentConfirmation(actionText: String) {
+        val preview = if (actionText.length > 80) actionText.take(80) + "…" else actionText
+        val intent = Intent(applicationContext, com.example.tail.ui.HabitIncrementConfirmActivity::class.java).apply {
+            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, "💻 Sent to PC assist")
+            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_NOTE_BODY, preview)
+            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_IS_NOTE, true)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        applicationContext.startActivity(intent)
+    }
+
+    /**
      * Decides whether [text] represents habits or a note, then delegates
      * to the appropriate handler.
      *
@@ -297,7 +419,8 @@ class SmartVoiceService : Service() {
         text: String,
         wordToHabits: Map<String, List<String>>,
         settings: com.example.tail.data.AppSettings,
-        capturedSpotifyTrack: SpotifyTrack? = null
+        capturedSpotifyTrack: SpotifyTrack? = null,
+        forceHabit: Boolean = false
     ) {
         // Strip hyphens so "pull-ups" matches "pullups"
         val normalisedText = text.lowercase().replace("-", "")
@@ -345,7 +468,7 @@ class SmartVoiceService : Service() {
         }
 
         val ratio = matchedWordCount.toDouble() / effectiveTotal
-        val isHabitMode = ratio >= 0.5 || hasVoiceSubtypeHabit
+        val isHabitMode = forceHabit || ratio >= 0.5 || hasVoiceSubtypeHabit
 
         Log.i(TAG, "Routing: $matchedWordCount/${words.size} words matched triggers (ratio=${"%.2f".format(ratio)}) → ${if (isHabitMode) "HABIT" else "NOTE"} mode")
 
@@ -858,6 +981,10 @@ class SmartVoiceService : Service() {
     }
 
     companion object {
+        /** Delay before starting a new recognition session on a service restart. */
+        private const val RECOGNIZER_RESTART_DELAY_MS = 800L
+        /** Optional extra forcing the routing mode: "assist" | "habit" | "note". */
+        const val EXTRA_FORCE_MODE = "force_mode"
         /**
          * Extracts text from an intent by checking multiple common extra keys
          * and the data URI. Returns the first non-empty value found, or null.

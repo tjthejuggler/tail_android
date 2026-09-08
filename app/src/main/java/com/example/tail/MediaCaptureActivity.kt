@@ -44,10 +44,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Camera
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -212,6 +216,16 @@ class MediaCaptureActivity : ComponentActivity() {
     private var targetHabit: String? = null
     private var voiceServiceStarted = false
     private var captureInProgress = false
+
+    /**
+     * Text typed into the quick-capture input bar. Non-empty text means the
+     * user is typing: voice listening is suspended and the auto-finish
+     * countdown is cancelled until the text is submitted or cleared.
+     */
+    private var quickText by mutableStateOf("")
+
+    /** True while the mic is listening specifically for a PC assist action. */
+    private var micAssistActive by mutableStateOf(false)
 
     /**
      * True while a tandem (hold-to-capture) flow is in progress. Guards the
@@ -439,7 +453,12 @@ class MediaCaptureActivity : ComponentActivity() {
                 when (val state = captureState) {
                     is CaptureState.CameraWithVoice -> CameraWithVoiceScreen(
                         targetHabit = targetHabit,
-                        voiceActive = !directCamera && voiceServiceStarted,
+                        voiceActive = !directCamera && voiceServiceStarted && !micAssistActive,
+                        micAssistActive = micAssistActive,
+                        quickText = quickText,
+                        onQuickTextChange = { onQuickTextChanged(it) },
+                        onSubmitQuickText = { mode -> submitQuickText(mode) },
+                        onMicAssist = { startAssistVoiceMode() },
                         onCapture = { capturePhoto(targetHabit) },
                         onHoldCapture = { startTandemCapture(targetHabit) },
                         onPickGallery = { launchGalleryPicker(teach = false) },
@@ -522,6 +541,65 @@ class MediaCaptureActivity : ComponentActivity() {
         }
         ContextCompat.startForegroundService(this, serviceIntent)
         voiceServiceStarted = true
+    }
+
+    /**
+     * Typing detected in the quick-capture text input: suspend voice
+     * listening (so the spoken pipeline doesn't race the typed input) and
+     * cancel the auto-finish countdown — the screen stays open until the
+     * user submits or clears the text.
+     */
+    private fun onQuickTextChanged(newText: String) {
+        if (newText.isNotEmpty()) {
+            if (voiceServiceStarted) {
+                stopVoiceService()
+                micAssistActive = false
+            }
+            handler.removeCallbacks(autoFinishTimeout)
+        }
+        quickText = newText
+    }
+
+    /**
+     * Submits the typed text through [SmartVoiceService] with an explicit
+     * forced mode — "habit" increments matched habit trigger words, "note"
+     * saves to the notes file, "assist" sends the text to the PC
+     * (quick_capture_assist Roo Code instance). The service's completion
+     * buses (HabitIncrementBus / VoiceNoteBus) auto-finish this screen.
+     */
+    private fun submitQuickText(mode: String) {
+        val text = quickText.trim()
+        if (text.isEmpty()) return
+
+        val serviceIntent = Intent(this, SmartVoiceService::class.java).apply {
+            putExtra(Intent.EXTRA_TEXT, text)
+            putExtra(SmartVoiceService.EXTRA_FORCE_MODE, mode)
+        }
+        ContextCompat.startForegroundService(this, serviceIntent)
+        voiceServiceStarted = true
+        quickText = ""
+    }
+
+    /**
+     * MIC ACTION button: restarts [SmartVoiceService] in forced-assist
+     * mode — whatever is said next is NOT treated as a habit or note but
+     * sent to the PC as an ACTION request for the quick_capture_assist
+     * Roo Code instance.
+     */
+    private fun startAssistVoiceMode() {
+        stopVoiceService()
+        micAssistActive = true
+
+        val spotifyTrack = SpotifyDetector.getCurrentSpotifyTrack(applicationContext)
+        val serviceIntent = Intent(this, SmartVoiceService::class.java)
+        serviceIntent.putExtra(SmartVoiceService.EXTRA_FORCE_MODE, "assist")
+        if (spotifyTrack != null) {
+            SpotifyDetector.putSpotifyTrack(serviceIntent, spotifyTrack)
+        }
+        ContextCompat.startForegroundService(this, serviceIntent)
+        voiceServiceStarted = true
+        handler.removeCallbacks(autoFinishTimeout)
+        handler.postDelayed(autoFinishTimeout, AUTO_FINISH_TIMEOUT_MS)
     }
 
     private fun stopVoiceService() {
@@ -1585,6 +1663,11 @@ class MediaCaptureActivity : ComponentActivity() {
 private fun CameraWithVoiceScreen(
     targetHabit: String?,
     voiceActive: Boolean,
+    micAssistActive: Boolean,
+    quickText: String,
+    onQuickTextChange: (String) -> Unit,
+    onSubmitQuickText: (mode: String) -> Unit,
+    onMicAssist: () -> Unit,
     onCapture: () -> Unit,
     onHoldCapture: () -> Unit,
     onPickGallery: () -> Unit,
@@ -1652,6 +1735,97 @@ private fun CameraWithVoiceScreen(
                 )
             }
 
+            // PC-assist listening indicator (top-center, replaces voice chip)
+            if (micAssistActive) {
+                Text(
+                    text = "💻 PC action — say it…",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 8.dp)
+                        .background(Color(0xFF00695C).copy(alpha = 0.85f))
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
+
+            // Text input + submit buttons (above the hold hint). Typing here
+            // suspends voice listening; the screen stays open until submit.
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 146.dp)
+            ) {
+                OutlinedTextField(
+                    value = quickText,
+                    onValueChange = onQuickTextChange,
+                    placeholder = { Text("Type instead…", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp) },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.Black.copy(alpha = 0.6f),
+                        unfocusedContainerColor = Color.Black.copy(alpha = 0.6f),
+                        focusedBorderColor = Color.White.copy(alpha = 0.7f),
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.35f),
+                        cursorColor = Color.White
+                    )
+                )
+                if (quickText.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.align(Alignment.End),
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Habit submit — force habit routing
+                        IconButton(
+                            onClick = { onSubmitQuickText("habit") },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(Color(0xFF2E7D32).copy(alpha = 0.9f), CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = "Submit as habit",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        // Note submit — force note save
+                        IconButton(
+                            onClick = { onSubmitQuickText("note") },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(Color(0xFF1565C0).copy(alpha = 0.9f), CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Default.Notes,
+                                contentDescription = "Submit as note",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        // Action submit — send to PC (quick_capture_assist)
+                        IconButton(
+                            onClick = { onSubmitQuickText("assist") },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(Color(0xFF6A1B9A).copy(alpha = 0.9f), CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Default.Terminal,
+                                contentDescription = "Send as PC action",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
             // Hold hint (above capture button)
             Text(
                 text = "tap = photo · hold = photo + teach · 🖼 gallery same",
@@ -1707,6 +1881,30 @@ private fun CameraWithVoiceScreen(
                 Icon(
                     Icons.Default.PhotoLibrary,
                     contentDescription = "Gallery (hold to teach)",
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+
+            // MIC ACTION button (bottom-right) — whatever is said next is
+            // sent to the PC as an ACTION request instead of being checked
+            // as a habit or saved as a note.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 24.dp, bottom = 38.dp)
+                    .size(56.dp)
+                    .background(
+                        if (micAssistActive) Color(0xFF00695C).copy(alpha = 0.9f)
+                        else Color.Black.copy(alpha = 0.5f),
+                        CircleShape
+                    )
+                    .clickable { onMicAssist() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Computer,
+                    contentDescription = "Mic action — send voice to PC",
                     tint = Color.White,
                     modifier = Modifier.size(28.dp)
                 )
