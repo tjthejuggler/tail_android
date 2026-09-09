@@ -38,6 +38,7 @@ import com.example.tail.data.BridgeClient
 import com.example.tail.data.GarminRepository
 import com.example.tail.data.GarminType
 import com.example.tail.data.HabitsRepository
+import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.appIconMonochromeOf
@@ -2647,6 +2648,21 @@ class FloatingBubbleService : Service() {
                 val db = habitsRepo.incrementHabitWithMinutes(
                     Uri.parse(uriStr), applicationContext, habit, minutes, 1
                 )
+
+                // Record the session in the timestamp store — same convention
+                // as every other timer-fed increment path (see
+                // HabitIncrementReceiver): one "HH:mm:ss" stamp at the stop
+                // time, with the session's minutes parked AT that stamp so the
+                // timestamp editor and the daily schedule view can show them.
+                try {
+                    val tsRepo = HabitTimestampRepository(applicationContext)
+                    val today = LocalDate.now()
+                    val now = HabitTimestampRepository.nowTime()
+                    tsRepo.addTimestamps(habit, 1, today, now)
+                    tsRepo.addMinutesAtTime(habit, today, now, minutes)
+                } catch (e: Exception) {
+                    Log.w("FloatingBubbleService", "Failed to record timestamp for '$habit': ${e.message}")
+                }
 
                 // The save HAS landed here. Everything below is UI refresh:
                 // if the service is being torn down concurrently (bubble

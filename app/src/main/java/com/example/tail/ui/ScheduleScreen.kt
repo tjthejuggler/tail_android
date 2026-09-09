@@ -390,6 +390,25 @@ fun ScheduleTimelineScreen(
             }
             mergedEvents = merged
         }
+        // Timer-fed habits (bubble timer, IPC timer sessions): the minutes
+        // sidecar (habit_timestamp_minutes.json) records each session's
+        // minutes AT its timestamp — size the block to the real session
+        // length instead of the minimum chip span.
+        run {
+            val merged = mergedEvents.toMutableList()
+            val minutesByHabit = HashMap<String, Map<String, Int>>()
+            for (i in merged.indices) {
+                val habit = merged[i].habitName
+                val dayMinutes = minutesByHabit.getOrPut(habit) {
+                    timestampRepo.getMinutesForDay(habit, selectedDate)
+                }
+                val atTime = dayMinutes[merged[i].time] ?: continue
+                if (atTime > merged[i].durationMinutes) {
+                    merged[i] = merged[i].copy(durationMinutes = atTime)
+                }
+            }
+            mergedEvents = merged
+        }
         // Publish ONCE, after movie watch lengths and Garmin activity
         // durations are in: blocks must never appear at minimum size and
         // then pop to their full length a beat later.
