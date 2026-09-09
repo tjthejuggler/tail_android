@@ -405,6 +405,46 @@ def _pc_widget_delete_pending(event_id: str) -> bool:
     return True
 
 
+# ── Quick Capture Assist (phone → PC fast-path actions) ─────────────────────
+
+ASSIST_ACTION_QUEUE = Path(os.environ.get(
+    "ASSIST_ACTION_QUEUE",
+    "/home/twain/Projects/quick_capture_assist/queue/actions.jsonl"))
+
+
+@app.post("/api/v1/assist/action", tags=["assist"])
+async def assist_submit_action(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """Phone submits one voice-command ACTION for the PC.
+
+    Appends {"id","timestamp","text","source"} as a JSONL line to the
+    quick_capture_assist dispatcher queue. The dispatcher (inotify on the
+    queue dir) picks it up within milliseconds, matches the fast-path
+    lookup table, runs the mapped script instantly, and annotates the task
+    for Roo Code. Response is returned BEFORE any of that happens, so the
+    phone gets a snappy ack.
+
+    Body: {"text": "...", "id": "optional-client-id"}
+    """
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    line = json.dumps({
+        "id": str(payload.get("id") or uuid.uuid4().hex[:12]),
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "source": "phone",
+        "text": text,
+    }, ensure_ascii=False)
+    try:
+        ASSIST_ACTION_QUEUE.parent.mkdir(parents=True, exist_ok=True)
+        with open(ASSIST_ACTION_QUEUE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError as exc:
+        logger.error("assist queue append failed: %s", exc)
+        raise HTTPException(status_code=500, detail="queue append failed")
+    dashboard.note("phone", "assist_action", f"Queued PC action: {text[:60]}")
+    return {"ok": True, "queued": True}
+
+
 @app.post("/api/v1/pc_widget/event", tags=["pc_widget"])
 async def pc_widget_add_event(payload: Dict[str, Any], api_key: str = Security(verify_key)):
     """PC widget appends one habit event; the bridge assigns its id.

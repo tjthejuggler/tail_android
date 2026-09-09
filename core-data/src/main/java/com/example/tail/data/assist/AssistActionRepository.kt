@@ -3,8 +3,12 @@ package com.example.tail.data.assist
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.example.tail.data.BridgeClient
+import com.example.tail.data.SettingsRepository
+import com.example.tail.data.bridgeConnectionFrom
 import com.example.tail.data.debug.DebugPreferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -19,25 +23,38 @@ private const val FILE_NAME = "assist_quick_capture.json"
 /**
  * Submits "PC action" requests from the quick capture screen to the PC.
  *
- * Works exactly like the debug-bubble pipeline: writes a JSON file
- * (`assist_quick_capture.json`, `{"notes": [...]}` format) into the same
- * SAF-synced directory chosen for [debug_tail.json]. Syncthing carries the
- * file to the PC, where `autoshare_roocode` watches it and submits the text
- * as a new Roo Code task in the VSCode window open on the
- * `quick_capture_assist` project.
+ * TWO transports, tried in order:
  *
- * The file is replaced on each submit (same convention as
- * DebugNoteRepository.submitQueue) so old requests do not accumulate — the
- * PC watcher drains and clears it.
+ * 1. **Tail Bridge (preferred, instant)** — POST /api/v1/assist/action on the
+ *    same bridge server the movie/widget features already use (connection
+ *    auto-derived from the Garmin proxy settings). The bridge appends the
+ *    text to the quick_capture_assist dispatcher queue on the PC; the
+ *    dispatcher (inotify) runs the fast-path lookup table within
+ *    milliseconds — e.g. "play the next episode" starts VLC before any LLM
+ *    is involved. Handled in ~100–300 ms end-to-end on the LAN.
+ *
+ * 2. **SAF file via Syncthing (fallback)** — the original path: writes
+ *    `assist_quick_capture.json` (`{"notes": [...]}`) into the SAF-synced
+ *    directory chosen for debug_tail.json. The PC-side autoshare watcher now
+ *    routes this file through the same dispatcher, so both transports land
+ *    in the same pipeline; the file path is just slower (Syncthing sync
+ *    interval) and can produce sync-conflict files.
  */
 object AssistActionRepository {
 
     /**
-     * Write [text] as an ACTION request to the assist JSON file.
-     * Must be called from a background thread (performs file I/O).
+     * Submit [text] as an ACTION request to the PC.
+     * Bridge-first; falls back to the SAF file when the bridge is
+     * unreachable / unconfigured. Must be called from a coroutine
+     * (performs network + file I/O).
      */
     suspend fun submit(context: Context, text: String) = withContext(Dispatchers.IO) {
         if (text.isBlank()) return@withContext
+
+        if (submitViaBridge(context, text)) {
+            Log.i(TAG, "Assist action sent via Tail Bridge: \"${text.take(60)}\"")
+            return@withContext
+        }
 
         try {
             val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
@@ -55,13 +72,30 @@ object AssistActionRepository {
 
             val dirUri = DebugPreferences(context).debugFileDirUri
             if (dirUri.isNotBlank() && writeToSaf(context, dirUri, jsonText)) {
-                Log.i(TAG, "Assist action queued to SAF file: \"${text.take(60)}\"")
+                Log.i(TAG, "Assist action queued to SAF file (bridge unavailable): \"${text.take(60)}\"")
             } else {
                 writeToInternal(context, jsonText)
-                Log.i(TAG, "Assist action queued to internal file (no SAF dir): \"${text.take(60)}\"")
+                Log.i(TAG, "Assist action queued to internal file (no bridge, no SAF dir): \"${text.take(60)}\"")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to write assist action", e)
+        }
+    }
+
+    /** POST to the Tail Bridge; true when the bridge acked (HTTP 200). */
+    private suspend fun submitViaBridge(context: Context, text: String): Boolean {
+        return try {
+            val settings = SettingsRepository(context).settingsFlow.first()
+            val bridge = bridgeConnectionFrom(settings.garminProxyUrl, settings.garminAppToken)
+                ?: return false
+            val body = JSONObject().apply {
+                put("id", System.currentTimeMillis().toString())
+                put("text", text)
+            }
+            BridgeClient().post(bridge.first, bridge.second, "assist/action", body) != null
+        } catch (e: Exception) {
+            Log.w(TAG, "Bridge submit failed, falling back to file: ${e.message}")
+            false
         }
     }
 
