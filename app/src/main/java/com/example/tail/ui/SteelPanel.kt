@@ -379,6 +379,16 @@ internal fun Modifier.ghostGlassSquares(
                 // is dark no matter what the sweep lingers at.
                 val holdActive =
                     System.currentTimeMillis() < LizardShimmerTarget.holdEndMs
+                // FRAME DRIVER for the hold: while the lizard sits frozen,
+                // shimmerSweep is parked at 1f and changes no state this draw
+                // reads — without this read NO frame would be produced during
+                // the 2 s hold, so the last LIZARD_IN mosaic frame (with its
+                // sliver-seam "grid") simply stayed on screen. Reading the
+                // driver-side ticker's value here is a snapshot read inside
+                // the draw phase: every tick invalidates the draw, letting
+                // holdActive gate the fast-path whole-image paint and the
+                // ghost-tile footprint suppression below.
+                val holdTick = LizardShimmerTarget.holdTicker?.value
 
                 // Vanishing point — the centre of the WINDOW (global
                 // coordinates), shared by every panel so the projected
@@ -863,8 +873,15 @@ internal fun Modifier.ghostGlassSquares(
                         if ((newLeg && arrivalLeg) || versionChanged ||
                             staleVariant || perchState.perch == null
                         ) {
+                            // The previous perch is passed as `avoid`: the
+                            // next shimmer must never freeze the lizard in
+                            // the exact same spot+pose twice in a row —
+                            // unless the occupancy leaves no alternative, in
+                            // which case randomLizardPerch falls back to the
+                            // full candidate pool.
                             perchState.perch = randomLizardPerch(
-                                lizardVariants, GhostSceneState.occupiedCells
+                                lizardVariants, GhostSceneState.occupiedCells,
+                                avoid = perchState.perch
                             ) ?: perchState.perch
                         }
                     }

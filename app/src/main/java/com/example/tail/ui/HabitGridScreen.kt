@@ -475,6 +475,19 @@ internal object LizardShimmerTarget {
      */
     @Volatile
     var holdEndMs: Long = 0L
+
+    /**
+     * The driver-side hold ticker (0→1 across the 2 s hold), published so
+     * SteelPanel's draw phase can READ its value — a snapshot read that
+     * invalidates the draw every frame. During the hold shimmerSweep is
+     * parked at 1f, so without this read no frame would ever be produced
+     * while the lizard sits frozen, and the last LIZARD_IN sliver-mosaic
+     * frame (whose per-cell seams read as a grid ON the lizard) would just
+     * stay on screen for the whole hold.
+     */
+    var holdTicker: androidx.compose.animation.core.Animatable<
+        Float, androidx.compose.animation.core.AnimationVector1D
+        >? = null
 }
 
 /**
@@ -639,6 +652,11 @@ fun HabitGridScreen(
     // (a bare delay() produces no frames at all); the ACTUAL gate is the
     // wall-clock deadline in LizardShimmerTarget.holdEndMs.
     val lizardHoldTicker = remember { Animatable(0f) }
+    // Publish the ticker so every SteelPanel draw phase can read its value
+    // (see LizardShimmerTarget.holdTicker) — that snapshot read is what keeps
+    // frames flowing during the 2 s frozen hold, when shimmerSweep sits still
+    // at 1f and would otherwise invalidate nothing.
+    LizardShimmerTarget.holdTicker = lizardHoldTicker
     // EXPERIMENT: bumped when a habit square is clicked to be incremented —
     // the ONLY trigger for the lizard shimmer cycle.
     val lizardShimmerGen = remember { mutableIntStateOf(0) }

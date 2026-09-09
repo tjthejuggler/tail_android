@@ -219,7 +219,8 @@ internal fun buildLizardVariants(base: ImageBitmap): List<LizardVariant> {
  */
 internal fun randomLizardPerch(
     variants: List<LizardVariant>,
-    occupied: Set<Int>
+    occupied: Set<Int>,
+    avoid: LizardPerch? = null
 ): LizardPerch? {
     if (variants.isEmpty()) return null
     fun occ(r: Int, c: Int) = occupied.contains(r * GRID_COLUMNS + c)
@@ -296,6 +297,32 @@ internal fun randomLizardPerch(
         perVariant.add(spots); total += spots.size
     }
     if (total == 0) return null
+    // NO REPEATS: consecutive lizard shimmers must never show the lizard in
+    // the exact same spot+pose. The previous perch (when there is one) is
+    // excluded from the candidate pool — UNLESS it was the only option the
+    // current occupancy allows (e.g. a nearly-full grid with one gap), in
+    // which case we fall through to the unfiltered pool rather than going
+    // blank or freezing on a stale perch.
+    if (avoid != null) {
+        val filtered = ArrayList<List<LizardPerch>>(perVariant.size)
+        var fTotal = 0
+        for (spots in perVariant) {
+            val kept = spots.filter {
+                it.variantIndex != avoid.variantIndex ||
+                    it.row != avoid.row ||
+                    it.col != avoid.col
+            }
+            filtered.add(kept)
+            fTotal += kept.size
+        }
+        if (fTotal > 0) {
+            var m = kotlin.random.Random.nextInt(fTotal)
+            for (spots in filtered) {
+                if (m < spots.size) return spots[m]
+                m -= spots.size
+            }
+        }
+    }
     // Variant-proportional pick: first choose a spot uniformly among ALL
     // valid spots (equivalent to weighting variants by how many places they
     // fit) — a variant with zero spots can never be chosen.
