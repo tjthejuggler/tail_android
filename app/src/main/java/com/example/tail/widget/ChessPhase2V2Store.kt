@@ -309,10 +309,20 @@ object ChessPhase2V2Store {
     fun acwrInput(
         games: List<ReadinessGameRecord>,
         now: Long,
-        zone: ZoneId = ZoneId.systemDefault()
+        zone: ZoneId = ZoneId.systemDefault(),
+        /**
+         * When auditing the game that just ENDED, pass its endTimeMs here so
+         * it is excluded from the acute count: chronic overload is a
+         * PRE-EXISTING condition, and the game being audited must never be
+         * the single game that tips a borderline ratio over the bar.
+         */
+        excludeEndMs: Long? = null
     ): ChessPhase2V2Engine.AcwrInput {
         val auditedVariants = setOf("chess", "chess960")
-        val rated = games.filter { it.rated && it.variant.lowercase() in auditedVariants }
+        val rated = games.filter {
+            it.rated && it.variant.lowercase() in auditedVariants &&
+                it.endTimeMs != excludeEndMs
+        }
         val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
         val byDay = rated.groupBy {
             Instant.ofEpochMilli(it.endTimeMs).atZone(zone).toLocalDate()

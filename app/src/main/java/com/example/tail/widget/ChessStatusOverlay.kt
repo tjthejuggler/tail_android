@@ -180,8 +180,10 @@ class ChessStatusOverlay(service: android.content.Context) {
                     "Workload ratio (7d : 28d)",
                     if (acwr.ratio.isInfinite()) "∞"
                     else "%.2f".format(acwr.ratio) +
-                        "  (yellow ≥ ${ChessPhase2V2Engine.ACWR_YELLOW}, " +
-                        "red ≥ ${ChessPhase2V2Engine.ACWR_RED})"
+                        "  (yellow ≥ ${ChessPhase2V2Engine.ACWR_YELLOW +
+                            ChessPhase2V2Engine.ACWR_BOUNDARY_BAND}, " +
+                        "red ≥ ${ChessPhase2V2Engine.ACWR_RED +
+                            ChessPhase2V2Engine.ACWR_BOUNDARY_BAND})"
                 )
             }
 

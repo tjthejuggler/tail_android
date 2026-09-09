@@ -309,7 +309,8 @@ object ChessDeferredGameReconciler {
             }
         val acwr = try {
             ChessPhase2V2Store.acwrInput(
-                ChessReadinessLogStore.loadGames(context), gameEndMs
+                ChessReadinessLogStore.loadGames(context), gameEndMs,
+                excludeEndMs = gameEndMs
             )
         } catch (_: Exception) { null }
 
@@ -523,7 +524,8 @@ object ChessDeferredGameReconciler {
             }
         val acwr = try {
             ChessPhase2V2Store.acwrInput(
-                ChessReadinessLogStore.loadGames(context), gameEndMs
+                ChessReadinessLogStore.loadGames(context), gameEndMs,
+                excludeEndMs = gameEndMs
             )
         } catch (_: Exception) { null }
 

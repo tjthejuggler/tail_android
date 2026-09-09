@@ -319,10 +319,13 @@ object ChessPhase2V3Engine {
         if (tiltRed) redRules += "RULE_3_TILT_VECTOR"
         else if (tiltYellow) yellowRules += "RULE_3_TILT_VECTOR"
 
-        // Rule 4 — chronic overload
+        // Rule 4 — chronic overload (boundary band: a ratio a hair over the
+        //    bar is noise from the overlapping 7/28-day windows, not overload)
         if (acwrRatio != null) {
-            if (acwrRatio >= ChessPhase2V2Engine.ACWR_RED) redRules += "RULE_4_CHRONIC_OVERLOAD"
-            else if (acwrRatio >= ChessPhase2V2Engine.ACWR_YELLOW) yellowRules += "RULE_4_CHRONIC_OVERLOAD"
+            if (acwrRatio >= ChessPhase2V2Engine.ACWR_RED + ChessPhase2V2Engine.ACWR_BOUNDARY_BAND)
+                redRules += "RULE_4_CHRONIC_OVERLOAD"
+            else if (acwrRatio >= ChessPhase2V2Engine.ACWR_YELLOW + ChessPhase2V2Engine.ACWR_BOUNDARY_BAND)
+                yellowRules += "RULE_4_CHRONIC_OVERLOAD"
         }
 
         // Rule 5 — strain accumulator (catastrophic is always red)

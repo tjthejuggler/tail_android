@@ -133,6 +133,15 @@ object ChessPhase2V2Engine {
     /** Distinct playing days required before the ACWR rule gates. */
     const val ACWR_MIN_HISTORY_DAYS = 14
 
+    /**
+     * Boundary band around the ACWR bars: because the 7-day acute window
+     * is fully contained in the 28-day chronic window, ratios sitting a
+     * hair above a bar are measurement noise, not overload (a single
+     * ordinary game must never be the straw that breaks the camel's back).
+     * Rule 4 only gates once the ratio clears the bar by this margin.
+     */
+    const val ACWR_BOUNDARY_BAND = 0.05
+
     // ── Rule 5: hysteresis ─────────────────────────────────────────────────
 
     /** Minutes that must pass after a Yellow flag before Green is re-earnable. */
@@ -388,8 +397,10 @@ object ChessPhase2V2Engine {
 
         // Rule 4 — chronic overload
         if (acwrRatio != null) {
-            if (acwrRatio >= ACWR_RED) redRules += "RULE_4_CHRONIC_OVERLOAD"
-            else if (acwrRatio >= ACWR_YELLOW) yellowRules += "RULE_4_CHRONIC_OVERLOAD"
+            if (acwrRatio >= ACWR_RED + ACWR_BOUNDARY_BAND)
+                redRules += "RULE_4_CHRONIC_OVERLOAD"
+            else if (acwrRatio >= ACWR_YELLOW + ACWR_BOUNDARY_BAND)
+                yellowRules += "RULE_4_CHRONIC_OVERLOAD"
         }
 
         // ── Rule 5 — hysteresis: Yellow persists until recovery is PROVEN

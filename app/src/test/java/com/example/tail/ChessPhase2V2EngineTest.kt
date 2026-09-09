@@ -309,15 +309,28 @@ class ChessPhase2V2EngineTest {
     }
 
     @Test
-    fun acwr_yellow_at_1_3() {
-        val r = eval(input(), acwr = acwrInput(acute = 13, chronicWeekly = 10.0))
+    fun acwr_yellow_at_1_35() {
+        // 1.4 ≥ ACWR_YELLOW (1.3) + boundary band (0.05): gates.
+        val r = eval(input(), acwr = acwrInput(acute = 14, chronicWeekly = 10.0))
         assertEquals(PIVOT, r.outputState)
         assertTrue(r.yellowRules.contains("RULE_4_CHRONIC_OVERLOAD"))
     }
 
     @Test
+    fun acwr_just_above_bar_is_noise() {
+        // 14 / 10.7 ≈ 1.31 sits inside the boundary band of the 1.3 yellow
+        // bar — the overlapping 7/28-day windows make such ratios
+        // measurement noise; one ordinary game must never be the tipping
+        // point that pivots a session.
+        val r = eval(input(), acwr = acwrInput(acute = 14, chronicWeekly = 10.7))
+        assertEquals(CONTINUE, r.outputState)
+        assertFalse(r.yellowRules.contains("RULE_4_CHRONIC_OVERLOAD"))
+    }
+
+    @Test
     fun acwr_red_at_1_5() {
-        val r = eval(input(), acwr = acwrInput(acute = 15, chronicWeekly = 10.0))
+        // 1.6 ≥ ACWR_RED (1.5) + boundary band: red.
+        val r = eval(input(), acwr = acwrInput(acute = 16, chronicWeekly = 10.0))
         assertEquals(TERMINATE, r.outputState)
         assertTrue(r.redRules.contains("RULE_4_CHRONIC_OVERLOAD"))
     }
