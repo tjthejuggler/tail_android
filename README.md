@@ -1,12 +1,28 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-07T05:00Z
+**Last updated:** 2026-09-09T12:55Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---31e8e7a8
+
+## 2026-09-09T12:55Z — Multi-Timer: linked group timers for habits sharing one app
+- New "⏱ Multi-Timer" sub-toggle in the habit edit panel's "🫧 Use Widget" section,
+  keyed by TRIGGER APP (like the full-screen menu toggle, shared by all habits on the
+  app; stored as `bubbleMultiTimerApps` in DataStore). Needs ≥2 habits on the app.
+- When ON, both the bubble's picker menu and the opt-in full-screen menu gain an extra
+  green "⏱ Multi: A + B" entry alongside the unchanged individual habit buttons.
+  Starting it arms ALL habits on the app with exactly ONE clock running (the first).
+- While the group is live, tapping the bubble SWITCHES the running clock to the next
+  habit (round-robin): the outgoing habit's elapsed time is banked and the incoming
+  one resumes on top of its own bank — the chip shows the active habit's icon plus its
+  banked+running total. A dedicated red ⏹ pill on the other side of the bubble stops
+  the whole group and records every member with ≥1 rounded minute (trigger-app-left
+  and long-press do the same). Individual per-habit timers behave exactly as before;
+  multi-timer state lives in `WidgetTimerStore` (SharedPreferences: `timer_bank_` +
+  `multi_member_` keys) so it survives bubble dismissal and process restarts.
 
 ## 2026-09-07T05:00Z — Ascended lizard poses finished: transplant mode for t11/t12
 - **🦎 The pose-art upgrade for the white-combo tiers is COMPLETE** — after the 2026-09-06 strip-art ascension (`upgrade_ascended_lizards.py`), tiers 7–10 + t11 p00–p07 were regenerated from scratch, and the remaining 16 poses (t11 p08–p11, all of t12) now carry the NEW lizard art too. Per user direction these were NOT re-imagined: [`wallpaper_gen/transplant_poses.py`](wallpaper_gen/transplant_poses.py:1) sends a TWO-image edit to ppq.ai — image 1 = the APPROVED old raw generation (restored from `wallpaper_gen/raw/poses_backup_t8_t12_20260906/`, same chroma scheme as the current keys), image 2 = the new tier strip's lizard alpha-cropped onto the tier's flat bg-key colour — with a "reproduce image 1 exactly, but the chameleon becomes the image-2 character" prompt. The result runs the UNCHANGED standard postprocess/verify/manifest path (grid align, hue keying, despill, size normalizer, per-cell erase). Old finals stay backed up in `poses_backup_t8_t12_20260906/finals/` and in git history.

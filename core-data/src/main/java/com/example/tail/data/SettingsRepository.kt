@@ -31,6 +31,9 @@ private val KEY_STATS_OVERLAY_ENABLED = booleanPreferencesKey("stats_overlay_ena
 // Floating bubble "Full-screen menu on bubble open" - set of TRIGGER APP
 // package names the prompt is enabled for (habits sharing an app share it).
 private val KEY_BUBBLE_FULL_SCREEN_APPS = stringSetPreferencesKey("bubble_full_screen_apps")
+// Floating bubble "Multi-Timer" - set of TRIGGER APP package names where the
+// menus offer a linked group timer for all habits sharing the app.
+private val KEY_BUBBLE_MULTI_TIMER_APPS = stringSetPreferencesKey("bubble_multi_timer_apps")
 
 // App-stats record notifications master switch
 private val KEY_APP_STATS_RECORD_NOTIFS = booleanPreferencesKey("app_stats_record_notifications_enabled")
@@ -937,6 +940,7 @@ class SettingsRepository(private val context: Context) {
             lockWidgetExcludedHabits = prefs[KEY_LOCK_WIDGET_EXCLUDED_HABITS] ?: emptySet(),
             statsOverlayEnabled = prefs[KEY_STATS_OVERLAY_ENABLED] ?: false,
             bubbleFullScreenApps = prefs[KEY_BUBBLE_FULL_SCREEN_APPS] ?: emptySet(),
+            bubbleMultiTimerApps = prefs[KEY_BUBBLE_MULTI_TIMER_APPS] ?: emptySet(),
             appStatsRecordNotificationsEnabled = prefs[KEY_APP_STATS_RECORD_NOTIFS] ?: true,
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             habitOrder = customOrder,
@@ -1108,6 +1112,16 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveBubbleFullScreenApps(apps: Set<String>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_BUBBLE_FULL_SCREEN_APPS] = apps
+        }
+    }
+
+    /**
+     * Saves the set of trigger apps with the floating bubble's "Multi-Timer"
+     * sub-option enabled (linked group timer for all habits sharing the app).
+     */
+    suspend fun saveBubbleMultiTimerApps(apps: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_BUBBLE_MULTI_TIMER_APPS] = apps
         }
     }
 

@@ -207,7 +207,11 @@ internal fun WidgetTriggerSection(
     /** Trigger apps with the "Full-screen menu on bubble open" sub-option. */
     bubbleFullScreenApps: Set<String> = emptySet(),
     /** Called when the user toggles the full-screen menu sub-option (habitName, enabled). */
-    onToggleFullScreenMenu: (String, Boolean) -> Unit = { _, _ -> }
+    onToggleFullScreenMenu: (String, Boolean) -> Unit = { _, _ -> },
+    /** Trigger apps with the "Multi-Timer" sub-option enabled. */
+    bubbleMultiTimerApps: Set<String> = emptySet(),
+    /** Called when the user toggles the multi-timer sub-option (habitName, enabled). */
+    onToggleMultiTimer: (String, Boolean) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val isEnabled = habitName in widgetTriggerHabits
@@ -383,6 +387,44 @@ internal fun WidgetTriggerSection(
                     Switch(
                         checked = fullScreenOn,
                         onCheckedChange = { onToggleFullScreenMenu(habitName, it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF44BBFF),
+                            checkedTrackColor = Color(0xFF003355),
+                            uncheckedThumbColor = Color(0xFF888888),
+                            uncheckedTrackColor = Color(0xFF333333)
+                        )
+                    )
+                }
+            }
+
+            // Multi-Timer sub-option: keyed by TRIGGER APP like the
+            // full-screen menu switch. When on, the bubble/full-screen menus
+            // over this app offer a group entry that arms ALL habits sharing
+            // the app with one clock running — tap the bubble to switch
+            // which member's clock runs, ⏹ next to the timer chip stops and
+            // records the whole group. Individual timers still work as-is.
+            if (triggerPkg != null) {
+                val multiOn = triggerPkg in bubbleMultiTimerApps
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "⏱ Multi-Timer", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                        Text(
+                            text = if (multiOn)
+                                "Menus offer a linked group timer for all habits on this app"
+                            else
+                                "One clock for all habits on this app — tap bubble to switch",
+                            color = if (multiOn) Color(0xFF66BB6A) else Color(0xFF888888),
+                            fontSize = 10.sp
+                        )
+                    }
+                    Switch(
+                        checked = multiOn,
+                        onCheckedChange = { onToggleMultiTimer(habitName, it) },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color(0xFF44BBFF),
                             checkedTrackColor = Color(0xFF003355),
@@ -1938,6 +1980,10 @@ internal fun EditModeControlBar(
     bubbleFullScreenApps: Set<String> = emptySet(),
     /** Called when the user toggles the full-screen menu sub-option (habitName, enabled). */
     onToggleFullScreenMenu: (String, Boolean) -> Unit = { _, _ -> },
+    /** Trigger apps with the "Multi-Timer" sub-option enabled. */
+    bubbleMultiTimerApps: Set<String> = emptySet(),
+    /** Called when the user toggles the multi-timer sub-option (habitName, enabled). */
+    onToggleMultiTimer: (String, Boolean) -> Unit = { _, _ -> },
     /** Whether the user has granted Usage Access permission. */
     hasUsageAccess: Boolean = true,
     /** Called when the user taps to grant Usage Access. */
@@ -3253,7 +3299,9 @@ internal fun EditModeControlBar(
                         widgetPersistentTimerHabits = widgetPersistentTimerHabits,
                         onTogglePersistentTimer = onTogglePersistentTimer,
                         bubbleFullScreenApps = bubbleFullScreenApps,
-                        onToggleFullScreenMenu = onToggleFullScreenMenu
+                        onToggleFullScreenMenu = onToggleFullScreenMenu,
+                        bubbleMultiTimerApps = bubbleMultiTimerApps,
+                        onToggleMultiTimer = onToggleMultiTimer
                     )
 
                     // ── PC Widget (desktop bubble widget) ─────────────────────

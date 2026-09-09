@@ -22,6 +22,8 @@ object WidgetTimerStore {
 
     private const val PREFS_NAME = "tail_widget_timers"
     private const val KEY_PREFIX = "timer_start_"
+    private const val BANK_PREFIX = "timer_bank_"
+    private const val MULTI_PREFIX = "multi_member_"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -63,6 +65,85 @@ object WidgetTimerStore {
         if (elapsed <= 0L) return 0
         return Math.round(elapsed / 60000.0).toInt().coerceAtLeast(0)
     }
+
+    // ── Multi-timer group support ─────────────────────────────────────────
+    //
+    // A multi-timer session links every habit sharing a trigger app: starting
+    // one arms the whole group, but exactly ONE member's clock runs at any
+    // time. Switching members banks the outgoing member's elapsed time
+    // (BANK_PREFIX) and restarts the incoming member's clock on top of its
+    // own bank. The dedicated stop control records EVERY member's banked +
+    // running time at once.
+
+    /** Banked (switched-away) millis for [habit] — 0 outside a multi session. */
+    fun bankMillis(context: Context, habitName: String): Long =
+        prefs(context).getLong(BANK_PREFIX + habitName, 0L)
+
+    /** Bank + current-elapsed millis (what the member has accumulated so far). */
+    fun totalMillis(context: Context, habitName: String): Long =
+        bankMillis(context, habitName) + elapsedMillis(context, habitName)
+
+    /** True while [habit] is a member of a live multi-timer group. */
+    fun isMultiMember(context: Context, habitName: String): Boolean =
+        prefs(context).getBoolean(MULTI_PREFIX + habitName, false)
+
+    /** All habits currently marked as members of a live multi-timer group. */
+    fun multiMembers(context: Context): List<String> =
+        prefs(context).all.keys
+            .filter { it.startsWith(MULTI_PREFIX) }
+            .map { it.removePrefix(MULTI_PREFIX) }
+
+    /**
+     * Arms a fresh multi-timer group for [habits] with [active]'s clock
+     * running. Any stale state (leftover banks / running clocks) of the
+     * members is cleared first so the group starts from zero.
+     */
+    fun startMultiGroup(context: Context, habits: List<String>, active: String) {
+        val editor = prefs(context).edit()
+        habits.forEach { habit ->
+            editor.remove(key(habit)).remove(BANK_PREFIX + habit)
+                .putBoolean(MULTI_PREFIX + habit, true)
+        }
+        editor.putLong(key(active), System.currentTimeMillis()).apply()
+    }
+
+    /**
+     * Switches the running clock from [from] to [to] inside a multi group:
+     * banks [from]'s elapsed time and starts [to]'s clock on top of its bank.
+     */
+    fun switchMultiActive(context: Context, from: String, to: String) {
+        if (from == to) return
+        val editor = prefs(context).edit()
+        val fromStart = timerStartMillis(context, from)
+        if (fromStart > 0L) {
+            val banked = bankMillis(context, from) + (System.currentTimeMillis() - fromStart)
+            editor.putLong(BANK_PREFIX + from, banked).remove(key(from))
+        }
+        editor.putLong(key(to), System.currentTimeMillis())
+        editor.apply()
+    }
+
+    /**
+     * Ends the multi-timer group: returns whole (rounded) minutes per habit
+     * — banked time plus running time — and clears every member's state.
+     * Habits under a (rounded) minute are included with 0 and are simply not
+     * recorded by the caller.
+     */
+    fun stopMultiGroupAndComputeMinutes(context: Context): Map<String, Int> {
+        val members = multiMembers(context)
+        val result = mutableMapOf<String, Int>()
+        val editor = prefs(context).edit()
+        members.forEach { habit ->
+            result[habit] = roundMillisToMinutes(totalMillis(context, habit))
+            editor.remove(key(habit)).remove(BANK_PREFIX + habit).remove(MULTI_PREFIX + habit)
+        }
+        editor.apply()
+        return result
+    }
+
+    /** Rounds a millis duration to whole minutes (>= 30 s rounds up). */
+    fun roundMillisToMinutes(millis: Long): Int =
+        Math.round(millis / 60000.0).toInt().coerceAtLeast(0)
 
     /** Formats an elapsed-millis value as h:mm:ss / m:ss for the live timer display. */
     fun formatElapsed(millis: Long): String {

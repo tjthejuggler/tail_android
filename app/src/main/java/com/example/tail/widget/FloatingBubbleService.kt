@@ -34,6 +34,8 @@ import android.widget.TextView
 import android.widget.Toast
 import com.example.tail.MainActivity
 import com.example.tail.R
+import com.example.tail.data.AiIconRepository
+import com.example.tail.data.AppSettings
 import com.example.tail.data.BridgeClient
 import com.example.tail.data.GarminRepository
 import com.example.tail.data.GarminType
@@ -212,6 +214,14 @@ class FloatingBubbleService : Service() {
 
     /** Total chip window height (icon + time in persistent mode). */
     private var timerChipTotalHeightPx = 0
+
+    // ── Multi-timer group (linked timers for all habits on one app) ──────
+    /** Dedicated ⏹ control next to the bubble — stops the whole group. */
+    private var multiStopButtonView: TextView? = null
+
+    /** Cached trigger-app → multi-timer-enabled config (menus are sync). */
+    @Volatile private var multiTimerAppsCache: Set<String> = emptySet()
+    @Volatile private var triggerAppsCache: Map<String, String> = emptyMap()
 
     // ── V3 survival gate panel (side banner next to the bubble) ──────────
     private var survivalPanelView: LinearLayout? = null
@@ -489,6 +499,7 @@ class FloatingBubbleService : Service() {
         }
 
         if (bubbleView == null) {
+            refreshMultiTimerConfig()
             showBubble()
             // Opt-in subsetting: a fresh stint over a trigger app with no
             // timer running can open the full-screen "start a session?"
@@ -506,6 +517,7 @@ class FloatingBubbleService : Service() {
         removeBubble()
         removeDismissZone()
         hideTimerChip()
+        hideMultiStopButton()
         survivalResultPopup?.dismiss()
         survivalResultPopup = null
         hideSurvivalPanel()
@@ -620,6 +632,17 @@ class FloatingBubbleService : Service() {
         val habit = triggerHabitName
         if (tailMode) {
             applyTailModeVisuals()
+        } else if (multiModeLive()) {
+            // A multi-timer group survived the bubble being hidden — resume
+            // the live display (active member's icon + banked+running time)
+            // and the dedicated stop control.
+            val active = activeMultiHabit() ?: triggerHabitNames.firstOrNull()
+            if (active != null) {
+                triggerHabitName = active
+                setBubbleRunningVisuals(running = activeMultiHabit() != null)
+                showTimerChip()
+                showMultiStopButton()
+            }
         } else if (habit != null && WidgetTimerStore.isTimerRunning(this, habit)) {
             setBubbleRunningVisuals(running = true)
             showTimerChip()
@@ -1021,6 +1044,14 @@ class FloatingBubbleService : Service() {
             return
         }
 
+        // Multi-timer group live: the tap SWITCHES the running clock to the
+        // next member (banking the outgoing one's time). Stopping the whole
+        // group is the ⏹ control's job — never the bubble tap.
+        if (multiModeLive()) {
+            switchMultiTimer()
+            return
+        }
+
         // Tail mode: the bubble exists solely to show/stop a persistent
         // timer that was started in another app. Tap = stop & record (then
         // dismiss once the increment flash has shown); if the timer already
@@ -1075,6 +1106,13 @@ class FloatingBubbleService : Service() {
             )
         } catch (e: Exception) { /* no vibrator */ }
 
+        // A live multi-timer group stops as a whole: every member's banked +
+        // running time is recorded, then Tail opens as usual.
+        if (multiModeLive()) {
+            stopMultiGroupAndRecord { openTailApp() }
+            return
+        }
+
         val habit = triggerHabitName
         if (tailMode) {
             // Already inside Tail — stop & record, then linger out the
@@ -1118,11 +1156,13 @@ class FloatingBubbleService : Service() {
     /** Live-update runnable — refreshes the elapsed-time pill while visible. */
     private val timerTickRunnable = object : Runnable {
         override fun run() {
-            val habit = triggerHabitName ?: return
+            val multi = multiModeLive()
+            val habit = (if (multi) activeMultiHabit() else triggerHabitName) ?: return
             val chip = timerChipView ?: return
             if (WidgetTimerStore.isTimerRunning(this@FloatingBubbleService, habit)) {
                 val elapsed = WidgetTimerStore.formatElapsed(
-                    WidgetTimerStore.elapsedMillis(this@FloatingBubbleService, habit)
+                    if (multi) WidgetTimerStore.totalMillis(this@FloatingBubbleService, habit)
+                    else WidgetTimerStore.elapsedMillis(this@FloatingBubbleService, habit)
                 )
                 chip.text = elapsed
                 // Shrink slightly once the string gets long (e.g. h:mm:ss)
@@ -1144,7 +1184,8 @@ class FloatingBubbleService : Service() {
      */
     private fun showTimerChip() {
         if (timerChipView != null) return
-        val habit = triggerHabitName ?: return
+        val multi = multiModeLive()
+        val habit = (if (multi) activeMultiHabit() else triggerHabitName) ?: return
 
         val density = resources.displayMetrics.density
         val chipBg = GradientDrawable().apply {
@@ -1155,7 +1196,8 @@ class FloatingBubbleService : Service() {
 
         val timeText = TextView(this).apply {
             text = WidgetTimerStore.formatElapsed(
-                WidgetTimerStore.elapsedMillis(this@FloatingBubbleService, habit)
+                if (multi) WidgetTimerStore.totalMillis(this@FloatingBubbleService, habit)
+                else WidgetTimerStore.elapsedMillis(this@FloatingBubbleService, habit)
             )
             textSize = 14f
             setTextColor(Color.WHITE)
@@ -1164,7 +1206,13 @@ class FloatingBubbleService : Service() {
         }
         timerChipView = timeText
 
-        val chipView: View = if (persistentMode) {
+        val chipView: View = if (multi) {
+            // Multi-timer: a member-selector chip — every group habit's icon
+            // in a row (frozen totals under the inactive ones, the active one
+            // highlighted), the active member's live total big underneath.
+            // The icons are tappable: tapping a member switches to it.
+            buildMultiChipView(habit, timeText, chipBg)
+        } else if (persistentMode) {
             // Persistent mode: habit icon above the time.
             timerChipTotalHeightPx = timerChipHeight + CHIP_ICON_SIZE_DP.dp(resources) + 4.dp(resources)
             val icon = ImageView(this).apply {
@@ -1200,13 +1248,15 @@ class FloatingBubbleService : Service() {
         }
 
         val params = WindowManager.LayoutParams(
-            bubbleSize, // same width as the bubble → stays centered on it
+            if (multi) WindowManager.LayoutParams.WRAP_CONTENT else bubbleSize,
             timerChipTotalHeightPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
-                LOCK_FLAGS,
+                LOCK_FLAGS or
+                // The multi chip's member icons are tappable (tap = switch);
+                // every other chip stays touch-through.
+                (if (multi) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE),
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -1216,6 +1266,9 @@ class FloatingBubbleService : Service() {
             windowManager.addView(chipView, params)
             timerChipContainer = chipView
             positionTimerChip()
+            // WRAP_CONTENT chips only know their width after the first
+            // layout pass — re-centre once measured.
+            chipView.post { positionTimerChip() }
             if (persistentMode) setHabitIconOnChip(habit)
             handler.removeCallbacks(timerTickRunnable)
             handler.postDelayed(timerTickRunnable, 500L)
@@ -1227,19 +1280,137 @@ class FloatingBubbleService : Service() {
     }
 
     /**
+     * Builds the multi-timer member-selector chip: one column per group
+     * habit — its icon (tappable: tap = switch that member's clock on) with
+     * the member's FROZEN total in small text underneath; the active member
+     * is highlighted (green ring + ▶) and its live banked+running total is
+     * the big time line at the bottom.
+     */
+    private fun buildMultiChipView(activeHabit: String, timeText: TextView, chipBg: GradientDrawable): View {
+        val iconSize = 26.dp(resources)
+        val pad = 4.dp(resources)
+        val members = WidgetTimerStore.multiMembers(this)
+            .filter { it in triggerHabitNames }
+            .ifEmpty { listOf(activeHabit) }
+
+        val iconRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        members.forEach { member ->
+            val isActive = member == activeHabit
+            val icon = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                // Tail icon placeholder; swapped for the habit's own icon
+                // as soon as it resolves (off the main thread).
+                val iconRes = resources.getIdentifier(
+                    "ic_launcher_foreground_custom", "drawable", packageName
+                )
+                if (iconRes != 0) setImageResource(iconRes)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    if (isActive) {
+                        setColor(0x332A6A2A.toInt())
+                        setStroke(2, 0xFF4CAF50.toInt())
+                    } else {
+                        setColor(0x22000000.toInt())
+                        setStroke(1, 0xFF334455.toInt())
+                    }
+                }
+                setOnClickListener { switchMultiTimerTo(member) }
+            }
+            loadHabitIconInto(member, icon)
+
+            val frozenTime = TextView(this).apply {
+                text = if (isActive) "▶" else formatCompact(
+                    WidgetTimerStore.bankMillis(this@FloatingBubbleService, member)
+                )
+                textSize = 8f
+                setTextColor(if (isActive) 0xFF66BB6A.toInt() else 0xFF999999.toInt())
+                typeface = Typeface.MONOSPACE
+                gravity = Gravity.CENTER
+            }
+
+            val column = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(pad, 3.dp(resources), pad, 0)
+                addView(icon, LinearLayout.LayoutParams(iconSize, iconSize))
+                addView(
+                    frozenTime,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                )
+            }
+            iconRow.addView(
+                column,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+
+        timerChipTotalHeightPx = timerChipHeight + iconSize + 18.dp(resources)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = chipBg
+            setMinimumWidth(bubbleSize)
+            addView(
+                iconRow,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                timeText,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, timerChipHeight
+                )
+            )
+        }
+    }
+
+    /** Compact frozen-total label: "12m" / "1h05". */
+    private fun formatCompact(millis: Long): String {
+        val totalMinutes = (millis / 60_000L).toInt()
+        return if (totalMinutes < 60) "${totalMinutes}m"
+        else String.format(java.util.Locale.US, "%dh%02d", totalMinutes / 60, totalMinutes % 60)
+    }
+
+    /**
      * Resolves [habit]'s icon and swaps it into the persistent-mode chip
      * (icon above the time). Best-effort: keeps the placeholder on failure.
      */
     private fun setHabitIconOnChip(habit: String) {
         val iconView = timerChipIconView ?: return
+        loadHabitIconInto(habit, iconView)
+    }
+
+    /**
+     * Resolves [habit]'s icon and swaps it into [iconView]. Best-effort:
+     * keeps the placeholder on failure.
+     */
+    private fun loadHabitIconInto(habit: String, iconView: ImageView) {
         try {
             serviceScope.launch(Dispatchers.IO) {
                 val settings = settingsRepo.settingsFlow.first()
                 val iconName = settings.habitIcons[habit]
+                // Same resolution order as the habit squares on the main
+                // grid (HabitButton): AI-generated icon → installed-app icon
+                // → text/emoji icon → built-in drawable.
+                val aiIconId = iconName?.takeIf { it.startsWith("ai_") }
                 val appPkg = appPackageNameOf(iconName)
                 val textChar = textIconCharOf(iconName)
                 val size = CHIP_ICON_SIZE_DP.dp(resources)
                 val drawable: android.graphics.drawable.Drawable? = when {
+                    aiIconId != null -> AiIconRepository(applicationContext)
+                        .loadBitmap(aiIconId)
+                        ?.let { android.graphics.drawable.BitmapDrawable(resources, it) }
                     appPkg != null -> loadAppIconBitmap(applicationContext, appPkg, appIconMonochromeOf(iconName))
                         ?.let { android.graphics.drawable.BitmapDrawable(resources, it) }
                     textChar != null -> android.graphics.drawable.BitmapDrawable(
@@ -1280,7 +1451,14 @@ class FloatingBubbleService : Service() {
         val chip = timerChipContainer ?: return
         val params = chip.layoutParams as? WindowManager.LayoutParams ?: return
         val gap = 8.dp(resources)
-        params.x = bubbleParams.x
+        // The multi chip is WRAP_CONTENT (icon row) — centre it on the
+        // bubble once its measured width is known; fixed-width chips just
+        // left-align with the bubble (same width → already centred).
+        params.x = if (multiModeLive() && chip.width > 0) {
+            bubbleParams.x + (bubbleSize - chip.width) / 2
+        } else {
+            bubbleParams.x
+        }
         params.y = if (bubbleParams.y - timerChipTotalHeightPx - gap >= 0) {
             bubbleParams.y - timerChipTotalHeightPx - gap
         } else {
@@ -1289,6 +1467,188 @@ class FloatingBubbleService : Service() {
         try {
             windowManager.updateViewLayout(chip, params)
         } catch (e: Exception) { /* view removed */ }
+        positionMultiStopButton()
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    //  Multi-timer group (linked timers for habits sharing one trigger app)
+    // ──────────────────────────────────────────────────────────────────────
+
+    /** True while a multi-timer session is live for THIS bubble's habits. */
+    private fun multiModeLive(): Boolean =
+        WidgetTimerStore.multiMembers(this).any { it in triggerHabitNames }
+
+    /** The group member whose clock is currently running (null if none). */
+    private fun activeMultiHabit(): String? =
+        WidgetTimerStore.multiMembers(this)
+            .filter { it in triggerHabitNames }
+            .firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
+
+    /**
+     * The habits a "Multi-timer" menu entry should arm, or null when the
+     * sub-option is off for the trigger app / fewer than 2 habits are on it.
+     */
+    private fun multiTimerOfferedHabits(offered: List<String>): List<String>? {
+        if (offered.size < 2) return null
+        val enabled = offered.any { habit ->
+            triggerAppsCache[habit]?.let { it in multiTimerAppsCache } == true
+        }
+        return if (enabled) offered else null
+    }
+
+    /** Refreshes the cached trigger-app config the sync menu builders use. */
+    private fun refreshMultiTimerConfig(settings: AppSettings? = null) {
+        serviceScope.launch {
+            val s = settings ?: settingsRepo.settingsFlow.first()
+            multiTimerAppsCache = s.bubbleMultiTimerApps
+            triggerAppsCache = s.widgetTriggerApps
+        }
+    }
+
+    /**
+     * Arms a multi-timer group for [habits]: every member is linked, the
+     * first one's clock runs. Tapping the bubble from then on switches the
+     * running clock between members; the ⏹ control stops and records all.
+     */
+    private fun startMultiTimerGroup(habits: List<String>) {
+        if (habits.size < 2) return
+        val active = habits.first()
+        WidgetTimerStore.startMultiGroup(this, habits, active)
+        triggerHabitName = active
+        setBubbleRunningVisuals(running = true)
+        hideTimerChip()
+        showTimerChip()
+        showMultiStopButton()
+    }
+
+    /**
+     * Switches the group's running clock to the next member (round-robin in
+     * trigger-habit order): the outgoing member's elapsed time is banked and
+     * the incoming member resumes on top of its own bank.
+     */
+    private fun switchMultiTimer() {
+        val members = WidgetTimerStore.multiMembers(this)
+            .filter { it in triggerHabitNames }
+        if (members.size < 2) return
+        val active = members.firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
+            ?: return
+        val next = members[(members.indexOf(active) + 1) % members.size]
+        switchMultiTimerTo(next)
+    }
+
+    /**
+     * Switches the group's running clock to [target] directly (chip icon
+     * tap) — the outgoing member's elapsed time is banked, [target] resumes
+     * on top of its own bank, and the member-selector chip is rebuilt with
+     * the new selection highlighted.
+     */
+    private fun switchMultiTimerTo(target: String) {
+        val members = WidgetTimerStore.multiMembers(this)
+            .filter { it in triggerHabitNames }
+        val active = members.firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
+            ?: return
+        if (target == active || target !in members) return
+        WidgetTimerStore.switchMultiActive(this, active, target)
+        triggerHabitName = target
+        // Rebuild the chip so the selection highlight + frozen totals move.
+        hideTimerChip()
+        showTimerChip()
+    }
+
+    /**
+     * Stops every member of the live multi-timer group and records each
+     * one's banked + running minutes (members under a rounded minute are
+     * skipped). One shared ⏹ tap — or the trigger app leaving — ends the
+     * whole group at once.
+     */
+    private fun stopMultiGroupAndRecord(onFinished: (() -> Unit)? = null) {
+        val minutesByHabit = WidgetTimerStore.stopMultiGroupAndComputeMinutes(this)
+        hideTimerChip()
+        hideMultiStopButton()
+        setBubbleRunningVisuals(running = false)
+        val recordable = minutesByHabit.entries.filter { it.value > 0 }
+        if (recordable.isEmpty()) {
+            Toast.makeText(
+                this, "Multi-timer stopped — under a minute, nothing recorded",
+                Toast.LENGTH_SHORT
+            ).show()
+            onFinished?.invoke()
+            return
+        }
+        recordable.forEachIndexed { index, entry ->
+            writeMinutesToHabit(
+                entry.key, entry.value,
+                if (index == recordable.lastIndex) onFinished else null
+            )
+        }
+    }
+
+    /**
+     * Shows the touchable ⏹ pill that stops the whole multi-timer group —
+     * the bubble tap is repurposed for SWITCHING while the group is live, so
+     * stopping needs its own dedicated control.
+     */
+    private fun showMultiStopButton() {
+        if (multiStopButtonView != null) return
+        val size = 40.dp(resources)
+        val btn = TextView(this).apply {
+            text = "✕"
+            textSize = 15f
+            setTextColor(0xFFFF5555.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xDD1A0E10.toInt())
+                setStroke(1, 0xFFCC3333.toInt())
+            }
+            setOnClickListener { stopMultiGroupAndRecord() }
+        }
+        val params = WindowManager.LayoutParams(
+            size, size,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+                LOCK_FLAGS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        try {
+            windowManager.addView(btn, params)
+            multiStopButtonView = btn
+            positionMultiStopButton()
+        } catch (_: Exception) {
+            multiStopButtonView = null
+        }
+    }
+
+    /** Removes the multi-timer ⏹ control. */
+    private fun hideMultiStopButton() {
+        multiStopButtonView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (_: Exception) { /* already removed */ }
+        }
+        multiStopButtonView = null
+    }
+
+    /**
+     * Places the ⏹ control on the opposite side of the bubble from the
+     * timer chip (below the bubble when the chip floats above it).
+     */
+    private fun positionMultiStopButton() {
+        val btn = multiStopButtonView ?: return
+        val params = btn.layoutParams as? WindowManager.LayoutParams ?: return
+        val gap = 8.dp(resources)
+        val size = params.width
+        params.x = bubbleParams.x + (bubbleSize - size) / 2
+        params.y = if (bubbleParams.y - timerChipTotalHeightPx - gap >= 0) {
+            bubbleParams.y + bubbleSize + gap
+        } else {
+            (bubbleParams.y - size - gap).coerceAtLeast(0)
+        }
+        try {
+            windowManager.updateViewLayout(btn, params)
+        } catch (_: Exception) { /* view removed */ }
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -2124,6 +2484,34 @@ class FloatingBubbleService : Service() {
 
         }
 
+        // Multi-timer entry (opt-in per trigger app): arms ALL offered
+        // habits as one linked group — one clock runs at a time, bubble
+        // taps switch it, ⏹ stops and records everything.
+        multiTimerOfferedHabits(offeredHabits)?.let { members ->
+            val multiItem = TextView(this).apply {
+                text = "⏱ Multi: ${members.joinToString(" + ")}"
+                textSize = 15f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+                background = GradientDrawable().apply {
+                    setColor(0xFF2A3A1A.toInt())
+                    cornerRadius = 8f * density
+                    setStroke(1, 0xFF88AA66.toInt())
+                }
+                setOnClickListener {
+                    hideHabitPickerMenu()
+                    startMultiTimerGroup(members)
+                }
+            }
+            menu.addView(multiItem, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = 6.dp()
+            })
+        }
+
         offeredHabits.forEachIndexed { index, habit ->
             val item = TextView(this).apply {
                 text = habit
@@ -2218,6 +2606,7 @@ class FloatingBubbleService : Service() {
         // Never fight a timer that is already going, a wizard that owns the
         // bubble, or a due puzzle-rush report.
         if (triggerHabitNames.any { WidgetTimerStore.isTimerRunning(this, it) }) return
+        if (multiModeLive()) return
         if (chessReadinessActive && ChessReadinessStore.loadSession(this) != null) return
         if (ChessPuzzleRushStore.loadPending(this) != null) return
         serviceScope.launch {
@@ -2227,6 +2616,9 @@ class FloatingBubbleService : Service() {
             val triggerPkg = settings.widgetTriggerApps.entries
                 .firstOrNull { it.key in triggerHabitNames }?.value
             if (triggerPkg == null || triggerPkg !in settings.bubbleFullScreenApps) return@launch
+            // Fresh config for the sync menu builder (multi-timer entry).
+            multiTimerAppsCache = settings.bubbleMultiTimerApps
+            triggerAppsCache = settings.widgetTriggerApps
             handler.post { showFullScreenMenu() }
         }
     }
@@ -2317,6 +2709,15 @@ class FloatingBubbleService : Service() {
             emptyList()
         } else {
             triggerHabitNames
+        }
+        // Multi-timer entry (opt-in per trigger app), full-screen edition.
+        multiTimerOfferedHabits(offeredHabits)?.let { members ->
+            addOption(
+                "⏱ Multi-timer: ${members.joinToString(" + ")}",
+                0xFF2A3A1A.toInt(), 0xFF88AA66.toInt()
+            ) {
+                startMultiTimerGroup(members)
+            }
         }
         offeredHabits.forEach { habit ->
             addOption("▶ $habit", 0xFF1A2A3A.toInt(), 0) {
@@ -2598,6 +2999,12 @@ class FloatingBubbleService : Service() {
      * swallow the "session recorded" confirmation.
      */
     private fun handleTriggerAppLeft() {
+        // A live multi-timer group is stopped and recorded as a whole —
+        // exactly like the ⏹ control — before the bubble hides itself.
+        if (multiModeLive()) {
+            stopMultiGroupAndRecord { scheduleLingerStop() }
+            return
+        }
         val runningHabit = triggerHabitNames.firstOrNull {
             WidgetTimerStore.isTimerRunning(this, it)
         }
@@ -2700,6 +3107,7 @@ class FloatingBubbleService : Service() {
         bubbleRingView = null
         // Closing the bubble also removes the timer chip
         hideTimerChip()
+        hideMultiStopButton()
     }
 
     private fun removeDismissZone() {

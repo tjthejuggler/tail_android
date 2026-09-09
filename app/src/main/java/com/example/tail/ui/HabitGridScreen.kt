@@ -2168,6 +2168,10 @@ fun HabitGridScreen(
                         onToggleFullScreenMenu = { name, enabled ->
                             viewModel.setBubbleFullScreenMenu(name, enabled)
                         },
+                        bubbleMultiTimerApps = settings.bubbleMultiTimerApps,
+                        onToggleMultiTimer = { name, enabled ->
+                            viewModel.setBubbleMultiTimer(name, enabled)
+                        },
                         hasUsageAccess = viewModel.hasUsageAccess(),
                         onRequestUsageAccess = { viewModel.openUsageAccessSettings() },
                         widgetTimerMinutesPrimary = settings.widgetTimerMinutesPrimary,

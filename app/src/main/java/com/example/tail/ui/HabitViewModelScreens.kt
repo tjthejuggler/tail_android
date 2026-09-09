@@ -1247,6 +1247,25 @@ fun HabitViewModel.setBubbleFullScreenMenu(habitName: String, enabled: Boolean) 
 }
 
 /**
+ * Toggles the floating bubble's "Multi-Timer" sub-option for [habitName]'s
+ * TRIGGER APP. Like the full-screen menu toggle this is keyed by app package,
+ * so every habit sharing the trigger app shares one switch. When enabled,
+ * the bubble's picker menu and the full-screen menu over that app gain an
+ * extra group entry ("⏱ Multi-timer") that arms ALL habits on the app with
+ * one clock running; tapping the bubble switches the running clock between
+ * members and a dedicated ⏹ control stops and records the whole group.
+ */
+fun HabitViewModel.setBubbleMultiTimer(habitName: String, enabled: Boolean) {
+    val triggerApp = _settings.value.widgetTriggerApps[habitName] ?: return
+    viewModelScope.launch {
+        val current = _settings.value.bubbleMultiTimerApps
+        val updated = if (enabled) current + triggerApp else current - triggerApp
+        settingsRepo.saveBubbleMultiTimerApps(updated)
+        _settings.value = _settings.value.copy(bubbleMultiTimerApps = updated)
+    }
+}
+
+/**
  * Sets the trigger app [packageName] for [habitName].
  * The habit should already be in [AppSettings.widgetTriggerHabits].
  */

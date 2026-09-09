@@ -1521,6 +1521,18 @@ data class AppSettings(
      */
     val widgetPersistentTimerHabits: Set<String> = emptySet(),
 
+    /**
+     * Trigger APP package names with the "Multi-Timer" sub-option of the
+     * Use Widget feature enabled. When on, the bubble/full-screen menus over
+     * that app offer an extra group entry: starting it arms ALL habits
+     * sharing the app, with exactly one clock running at a time — tapping
+     * the bubble switches which member's clock runs (banking the outgoing
+     * one's elapsed time) and a dedicated ⏹ control stops and records the
+     * whole group at once. Individual per-habit timers keep working exactly
+     * as before; this is an additional way to start them.
+     */
+    val bubbleMultiTimerApps: Set<String> = emptySet(),
+
     // ── Chess Readiness settings ───────────────────────────────────────────
     /**
      * Whether the Chess Readiness feature is enabled (global toggle in the
