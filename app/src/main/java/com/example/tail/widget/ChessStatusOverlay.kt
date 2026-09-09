@@ -67,8 +67,7 @@ class ChessStatusOverlay(service: android.content.Context) {
             stateLabel("RATED PLAY AUTHORIZED", "#22C55E")
             spacer(10)
 
-            val msLeft = (lastTest?.timestamp ?: now) +
-                ChessReadinessEngine.SESSION_VALIDITY_MS - now
+            val msLeft = ChessPhase2Store.ratedPlayMsRemaining(context, now)
             val ccrs = ChessPhase2Store.authorizingReadinessCcrs(context, now)
             val buffer = ChessPhase2Engine.readinessBuffer(ccrs)
             val terminateAt = ChessPhase2Engine.STRAIN_TERMINATE_BASE + buffer
@@ -159,9 +158,9 @@ class ChessStatusOverlay(service: android.content.Context) {
             stateLabel("RATED PLAY AUTHORIZED · AUDIT v2", "#22C55E")
             spacer(10)
 
-            val msLeft = (lastTest?.timestamp ?: now) +
-                ChessReadinessEngine.SESSION_VALIDITY_MS - now
-            keyValue("Time left", "${(msLeft / 60000L).coerceAtLeast(0)} min")
+            val msLeft = ChessPhase2Store.ratedPlayMsRemaining(context, now)
+            keyValue("Time left", "${(msLeft / 60000L).coerceAtLeast(0)} min " +
+                "(re-anchored by every clean audit)")
             keyValue("Games audited this session", "${session.size}")
             keyValue(
                 "Fatigue budget",

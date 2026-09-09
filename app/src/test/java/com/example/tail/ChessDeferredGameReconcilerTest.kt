@@ -19,7 +19,9 @@ import org.junit.Test
 class ChessDeferredGameReconcilerTest {
 
     private val t0 = 1_755_000_000_000L
-    private val validity = ChessReadinessEngine.SESSION_VALIDITY_MS
+    // Rated-play window duration = the 30-minute rolling idle close.
+    private val validity =
+        ChessPhase2Engine.RATED_IDLE_CLOSE_MINUTES * 60_000
 
     private fun test(
         at: Long,
@@ -115,7 +117,7 @@ class ChessDeferredGameReconcilerTest {
 
     @Test
     fun `game started inside the window but ending after it stays authorized`() {
-        // The exact bug from 2026-08-25: GREEN test opens a 60-minute window,
+        // The exact bug from 2026-08-25: GREEN test opens a 30-minute idle
         // a 10-minute rapid game starts 5 minutes before expiry and ends
         // 5 minutes after it. Start-based check → authorized.
         val tests = listOf(test(t0, ChessReadinessEngine.ReadinessState.GREEN_LIGHT))

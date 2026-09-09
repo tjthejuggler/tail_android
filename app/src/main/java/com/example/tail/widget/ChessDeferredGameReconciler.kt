@@ -91,25 +91,30 @@ object ChessDeferredGameReconciler {
      * mirrors [ChessPhase2Store.ratedPlayAuthorized] with "now" replaced by
      * [gameStartMs]:
      *  - the latest test at/before [gameStartMs] was GREEN_LIGHT, and
-     *  - [gameStartMs] is inside that test's validity window, and
+     *  - [gameStartMs] is inside the ROLLING window that test opened
+     *    ([ChessPhase2Engine.rollingWindowExpiresAt] — every CONTINUE_RATED
+     *    audit between the test and the game re-anchors the 30-minute
+     *    idle clock), and
      *  - every Phase 2 audit filed between the test and [gameStartMs] left
      *    rated play alive (CONTINUE_RATED).
      */
-   fun authorizedAtPlay(
-       tests: List<ChessReadinessEngine.ReadinessTest>,
-       audits: List<AuditStamp>,
-       gameStartMs: Long
-   ): Boolean {
-       val last = tests
-           .filter { it.timestamp <= gameStartMs }
-           .maxByOrNull { it.timestamp } ?: return false
-       if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return false
-       if (gameStartMs - last.timestamp >= ChessReadinessEngine.SESSION_VALIDITY_MS) return false
-       return audits.all {
-           it.timestamp < last.timestamp || it.timestamp > gameStartMs ||
-               it.outputState == ChessPhase2Engine.OutputState.CONTINUE_RATED.name
-       }
-   }
+    fun authorizedAtPlay(
+        tests: List<ChessReadinessEngine.ReadinessTest>,
+        audits: List<AuditStamp>,
+        gameStartMs: Long
+    ): Boolean {
+        val last = tests
+            .filter { it.timestamp <= gameStartMs }
+            .maxByOrNull { it.timestamp } ?: return false
+        if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return false
+        return ChessPhase2Engine.rollingWindowExpiresAt(
+            last.timestamp,
+            audits
+                .filter { it.timestamp in last.timestamp..gameStartMs }
+                .map { it.timestamp to it.outputState },
+            gameStartMs
+        ) != null
+    }
 
    /**
     * Best-effort game START in epoch millis: the PGN's UTC StartTime when

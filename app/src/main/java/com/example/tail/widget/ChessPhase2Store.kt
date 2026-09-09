@@ -250,27 +250,48 @@ object ChessPhase2Store {
     // ── Rated-play authorization (Phase 1 gate) ────────────────────────────
 
     /**
+     * The epoch-ms expiry of the ROLLING rated-play authorization window,
+     * or null when rated play is currently NOT authorized. The 30-minute
+     * idle clock re-anchors to every CONTINUE_RATED audit filed inside the
+     * window ([ChessPhase2Engine.rollingWindowExpiresAt]): playing well
+     * keeps the window open indefinitely, while 30 minutes without being
+     * in a game that ends clean — or any Yellow/Red audit — closes it
+     * until a new GREEN readiness test.
+     */
+    fun ratedPlayExpiresAt(
+        context: Context,
+        now: Long = System.currentTimeMillis()
+    ): Long? {
+        val last = ChessReadinessStore.lastTest(context) ?: return null
+        if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return null
+        return ChessPhase2Engine.rollingWindowExpiresAt(
+            last.timestamp,
+            loadAudits(context)
+                .filter { it.timestamp >= last.timestamp && it.timestamp <= now }
+                .map { it.timestamp to it.outputState },
+            now
+        )
+    }
+
+    /**
      * The CCRS of the Phase 1 test currently authorizing rated play, or null
-     * when no GREEN authorization is inside its validity window. Feeds the
-     * readiness buffer in [ChessPhase2Engine.evaluate].
+     * when no GREEN authorization window is live. Feeds the readiness
+     * buffer in [ChessPhase2Engine.evaluate].
      */
     fun authorizingReadinessCcrs(
         context: Context,
         now: Long = System.currentTimeMillis()
     ): Int? {
-        val last = ChessReadinessStore.lastTest(context) ?: return null
-        if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return null
-        if (now - last.timestamp >= ChessReadinessEngine.SESSION_VALIDITY_MS) return null
-        return last.ccrs
+        if (ratedPlayExpiresAt(context, now) == null) return null
+        return ChessReadinessStore.lastTest(context)?.ccrs
     }
 
     /**
-     * True when the user may currently play/report RATED games, i.e. all of:
-     *  - the last Phase 1 test resulted in GREEN_LIGHT (rated authorized),
-     *  - that authorization is still inside its 60-minute validity window
-     *    ([ChessReadinessEngine.SESSION_VALIDITY_MS]),
-     *  - every Phase 2 audit filed since the authorization is CONTINUE_RATED
-     *    (a Yellow/Red audit revokes rated play for the rest of the window).
+     * True when the user may currently play/report RATED games: the last
+     * Phase 1 test was GREEN_LIGHT and the ROLLING window it opened is
+     * still live ([ratedPlayExpiresAt]) — every Phase 2 audit since the
+     * test must be CONTINUE_RATED, and each one re-anchors the 30-minute
+     * idle clock.
      *
      * The floating bubble uses this to decide which SINGLE chess entry its
      * popup menu shows: authorized → "Chess Status"; otherwise →
@@ -279,22 +300,12 @@ object ChessPhase2Store {
     fun ratedPlayAuthorized(
         context: Context,
         now: Long = System.currentTimeMillis()
-    ): Boolean {
-        val authTimestamp = ChessReadinessStore.lastTest(context)
-            ?.takeIf {
-                it.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name &&
-                    now - it.timestamp < ChessReadinessEngine.SESSION_VALIDITY_MS
-            }
-            ?.timestamp ?: return false
-        val auditsSinceAuth = loadAudits(context).filter { it.timestamp >= authTimestamp }
-        return auditsSinceAuth.all {
-            it.outputState == ChessPhase2Engine.OutputState.CONTINUE_RATED.name
-        }
-    }
+    ): Boolean = ratedPlayExpiresAt(context, now) != null
 
     /**
-     * Milliseconds remaining in the current rated-play authorization window
-     * (last GREEN test + [ChessReadinessEngine.SESSION_VALIDITY_MS] − now).
+     * Milliseconds remaining in the current ROLLING rated-play
+     * authorization window (60 min past the latest clean evidence — the
+     * GREEN test or the newest CONTINUE_RATED audit, whichever is later).
      * 0 when rated play is NOT currently authorized. Used by the post-game
      * audit result screens to always tell the user how much authorized
      * playtime is left.
@@ -303,10 +314,8 @@ object ChessPhase2Store {
         context: Context,
         now: Long = System.currentTimeMillis()
     ): Long {
-        val last = ChessReadinessStore.lastTest(context) ?: return 0L
-        if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return 0L
-        return (last.timestamp + ChessReadinessEngine.SESSION_VALIDITY_MS - now)
-            .coerceAtLeast(0L)
+        val expiresAt = ratedPlayExpiresAt(context, now) ?: return 0L
+        return (expiresAt - now).coerceAtLeast(0L)
     }
 
     /**

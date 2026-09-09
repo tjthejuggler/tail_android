@@ -1,5 +1,6 @@
 package com.example.tail.widget
 
+import com.example.tail.data.ChessReadinessEngine
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -183,6 +184,41 @@ object ChessPhase2Engine {
 
     /** One audited game in the user's ΔE history (feeds the percentile floors). */
     data class DeltaERecord(val timestamp: Long, val deltaE: Double)
+
+    /** Minutes of rated-play idleness (no completed clean game) that close
+     * an otherwise-healthy authorization window. */
+    const val RATED_IDLE_CLOSE_MINUTES = 30L
+
+    /**
+     * ROLLING rated-play window (2026-09-09 redesign): the 30-minute idle
+     * clock re-anchors to every CONTINUE_RATED audit filed inside the
+     * window. Playing well keeps the window open indefinitely; going
+     * [RATED_IDLE_CLOSE_MINUTES] minutes without being in a game that ends
+     * clean (or flagging Yellow/Red) closes it and a new readiness test is
+     * required.
+     *
+     * @param greenTestMs timestamp of the authorizing GREEN_LIGHT test
+     * @param audits      (timestamp, [OutputState] name) pairs filed after
+     *                    the test and at/before "now", oldest first
+     * @param now         evaluation instant
+     * @return the epoch-ms expiry of the window, or null when revoked or
+     *         already expired
+     */
+    fun rollingWindowExpiresAt(
+        greenTestMs: Long,
+        audits: List<Pair<Long, String>>,
+        now: Long
+    ): Long? {
+        val inWindow = audits.filter { it.first in greenTestMs..now }
+        // A Yellow/Red audit since the authorization revokes rated play.
+        if (inWindow.any {
+                it.second != OutputState.CONTINUE_RATED.name
+            }) return null
+        val anchor = inWindow.lastOrNull()?.first ?: greenTestMs
+        val idleCloseMs = RATED_IDLE_CLOSE_MINUTES * 60_000
+        return if (now - anchor >= idleCloseMs) null
+        else anchor + idleCloseMs
+    }
 
     // ── Result models ──────────────────────────────────────────────────────
 

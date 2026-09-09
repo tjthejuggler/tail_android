@@ -168,9 +168,22 @@ object ChessEnforcementPolicy {
         val last = history.maxByOrNull { it.timestamp }
         val auditAfterTest = lastAudit
             ?.takeIf { last != null && it.timestamp > last.timestamp }
+        // ROLLING GREEN window: a CONTINUE_RATED audit after the test
+        // re-anchors the idle clock — playing well keeps the authorized
+        // session open; 30 minutes without a clean game closes it.
+        val greenAnchor = maxOf(
+            last?.timestamp ?: now,
+            auditAfterTest
+                ?.takeIf {
+                    it.outputState ==
+                        ChessPhase2Engine.OutputState.CONTINUE_RATED.name
+                }
+                ?.timestamp ?: 0L
+        )
         if (last != null &&
             last.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name &&
-            now - last.timestamp < ChessReadinessEngine.SESSION_VALIDITY_MS
+            now - greenAnchor <
+                ChessPhase2Engine.RATED_IDLE_CLOSE_MINUTES * 60_000
         ) {
             return when {
                 auditAfterTest?.outputState ==
