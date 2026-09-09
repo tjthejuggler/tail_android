@@ -984,6 +984,7 @@ fun HabitViewModel.incrementHabit(
     }
     
     cachedPhoneDb = updatedDb
+    dbEpoch++
     // Keep per-screen cache in sync after conditional updates — only when
     // the visible list actually reflects the incremented date
     if (affectsVisibleDate) {
@@ -1013,11 +1014,19 @@ fun HabitViewModel.incrementHabit(
         var lastPersistError: Exception? = null
         for (attempt in 1..INCREMENT_PERSIST_ATTEMPTS) {
             try {
-                habitsRepo.persistDatabase(uri, context, updatedDb)
-                val reread = habitsRepo.loadDatabase(uri, context)
-                val rereadVal = reread[habitName]?.get(dateStr)
-                val landed = if (dbDelta >= 0) (rereadVal ?: 0) >= newCount
+                // Each attempt holds the process-wide habits-file mutex for
+                // the whole write+verify, so a concurrent read-modify-write
+                // (ensureDaysExist zero-fill, an external increment) can
+                // never load our PRE-write state and save it back AFTER our
+                // write lands — the lost-tap-increment race.
+                var landed = false
+                habitsRepo.withFileLock {
+                    habitsRepo.persistDatabase(uri, context, updatedDb)
+                    val reread = habitsRepo.loadDatabase(uri, context)
+                    val rereadVal = reread[habitName]?.get(dateStr)
+                    landed = if (dbDelta >= 0) (rereadVal ?: 0) >= newCount
                              else (rereadVal ?: Int.MAX_VALUE) <= newCount
+                }
                 if (landed) {
                     persisted = true
                     break
@@ -1039,6 +1048,7 @@ fun HabitViewModel.incrementHabit(
             // doesn't early-return against a stale-high count.
             try {
                 cachedPhoneDb = habitsRepo.loadDatabase(uri, context)
+                dbEpoch++
             } catch (e2: Exception) {
                 Log.w(TAG, "Cache resync after failed persist failed too: ${e2.message}")
             }
@@ -1050,6 +1060,7 @@ fun HabitViewModel.incrementHabit(
         // write was in flight. The rebuild below must never publish that
         // stale snapshot over the optimistic UI update from Step 1.
         cachedPhoneDb = updatedDb
+        dbEpoch++
         HabitsDataChangedBus.emit()
         // Full rebuild (streak/ATH recalc) — AFTER the write, and guarded so
         // a rebuild failure can never starve the effects below.
@@ -1180,6 +1191,7 @@ fun HabitViewModel.incrementHabitWithRollForward(
     }
     
     cachedPhoneDb = updatedDb
+    dbEpoch++
     screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
 
     // Step 5 delta, computed here while the cache values are stable.
@@ -1192,12 +1204,15 @@ fun HabitViewModel.incrementHabitWithRollForward(
     viewModelScope.launch {
         val uri = Uri.parse(uriString)
         try {
-            habitsRepo.persistDatabase(uri, context, updatedDb)
+            habitsRepo.withFileLock {
+                habitsRepo.persistDatabase(uri, context, updatedDb)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to persist roll-forward increment for '$habitName': ${e.message}", e)
             _errorMessage.value = "Failed to save: ${e.message}"
             try {
                 cachedPhoneDb = habitsRepo.loadDatabase(uri, context)
+                dbEpoch++
             } catch (e2: Exception) {
                 Log.w(TAG, "Cache resync after failed persist failed too: ${e2.message}")
             }
@@ -1207,6 +1222,7 @@ fun HabitViewModel.incrementHabitWithRollForward(
         // incrementHabit: a concurrent disk reload during the persist
         // must not become the snapshot the rebuild publishes).
         cachedPhoneDb = updatedDb
+        dbEpoch++
         HabitsDataChangedBus.emit()
         try {
             rebuildHabitList()

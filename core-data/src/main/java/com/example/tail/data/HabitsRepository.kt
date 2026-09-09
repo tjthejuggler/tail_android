@@ -8,6 +8,8 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
@@ -72,6 +74,21 @@ class HabitsRepository {
 
     companion object {
         /**
+         * Process-wide mutex serialising every habits-file READ-MODIFY-WRITE
+         * cycle (and the ViewModel's optimistic persist-verify, via
+         * [withFileLock]). Without it, a concurrent reload such as the
+         * HabitIncrementBus collector's ensureDaysExist could load the
+         * PRE-increment file, then save its zero-fill back AFTER the tap's
+         * persist landed — silently erasing the increment while the
+         * timestamp (a separate file) survived: the intermittent
+         * "square flashes on then off, timestamp kept, count lost" bug.
+         *
+         * NOTE: not reentrant — none of the locked RMW functions may call
+         * another locked function.
+         */
+        private val fileMutex = Mutex()
+
+        /**
          * Process-wide snapshot store, lazily built from the first save's context.
          * Shared across all [HabitsRepository] instances (widgets, receivers,
          * services each create their own repo) so retention is consistent.
@@ -106,6 +123,15 @@ class HabitsRepository {
          */
         const val MIN_RESTORE_BASELINE: Int = 50
     }
+
+    /**
+     * Runs [block] while holding the process-wide habits-file mutex, so a
+     * caller's custom load→modify→persist cycle (e.g. the ViewModel's
+     * increment persist-verify) cannot interleave with the repository's own
+     * locked read-modify-write functions.
+     */
+    suspend fun <T> withFileLock(block: suspend () -> T): T =
+        Companion.fileMutex.withLock { block() }
 
     /**
      * Reads and parses the habits JSON file from the given SAF URI.
@@ -370,6 +396,7 @@ class HabitsRepository {
         context: Context,
         today: LocalDate = LocalDate.now()
     ): HabitsDatabase = withContext(Dispatchers.IO) {
+        fileMutex.withLock {
         val loadResult = loadDatabaseResult(uri, context)
         if (loadResult !is HabitsLoadResult.Success) {
             Log.w(TAG, "ensureDaysExist: load did not succeed ($loadResult), refusing to save and throwing")
@@ -407,6 +434,7 @@ class HabitsRepository {
             saveDatabase(uri, context, db)
         }
         db
+        }
     }
 
     /**
@@ -543,6 +571,7 @@ class HabitsRepository {
         amount: Int,
         date: LocalDate
     ): HabitsDatabase = withContext(Dispatchers.IO) {
+        fileMutex.withLock {
         val loadResult = loadDatabaseResult(uri, context)
         if (loadResult !is HabitsLoadResult.Success) {
             Log.w(TAG, "incrementHabitForDate: load did not succeed ($loadResult), refusing to save and throwing")
@@ -559,6 +588,7 @@ class HabitsRepository {
 
         saveDatabase(uri, context, db)
         db
+        }
     }
 
     /**
@@ -592,6 +622,7 @@ class HabitsRepository {
         minutes: Int,
         sessions: Int
     ): HabitsDatabase = withContext(Dispatchers.IO) {
+        fileMutex.withLock {
         val loadResult = loadDatabaseResult(uri, context)
         if (loadResult !is HabitsLoadResult.Success) {
             Log.w(TAG, "incrementHabitWithMinutes: load did not succeed ($loadResult), refusing to save and throwing")
@@ -611,6 +642,7 @@ class HabitsRepository {
 
         saveDatabase(uri, context, db)
         db
+        }
     }
 
     /**
@@ -630,6 +662,7 @@ class HabitsRepository {
         deltaMinutes: Int
     ): HabitsDatabase = withContext(Dispatchers.IO) {
         if (deltaMinutes == 0) return@withContext loadDatabase(uri, context)
+        fileMutex.withLock {
         val loadResult = loadDatabaseResult(uri, context)
         if (loadResult !is HabitsLoadResult.Success) {
             Log.w(TAG, "adjustHabitMinutesSlot: load did not succeed ($loadResult), refusing to save and throwing")
@@ -647,6 +680,7 @@ class HabitsRepository {
             saveDatabase(uri, context, db)
         }
         db
+        }
     }
 
     /**
@@ -681,6 +715,7 @@ class HabitsRepository {
         increments: Map<String, Int>,
         date: LocalDate
     ): HabitsDatabase = withContext(Dispatchers.IO) {
+        fileMutex.withLock {
         val positive = increments.filterValues { it > 0 }
         if (positive.isEmpty()) return@withContext loadDatabase(uri, context)
 
@@ -700,6 +735,7 @@ class HabitsRepository {
 
         saveDatabase(uri, context, db)
         db
+        }
     }
 
     /**
@@ -766,6 +802,7 @@ class HabitsRepository {
         date: LocalDate
     ): HabitsDatabase = withContext(Dispatchers.IO) {
         if (deltas.values.all { it == 0 }) return@withContext loadDatabase(uri, context)
+        fileMutex.withLock {
 
         val loadResult = loadDatabaseResult(uri, context)
         if (loadResult !is HabitsLoadResult.Success) {
@@ -785,6 +822,7 @@ class HabitsRepository {
 
         saveDatabase(uri, context, db)
         db
+        }
     }
 
     /**
@@ -808,6 +846,7 @@ class HabitsRepository {
         value: Int,
         date: LocalDate
     ): HabitsDatabase = withContext(Dispatchers.IO) {
+        fileMutex.withLock {
         val loadResult = loadDatabaseResult(uri, context)
         if (loadResult !is HabitsLoadResult.Success) {
             Log.w(TAG, "setHabitValueForDate: load did not succeed ($loadResult), refusing to save and throwing")
@@ -823,6 +862,7 @@ class HabitsRepository {
 
         saveDatabase(uri, context, db)
         db
+        }
     }
 
     /**
@@ -843,6 +883,7 @@ class HabitsRepository {
         habitName: String,
         dateValues: Map<LocalDate, Int>
     ): HabitsDatabase = withContext(Dispatchers.IO) {
+        fileMutex.withLock {
         val loadResult = loadDatabaseResult(uri, context)
         if (loadResult !is HabitsLoadResult.Success) {
             Log.w(TAG, "setHabitValuesForDates: load did not succeed ($loadResult), refusing to save and throwing")
@@ -864,6 +905,7 @@ class HabitsRepository {
 
         saveDatabase(uri, context, db)
         db
+        }
     }
 
     /**
@@ -880,6 +922,7 @@ class HabitsRepository {
         context: Context,
         slotValues: Map<String, Map<LocalDate, Int>>
     ): HabitsDatabase = withContext(Dispatchers.IO) {
+        fileMutex.withLock {
         val loadResult = loadDatabaseResult(uri, context)
         if (loadResult !is HabitsLoadResult.Success) {
             Log.w(TAG, "setHabitSlotsForDates: load did not succeed ($loadResult), refusing to save and throwing")
@@ -898,6 +941,7 @@ class HabitsRepository {
 
         saveDatabase(uri, context, db)
         db
+        }
     }
 
     /**
@@ -914,6 +958,7 @@ class HabitsRepository {
         context: Context,
         habitName: String
     ): HabitsDatabase = withContext(Dispatchers.IO) {
+        fileMutex.withLock {
         val loadResult = loadDatabaseResult(uri, context)
         if (loadResult !is HabitsLoadResult.Success) {
             Log.w(TAG, "invertHabit: load did not succeed ($loadResult), refusing to save and throwing")
@@ -929,6 +974,7 @@ class HabitsRepository {
 
         saveDatabase(uri, context, db)
         db
+        }
     }
 
     /**

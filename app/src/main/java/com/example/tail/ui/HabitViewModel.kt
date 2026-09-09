@@ -752,6 +752,16 @@ class HabitViewModel(
     // Cache the full unified DB so we can rebuild the habit list without re-reading the file
     internal var cachedPhoneDb: HabitsDatabase = emptyMap()
 
+    // Monotonic epoch bumped on EVERY cachedPhoneDb assignment made by the
+    // optimistic increment paths. The HabitIncrementBus collector re-checks
+    // it after its disk reload: if an increment's persist landed while the
+    // reload was in flight, the freshly-loaded (older) snapshot is discarded
+    // and reloaded instead of being published over the newer cache — the
+    // "square flashes on then off" race. Written only from the main
+    // dispatcher, so no further synchronisation is needed.
+    @Volatile
+    internal var dbEpoch: Long = 0
+
     // TRUE only after the phone DB has been successfully loaded from disk at least
     // once this session. Background sync writers (chess.com, Garmin) MUST NOT
     // persist cachedPhoneDb while this is false -- otherwise a startup race (or a
@@ -853,12 +863,22 @@ class HabitViewModel(
                 val phoneUriStr = _settings.value.fileUri
                 if (phoneUriStr.isNotEmpty()) {
                     try {
-                        val db = withContext(Dispatchers.IO) {
-                            habitsRepo.ensureDaysExist(Uri.parse(phoneUriStr), context)
+                        // Epoch-stable reload: if an optimistic increment's
+                        // persist lands WHILE this reload is reading the file,
+                        // the loaded snapshot is stale. Retry instead of
+                        // publishing it over the newer cache (which would
+                        // flip the just-tapped square back off).
+                        while (true) {
+                            val epochBefore = dbEpoch
+                            val db = withContext(Dispatchers.IO) {
+                                habitsRepo.ensureDaysExist(Uri.parse(phoneUriStr), context)
+                            }
+                            if (dbEpoch != epochBefore) continue
+                            cachedPhoneDb = db
+                            dbLoaded = true
+                            rebuildHabitList()
+                            break
                         }
-                        cachedPhoneDb = db
-                        dbLoaded = true
-                        rebuildHabitList()
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to reload DB after increment event: ${e.message}")
                     }
