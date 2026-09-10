@@ -49,8 +49,8 @@ import kotlin.math.roundToLong
  *
  *  RULE 4 — CHRONIC OVERLOAD (ACWR). Acute:Chronic Workload Ratio with the
  *  robust Rolling Average model: acute = rated games in the last 7 days,
- *  chronic = average weekly games over the last 28 days. Green 0.8–1.3
- *  (sweet spot), Yellow ≥ 1.3, Red ≥ 1.5. Fewer than
+ *  chronic = average weekly games over the last 28 days. Green 0.8–1.5
+ *  (sweet spot), Yellow ≥ 1.5, Red ≥ 1.8. Fewer than
  *  [ACWR_MIN_HISTORY_DAYS] distinct playing days on file → NO_DATA, does
  *  not gate (mirrors the Phase 1 v2 onboarding convention).
  *
@@ -118,11 +118,16 @@ object ChessPhase2V2Engine {
 
     // ── Rule 4: ACWR ───────────────────────────────────────────────────────
 
-    /** ACWR at/above which chronic overload trips Yellow. */
-    const val ACWR_YELLOW = 1.3
+    /**
+     * ACWR at/above which chronic overload trips Yellow (2026-09-10: raised
+     * from 1.3 — a high-volume player whose recent weeks run even ~40 %
+     * above a quiet month is ramping, not chronically overloaded, and the
+     * per-session rules already police acute risk).
+     */
+    const val ACWR_YELLOW = 1.5
 
-    /** ACWR at/above which chronic overload trips Red. */
-    const val ACWR_RED = 1.5
+    /** ACWR at/above which chronic overload trips Red (was 1.5). */
+    const val ACWR_RED = 1.8
 
     /** Acute window in days (report: games in the last 7 days). */
     const val ACWR_ACUTE_DAYS = 7
@@ -139,8 +144,10 @@ object ChessPhase2V2Engine {
      * hair above a bar are measurement noise, not overload (a single
      * ordinary game must never be the straw that breaks the camel's back).
      * Rule 4 only gates once the ratio clears the bar by this margin.
+     * (2026-09-10: widened from 0.05 — rolling-average ratios creep for
+     * days after any volume ramp and must clear a real margin to gate.)
      */
-    const val ACWR_BOUNDARY_BAND = 0.05
+    const val ACWR_BOUNDARY_BAND = 0.1
 
     // ── Rule 5: hysteresis ─────────────────────────────────────────────────
 

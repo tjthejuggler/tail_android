@@ -328,10 +328,15 @@ object ChessPhase2V3Engine {
                 yellowRules += "RULE_4_CHRONIC_OVERLOAD"
         }
 
-        // Rule 5 — strain accumulator (catastrophic is always red)
+        // Rule 5 — strain accumulator (catastrophic is always red). The
+        // session accumulator must CLEAR the bar by a margin — landing
+        // exactly on it (e.g. two severe-ish losses double-counted with a
+        // blunder cap) is Yellow, not a day-ending Red.
         if (catastrophic || strain >= ChessPhase2Engine.STRAIN_TERMINATE_BASE) {
             redRules += "RULE_5_STRAIN"
-        } else if (sessionStrain >= strainTerminateAt) {
+        } else if (sessionStrain >= strainTerminateAt +
+            ChessPhase2Engine.STRAIN_TERMINATE_MARGIN
+        ) {
             redRules += "RULE_5_STRAIN"
         } else if (!strainForgiven && strain >= ChessPhase2Engine.MODERATE_STRAIN) {
             yellowRules += "RULE_5_STRAIN"

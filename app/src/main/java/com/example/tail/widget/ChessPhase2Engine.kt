@@ -105,6 +105,15 @@ object ChessPhase2Engine {
     const val STRAIN_TERMINATE_BASE = 100.0
 
     /**
+     * Margin the SESSION strain accumulator must CLEAR beyond
+     * [STRAIN_TERMINATE_BASE] (+ readiness buffer) to terminate a
+     * non-catastrophic session (2026-09-10: the ΔE floor and the blunder
+     * cap measure correlated bad play, so sessions can land exactly on the
+     * bar — 100/100 with no margin must stay Yellow, not end the day).
+     */
+    const val STRAIN_TERMINATE_MARGIN = 10.0
+
+    /**
      * Readiness buffer at/above which ONE moderate-or-severe dip in an
      * otherwise clean session is forgiven entirely (CCRS ≥ 85).
      */

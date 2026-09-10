@@ -109,7 +109,8 @@ object ChessPhase2V4Engine {
             yellowRules.remove("RULE_5_STRAIN")
             if (base.catastrophic ||
                 strain >= ChessPhase2Engine.STRAIN_TERMINATE_BASE ||
-                sessionStrain >= base.strainTerminateAt
+                sessionStrain >= base.strainTerminateAt +
+                    ChessPhase2Engine.STRAIN_TERMINATE_MARGIN
             ) redRules += "RULE_5_STRAIN"
             else if (!strainForgiven &&
                 strain >= ChessPhase2Engine.MODERATE_STRAIN

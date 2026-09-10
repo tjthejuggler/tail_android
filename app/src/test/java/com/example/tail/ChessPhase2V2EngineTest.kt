@@ -309,17 +309,18 @@ class ChessPhase2V2EngineTest {
     }
 
     @Test
-    fun acwr_yellow_at_1_35() {
-        // 1.4 ≥ ACWR_YELLOW (1.3) + boundary band (0.05): gates.
-        val r = eval(input(), acwr = acwrInput(acute = 14, chronicWeekly = 10.0))
+    fun acwr_yellow_at_1_6() {
+        // 2026-09-10: bars raised — yellow 1.5, red 1.8, band 0.1.
+        // 1.6 ≥ ACWR_YELLOW (1.5) + boundary band (0.1): gates.
+        val r = eval(input(), acwr = acwrInput(acute = 16, chronicWeekly = 10.0))
         assertEquals(PIVOT, r.outputState)
         assertTrue(r.yellowRules.contains("RULE_4_CHRONIC_OVERLOAD"))
     }
 
     @Test
     fun acwr_just_above_bar_is_noise() {
-        // 14 / 10.7 ≈ 1.31 sits inside the boundary band of the 1.3 yellow
-        // bar — the overlapping 7/28-day windows make such ratios
+        // 14 / 10.7 ≈ 1.31 sits well inside the boundary band of the 1.5
+        // yellow bar — the overlapping 7/28-day windows make such ratios
         // measurement noise; one ordinary game must never be the tipping
         // point that pivots a session.
         val r = eval(input(), acwr = acwrInput(acute = 14, chronicWeekly = 10.7))
@@ -328,9 +329,18 @@ class ChessPhase2V2EngineTest {
     }
 
     @Test
-    fun acwr_red_at_1_5() {
-        // 1.6 ≥ ACWR_RED (1.5) + boundary band: red.
-        val r = eval(input(), acwr = acwrInput(acute = 16, chronicWeekly = 10.0))
+    fun acwr_mild_ramp_is_green() {
+        // 2026-09-10 regression: acute 132 vs chronic 97/week (ratio 1.36)
+        // is a mild volume ramp, not chronic overload.
+        val r = eval(input(), acwr = acwrInput(acute = 132, chronicWeekly = 97.0))
+        assertEquals(CONTINUE, r.outputState)
+        assertFalse(r.yellowRules.contains("RULE_4_CHRONIC_OVERLOAD"))
+    }
+
+    @Test
+    fun acwr_red_at_1_9() {
+        // 2.0 ≥ ACWR_RED (1.8) + boundary band (0.1): red.
+        val r = eval(input(), acwr = acwrInput(acute = 20, chronicWeekly = 10.0))
         assertEquals(TERMINATE, r.outputState)
         assertTrue(r.redRules.contains("RULE_4_CHRONIC_OVERLOAD"))
     }

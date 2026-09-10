@@ -252,9 +252,10 @@ class ChessPhase2V3EngineTest {
                 accuracyHistory = emptyList()
             ),
             // deltaE −0.3 vs lenient floors (pivot −0.50) is clean on its
-            // own; the PRIOR 75 strain + accuracy violation 25 = 100.
+            // own; the PRIOR 90 strain + accuracy violation 25 = 115,
+            // clearing the terminate bar (100) by the required margin.
             session = listOf(
-                sessionGame(ChessPhase2Engine.GameResult.LOSS, strain = 75.0)
+                sessionGame(ChessPhase2Engine.GameResult.LOSS, strain = 90.0)
             )
         )
         assertTrue(r.redRules.contains("RULE_5_STRAIN"))
@@ -399,6 +400,61 @@ class ChessPhase2V3EngineTest {
             )
         )
         assertTrue(r.redRules.contains("RULE_4_CHRONIC_OVERLOAD"))
+    }
+
+    // ── Rule 5 — session strain terminate margin ───────────────────────────
+
+    // 2026-09-10 regression: a session landing EXACTLY on the strain bar
+    // (two severe-ish losses, ΔE floor + blunder cap double-counting the
+    // same bad play, no readiness buffer) must stay Yellow — not end the
+    // day with a Red lockout.
+    @Test
+    fun `session strain exactly at the bar is yellow not red`() {
+        val r = evaluate(
+            input(result = ChessPhase2Engine.GameResult.LOSS, deltaE = -0.6),
+            session = listOf(sessionGame(ChessPhase2Engine.GameResult.LOSS, strain = 50.0))
+        )
+        assertEquals(100.0, r.sessionStrain, 1e-9)
+        assertFalse(r.redRules.contains("RULE_5_STRAIN"))
+        assertTrue(r.yellowRules.contains("RULE_5_STRAIN"))
+        assertEquals(ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS, r.outputState)
+    }
+
+    @Test
+    fun `session strain clearing the bar by the margin still terminates`() {
+        val r = evaluate(
+            input(result = ChessPhase2Engine.GameResult.LOSS, deltaE = -0.6),
+            session = listOf(sessionGame(ChessPhase2Engine.GameResult.LOSS, strain = 70.0))
+        )
+        assertTrue(r.redRules.contains("RULE_5_STRAIN"))
+        assertEquals(ChessPhase2Engine.OutputState.TERMINATE_SESSION, r.outputState)
+    }
+
+    // 2026-09-10 regression: a high-volume player ramping ~36% above a
+    // quiet 28-day baseline (e.g. acute 132 vs chronic 97/week) is NOT
+    // chronic overload — per-session rules police the acute risk.
+    @Test
+    fun `chronic overload does not trip on a mild volume ramp`() {
+        val r = evaluate(
+            input(),
+            acwr = ChessPhase2V2Engine.AcwrInput(
+                acuteGames = 132, chronicWeekly = 97.0, distinctDays = 300
+            )
+        )
+        assertFalse(r.yellowRules.contains("RULE_4_CHRONIC_OVERLOAD"))
+        assertEquals(ChessPhase2Engine.OutputState.CONTINUE_RATED, r.outputState)
+    }
+
+    @Test
+    fun `chronic overload yellow only clears the raised bar`() {
+        val r = evaluate(
+            input(),
+            acwr = ChessPhase2V2Engine.AcwrInput(
+                acuteGames = 16, chronicWeekly = 10.0, distinctDays = 20
+            )
+        )
+        assertTrue(r.yellowRules.contains("RULE_4_CHRONIC_OVERLOAD"))
+        assertFalse(r.redRules.contains("RULE_4_CHRONIC_OVERLOAD"))
     }
 
     @Test
