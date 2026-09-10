@@ -345,11 +345,17 @@ object ChessReadinessV3Recorder {
         survivalDurationMs: Long,
         reflex: ChessReadinessV3Engine.ReflexSummary?,
         variant: String? = null,
-        targetReachedMs: Long = 0L
+        targetReachedMs: Long = 0L,
+        /** Bar actually enforced this run (P70-adjusted); 0 = unknown. */
+        enforcedBar: Int = 0
     ) {
         val now = System.currentTimeMillis()
-        val stateName = ChessReadinessV3Engine.stateNameFor(verdict)
-        val ccrs = ChessReadinessV3Engine.syntheticCcrs(verdict)
+        val stateName = ChessReadinessV3Engine.stateNameFor(
+            verdict, puzzlesPassed, enforcedBar
+        )
+        val ccrs = ChessReadinessV3Engine.syntheticCcrs(
+            verdict, puzzlesPassed, enforcedBar
+        )
         ChessReadinessStore.appendTest(
             context,
             ChessReadinessEngine.ReadinessTest(timestamp = now, ccrs = ccrs, state = stateName)

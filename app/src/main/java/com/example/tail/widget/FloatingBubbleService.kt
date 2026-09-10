@@ -2090,13 +2090,20 @@ class FloatingBubbleService : Service() {
             survivalDurationMs = elapsed,
             reflex = survivalReflex,
             variant = survivalVariant,
-            targetReachedMs = survivalTargetReachedMs
+            targetReachedMs = survivalTargetReachedMs,
+            // The P70-adjusted bar actually enforced this run — drives the
+            // solved-count ratio that decides YELLOW vs RED on a failure.
+            enforcedBar = survivalPassAt
         )
         // Verdict POPUP: tells the user the outcome and — unless the run put
         // them in RED (kicked out of chess entirely) — offers continuing the
-        // survival drill as free play from the attached banner.
-        val red = verdict == ChessReadinessV3Engine.Verdict.FAIL_TIMEOUT ||
-            verdict == ChessReadinessV3Engine.Verdict.FAIL_REFLEX
+        // survival drill as free play from the attached banner. RED is
+        // decided by the solved-count ratio at failure (engine rule), not by
+        // the failure mode: a strike and a timeout with the same count land
+        // in the same zone. Reflex failure is always RED.
+        val red = verdict == ChessReadinessV3Engine.Verdict.FAIL_REFLEX ||
+            (verdict != ChessReadinessV3Engine.Verdict.PASS &&
+                survivalPassed * 2 < survivalPassAt)
         hideSurvivalPanel()
         // The verdict popup is the ONLY route to the free-play timer, so a
         // silent window-add failure would end the run with no feedback at
@@ -2120,13 +2127,15 @@ class FloatingBubbleService : Service() {
             cached[type]?.get(todayKey)?.toString() ?: "—"
         val reflex = survivalReflex
         popup.setContent("♟ Survival Gate", "Run complete — summary") {
-            when (verdict) {
-                ChessReadinessV3Engine.Verdict.PASS ->
+            when {
+                verdict == ChessReadinessV3Engine.Verdict.PASS ->
                     stateLabel("GATE PASSED", "#66BB6A")
-                ChessReadinessV3Engine.Verdict.FAIL_STRIKE ->
-                    stateLabel("GATE FAILED — STRIKE", "#F5B040")
-                else ->
+                red ->
                     stateLabel("GATE FAILED — RED", "#EF4444")
+                verdict == ChessReadinessV3Engine.Verdict.FAIL_STRIKE ->
+                    stateLabel("GATE FAILED — STRIKE · NEAR MISS", "#F5B040")
+                else ->
+                    stateLabel("GATE FAILED — TIMEOUT · NEAR MISS", "#F5B040")
             }
             spacer(8)
 

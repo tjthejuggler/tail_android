@@ -38,13 +38,18 @@ import kotlin.math.roundToInt
  *
  *  Verdict mapping into the SHARED v1 traffic-light system (so Chess
  *  Guard enforcement, the color system and the Phase-2 audit pipeline
- *  keep working unchanged):
+ *  keep working unchanged). A failed SURVIVAL run is zoned by the
+ *  solved-count ratio at the moment of failure — a wrong answer (strike)
+ *  and the 5-minute cap (timeout) are treated IDENTICALLY:
  *      PASS         → GREEN_LIGHT  (rated play unlocked)
- *      FAIL_STRIKE  → YELLOW_LIGHT (near-miss: casual play allowed,
- *                      rated locked — a single wrong puzzle is a bad
- *                      day at the board, not a systemic red flag)
- *      FAIL_TIMEOUT → RED_LIGHT (rated play locked out)
- *      FAIL_REFLEX  → RED_LIGHT (total rest lockout — worst ccrs)
+ *      FAIL_REFLEX  → RED_LIGHT (physiological filter — total rest)
+ *      FAIL_STRIKE / FAIL_TIMEOUT
+ *          solved ≥ ½ enforced bar → YELLOW_LIGHT (near-miss: casual
+ *          play allowed, rated locked)
+ *          solved < ½ enforced bar → RED_LIGHT (severe underperform)
+ *  The single-argument [stateNameFor]/[syntheticCcrs] keep the legacy
+ *  mapping (strike → yellow, timeout → red) for count-less callers;
+ *  the recorder always passes the enforced bar.
  *
  * Pure Kotlin (java.time only) — no Android dependencies, unit-testable.
  */
@@ -205,27 +210,59 @@ object ChessReadinessV3Engine {
 
     // ── Verdict → shared v1 system mapping ─────────────────────────────────
 
+    /**
+     * A failed survival run (strike OR timeout) lands in RED only when
+     * fewer than 1/[RED_ZONE_SOLVE_DIVISOR] of the enforced pass bar was
+     * solved at the moment of failure. The failure mode itself is
+     * irrelevant — a wrong answer and the 5-minute cap are equivalent
+     * evidence about readiness.
+     */
+    const val RED_ZONE_SOLVE_DIVISOR = 2
+
     /** v1-compatible traffic-light state name (what Chess Guard reads). */
-    fun stateNameFor(verdict: Verdict): String = when (verdict) {
+    fun stateNameFor(
+        verdict: Verdict,
+        puzzlesPassed: Int = 0,
+        enforcedBar: Int = 0
+    ): String = when (verdict) {
         Verdict.PASS -> ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name
-        // A single strike is a near-miss → YELLOW (casual play continues,
-        // rated locked). Timeout and reflex failure are systemic → RED.
-        Verdict.FAIL_STRIKE -> ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name
-        Verdict.FAIL_REFLEX,
-        Verdict.FAIL_TIMEOUT -> ChessReadinessEngine.ReadinessState.RED_LIGHT.name
+        Verdict.FAIL_REFLEX -> ChessReadinessEngine.ReadinessState.RED_LIGHT.name
+        // Strike/timeout share the solved-count ratio rule. Without count
+        // context (enforcedBar = 0) the legacy mapping stands: strike is a
+        // near-miss YELLOW, timeout is systemic RED.
+        Verdict.FAIL_STRIKE ->
+            if (enforcedBar > 0 &&
+                puzzlesPassed * RED_ZONE_SOLVE_DIVISOR < enforcedBar
+            ) ChessReadinessEngine.ReadinessState.RED_LIGHT.name
+            else ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name
+        Verdict.FAIL_TIMEOUT ->
+            if (enforcedBar > 0 &&
+                puzzlesPassed * RED_ZONE_SOLVE_DIVISOR >= enforcedBar
+            ) ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name
+            else ChessReadinessEngine.ReadinessState.RED_LIGHT.name
     }
 
     /**
      * Synthetic CCRS for the SHARED history record (drives the rest-period
      * ladder for failed tests: < 40 → 120 min, 40–59 → 60 min). The reflex
-     * failure is the most severe (total rest). A strike is a YELLOW
-     * near-miss — its 65 keeps it in the standard 60-min cool-down band
-     * (same as a passed session) instead of the 120-min severe rest ladder.
+     * failure is the most severe (total rest). A YELLOW near-miss keeps 65 —
+     * the standard 60-min cool-down band (same as a passed session). A RED
+     * survival failure (below half the enforced bar solved) uses 40.
      */
-    fun syntheticCcrs(verdict: Verdict): Int = when (verdict) {
+    fun syntheticCcrs(
+        verdict: Verdict,
+        puzzlesPassed: Int = 0,
+        enforcedBar: Int = 0
+    ): Int = when (verdict) {
         Verdict.PASS -> 85
-        Verdict.FAIL_STRIKE -> 65
-        Verdict.FAIL_TIMEOUT -> 40
         Verdict.FAIL_REFLEX -> 20
+        Verdict.FAIL_STRIKE ->
+            if (enforcedBar > 0 &&
+                puzzlesPassed * RED_ZONE_SOLVE_DIVISOR < enforcedBar
+            ) 40 else 65
+        Verdict.FAIL_TIMEOUT ->
+            if (enforcedBar > 0 &&
+                puzzlesPassed * RED_ZONE_SOLVE_DIVISOR >= enforcedBar
+            ) 65 else 40
     }
 }

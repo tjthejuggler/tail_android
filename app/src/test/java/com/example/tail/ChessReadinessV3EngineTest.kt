@@ -152,6 +152,84 @@ class ChessReadinessV3EngineTest {
         // Reflex failure is the harshest (120-min severe rung).
         assertEquals(20, ChessReadinessV3Engine.syntheticCcrs(Verdict.FAIL_REFLEX))
     }
+
+    // ── Zone rule: solved-count ratio at failure decides YELLOW vs RED ────
+
+    @Test
+    fun `timeout near the bar is a yellow near-miss`() {
+        // 18 of bar 19 solved at the 5:00 cap: 36 ≥ 19 → YELLOW
+        assertEquals(
+            ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name,
+            ChessReadinessV3Engine.stateNameFor(
+                Verdict.FAIL_TIMEOUT, puzzlesPassed = 18, enforcedBar = 19
+            )
+        )
+        assertEquals(
+            65, ChessReadinessV3Engine.syntheticCcrs(
+                Verdict.FAIL_TIMEOUT, puzzlesPassed = 18, enforcedBar = 19
+            )
+        )
+    }
+
+    @Test
+    fun `strike with a strong count is also a yellow near-miss`() {
+        assertEquals(
+            ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name,
+            ChessReadinessV3Engine.stateNameFor(
+                Verdict.FAIL_STRIKE, puzzlesPassed = 10, enforcedBar = 19
+            )
+        )
+        assertEquals(
+            65, ChessReadinessV3Engine.syntheticCcrs(
+                Verdict.FAIL_STRIKE, puzzlesPassed = 10, enforcedBar = 19
+            )
+        )
+    }
+
+    @Test
+    fun `failure below half the bar maps to red regardless of mode`() {
+        // 9 of 19: 18 < 19 → severe underperform → RED (both failure modes)
+        for (v in listOf(Verdict.FAIL_TIMEOUT, Verdict.FAIL_STRIKE)) {
+            assertEquals(
+                ChessReadinessEngine.ReadinessState.RED_LIGHT.name,
+                ChessReadinessV3Engine.stateNameFor(
+                    v, puzzlesPassed = 9, enforcedBar = 19
+                )
+            )
+            assertEquals(
+                40, ChessReadinessV3Engine.syntheticCcrs(
+                    v, puzzlesPassed = 9, enforcedBar = 19
+                )
+            )
+        }
+    }
+
+    @Test
+    fun `exactly half the bar solved is a yellow near-miss`() {
+        // bar 20, solved 10 → 20 ≥ 20 → YELLOW (boundary is inclusive)
+        assertEquals(
+            ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name,
+            ChessReadinessV3Engine.stateNameFor(
+                Verdict.FAIL_TIMEOUT, puzzlesPassed = 10, enforcedBar = 20
+            )
+        )
+    }
+
+    @Test
+    fun `reflex failure is red regardless of counts`() {
+        assertEquals(
+            ChessReadinessEngine.ReadinessState.RED_LIGHT.name,
+            ChessReadinessV3Engine.stateNameFor(
+                Verdict.FAIL_REFLEX, puzzlesPassed = 50, enforcedBar = 19
+            )
+        )
+        assertEquals(
+            20, ChessReadinessV3Engine.syntheticCcrs(
+                Verdict.FAIL_REFLEX, puzzlesPassed = 50, enforcedBar = 19
+            )
+        )
+    }
+
     // ── Dual win: 70th-percentile personal target ─────────────────────────
 
     @Test
