@@ -8,6 +8,11 @@ Design:
   • Polls the KDE Activity SQLite DB every N seconds (default 60).
   • Tracks a high-water-mark (last-seen `start` timestamp) so only NEW
     entries are processed on each poll — O(new rows), not O(all rows).
+  • Additionally drains assist-launch events (JSONL lines appended by
+    scripts/play_in_vlc.sh to movie_watcher_assist.jsonl): direct VLC
+    launches never produce a KDE Activity DB event (KIO/the portal only
+    records portal-routed opens), so without this the Tail app would
+    never ask about videos started by voice.
   • Cleans each filename using movie_name_cleaner (same logic as the
     one-shot clean_video_history.py).
   • Captures BOTH start and end times from the KDE DB.
@@ -81,6 +86,18 @@ STATE_FILE = os.environ.get(
     "MOVIE_WATCHER_STATE",
     str(SCRIPT_DIR / "movie_watcher_state.json")
 )
+# Assist launches bypass KDE/KIO (no Activity DB event is ever recorded for
+# them), so scripts/play_in_vlc.sh appends {"start","end","path"} JSONL lines
+# here; we drain the file each poll and feed the rows through the normal
+# pipeline. Deduped against the KDE DB and existing cache sessions so a
+# manually re-opened file is never counted twice.
+ASSIST_EVENTS_FILE = os.environ.get(
+    "MOVIE_ASSIST_EVENTS",
+    str(SCRIPT_DIR / "movie_watcher_assist.jsonl")
+)
+# Two events for the same file within this window are considered the SAME
+# viewing (launch-vs-KDE-write jitter).
+ASSIST_DEDUP_WINDOW_SEC = int(os.environ.get("MOVIE_ASSIST_DEDUP_WINDOW", "180"))
 
 VIDEO_EXTS = ['mp4', 'mkv', 'avi', 'mov', 'm4v', 'webm', 'flv', 'wmv', 'ts', 'm2ts']
 VIDEO_CONDITIONS = " OR ".join([f"targettedResource LIKE '%.{ext}'" for ext in VIDEO_EXTS])
@@ -225,6 +242,98 @@ def query_all_videos() -> List[Tuple[int, int, str]]:
         return []
     finally:
         conn.close()
+
+
+def _is_video_path(path: str) -> bool:
+    """Extension check mirroring the SQL filter used for KDE rows."""
+    p = (path or "").lower()
+    return any(p.endswith("." + ext) for ext in VIDEO_EXTS)
+
+
+def _kde_has_event(filepath: str, start: int) -> bool:
+    """True when the KDE DB already recorded this file within the dedup
+    window of `start` (a manual Dolphin open of the same file)."""
+    if not os.path.exists(KDE_DB_PATH):
+        return False
+    conn = sqlite3.connect(f"file:{KDE_DB_PATH}?mode=ro", uri=True)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM ResourceEvent "
+            "WHERE targettedResource = ? AND start BETWEEN ? AND ? LIMIT 1",
+            (filepath, start - ASSIST_DEDUP_WINDOW_SEC,
+             start + ASSIST_DEDUP_WINDOW_SEC),
+        )
+        return cursor.fetchone() is not None
+    except sqlite3.OperationalError as e:
+        logger.error(f"Error querying KDE DB for dedup: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def load_assist_events() -> List[Tuple[int, int, str]]:
+    """Drain assist-launched video events (JSONL {start,end,path}).
+
+    Returns raw rows (start, end, path) already deduplicated within the
+    batch, filtered to video extensions, and dropped when the KDE DB has
+    the same viewing. The file is truncated after a successful read so
+    lines are consumed exactly once (cache-session dedup below keeps a
+    re-read after a crash idempotent).
+    """
+    if not os.path.exists(ASSIST_EVENTS_FILE):
+        return []
+    rows: List[Tuple[int, int, str]] = []
+    seen: set = set()
+    try:
+        with open(ASSIST_EVENTS_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning(f"Skipping malformed assist line: {line[:80]}")
+                    continue
+                try:
+                    start = int(obj.get("start") or 0)
+                    end = int(obj.get("end") or 0)
+                except (TypeError, ValueError):
+                    continue
+                path = str(obj.get("path") or "")
+                if start <= 0 or not path or not _is_video_path(path):
+                    continue
+                if (start, path) in seen:
+                    continue
+                if _kde_has_event(path, start):
+                    logger.info(f"Assist event already in KDE DB — skipped: {path}")
+                    continue
+                seen.add((start, path))
+                rows.append((start, end, path))
+    except OSError as e:
+        logger.error(f"Error reading assist events: {e}")
+        return []
+    if not rows:
+        return []
+    # Drain only after a successful parse — a crash mid-parse retries later.
+    try:
+        open(ASSIST_EVENTS_FILE, "w").close()
+    except OSError as e:
+        logger.error(f"Error draining assist events file: {e}")
+    return rows
+
+
+def _session_seen(cache: Dict[str, Any], filepath: str, start: int) -> bool:
+    """True when the cache already holds a session for this file inside the
+    dedup window — makes re-drained batches idempotent."""
+    for entry in cache.get("movies", []):
+        for s in entry.get("sessions", []):
+            if s.get("filepath") == filepath:
+                su = s.get("start_unix") or 0
+                if su and abs(su - start) <= ASSIST_DEDUP_WINDOW_SEC:
+                    return True
+    return False
 
 
 # ── Cache management ─────────────────────────────────────────────────────────
@@ -419,12 +528,32 @@ def poll_once() -> int:
     """
     last_seen = load_state()
     rows = query_new_videos(since_start=last_seen)
-    if not rows:
+
+    # Assist-launched videos (no KDE event exists for them — see file header).
+    assist_raw = load_assist_events()
+    assist_rows: List[Tuple[int, int, str]] = []
+    if assist_raw:
+        cache_probe = load_cache()
+        for start, end, path in assist_raw:
+            if _session_seen(cache_probe, path, start):
+                logger.info(f"Assist event already cached — skipped: {path}")
+                continue
+            assist_rows.append((start, end, path))
+        if assist_rows:
+            logger.info(f"Drained {len(assist_rows)} assist event(s) "
+                        f"from {ASSIST_EVENTS_FILE}")
+
+    if not rows and not assist_rows:
         return 0
 
-    logger.info(f"Found {len(rows)} new video event(s) since start={last_seen}")
+    if rows:
+        logger.info(f"Found {len(rows)} new video event(s) since start={last_seen}")
 
-    new_entries = process_rows(rows)
+    all_rows = rows + assist_rows
+    new_entries = process_rows(all_rows)
+    # The high-water mark tracks KDE DB rows ONLY: assist rows never come
+    # from the KDE DB, so advancing the mark with them could mask a KDE row
+    # written a moment later with a slightly older start.
     max_start = max((r[0] for r in rows), default=last_seen)
 
     if not new_entries:
