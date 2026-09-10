@@ -423,17 +423,44 @@ async def assist_submit_action(payload: Dict[str, Any], api_key: str = Security(
     for Roo Code. Response is returned BEFORE any of that happens, so the
     phone gets a snappy ack.
 
-    Body: {"text": "...", "id": "optional-client-id"}
+    Body: {"text": "...", "id": "optional-client-id",
+           "image_b64": "optional base64 image bytes",
+           "image_ext": "jpg|png|..."}
+    When image_b64 is present the decoded file is saved to
+    <queue-dir>/images/<id>.<ext> and the JSONL line carries an "image"
+    field with that relative path — the Roo Code quick_capture_assist task
+    reads it from there (e.g. movies shared via the Quick Capture share
+    target with an action-type instruction).
     """
+    import base64 as _b64
+
     text = str(payload.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
-    line = json.dumps({
-        "id": str(payload.get("id") or uuid.uuid4().hex[:12]),
+    action_id = str(payload.get("id") or uuid.uuid4().hex[:12])
+    image_rel = None
+    image_b64 = str(payload.get("image_b64") or "")
+    if image_b64:
+        ext = str(payload.get("image_ext") or "jpg").strip(".").lower() or "jpg"
+        images_dir = ASSIST_ACTION_QUEUE.parent / "images"
+        try:
+            images_dir.mkdir(parents=True, exist_ok=True)
+            image_path = images_dir / f"{action_id}.{ext}"
+            image_path.write_bytes(_b64.b64decode(image_b64))
+            image_rel = str(image_path.relative_to(ASSIST_ACTION_QUEUE.parent))
+            logger.info("assist image saved: %s (%d bytes)", image_path, image_path.stat().st_size)
+        except Exception as exc:  # noqa: BLE001 — degrade to text-only action
+            logger.error("assist image decode/save failed: %s", exc)
+            image_rel = None
+    entry = {
+        "id": action_id,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "source": "phone",
         "text": text,
-    }, ensure_ascii=False)
+    }
+    if image_rel:
+        entry["image"] = image_rel
+    line = json.dumps(entry, ensure_ascii=False)
     try:
         ASSIST_ACTION_QUEUE.parent.mkdir(parents=True, exist_ok=True)
         with open(ASSIST_ACTION_QUEUE, "a", encoding="utf-8") as f:
@@ -442,7 +469,7 @@ async def assist_submit_action(payload: Dict[str, Any], api_key: str = Security(
         logger.error("assist queue append failed: %s", exc)
         raise HTTPException(status_code=500, detail="queue append failed")
     dashboard.note("phone", "assist_action", f"Queued PC action: {text[:60]}")
-    return {"ok": True, "queued": True}
+    return {"ok": True, "queued": True, "image": image_rel}
 
 
 @app.post("/api/v1/pc_widget/event", tags=["pc_widget"])

@@ -450,6 +450,8 @@ fun SettingsScreen(
                     SettingsSubSectionDivider()
                     VisionMemorySection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
+                    QuickCaptureSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
                     AdviceBannerSection(adviceViewModel = adviceViewModel)
                 }
             }

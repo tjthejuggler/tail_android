@@ -366,6 +366,29 @@
         </activity>
 
         <!--
+            ShareImageActivity (Quick Capture): appears in the system share
+            sheet when the user shares an IMAGE from anywhere on the phone.
+            Offers three destinations: Note (saves image + markdown entry),
+            Habit (sharable text-input habit), Action (pick a Quick Capture
+            action type → image + instruction go to the PC
+            quick_capture_assist instance via the Tail Bridge).
+        -->
+        <activity
+            android:name=".ShareImageActivity"
+            android:exported="true"
+            android:label="📸 Quick Capture"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Tail.Transparent">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+        </activity>
+
+        <!--
             ChessGameShareActivity: appears in the system share sheet as
             "♟ Chess Audit". When the user shares a finished chess.com game
             link to Tail, it extracts the game ID, verifies rated play is

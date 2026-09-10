@@ -141,6 +141,8 @@ private val KEY_VOICE_TRIGGER_INCREMENTS = stringPreferencesKey("voice_trigger_i
 // Voice note dictation settings
 private val KEY_VOICE_NOTE_ENABLED = booleanPreferencesKey("voice_note_enabled")
 private val KEY_VOICE_NOTE_FILE_URI = stringPreferencesKey("voice_note_file_uri")
+// Quick Capture action types — stored as a JSON array of {id,name,description}
+private val KEY_QC_ACTION_TYPES = stringPreferencesKey("qc_action_types")
 // Automatic daily backup settings — see AppSettings.autoBackupFolderUri
 private val KEY_AUTO_BACKUP_FOLDER_URI = stringPreferencesKey("auto_backup_folder_uri")
 private val KEY_AUTO_BACKUP_LAST_DATE = stringPreferencesKey("auto_backup_last_date")
@@ -393,6 +395,24 @@ private fun decodeFileUriMap(raw: String): Map<String, String> {
         val idx = pair.indexOf(KV_SEP)
         if (idx < 0) null else pair.substring(0, idx) to pair.substring(idx + 1)
     }.toMap()
+}
+
+// Quick Capture action types are stored as a JSON array — see
+// SettingsRepository.saveQuickCaptureActionTypes.
+private fun decodeQcActionTypes(raw: String): List<QuickCaptureActionType> {
+    if (raw.isBlank()) return emptyList()
+    return try {
+        val arr = org.json.JSONArray(raw)
+        (0 until arr.length()).mapNotNull { i ->
+            val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+            val id = obj.optString("id")
+            val name = obj.optString("name")
+            if (id.isBlank() || name.isBlank()) null
+            else QuickCaptureActionType(id, name, obj.optString("description"))
+        }
+    } catch (_: Exception) {
+        emptyList()
+    }
 }
 
 // Serialisation helpers for habit notes (habit name → note text).
@@ -992,6 +1012,7 @@ class SettingsRepository(private val context: Context) {
             voiceSubtypeHabits = prefs[KEY_VOICE_SUBTYPE_HABITS] ?: emptySet(),
             voiceNoteEnabled = prefs[KEY_VOICE_NOTE_ENABLED] ?: false,
             voiceNoteFileUri = prefs[KEY_VOICE_NOTE_FILE_URI] ?: "",
+            quickCaptureActionTypes = decodeQcActionTypes(prefs[KEY_QC_ACTION_TYPES] ?: ""),
             autoBackupFolderUri = prefs[KEY_AUTO_BACKUP_FOLDER_URI] ?: "",
             autoBackupLastDate = prefs[KEY_AUTO_BACKUP_LAST_DATE] ?: "",
             customInputAmounts = decodeIntListMap(customInputAmountsRaw),
@@ -1606,6 +1627,24 @@ class SettingsRepository(private val context: Context) {
     /** Saves the SAF URI for the voice note markdown file. */
     suspend fun saveVoiceNoteFileUri(uri: String) {
         context.dataStore.edit { prefs -> prefs[KEY_VOICE_NOTE_FILE_URI] = uri }
+    }
+
+    /**
+     * Saves the full list of Quick Capture action types (Settings → Quick
+     * Capture → Actions). Serialized as a JSON array of
+     * `{"id","name","description"}` objects.
+     */
+    suspend fun saveQuickCaptureActionTypes(types: List<QuickCaptureActionType>) {
+        val arr = org.json.JSONArray()
+        types.forEach { t ->
+            arr.put(
+                org.json.JSONObject()
+                    .put("id", t.id)
+                    .put("name", t.name)
+                    .put("description", t.description)
+            )
+        }
+        context.dataStore.edit { prefs -> prefs[KEY_QC_ACTION_TYPES] = arr.toString() }
     }
 
     // ── Map Screen Stats Settings ────────────────────────────────────────

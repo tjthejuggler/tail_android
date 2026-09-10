@@ -752,3 +752,9 @@ Notes:
 - Deleted `ChessReadinessV2Overlay` (524 lines) and gutted `ChessReadinessOverlay` down to the shared `ChessHabitCredit` helper (-540 lines); FloatingBubbleService now opens the V3 overlay unconditionally.
 - NOTE: the v1/v2 ENGINE objects remain — v3/v4 are layered on top of them (v4 refines v3, v3 builds on v2/v1 types), so they cannot be deleted without redesigning the engines. Same for the old `GameOutcome.Audited/AuditedV2` branches in the reconciler/status UI.
 - Verified: all 704 unit tests pass. `installDebug` blocked by offline ADB device (wireless debugging needs refresh on the phone).
+
+## 2026-09-10 — Quick Capture image share target + Action types
+- New system share target **"📸 Quick Capture"** (`ShareImageActivity`) for images from anywhere on the phone: route to 📝 Note (image saved to `note_images/` beside the notes file + markdown entry), 🧠 Habit (sharable text-input habit log + increment), or 💻 **Action**.
+- Action opens a sub-selection of user-defined **action types** (Settings → Quick Capture → Actions, full CRUD; e.g. "Wanted movies" with the film_organizer instruction). The chosen type's description is sent verbatim together with the image to the PC quick_capture_assist (bridge POST `/api/v1/assist/action` with `image_b64`; the bridge stores it under `queue/images/` and adds an `"image"` field to actions.jsonl; SAF/Syncthing fallback copies the image as `assist_image_<ts>.jpg`).
+- Bridge (`tail_bridge/bridge_server.py`) `assist/action` endpoint now accepts optional `image_b64`/`image_ext`.
+- quick_capture_assist README/PREFERENCES updated with the image-action pipeline and film_organizer `POST /api/wanted` specifics.

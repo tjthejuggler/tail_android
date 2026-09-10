@@ -245,6 +245,18 @@ fun HabitViewModel.saveVoiceNoteFileUri(uri: String) {
 }
 
 /**
+ * Saves the full list of Quick Capture action types (Settings → Quick
+ * Capture → Actions). Replaces the whole list — callers compute the new
+ * list from the current one (add / edit / delete).
+ */
+fun HabitViewModel.saveQuickCaptureActionTypes(types: List<com.example.tail.data.QuickCaptureActionType>) {
+    viewModelScope.launch {
+        settingsRepo.saveQuickCaptureActionTypes(types)
+        _settings.value = _settings.value.copy(quickCaptureActionTypes = types)
+    }
+}
+
+/**
  * Toggles custom point ranges on/off for [habitName].
  * When enabled, the habit's points are calculated based on which range
  * the "true value" or "garmin value" falls into.

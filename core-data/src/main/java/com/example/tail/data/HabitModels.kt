@@ -811,6 +811,22 @@ data class HabitScreen(
 )
 
 /**
+ * Quick Capture "action type" — a named, user-defined instruction that is
+ * sent together with a shared image to the PC quick_capture_assist instance.
+ *
+ * Example: name = "Wanted movies", description = "add the movies or series
+ * shown here to the movie_organizer app via the api and mark them as wanted".
+ */
+data class QuickCaptureActionType(
+    /** Stable client-generated id (UUID) used for editing/deleting. */
+    val id: String,
+    /** Short user-facing name shown in the share picker. */
+    val name: String,
+    /** Full instruction/explanation forwarded verbatim to the PC assist. */
+    val description: String
+)
+
+/**
  * App settings stored in DataStore.
  */
 data class AppSettings(
@@ -1212,6 +1228,15 @@ data class AppSettings(
     val voiceNoteEnabled: Boolean = false,
     /** SAF URI for the notes markdown file to prepend dictated notes to. */
     val voiceNoteFileUri: String = "",
+
+    // ── Quick Capture action types ────────────────────────────────────────
+    /**
+     * User-defined action types offered when sharing an image to the Quick
+     * Capture share target and choosing "Action". Managed in Settings →
+     * Quick Capture → Actions. Each carries the instruction text that is
+     * forwarded verbatim to the PC quick_capture_assist instance.
+     */
+    val quickCaptureActionTypes: List<QuickCaptureActionType> = emptyList(),
 
     // ── Custom input increment amounts ────────────────────────────────────
     /**
