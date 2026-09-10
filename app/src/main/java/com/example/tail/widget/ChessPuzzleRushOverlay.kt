@@ -119,6 +119,8 @@ class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = fal
     private var rushStrikes = -1
     private var reviewedWrong: Boolean? = null
     private var manualMinutesText = ""
+    // 3 or 5 — which Puzzle Rush mode the run was (-1 = not answered yet).
+    private var rushMinutesMode = -1
 
     // Handles to input views of the currently shown step
     private var rushScoreField: EditText? = null
@@ -155,14 +157,21 @@ class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = fal
             var saveButton: TextView? = null
             fun updateSave() {
                 val btn = saveButton ?: return
-                // The review question only exists for runs with strikes.
+                // The review question only exists for runs with strikes;
+                // the mode question is mandatory (3 or 5 minutes).
                 val ready = rushScoreText.isNotBlank() &&
                     rushStrikes >= 0 &&
                     (rushStrikes == 0 || reviewedWrong != null) &&
+                    (rushMinutesMode == 3 || rushMinutesMode == 5) &&
                     (!manual || (manualMinutesText.toIntOrNull() ?: 0) > 0)
                 btn.isEnabled = ready
                 btn.alpha = if (ready) 1f else 0.5f
             }
+            body("Which Puzzle Rush mode?", bold = true)
+            chipRow(listOf("3 min", "5 min"),
+                if (rushMinutesMode == 3) 0 else if (rushMinutesMode == 5) 1 else -1
+            ) { rushMinutesMode = if (it == 0) 3 else 5; updateSave() }
+            spacer(8)
             rushScoreField = numberField("Puzzles solved", rushScoreText, 3).also { field ->
                 field.addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -217,6 +226,7 @@ class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = fal
 
     private fun submit() {
         val rushScore = rushScoreField?.text?.toString()?.toIntOrNull() ?: return
+        if (rushMinutesMode != 3 && rushMinutesMode != 5) return
         val ath = ChessReadinessStore.lastRushAllTimeHigh(context)
 
         val (startedAt, durationSec) = if (manual) {
@@ -242,7 +252,8 @@ class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = fal
                 strikes = rushStrikes.coerceAtLeast(0),
                 // Null for strike-free runs — the question was never asked.
                 reviewedWrong = if (rushStrikes > 0) reviewedWrong else null,
-                allTimeHigh = ath
+                allTimeHigh = ath,
+                minutesMode = rushMinutesMode
             )
         )
         // The rush all-time high feeds the record line of the stats chart

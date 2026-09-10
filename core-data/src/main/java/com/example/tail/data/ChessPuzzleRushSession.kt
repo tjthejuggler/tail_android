@@ -51,7 +51,13 @@ data class PuzzleRushSessionRecord(
      */
     val reviewedWrong: Boolean?,
     /** All-time-high rush baseline in effect at session time. */
-    val allTimeHigh: Int
+    val allTimeHigh: Int,
+    /**
+     * Which Puzzle Rush mode the run was: 3 (3-minute) or 5 (5-minute).
+     * Everything logged before this field existed was a 3-minute run, so
+     * the log store backfills legacy entries with 3.
+     */
+    val minutesMode: Int = 3
 )
 
 /**

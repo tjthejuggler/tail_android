@@ -58,6 +58,14 @@ object ChessReadinessLogStore {
     private const val KEY_SURVEY_SCALE10 = "surveyScale10"
 
     /**
+     * One-time rush-mode backfill marker: every rush session logged before
+     * the 3/5-minute survey question existed was a 3-minute run, so on
+     * first touch after the upgrade every stored session gets
+     * `minutesMode = 3` and this flag is set.
+     */
+    private const val KEY_RUSH_MINUTES_BACKFILLED = "rushMinutesBackfilled"
+
+    /**
      * Soft cap on stored events (oldest are trimmed first). Generous on
      * purpose: the one-time full-history backfill must be able to hold a
      * user's ENTIRE chess.com game history, not just recent months.
@@ -335,7 +343,9 @@ object ChessReadinessLogStore {
     /** All standalone Puzzle Rush timer sessions, in stored order. */
     fun loadRushSessions(context: Context): List<PuzzleRushSessionRecord> =
         synchronized(lock) {
-            val arr = readRoot(context).optJSONArray(KEY_RUSH_SESSIONS) ?: return emptyList()
+            val root = readRoot(context)
+            if (migrateRushMinutesLocked(root)) writeRoot(context, root)
+            val arr = root.optJSONArray(KEY_RUSH_SESSIONS) ?: return emptyList()
             (0 until arr.length()).mapNotNull { i ->
                 decodeRushSession(arr.getJSONObject(i))
             }
@@ -368,6 +378,24 @@ object ChessReadinessLogStore {
             }
         }
         root.put(KEY_SURVEY_SCALE10, true)
+        return true
+    }
+
+    /**
+     * Backfills `minutesMode = 3` onto every stored rush session that
+     * predates the 3/5-minute survey question (idempotent via
+     * [KEY_RUSH_MINUTES_BACKFILLED]). True when the root was mutated and
+     * needs persisting.
+     */
+    private fun migrateRushMinutesLocked(root: JSONObject): Boolean {
+        if (root.optBoolean(KEY_RUSH_MINUTES_BACKFILLED, false)) return false
+        val arr = root.optJSONArray(KEY_RUSH_SESSIONS)
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                arr.getJSONObject(i).put("minutesMode", 3)
+            }
+        }
+        root.put(KEY_RUSH_MINUTES_BACKFILLED, true)
         return true
     }
 
@@ -454,6 +482,7 @@ object ChessReadinessLogStore {
         // Omitted when the question was never asked (strike-free runs).
         s.reviewedWrong?.let { put("reviewedWrong", it) }
         put("allTimeHigh", s.allTimeHigh)
+        put("minutesMode", s.minutesMode)
     }
 
     private fun decodeRushSession(o: JSONObject): PuzzleRushSessionRecord? = try {
@@ -465,7 +494,8 @@ object ChessReadinessLogStore {
             strikes = o.optInt("strikes", 0),
             reviewedWrong = if (o.has("reviewedWrong") && !o.isNull("reviewedWrong"))
                 o.optBoolean("reviewedWrong", false) else null,
-            allTimeHigh = o.optInt("allTimeHigh", 0)
+            allTimeHigh = o.optInt("allTimeHigh", 0),
+            minutesMode = o.optInt("minutesMode", 3)
         )
     } catch (_: Exception) {
         null
