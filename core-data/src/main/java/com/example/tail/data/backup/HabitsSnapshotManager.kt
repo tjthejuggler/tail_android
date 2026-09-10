@@ -5,11 +5,14 @@ import android.util.Log
 import com.example.tail.data.HabitsDatabase
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.google.gson.stream.JsonReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.Reader
+import java.io.StringReader
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
@@ -83,15 +86,44 @@ class HabitsSnapshotManager(private val context: Context) {
      *
      * @param reason short tag for logs (e.g. "pre-write", "post-save").
      */
-    suspend fun snapshot(db: HabitsDatabase, reason: String) = withContext(Dispatchers.IO) {
+    suspend fun snapshot(db: HabitsDatabase, reason: String) {
         val entryCount = db.values.sumOf { it.size }
         if (entryCount < MIN_ENTRIES_TO_SNAPSHOT) {
             // Refuse to snapshot an empty/near-empty DB — it's never a "good" state
             // worth preserving and would just dilute the retained history.
-            return@withContext
+            return
         }
         try {
-            val json = gson.toJson(db)
+            snapshotRaw(gson.toJson(db), reason)
+        } catch (e: Throwable) {
+            // Throwable, not Exception: snapshotting must never take the process
+            // down (an OutOfMemoryError serializing a multi-MB DB is exactly the
+            // crash class fixed on 2026-09-10).
+            Log.w(TAG, "snapshot[$reason]: failed (non-fatal): ${e.message}")
+        }
+    }
+
+    /**
+     * Records a snapshot from ALREADY-SERIALIZED json — e.g. the exact bytes just
+     * written to the DB file ("post-save") or the raw on-disk text captured before
+     * an overwrite ("pre-write"). This avoids the old parse→re-serialize round
+     * trip, which transiently doubled the DB's memory footprint on every save and
+     * was a direct contributor to the 2026-09-10 OOM crash loop on rapid habit
+     * increments.
+     */
+    suspend fun snapshotRaw(json: String, reason: String) = withContext(Dispatchers.IO) {
+        try {
+            val entryCount = try {
+                countHabitDbEntries(json)
+            } catch (e: Throwable) {
+                -1
+            }
+            if (entryCount < MIN_ENTRIES_TO_SNAPSHOT) {
+                // Refuse to snapshot an unparseable or near-empty payload — it's
+                // never a "good" state worth preserving.
+                Log.w(TAG, "snapshot[$reason]: refused unparseable/near-empty payload ($entryCount entries)")
+                return@withContext
+            }
             val hash = shortHash(json)
 
             mutex.withLock {
@@ -115,7 +147,9 @@ class HabitsSnapshotManager(private val context: Context) {
                 Log.i(TAG, "snapshot[$reason]: wrote $fileName ($entryCount entries, ${json.length} bytes)")
                 prune()
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Throwable, not Exception: snapshotting must never break a
+            // legitimate save (see snapshot() above).
             Log.w(TAG, "snapshot[$reason]: failed (non-fatal): ${e.message}")
         }
     }
@@ -135,22 +169,37 @@ class HabitsSnapshotManager(private val context: Context) {
 
     /**
      * Loads and parses the snapshot at [file]. Returns null if it can't be read
-     * or parsed (so the restore UI can grey it out rather than crash).
+     * or parsed (so the restore UI can grey it out rather than crash). Only used
+     * for real restore/preview paths — entry counting uses [entryCountOf].
      */
     suspend fun readSnapshot(file: File): HabitsDatabase? = withContext(Dispatchers.IO) {
         try {
             val text = file.readText()
             if (text.isBlank()) return@withContext null
             gson.fromJson<HabitsDatabase>(text, dbType)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Throwable, not Exception: an OutOfMemoryError mid-parse of a
+            // multi-MB snapshot must grey the snapshot out, never kill the process.
             Log.w(TAG, "readSnapshot: failed for ${file.name}: ${e.message}")
             null
         }
     }
 
-    /** Total entry count for a snapshot (for display). Best-effort, 0 on failure. */
+    /**
+     * Total entry count for a snapshot (for display and the auto-restore scan).
+     *
+     * STREAMING: counts entries with a JSON token reader instead of building the
+     * full Gson object graph. The auto-restore scan used to full-parse up to a
+     * dozen multi-MB snapshots back-to-back on every process start; together with
+     * the save-path allocations that OOM-crash-looped the app on 2026-09-10.
+     * O(1) memory now. Best-effort, 0 on failure.
+     */
     suspend fun entryCountOf(file: File): Int = withContext(Dispatchers.IO) {
-        readSnapshot(file)?.values?.sumOf { it.size } ?: 0
+        try {
+            file.bufferedReader().use { countHabitDbEntries(it) }
+        } catch (e: Throwable) {
+            0
+        }
     }
 
     // ─── internals ──────────────────────────────────────────────────────────
@@ -252,3 +301,31 @@ class HabitsSnapshotManager(private val context: Context) {
         }
     }
 }
+
+/**
+ * Counts total habit entries (inner map size summed over habits) in a
+ * habits-db JSON document using a streaming token reader — O(1) memory, no
+ * object graph. Throws on malformed or foreign JSON; callers decide how to
+ * treat that. Shared with [com.example.tail.data.HabitsRepository] for
+ * memory-safe save validation.
+ */
+internal fun countHabitDbEntries(reader: Reader): Int {
+    val json = JsonReader(reader)
+    var total = 0
+    json.beginObject()
+    while (json.hasNext()) {
+        json.nextName() // habit name
+        json.beginObject()
+        while (json.hasNext()) {
+            json.nextName() // date key
+            json.nextInt()  // stored count (also rejects non-int payloads)
+            total++
+        }
+        json.endObject()
+    }
+    json.endObject()
+    return total
+}
+
+/** Convenience overload for in-memory JSON text. */
+internal fun countHabitDbEntries(text: String): Int = countHabitDbEntries(StringReader(text))

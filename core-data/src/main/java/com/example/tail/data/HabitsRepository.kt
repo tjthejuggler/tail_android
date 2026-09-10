@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.example.tail.data.backup.HabitsSnapshotManager
+import com.example.tail.data.backup.countHabitDbEntries
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
@@ -188,7 +189,11 @@ class HabitsRepository {
                 // guard has a baseline even when a later read fails mid-Syncthing-write.
                 recordGoodEntryCount(db.values.sumOf { it.size })
                 HabitsLoadResult.Success(db)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable, not Exception: an OutOfMemoryError while parsing a
+                // multi-MB DB must surface as a (recoverable) ParseFailure, never
+                // kill the process — this exact path OOM-crash-looped the app on
+                // 2026-09-10.
                 Log.w(TAG, "loadDatabaseResult: JSON parse failed (${text.length} chars): ${e.message}")
                 HabitsLoadResult.ParseFailure(e, rawBytesLen = text.length)
             }
@@ -219,31 +224,59 @@ class HabitsRepository {
     suspend fun saveDatabase(uri: Uri, context: Context, db: HabitsDatabase) =
         withContext(Dispatchers.IO) {
             val json = prettyGson.toJson(db)
-            // Validate round-trip before writing
-            val validated: HabitsDatabase? = try {
-                gson.fromJson(json, dbType)
-            } catch (e: Exception) {
-                null
+
+            // ── Streaming round-trip validation (memory-safe) ─────────────────
+            // This used to re-parse the fully serialized DB through Gson into a
+            // SECOND complete object graph just to validate Gson's own output.
+            // On a multi-MB habits DB that graph — plus the anti-shrinkage
+            // re-read and the snapshot serializations below — filled the 256 MB
+            // heap and produced the OOM crash loop of 2026-09-10 whenever
+            // several increments landed in quick succession. A streaming token
+            // scan now proves well-formedness AND total entry-count equality
+            // with O(1) memory.
+            val newEntryCount = db.values.sumOf { it.size }
+            val streamedCount = try {
+                countHabitDbEntries(json)
+            } catch (e: Throwable) {
+                -1
             }
-            if (validated == null) {
-                Log.w(TAG, "saveDatabase: round-trip JSON validation failed, ABORTING save")
+            if (streamedCount != newEntryCount) {
+                Log.w(
+                    TAG,
+                    "saveDatabase: round-trip validation failed (expected $newEntryCount " +
+                            "entries, streamed $streamedCount) — ABORTING save"
+                )
                 return@withContext
             }
 
-            // ── Anti-shrinkage guard ──────────────────────────────────────────
+            // ── Anti-shrinkage guard (streaming, memory-safe) ──────────────────
             // Read what is currently on disk and reject the write if we'd be
-            // catastrophically shrinking it. Errors here fall through to the
-            // fail-closed fallback below, which uses the high-water mark.
-            val newEntryCount = db.values.sumOf { it.size }
-            val onDiskResult = try {
-                loadDatabaseResult(uri, context)
+            // catastrophically shrinking it. This used to fully parse the
+            // on-disk file into an object graph on EVERY save and then
+            // re-serialize it again for the pre-write snapshot — two more
+            // multi-MB transient allocations per increment. Now: read the raw
+            // text once, stream-count its entries, and (when the write
+            // proceeds) store that raw text directly as the pre-write snapshot.
+            val mgr = snapshotManager(context)
+            val onDiskText = try {
+                readRawText(uri, context)
             } catch (e: Exception) {
-                HabitsLoadResult.IoFailure(e)
+                null
             }
-            val onDisk: HabitsDatabase? = (onDiskResult as? HabitsLoadResult.Success)?.db
+            // Null = unreadable / blank / unparseable → fail-closed fallback,
+            // exactly like the old load-failure paths.
+            val onDiskState: Pair<String, Int>? = onDiskText
+                ?.takeIf { it.isNotBlank() }
+                ?.let { text ->
+                    try {
+                        text to countHabitDbEntries(text)
+                    } catch (e: Throwable) {
+                        null
+                    }
+                }
 
-            if (onDisk != null) {
-                val onDiskEntryCount = onDisk.values.sumOf { it.size }
+            if (onDiskState != null) {
+                val onDiskEntryCount = onDiskState.second
                 // Tuning: only trigger the guard when the on-disk DB is non-trivial
                 // (>50 entries) AND we'd be writing fewer than half as many entries.
                 // This catches the full-wipe scenario (writing 0..76 entries on top
@@ -258,26 +291,25 @@ class HabitsRepository {
                     return@withContext
                 }
 
-                // Snapshot the healthy pre-write state so we can always roll back
-                // to what was on disk before this overwrite. Never blocks the save.
-                snapshotManager(context).snapshot(onDisk, reason = "pre-write")
+                // Snapshot the healthy pre-write state (raw bytes, no parse or
+                // re-serialize) so we can always roll back to what was on disk
+                // before this overwrite. Never blocks the save.
+                mgr.snapshotRaw(onDiskState.first, reason = "pre-write")
             } else {
                 // ── FAIL-CLOSED FALLBACK (2026-07-19 wipe fix) ────────────────────
-                // The on-disk read did NOT succeed (UriNotReadable / ParseFailure /
-                // blank file / IoFailure). This is EXACTLY the dangerous window: a
-                // Syncthing partial write makes the file momentarily unreadable, and
-                // previously the guard "failed open" and let a near-empty payload
-                // clobber a healthy DB. We now refuse to write a shrinking payload
-                // whenever we cannot positively confirm what is on disk, using the
-                // high-water mark of the largest DB we've seen this process as the
-                // baseline. A genuinely large write (e.g. real user data) still goes
-                // through; only suspiciously small writes are blocked.
+                // The on-disk read did NOT succeed (unreadable / blank file /
+                // unparseable JSON, e.g. a Syncthing partial write mid-flight).
+                // This is EXACTLY the dangerous window: previously a guard that
+                // "failed open" let a near-empty payload clobber a healthy DB. We
+                // refuse to write a shrinking payload whenever we cannot
+                // positively confirm what is on disk, using the high-water mark
+                // of the largest DB we've seen this process as the baseline.
                 val baseline = highWaterEntryCount()
                 if (baseline > MIN_RESTORE_BASELINE && newEntryCount * 2 < baseline) {
                     Log.e(
                         TAG,
-                        "saveDatabase: ANTI-SHRINKAGE GUARD TRIPPED (on-disk unreadable: " +
-                                "$onDiskResult). Refusing to overwrite with only $newEntryCount " +
+                        "saveDatabase: ANTI-SHRINKAGE GUARD TRIPPED (on-disk unreadable/unparseable). " +
+                                "Refusing to overwrite with only $newEntryCount " +
                                 "entries when high-water mark is $baseline. BLOCKED to prevent " +
                                 "the transient-read-failure wipe."
                     )
@@ -285,7 +317,7 @@ class HabitsRepository {
                 }
                 Log.w(
                     TAG,
-                    "saveDatabase: on-disk read not Success ($onDiskResult) but new payload " +
+                    "saveDatabase: on-disk read not usable but new payload " +
                             "($newEntryCount entries vs high-water $baseline) is not a shrink; proceeding."
                 )
             }
@@ -302,7 +334,9 @@ class HabitsRepository {
 
             // Snapshot the newly-written state only after a confirmed write.
             if (wrote) {
-                snapshotManager(context).snapshot(db, reason = "post-save")
+                // The json we just wrote IS the new state — store those bytes
+                // directly instead of re-serializing [db] a third time per save.
+                mgr.snapshotRaw(json, reason = "post-save")
 
                 // Points-driven wallpaper: recompute after every successful
                 // save so the wallpaper tracks the day's points as they
@@ -339,6 +373,27 @@ class HabitsRepository {
         } catch (e: Exception) {
             Log.e(TAG, "writeJsonToUri: write failed: ${e.message}", e)
             false
+        }
+    }
+
+    /**
+     * Reads the raw text content at [uri] without parsing it. Returns null when
+     * the stream cannot be opened or read (SAF failure, Syncthing mid-write, ...).
+     * Used by the memory-safe anti-shrinkage guard in [saveDatabase].
+     */
+    private fun readRawText(uri: Uri, context: Context): String? {
+        val cr = context.contentResolver
+        val stream = try {
+            cr.openInputStream(uri)
+        } catch (e: Exception) {
+            Log.w(TAG, "readRawText: openInputStream threw ${e.javaClass.simpleName}: ${e.message}")
+            return null
+        } ?: return null
+        return try {
+            stream.use { it.bufferedReader().readText() }
+        } catch (e: Exception) {
+            Log.w(TAG, "readRawText: stream read failed: ${e.message}")
+            null
         }
     }
 

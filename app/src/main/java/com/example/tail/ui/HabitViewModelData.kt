@@ -1011,7 +1011,7 @@ fun HabitViewModel.incrementHabit(
         // same guarantee the system-notification answer path has had since
         // the earlier "movie increment failed" fix (HabitAsks.applyAnswer).
         var persisted = false
-        var lastPersistError: Exception? = null
+        var lastPersistError: Throwable? = null
         for (attempt in 1..INCREMENT_PERSIST_ATTEMPTS) {
             try {
                 // Each attempt holds the process-wide habits-file mutex for
@@ -1032,7 +1032,12 @@ fun HabitViewModel.incrementHabit(
                     break
                 }
                 Log.e(TAG, "Increment verify failed (attempt $attempt) for '$habitName' — write did not land")
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Throwable, not Exception: an OutOfMemoryError while persisting
+                // a multi-MB DB must surface as an error message and retry, never
+                // take the process down mid-increment (2026-09-10 OOM fix).
                 lastPersistError = e
                 Log.e(TAG, "Failed to persist increment for '$habitName' (attempt $attempt): ${e.message}", e)
             }
