@@ -298,7 +298,9 @@ class ChessReadinessV3Overlay(
                 dismiss()
                 onSurvivalArmed?.invoke()
             }
-            textButton("Abandon test") { abandon() }
+            // NO "Abandon test" here — once the reflex is cleared the only
+            // way out is arming the gate (dismissing the dialog mid-wizard
+            // would strand the session with no way to resume the hand-off).
         }
     }
 

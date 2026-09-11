@@ -2281,15 +2281,18 @@ class FloatingBubbleService : Service() {
 
         panel.addView(
             TextView(this).apply {
-                text = "■ STOP & SAVE"
+                // Stop GLYPH only — the full "■ STOP & SAVE" label wrapped
+                // onto multiple lines in the narrow banner and looked broken.
+                text = "■"
+                contentDescription = "Stop & save"
                 gravity = Gravity.CENTER
-                textSize = 13f
+                textSize = 18f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(0xFFEF9A9A.toInt())
-                setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+                setPadding(12.dp(), 12.dp(), 12.dp(), 12.dp())
                 background = GradientDrawable().apply {
                     setColor(0xFF7F1D1D.toInt())
-                    cornerRadius = 10f * density
+                    cornerRadius = 8f * density
                 }
                 setOnClickListener { stopSurvivalFreePlay() }
             },
