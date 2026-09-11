@@ -93,7 +93,13 @@ data class Phase2AuditRecord(
     /** False when accuracy was bypassed (short game / no Game Review). */
     val accuracyCounted: Boolean,
     /** Strain (0–100) the game contributed to its session. */
-    val strain: Double
+    val strain: Double,
+    /** Stockfish ACPL from the desktop analysis (null = not analyzed). */
+    val analysisAcpl: Double? = null,
+    /** Blunder count from the same analysis (null = unknown). */
+    val blunders: Int? = null,
+    /** Blunders NOT forced by time pressure (null = unknown). */
+    val unforcedBlunders: Int? = null
 )
 
 // ── Tier / verdict vocabulary ────────────────────────────────────────────────

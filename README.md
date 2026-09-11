@@ -1,12 +1,67 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-09T12:55Z
+**Last updated:** 2026-09-11T12:10Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---31e8e7a8
+
+## 2026-09-11T12:10Z — Chess Stats: correlations expanded to 13 charted subsections + Stockfish ACPL/blunders
+- The correlation section now renders **13 collapsible scatter subsections**
+  (one per correlation, each with its own chart, dashed least-squares fit and
+  r shown right in the header; collapsed by default until its series has
+  ≥ 2 points): reflex RT and puzzles solved each vs following-session
+  accuracy, **ACPL**, **blunders**, **unforced blunders** (the time-pressure-
+  free failures, from the desktop Stockfish analysis `unforced_blunders`
+  field), win rate and Elo delta — plus reflex RT → puzzles solved (same run).
+- **NEW on-device telemetry**: [`ChessPhase2Store.Phase2Audit`](app/src/main/java/com/example/tail/widget/ChessPhase2Store.kt:47)
+  now persists `analysisAcpl`, `blunders` and `unforcedBlunders` from
+  [`ChessAnalysisFetcher`](app/src/main/java/com/example/tail/widget/ChessAnalysisFetcher.kt:49)'s
+  desktop analysis (v3 audit path + re-share refresh; null-tolerant JSON
+  decoding so pre-existing audit history loads unchanged). Sessions without
+  a bridge analysis simply contribute no ACPL/blunder dots.
+- 10 unit tests lock the new pairs (perfect / inverse / strong-positive r
+  cases + "no analysis → no pairs").
+- FIX (13:43): session-based series were gated on "a COUNTED accuracy audit
+  exists", but chess.com Game Review is often unavailable (accuracyCounted
+  false, ACPL present from the bridge) — the gate wrongly emptied ALL
+  session subsections. Now every metric gates only on its own presence:
+  accuracy needs counted audits, ACPL/blunders need analysis, win rate/Elo
+  need nothing but the games. Diagnosis tool:
+  [`debug_correlation_join.py`](debug_correlation_join.py:1) (replays the
+  run→game→audit join straight from the device's stores via adb).
+- DATA CUTOFF (unchanged): only runs at/after `SURVIVAL_UNLIMITED_CUTOFF_MS`
+  (2026-09-08 00:00 Europe/Rome) feed the correlations — before the
+  "run continues to the 5:00 cap" change the survival stage ended at the
+  target, so pre-change solved counts were censored at the bar. Reflex-fail
+  runs are excluded (never solved puzzles). Pure logic in
+  [`ChessReadinessCorrelations.kt`](core-data/src/main/java/com/example/tail/data/ChessReadinessCorrelations.kt:1),
+  UI in
+  [`ChessReadinessCorrelationSections.kt`](app/src/main/java/com/example/tail/ui/ChessReadinessCorrelationSections.kt:1).
+
+## 2026-09-11T08:45Z — Chess Stats: pre-game ↔ performance correlation section
+- New "🔮 Pre-game ↔ Performance Correlations" section on the Chess Stats screen
+  (after the V3 pre-game gate section). Three scatter charts (one dot = one v3 run,
+  dashed least-squares fit line) + Pearson r rows:
+  1. Reflex mean RT → accuracy of the following rated session (CAPS2, the
+     accuracy-based inverse view of ACPL, joined from the shared Phase-2 audits
+     within a 60 s window, counted audits only).
+  2. Puzzles solved in the survival stage → the same session accuracy.
+  3. Reflex mean RT → puzzles solved in the SAME run (does the physiological
+     half of the pre-game test predict the tactical half?).
+  Plus secondary r rows for win-rate and Elo-delta outcomes.
+- DATA CUTOFF: only runs at/after `SURVIVAL_UNLIMITED_CUTOFF_MS`
+  (2026-09-08 00:00 Europe/Rome) feed the correlations — before the
+  "run continues to the 5:00 cap" change the survival stage ended at the
+  target, so pre-change solved counts were censored at the bar and are not
+  comparable. Reflex-fail runs are also excluded (never solved puzzles).
+  Pure logic in [`ChessReadinessCorrelations.kt`](core-data/src/main/java/com/example/tail/data/ChessReadinessCorrelations.kt:1)
+  (JVM-testable, mirrors `computeReflexStats`), UI in
+  [`ChessReadinessCorrelationSections.kt`](app/src/main/java/com/example/tail/ui/ChessReadinessCorrelationSections.kt:1),
+  8 unit tests in
+  [`ChessReadinessCorrelationsTest.kt`](app/src/test/java/com/example/tail/ChessReadinessCorrelationsTest.kt:1).
 
 ## 2026-09-09T12:55Z — Multi-Timer: linked group timers for habits sharing one app
 - New "⏱ Multi-Timer" sub-toggle in the habit edit panel's "🫧 Use Widget" section,

@@ -481,7 +481,13 @@ object ChessDeferredGameReconciler {
                     ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS ->
                         ChessPhase2Engine.SEVERE_STRAIN
                     else -> 0.0
-                }
+                },
+                // Desktop Stockfish telemetry — persisted so the stats
+                // screen can correlate ACPL / (unforced) blunders against
+                // the pre-game readiness stages. Null when away from PC.
+                analysisAcpl = analysis?.userStats?.acpl,
+                blunders = analysis?.userStats?.blunders,
+                unforcedBlunders = analysis?.userStats?.unforcedBlunders
             )
         )
         return GameOutcome.AuditedV3(result)
@@ -648,6 +654,8 @@ object ChessDeferredGameReconciler {
 
         // In-place verdict update — Chess Guard / authorization consumers
         // read these stores, so a revised verdict must replace, not append.
+        // A fresh analysis (when the bridge answered) also refreshes the
+        // persisted Stockfish telemetry the correlation section charts.
         ChessPhase2Store.updateAuditForGame(context, game.gameId) { old ->
             old.copy(
                 outputState = result.outputState.name,
@@ -657,7 +665,11 @@ object ChessDeferredGameReconciler {
                     ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS ->
                         ChessPhase2Engine.SEVERE_STRAIN
                     else -> 0.0
-                }
+                },
+                analysisAcpl = analysis?.userStats?.acpl ?: old.analysisAcpl,
+                blunders = analysis?.userStats?.blunders ?: old.blunders,
+                unforcedBlunders = analysis?.userStats?.unforcedBlunders
+                    ?: old.unforcedBlunders
             )
         }
         ChessPhase2V2Store.updateRecentGameAt(context, gameEndMs) {

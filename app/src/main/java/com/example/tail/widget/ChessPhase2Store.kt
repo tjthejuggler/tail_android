@@ -63,7 +63,16 @@ object ChessPhase2Store {
         /** Estimated base-clock minutes the game contributed to the session. */
         val estimatedMinutes: Double = 0.0,
         /** Strain (0–100) this game contributed to the session (v2.0). */
-        val strain: Double = 0.0
+        val strain: Double = 0.0,
+        /**
+         * Stockfish ACPL from the desktop analysis service (v3+ audits with
+         * a reachable bridge; null = not analyzed / away from PC).
+         */
+        val analysisAcpl: Double? = null,
+        /** Blunder count from the same analysis (null = unknown). */
+        val blunders: Int? = null,
+        /** Blunders NOT flagged as time-pressure-forced (null = unknown). */
+        val unforcedBlunders: Int? = null
     )
 
     /**
@@ -129,7 +138,13 @@ object ChessPhase2Store {
                     gameId = o.optString("gameId", ""),
                     estimatedMinutes = o.optDouble("estimatedMinutes", 0.0),
                     strain = if (o.has("strain")) o.getDouble("strain")
-                    else legacyStrain(state)
+                    else legacyStrain(state),
+                    analysisAcpl = if (o.has("analysisAcpl") && !o.isNull("analysisAcpl"))
+                        o.optDouble("analysisAcpl") else null,
+                    blunders = if (o.has("blunders") && !o.isNull("blunders"))
+                        o.optInt("blunders") else null,
+                    unforcedBlunders = if (o.has("unforcedBlunders") && !o.isNull("unforcedBlunders"))
+                        o.optInt("unforcedBlunders") else null
                 )
             }
         } catch (_: Exception) {
@@ -142,24 +157,28 @@ object ChessPhase2Store {
             .sortedBy { it.timestamp }
             .takeLast(MAX_AUDITS)
         val arr = JSONArray()
-        history.forEach {
-            arr.put(JSONObject().apply {
-                put("timestamp", it.timestamp)
-                put("timeControl", it.timeControl)
-                put("outputState", it.outputState)
-                put("deltaE", it.deltaE)
-                put("caps2Accuracy", it.caps2Accuracy)
-                put("accuracyCounted", it.accuracyCounted)
-                put("gameId", it.gameId)
-                put("estimatedMinutes", it.estimatedMinutes)
-                put("strain", it.strain)
-            })
-        }
+        history.forEach { arr.put(auditJson(it)) }
         prefs(context).edit().putString(KEY_AUDITS, arr.toString()).apply()
         // The newest audit can flip the enforcement decision (a PIVOT or
         // TERMINATE verdict after the last test limits the session) —
         // keep the guard and external automation in sync.
         ChessGuardNotifier.notifyStateChange(context)
+    }
+
+    /** One audit → its persisted JSON form (shared by both writers). */
+    private fun auditJson(it: Phase2Audit) = JSONObject().apply {
+        put("timestamp", it.timestamp)
+        put("timeControl", it.timeControl)
+        put("outputState", it.outputState)
+        put("deltaE", it.deltaE)
+        put("caps2Accuracy", it.caps2Accuracy)
+        put("accuracyCounted", it.accuracyCounted)
+        put("gameId", it.gameId)
+        put("estimatedMinutes", it.estimatedMinutes)
+        put("strain", it.strain)
+        put("analysisAcpl", it.analysisAcpl ?: JSONObject.NULL)
+        put("blunders", it.blunders ?: JSONObject.NULL)
+        put("unforcedBlunders", it.unforcedBlunders ?: JSONObject.NULL)
     }
 
     /** The most recent audit of a specific chess.com game, or null (re-share detection). */
@@ -181,19 +200,7 @@ object ChessPhase2Store {
             if (it.gameId == id) update(it) else it
         }
         val arr = JSONArray()
-        history.forEach {
-            arr.put(JSONObject().apply {
-                put("timestamp", it.timestamp)
-                put("timeControl", it.timeControl)
-                put("outputState", it.outputState)
-                put("deltaE", it.deltaE)
-                put("caps2Accuracy", it.caps2Accuracy)
-                put("accuracyCounted", it.accuracyCounted)
-                put("gameId", it.gameId)
-                put("estimatedMinutes", it.estimatedMinutes)
-                put("strain", it.strain)
-            })
-        }
+        history.forEach { arr.put(auditJson(it)) }
         prefs(context).edit().putString(KEY_AUDITS, arr.toString()).apply()
         ChessGuardNotifier.notifyStateChange(context)
     }

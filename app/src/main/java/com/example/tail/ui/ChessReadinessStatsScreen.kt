@@ -70,6 +70,8 @@ import com.example.tail.data.Phase2V2GameRecord
 import com.example.tail.data.RatingHistoryPoint
 import com.example.tail.data.RatingHistorySeries
 import com.example.tail.data.RatingPoolStats
+import com.example.tail.data.V3CorrelationRun
+import com.example.tail.data.computeV3CorrelationStats
 import com.example.tail.data.ReadinessBlockedRecord
 import com.example.tail.data.ReadinessGameRecord
 import com.example.tail.data.ReadinessStats
@@ -284,7 +286,10 @@ fun ChessReadinessStatsScreen(
                     deltaE = it.deltaE,
                     caps2Accuracy = it.caps2Accuracy,
                     accuracyCounted = it.accuracyCounted,
-                    strain = it.strain
+                    strain = it.strain,
+                    analysisAcpl = it.analysisAcpl,
+                    blunders = it.blunders,
+                    unforcedBlunders = it.unforcedBlunders
                 )
             }
             // v1↔v2 engine switches (pre-game + post-game toggles) become
@@ -372,6 +377,28 @@ fun ChessReadinessStatsScreen(
     }
     val v3Events = remember(resumeCount) {
         com.example.tail.widget.ChessReadinessV3Store.loadEvents(context)
+    }
+    // Pre-game ↔ performance correlations: only POST-cutoff v3 runs (the
+    // survival stage stopped ending at the target on 2026-09-08 and now
+    // always uses the full 5 minutes, making solved counts comparable),
+    // joined to the rated-game log and the shared Phase-2 audits.
+    val v3Correlations = remember(v3Results, visibleGames, phase2Audits) {
+        computeV3CorrelationStats(
+            results = v3Results.map {
+                V3CorrelationRun(
+                    timestamp = it.timestamp,
+                    verdict = it.verdict,
+                    puzzlesPassed = it.puzzlesPassed,
+                    target = it.target,
+                    survivalDurationMs = it.survivalDurationMs,
+                    reflexLapses = it.reflexLapses,
+                    reflexFalseStarts = it.reflexFalseStarts,
+                    reflexMeanRtMs = it.reflexMeanRtMs
+                )
+            },
+            games = visibleGames,
+            audits = phase2Audits
+        )
     }
 
     // Cross-version reflex series: every PVT-B run ever recorded (v2's
@@ -1192,6 +1219,12 @@ fun ChessReadinessStatsScreen(
                     events = v3Events,
                     startExpanded = pregameIsV3
                 )
+
+                // ── Pre-game ↔ performance correlations ──────────────────
+                // Scatter charts + Pearson r between the v3 reflex/survival
+                // stages and the following rated session (and between the
+                // two stages themselves). Post-cutoff runs only.
+                V3CorrelationSection(stats = v3Correlations)
 
                 // ── Reflex tests (cross-version) ─────────────────────────
                 // Every PVT-B reflex run ever recorded, regardless of engine
