@@ -223,6 +223,22 @@ class HabitViewModel(
     /** Repository for recording habit increment timestamps (internal storage). */
     val timestampRepo = HabitTimestampRepository(context)
 
+    /** Repository for per-day exercise/machine names of weights habits (internal storage). */
+    val weightsExerciseRepo = com.example.tail.data.WeightsExerciseRepository(context)
+
+    /** Full per-day exercise-name DB for weights habits (habit → date → type → name). */
+    internal val _weightsExerciseNames =
+        MutableStateFlow<Map<String, Map<String, Map<String, String>>>>(emptyMap())
+    val weightsExerciseNames: StateFlow<Map<String, Map<String, Map<String, String>>>> =
+        _weightsExerciseNames.asStateFlow()
+
+    /** (Re)loads the per-day exercise-name DB from internal storage. */
+    fun loadWeightsExerciseNames() {
+        viewModelScope.launch {
+            _weightsExerciseNames.value = weightsExerciseRepo.loadAll()
+        }
+    }
+
     // ── Habit-ask notifications (system + in-app center + one-time flash) ───
     /** Single source of truth for pending asks; system notifications mirror it. */
     val notificationStore = NotificationStore(context)

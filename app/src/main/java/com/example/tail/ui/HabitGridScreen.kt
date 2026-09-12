@@ -539,6 +539,12 @@ fun HabitGridScreen(
     val settings by viewModel.settings.collectAsState()
     val selectedDate by viewModel.selectedDate.collectAsState()
     val editMode by viewModel.editMode.collectAsState()
+    // Per-day exercise-name records (habit → date → slot key → name), used by
+    // the edit-mode weights summary + day editor and the weights popup's PB row.
+    val weightsExerciseNames by viewModel.weightsExerciseNames.collectAsState()
+    val weightsExerciseNamesForDay = weightsExerciseNames.mapValues { (_, byDate) ->
+        byDate[com.example.tail.data.dateString(selectedDate)] ?: emptyMap()
+    }
     val graphMode by viewModel.graphMode.collectAsState()
     val scheduleMode by viewModel.scheduleMode.collectAsState()
     val graphSelectedHabits by viewModel.graphSelectedHabits.collectAsState()
@@ -918,6 +924,9 @@ fun HabitGridScreen(
         }
     }
     LaunchedEffect(Unit) { refreshQuickCaptureReviewCount() }
+    // Per-day exercise-name records for weights habits (PB display, graph
+    // filter, edit-screen name readout) — loaded once on screen entry.
+    LaunchedEffect(Unit) { viewModel.loadWeightsExerciseNames() }
 
     // Increment toast state — shows briefly after tapping a habit
     var incrementToastHabit by remember { mutableStateOf<String?>(null) }
@@ -1830,6 +1839,12 @@ fun HabitGridScreen(
                     val selectedHabitName = selectedHabitAtIndex?.name?.takeIf { it.isNotEmpty() }
                     val isPlaceholderSelected = selectedEditIndex >= 0 &&
                         (selectedEditIndex >= habits.size || selectedHabitAtIndex?.name?.isEmpty() == true)
+                    // The selected weights habit's exercise names recorded for
+                    // the selected day (slot key → name), shown in the summary
+                    // and used to pre-fill the day editor.
+                    val weightsDayExerciseNames = selectedHabitName
+                        ?.let { name -> weightsExerciseNamesForDay[name] }
+                        ?: emptyMap()
                     EditModeControlBar(
                         selectedIndex = selectedEditIndex,
                         selectedHabitName = selectedHabitName,
@@ -1929,6 +1944,7 @@ fun HabitGridScreen(
                         },
                         weightsRecentExercises = selectedHabitName
                             ?.let { settings.weightsRecentExercises[it] } ?: emptyList(),
+                        weightsDayExerciseNames = weightsDayExerciseNames,
                         onDeleteWeightsDay = { name -> viewModel.deleteWeightsDay(name) },
                         onOpenMealDetails = { name ->
                             mealDialogFromTap = false
@@ -2683,6 +2699,9 @@ fun HabitGridScreen(
             habitName = habit.name,
             defaultUnit = settings.graphWeightUnit,
             recentExercises = settings.weightsRecentExercises[habit.name] ?: emptyList(),
+            getStats = { exerciseName, machine ->
+                viewModel.getWeightsExerciseStats(habit.name, exerciseName, machine)
+            },
             onConfirm = { weightGrams, reps, machine, exerciseName ->
                 viewModel.saveWeightsEntry(habit.name, weightGrams, reps, machine, exerciseName)
                 weightsDialogHabit = null

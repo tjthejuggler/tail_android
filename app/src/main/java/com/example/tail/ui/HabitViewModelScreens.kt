@@ -1884,6 +1884,16 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             // timed sessions survive the rename too
             subtypeDataRepo.renameHabit(oldName, newName)
             timedDataRepo.renameHabit(oldName, newName)
+
+            // Rename in the weights exercise-name sidecar so per-day exercise
+            // attribution (PB display, graph filter, edit screen) survives too
+            weightsExerciseRepo.renameHabit(oldName, newName)
+            _weightsExerciseNames.value = weightsExerciseRepo.loadAll()
+
+            // Rename in the weights exercise-name sidecar so per-day exercise
+            // attribution (PB display, graph filter, edit screen) survives too
+            weightsExerciseRepo.renameHabit(oldName, newName)
+            _weightsExerciseNames.value = weightsExerciseRepo.loadAll()
             
             _settings.value = newSettings
             _habitOrder.value = newHabitOrder

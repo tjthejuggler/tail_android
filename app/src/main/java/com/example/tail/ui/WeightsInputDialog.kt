@@ -1,8 +1,10 @@
 package com.example.tail.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -44,6 +46,12 @@ fun WeightsInputDialog(
     defaultUnit: String = WEIGHT_UNIT_KG,
     /** Previously used exercise/machine names on this habit, most recent first. */
     recentExercises: List<String> = emptyList(),
+    /**
+     * Looks up the PB + most-recent set for the currently typed exercise on
+     * the currently selected type (machine/free). Recomputed as the name or
+     * type changes so the readout always matches what is being entered.
+     */
+    getStats: (exerciseName: String, machine: Boolean) -> WeightsExerciseStats = { _, _ -> WeightsExerciseStats() },
     onConfirm: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -58,6 +66,17 @@ fun WeightsInputDialog(
     val weight = weightText.replace(',', '.').toDoubleOrNull() ?: 0.0
     val reps = repsText.toIntOrNull() ?: 0
     val canConfirm = weight > 0.0 || reps > 0
+
+    // PB + most recent set for the typed exercise — recomputed live as the
+    // exercise name or the machine/free toggle changes.
+    val stats = getStats(exerciseName.trim(), machine)
+    fun gramsLabel(grams: Int): String {
+        if (grams <= 0) return "—"
+        val tenths = gramsToDisplayTenths(grams, unit)
+        return if (tenths % 10 == 0) "${tenths / 10} $unit" else formatWeightTenths(tenths) + " $unit"
+    }
+    fun dateLabel(date: java.time.LocalDate?): String =
+        date?.format(java.time.format.DateTimeFormatter.ofPattern("d/M/yy")) ?: "—"
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -95,6 +114,30 @@ fun WeightsInputDialog(
                                 onClick = { exerciseName = name }
                             )
                         }
+                    }
+                }
+
+                // ── PB + last set for the typed exercise (with dates) ─────
+                // Shown whenever any exercise text is entered; values update
+                // live as the name or the Machine/Free toggle changes.
+                if (exerciseName.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF142414), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "PB: ${gramsLabel(stats.pbWeightGrams)} × ${stats.pbReps}  (${dateLabel(stats.pbDate)})",
+                            color = Color(0xFFFFD54F),
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = "Last: ${gramsLabel(stats.lastWeightGrams)} × ${stats.lastReps}  (${dateLabel(stats.lastDate)})",
+                            color = Color(0xFFAACCAA),
+                            fontSize = 11.sp
+                        )
                     }
                 }
 
@@ -229,6 +272,11 @@ fun WeightsDayEditorDialog(
     initial: WeightsDayValues,
     /** Previously used exercise/machine names on this habit, most recent first. */
     recentExercises: List<String> = emptyList(),
+    /**
+     * The exercise names recorded FOR THIS DAY (machine/free slot key →
+     * name) — pre-fills the exercise field with the slot's exact name.
+     */
+    dayExerciseNames: Map<String, String> = emptyMap(),
     /** Display unit for the weight field ("kg" or "lb"); defaults to the graph's unit. */
     defaultUnit: String = WEIGHT_UNIT_KG,
     onConfirm: (values: WeightsDayValues, exerciseName: String) -> Unit,
@@ -241,8 +289,14 @@ fun WeightsDayEditorDialog(
     val freeHasData = initial.freeWeightGrams > 0 || initial.freeReps > 0
     var machine by remember { mutableStateOf(machineHasData || !freeHasData) }
 
-    // Auto-fill with the most recently used exercise name, like the logging dialog
-    var exerciseName by remember { mutableStateOf(recentExercises.firstOrNull() ?: "") }
+    // Pre-fill with THIS DAY's recorded name for the initially selected slot
+    // (falls back to the most recent quick-choice, like the logging dialog).
+    val machineDayName = dayExerciseNames[com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE]
+    val freeDayName = dayExerciseNames[com.example.tail.data.WeightsExerciseRepository.KEY_FREE]
+    fun dayNameFor(isMachine: Boolean): String? = if (isMachine) machineDayName else freeDayName
+    var exerciseName by remember {
+        mutableStateOf(dayNameFor(machine) ?: recentExercises.firstOrNull() ?: "")
+    }
 
     // Pre-fill from stored grams, converted to the initial display unit
     // (whole values render without a decimal, others with one).
@@ -256,10 +310,12 @@ fun WeightsDayEditorDialog(
     var repsText by remember { mutableStateOf(repsToText(if (machine) initial.machineReps else initial.freeReps)) }
     var confirmDelete by remember { mutableStateOf(false) }
 
-    // Switching Machine ↔ Free re-fills the fields from that type's day values
+    // Switching Machine ↔ Free re-fills the fields from that type's day values,
+    // including that slot's exact recorded exercise name.
     fun refillFor(isMachine: Boolean) {
         weightText = gramsToText(if (isMachine) initial.machineWeightGrams else initial.freeWeightGrams)
         repsText = repsToText(if (isMachine) initial.machineReps else initial.freeReps)
+        exerciseName = dayNameFor(isMachine) ?: recentExercises.firstOrNull() ?: ""
     }
 
     fun parseWeight(text: String): Double = text.replace(',', '.').toDoubleOrNull() ?: 0.0

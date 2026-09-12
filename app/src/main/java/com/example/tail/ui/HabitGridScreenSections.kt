@@ -1865,6 +1865,8 @@ internal fun EditModeControlBar(
     onSetWeightsDayValues: (String, com.example.tail.data.WeightsDayValues, String) -> Unit = { _, _, _ -> },
     /** Previously used exercise/machine names for the selected weights habit (quick choices). */
     weightsRecentExercises: List<String> = emptyList(),
+    /** This day's recorded exercise names for the selected weights habit (slot key → name). */
+    weightsDayExerciseNames: Map<String, String> = emptyMap(),
     /** Called when the user deletes ALL weights data for a day (habitName). */
     onDeleteWeightsDay: (String) -> Unit = {},
     onOpenMealDetails: (String) -> Unit = {},
@@ -2175,6 +2177,7 @@ internal fun EditModeControlBar(
                         values = weightsDayValues,
                         unit = weightsUnit,
                         recentExercises = weightsRecentExercises,
+                        dayExerciseNames = weightsDayExerciseNames,
                         onSetValues = { v, exerciseName ->
                             onSetWeightsDayValues(selectedHabitName, v, exerciseName)
                         },
@@ -3576,6 +3579,11 @@ internal fun EditModeWeightsSummarySection(
     unit: String,
     /** Previously used exercise/machine names on this habit, most recent first. */
     recentExercises: List<String> = emptyList(),
+    /**
+     * The exercise names recorded FOR THIS DAY (machine/free slot → name),
+     * shown in the summary and used to pre-fill the day editor.
+     */
+    dayExerciseNames: Map<String, String> = emptyMap(),
     onSetValues: (com.example.tail.data.WeightsDayValues, String) -> Unit,
     /** Called when the user deletes ALL weights data for the selected day. */
     onDeleteDay: () -> Unit
@@ -3593,11 +3601,15 @@ internal fun EditModeWeightsSummarySection(
     } else buildString {
         if (values.machineWeightGrams > 0 || values.machineReps > 0) {
             if (isNotEmpty()) append(" · ")
-            append("Machine ${weightLabel(values.machineWeightGrams)} × ${values.machineReps} reps")
+            append("Machine ${weightLabel(values.machineWeightGrams)} × ${values.machineReps}")
+            dayExerciseNames[com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE]
+                ?.let { append(" ($it)") }
         }
         if (values.freeWeightGrams > 0 || values.freeReps > 0) {
             if (isNotEmpty()) append(" · ")
-            append("Free ${weightLabel(values.freeWeightGrams)} × ${values.freeReps} reps")
+            append("Free ${weightLabel(values.freeWeightGrams)} × ${values.freeReps}")
+            dayExerciseNames[com.example.tail.data.WeightsExerciseRepository.KEY_FREE]
+                ?.let { append(" ($it)") }
         }
     }
 
@@ -3625,6 +3637,7 @@ internal fun EditModeWeightsSummarySection(
             habitName = habitName,
             initial = values,
             recentExercises = recentExercises,
+            dayExerciseNames = dayExerciseNames,
             defaultUnit = unit,
             onConfirm = { newValues, exerciseName ->
                 onSetValues(newValues, exerciseName)

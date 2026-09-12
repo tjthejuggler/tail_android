@@ -155,6 +155,9 @@ fun GraphsPanel(
     val interpolateZeroMetrics = settings.graphInterpolateZeroMetrics
     // Text-entry cache — recomputes series once entries finish loading (movie runtimes)
     val textEntriesCache by viewModel.textEntriesCache.collectAsState()
+    // Per-day exercise names for weights habits — powers the exercise-type
+    // filter and the selected-node exercise readout.
+    val weightsExerciseNames by viewModel.weightsExerciseNames.collectAsState()
 
     var selectedDataPoint by remember { mutableStateOf<SelectedPoint?>(null) }
     var textEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -165,6 +168,22 @@ fun GraphsPanel(
     // Text filter state
     var showFilterDialog by remember { mutableStateOf(false) }
     var textFilter by remember { mutableStateOf("") }
+
+    // Exercise-type filter for weights habits ("" = all exercises). Chips are
+    // built from every name recorded on the currently selected weights habits.
+    var exerciseFilter by remember { mutableStateOf("") }
+    val weightsHabitNames = graphSelectedHabits.filter { viewModel.isWeightsHabit(it) }
+    val availableExercises = remember(weightsHabitNames, weightsExerciseNames) {
+        weightsHabitNames.flatMap { habit ->
+            weightsExerciseNames[habit]?.values?.flatMap { day ->
+                day.values
+            } ?: emptyList()
+        }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    // Clear the filter when the exercises it referenced disappear
+    LaunchedEffect(availableExercises) {
+        if (exerciseFilter.isNotEmpty() && exerciseFilter !in availableExercises) exerciseFilter = ""
+    }
     
     // Check if any selected habit is a text-input habit
     val hasTextInputHabit = graphSelectedHabits.any { viewModel.isTextInputHabit(it) }
@@ -324,6 +343,70 @@ fun GraphsPanel(
             }
         }
 
+        // ── Exercise-type filter chips — only for weights habits ─────────────
+        // Each recorded exercise name becomes a toggle chip; the active chip
+        // restricts every weights series to days logged with that exercise.
+        if (weightsHabitNames.isNotEmpty() && availableExercises.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Exercise:",
+                    color = Color(0xFF88AA88),
+                    fontSize = 11.sp
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // "All" chip clears the filter
+                    Text(
+                        text = "All",
+                        color = if (exerciseFilter.isEmpty()) Color(0xFF000000) else Color(0xFF88AA88),
+                        fontSize = 11.sp,
+                        fontWeight = if (exerciseFilter.isEmpty()) FontWeight.Bold else FontWeight.Normal,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .background(
+                                if (exerciseFilter.isEmpty()) Color(0xFF66DD66) else Color(0xFF1A2E1A),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) { exerciseFilter = "" }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                    availableExercises.forEach { name ->
+                        val isActive = exerciseFilter.equals(name, ignoreCase = true)
+                        Text(
+                            text = name,
+                            color = if (isActive) Color(0xFF000000) else Color(0xFF88AA88),
+                            fontSize = 11.sp,
+                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .background(
+                                    if (isActive) Color(0xFF66DD66) else Color(0xFF1A2E1A),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() }
+                                ) { exerciseFilter = if (isActive) "" else name }
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         // ── Multi-select metric toggles — one row per selected habit ────────────
         // Multiple metrics can be active simultaneously; each renders as a
         // separate line. Every selected habit gets its own row of buttons, so
@@ -382,9 +465,18 @@ fun GraphsPanel(
 
             // Collect data for all selected habits × selected metrics.
             // Each (habit, metric) pair becomes a separate line on the chart.
-            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, currentDay, textFilter, metricSelection, interpolateZeroMetrics, textEntriesCache, settings.graphWeightUnit) {
+            val allSeriesData = remember(graphSelectedHabits, selectedPeriod, zoomStartDate, zoomEndDate, currentDay, textFilter, exerciseFilter, weightsExerciseNames, metricSelection, interpolateZeroMetrics, textEntriesCache, settings.graphWeightUnit) {
                 graphSelectedHabits.toList().flatMap { habitName ->
-                    val data = viewModel.getGraphData(habitName, fullStartDate, fullEndDate, textFilter)
+                    var data = viewModel.getGraphData(habitName, fullStartDate, fullEndDate, textFilter)
+                    // Exercise-type filter: keep only days logged with the
+                    // selected exercise (weights habits, active filter only)
+                    if (exerciseFilter.isNotEmpty() && viewModel.isWeightsHabit(habitName)) {
+                        val dayNames = weightsExerciseNames[habitName].orEmpty()
+                        data = data.filter { point ->
+                            val names = dayNames[point.dateStr] ?: emptyMap()
+                            names.values.any { it.equals(exerciseFilter, ignoreCase = true) }
+                        }
+                    }
                     val metrics = viewModel.getSelectedMetrics(habitName)
                     val availableMetrics = viewModel.getAvailableMetrics(habitName)
                     // Preserve a stable ordering: points, value1, value2, then meal metrics
@@ -511,6 +603,37 @@ fun GraphsPanel(
                                     tint = Color(0xFF889988),
                                     modifier = Modifier.size(16.dp)
                                 )
+                            }
+                        }
+
+                        // Exercise readout — always shown for weights-habit
+                        // nodes so the day's exact exercise type is visible
+                        // (machine + free slot names, when recorded).
+                        if (viewModel.isWeightsHabit(point.habitName)) {
+                            val dayNames = weightsExerciseNames[point.habitName]
+                                ?.get(com.example.tail.data.dateString(point.date))
+                                .orEmpty()
+                            val exerciseLine = listOfNotNull(
+                                dayNames[com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE]
+                                    ?.let { "Machine: $it" },
+                                dayNames[com.example.tail.data.WeightsExerciseRepository.KEY_FREE]
+                                    ?.let { "Free: $it" }
+                            ).joinToString("  ·  ")
+                            if (exerciseLine.isNotEmpty()) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
+                                ) {
+                                    HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Exercise: $exerciseLine",
+                                        color = Color(0xFFFFCC66),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
 

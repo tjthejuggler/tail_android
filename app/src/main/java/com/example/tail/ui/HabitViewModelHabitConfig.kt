@@ -1015,9 +1015,77 @@ fun HabitViewModel.saveWeightsEntry(
 
     // Remember the exercise/machine name for quick re-entry (most recent first)
     recordRecentExercise(habitName, exerciseName.trim())
+
+    // Record WHICH exercise this day's slot belongs to (powers the PB display,
+    // the graph's exercise filter and the edit-screen name readout)
+    if (exerciseName.isNotBlank()) {
+        viewModelScope.launch {
+            weightsExerciseRepo.setExerciseName(habitName, _selectedDate.value, machine, exerciseName)
+            loadWeightsExerciseNames()
+        }
+    }
 }
 
-/** Returns the selected date's aggregated weights slots for a weights habit. */
+/**
+ * One exercise's best (heaviest) and most recent set for a weights habit,
+ * computed from the habits-DB day slots joined with the per-day exercise
+ * names. Dates are included so the popup can show WHEN each happened.
+ */
+data class WeightsExerciseStats(
+    /** Heaviest weight ever logged for this exercise, in grams (0 = none). */
+    val pbWeightGrams: Int = 0,
+    /** Reps logged on the PB day. */
+    val pbReps: Int = 0,
+    /** Date the PB was set, or null when no PB exists. */
+    val pbDate: LocalDate? = null,
+    /** Weight of the most recent set, in grams (0 = none). */
+    val lastWeightGrams: Int = 0,
+    /** Reps of the most recent set. */
+    val lastReps: Int = 0,
+    /** Date of the most recent set, or null when never logged. */
+    val lastDate: LocalDate? = null
+)
+
+/**
+ * Personal best (heaviest weight) and most recent set for [exerciseName] on
+ * a weights habit: the habit's day slots joined with the per-day exercise-
+ * name records. Weight slots keep the day's HEAVIEST gram value (max-merge),
+ * so the PB is the heaviest single-set weight ever entered for the exercise.
+ * Days without a name record (logged before the sidecar existed) are skipped.
+ */
+fun HabitViewModel.getWeightsExerciseStats(
+    habitName: String,
+    exerciseName: String,
+    machine: Boolean
+): WeightsExerciseStats {
+    if (exerciseName.isBlank()) return WeightsExerciseStats()
+    val typeKey = if (machine) com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE
+                  else com.example.tail.data.WeightsExerciseRepository.KEY_FREE
+    val weightKey = if (machine) com.example.tail.data.secondaryValueKey(habitName)
+                    else com.example.tail.data.secondaryValueSlotKey(habitName, 3)
+    val repsKey = if (machine) com.example.tail.data.secondaryValueSlotKey(habitName, 2)
+                  else com.example.tail.data.secondaryValueSlotKey(habitName, 4)
+    val weights = cachedPhoneDb[weightKey] ?: return WeightsExerciseStats()
+    val repsByDate = cachedPhoneDb[repsKey] ?: emptyMap()
+    val namesByDate = _weightsExerciseNames.value[habitName] ?: emptyMap()
+
+    var pbGrams = 0; var pbReps = 0; var pbDate: LocalDate? = null
+    var lastGrams = 0; var lastReps = 0; var lastDate: LocalDate? = null
+    for ((dateStr, grams) in weights) {
+        val named = namesByDate[dateStr]?.get(typeKey) ?: continue
+        if (!named.equals(exerciseName, ignoreCase = true)) continue
+        val dayReps = repsByDate[dateStr] ?: 0
+        if (grams <= 0 && dayReps <= 0) continue
+        if (lastDate == null || dateStr > com.example.tail.data.dateString(lastDate)) {
+            lastGrams = grams; lastReps = dayReps; lastDate = parseDate(dateStr)
+        }
+        if (grams > pbGrams) {
+            pbGrams = grams; pbReps = dayReps; pbDate = parseDate(dateStr)
+        }
+    }
+    return WeightsExerciseStats(pbGrams, pbReps, pbDate, lastGrams, lastReps, lastDate)
+}
+
 
 
 /** Returns the selected date's aggregated weights slots for a weights habit. */
@@ -1074,6 +1142,20 @@ fun HabitViewModel.setWeightsDayValues(habitName: String, values: WeightsDayValu
 
     // Keep the exercise quick-choices fresh when an edited entry names one
     recordRecentExercise(habitName, exerciseName.trim())
+
+    // The editor writes the day's slots absolutely — record which exercise
+    // each populated slot belongs to.
+    viewModelScope.launch {
+        if (exerciseName.isNotBlank()) {
+            if (values.machineWeightGrams > 0 || values.machineReps > 0) {
+                weightsExerciseRepo.setExerciseName(habitName, _selectedDate.value, true, exerciseName)
+            }
+            if (values.freeWeightGrams > 0 || values.freeReps > 0) {
+                weightsExerciseRepo.setExerciseName(habitName, _selectedDate.value, false, exerciseName)
+            }
+        }
+        loadWeightsExerciseNames()
+    }
 }
 
 /**
@@ -1107,6 +1189,12 @@ fun HabitViewModel.deleteWeightsDay(habitName: String) {
         val entries = updatedDb[key]?.toMutableMap() ?: continue
         entries.remove(dateStr)
         if (entries.isEmpty()) updatedDb.remove(key) else updatedDb[key] = entries
+    }
+
+    // Drop the day's exercise-name records too — the day no longer exists
+    viewModelScope.launch {
+        weightsExerciseRepo.removeDay(habitName, _selectedDate.value)
+        loadWeightsExerciseNames()
     }
 
     // Remove the day's increment (count)
