@@ -4,12 +4,11 @@ package com.example.tail.data
  * Pure, ViewModel-free calculation of a habit's effective points for a date
  * and of a day's total points.
  *
- * Extracted verbatim from HabitViewModel.effectivePointsForDate so the
- * launcher-icon tier switcher (LauncherIconTierManager) — which runs in
- * processes/paths where no ViewModel exists (widget taps, IPC broadcasts,
- * voice increments with the app closed) — computes EXACTLY the same numbers
- * as the in-app spinner. The ViewModel delegates to these functions; do not
- * fork the logic.
+ * Extracted verbatim from HabitViewModel.effectivePointsForDate so non-UI
+ * callers — which run in processes/paths where no ViewModel exists (widget
+ * taps, IPC broadcasts, voice increments with the app closed) — compute
+ * EXACTLY the same numbers as the in-app spinner. The ViewModel delegates
+ * to these functions; do not fork the logic.
  */
 object DailyPointsCalculator {
 

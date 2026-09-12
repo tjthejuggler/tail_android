@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Wraps the foreground PNG with a small inset so the spiral-tail glyph
+     draws slightly smaller on the adaptive-icon's 108dp canvas — the top
+     of the tail was being clipped by the launcher mask. 7dp on 108dp ≈ 6%
+     shrink. Referenced by mipmap-anydpi-v26/ic_launcher*.xml. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_foreground_custom"
+    android:insetLeft="7dp"
+    android:insetTop="7dp"
+    android:insetRight="7dp"
+    android:insetBottom="7dp" />

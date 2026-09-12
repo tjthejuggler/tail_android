@@ -19,12 +19,12 @@ import kotlinx.coroutines.launch
  * [HabitViewModel] collects the flow and reloads the DB so the UI updates
  * instantly — no Android broadcast permission headaches.
  *
- * Every emit ALSO schedules a debounced launcher-icon tier refresh (see
- * [LauncherIconTierManager]), so the home-screen icon's background colour
- * follows the daily points tier no matter which path incremented the habit
- * — widget tap, IPC broadcast, voice, bubble timer, notification ask — even
- * when no ViewModel is alive. Requires [install] to have been called with
- * the application context (done in TailApplication.onCreate).
+ * Every emit ALSO schedules a debounced widget refresh (see
+ * [AppHooks.refreshWidgets]) so the home-screen widgets stay in sync no
+ * matter which path incremented the habit — widget tap, IPC broadcast,
+ * voice, bubble timer, notification ask — even when no ViewModel is alive.
+ * Requires [install] to have been called with the application context
+ * (done in TailApplication.onCreate).
  */
 object HabitIncrementBus {
     private val _events = MutableSharedFlow<String>(extraBufferCapacity = 16)
@@ -44,15 +44,14 @@ object HabitIncrementBus {
     /** Call after an external increment (voice, IPC, share) to notify the UI layer. */
     fun emit(habitName: String) {
         _events.tryEmit(habitName)
-        // Debounced icon refresh: bursts of increments coalesce into one
-        // DB read + at most one PackageManager switch.
+        // Debounced widget refresh: bursts of increments coalesce into a
+        // single widget pass.
         val ctx = appContext ?: return
         iconRefreshJob?.cancel()
         iconRefreshJob = iconScope.launch {
             delay(1500)
-            LauncherIconTierManager.refreshFromDatabase(ctx)
-            // Same debounced pass also refreshes the full-width tier bar
-            // widget (background colour + point total) if one is placed.
+            // Refreshes the full-width tier bar widget (background colour +
+            // point total) if one is placed.
             AppHooks.refreshWidgets?.invoke(ctx)
         }
     }

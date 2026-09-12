@@ -1,12 +1,34 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-12T06:00Z
+**Last updated:** 2026-09-12T07:10Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---
+
+## 2026-09-12T07:10Z — Launcher icon: transparent shape-only glyph (tier-colour switching removed)
+- **The icon no longer mirrors the daily habit-points tier colour.** The launcher
+  now shows just the spiral-tail glyph with a fully transparent background — the
+  shape floats directly on the wallpaper, same technique as JugCoach: the
+  adaptive-icon background layer wraps all content in a
+  `<group android:scaleX="0" android:scaleY="0">` so it renders nothing
+  ([`ic_launcher_background.xml`](app/src/main/res/drawable/ic_launcher_background.xml:8)).
+- **Alias machinery deleted:** all 13 `LauncherAliasTier0…12` activity-aliases
+  and their 26 tier adaptive-icon XMLs are gone; [`MainActivity`](app/src/main/AndroidManifest.xml:81)
+  is the single MAIN/LAUNCHER entry again (with the shortcuts meta-data).
+  `LauncherIconTierManager` (core-data) is deleted along with its two
+  call sites — the debounced refresh in [`HabitIncrementBus.emit`](core-data/src/main/java/com/example/tail/data/HabitIncrementBus.kt:45)
+  now only refreshes widgets, and the ViewModel rebuild pass no longer touches
+  PackageManager. This also removes the per-increment
+  `setComponentEnabledSetting` churn and the launcher icon-cache flicker it caused.
+- **Kept:** `ic_launcher_tier_colors.xml` (the full-width tier-bar widget still
+  reads those colours) and `habitPointsTier()` (UI tier colouring). The icon
+  XMLs moved to `mipmap-anydpi-v26/` and the legacy density `ic_launcher*.png`
+  fallbacks were removed — minSdk 26 makes the adaptive XML authoritative.
+  Existing home-screen shortcuts may keep the last tier-coloured icon until the
+  launcher refreshes; remove/re-add the icon to force it.
 
 ## 2026-09-12T06:00Z — OOM crash fix + Phase 1 bridge backup (Syncthing → Tail Bridge)
 - **OOM crash root cause fixed (the Sep 9/10 crashes)**: the habits persistence

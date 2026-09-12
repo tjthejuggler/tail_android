@@ -5,7 +5,7 @@ package com.example.tail.data
  * Boundaries match PointTierColors.TIERS in the UI exactly.
  *
  * Lives in the data layer (moved from ui/HabitLoadingSpinner.kt on 2026-09-07)
- * so LauncherIconTierManager and DailyPointsCalculator can use it without a
+ * so DailyPointsCalculator and the tier-bar widget can use it without a
  * reverse dependency on the UI package.
  */
 fun habitPointsTier(points: Int): Int = when {
