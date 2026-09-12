@@ -93,7 +93,7 @@ object ChessDeferredGameReconciler {
      *  - the latest test at/before [gameStartMs] was GREEN_LIGHT, and
      *  - [gameStartMs] is inside the ROLLING window that test opened
      *    ([ChessPhase2Engine.rollingWindowExpiresAt] — every CONTINUE_RATED
-     *    audit between the test and the game re-anchors the 30-minute
+     *    audit between the test and the game re-anchors the 10-minute
      *    idle clock), and
      *  - every Phase 2 audit filed between the test and [gameStartMs] left
      *    rated play alive (CONTINUE_RATED).

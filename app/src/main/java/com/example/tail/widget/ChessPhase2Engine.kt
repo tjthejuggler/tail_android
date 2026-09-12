@@ -196,15 +196,15 @@ object ChessPhase2Engine {
 
     /** Minutes of rated-play idleness (no completed clean game) that close
      * an otherwise-healthy authorization window. */
-    const val RATED_IDLE_CLOSE_MINUTES = 30L
+    const val RATED_IDLE_CLOSE_MINUTES = 10L
 
     /**
-     * ROLLING rated-play window (2026-09-09 redesign): the 30-minute idle
-     * clock re-anchors to every CONTINUE_RATED audit filed inside the
-     * window. Playing well keeps the window open indefinitely; going
-     * [RATED_IDLE_CLOSE_MINUTES] minutes without being in a game that ends
-     * clean (or flagging Yellow/Red) closes it and a new readiness test is
-     * required.
+     * ROLLING rated-play window (2026-09-12: idle close tightened from 30
+     * to 10 minutes): the idle clock re-anchors to every CONTINUE_RATED
+     * audit filed inside the window. Playing well keeps the window open
+     * indefinitely; going [RATED_IDLE_CLOSE_MINUTES] minutes without being
+     * in a game that ends clean (or flagging Yellow/Red) closes it and a
+     * new readiness test is required.
      *
      * @param greenTestMs timestamp of the authorizing GREEN_LIGHT test
      * @param audits      (timestamp, [OutputState] name) pairs filed after

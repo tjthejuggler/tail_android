@@ -258,10 +258,10 @@ object ChessPhase2Store {
 
     /**
      * The epoch-ms expiry of the ROLLING rated-play authorization window,
-     * or null when rated play is currently NOT authorized. The 30-minute
+     * or null when rated play is currently NOT authorized. The 10-minute
      * idle clock re-anchors to every CONTINUE_RATED audit filed inside the
      * window ([ChessPhase2Engine.rollingWindowExpiresAt]): playing well
-     * keeps the window open indefinitely, while 30 minutes without being
+     * keeps the window open indefinitely, while 10 minutes without being
      * in a game that ends clean — or any Yellow/Red audit — closes it
      * until a new GREEN readiness test.
      */
@@ -297,7 +297,7 @@ object ChessPhase2Store {
      * True when the user may currently play/report RATED games: the last
      * Phase 1 test was GREEN_LIGHT and the ROLLING window it opened is
      * still live ([ratedPlayExpiresAt]) — every Phase 2 audit since the
-     * test must be CONTINUE_RATED, and each one re-anchors the 30-minute
+     * test must be CONTINUE_RATED, and each one re-anchors the 10-minute
      * idle clock.
      *
      * The floating bubble uses this to decide which SINGLE chess entry its

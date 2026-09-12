@@ -170,7 +170,7 @@ object ChessEnforcementPolicy {
             ?.takeIf { last != null && it.timestamp > last.timestamp }
         // ROLLING GREEN window: a CONTINUE_RATED audit after the test
         // re-anchors the idle clock — playing well keeps the authorized
-        // session open; 30 minutes without a clean game closes it.
+        // session open; 10 minutes without a clean game closes it.
         val greenAnchor = maxOf(
             last?.timestamp ?: now,
             auditAfterTest

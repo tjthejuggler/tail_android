@@ -93,8 +93,9 @@ class ChessEnforcementPolicyTest {
 
     @Test
     fun `green session inside validity allows the app`() {
+        // 5 min ago: inside the 10-minute rolling idle window.
         val decision = evaluate(
-            history = listOf(test(20, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT))
+            history = listOf(test(5, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT))
         )
         assertTrue(decision is ChessEnforcementPolicy.Decision.Allow)
         assertEquals(
@@ -310,9 +311,11 @@ class ChessEnforcementPolicyTest {
         // The user passed the readiness test, then a bad audited game
         // PIVOTED the session — re-entering the chess app must show the
         // yellow casual-only warning, not stay fully unlocked.
+        // (Test 5 min ago — inside the 10-minute idle window; a PIVOT
+        // audit does NOT re-anchor the clock.)
         val decision = evaluate(
-            history = listOf(test(20, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
-            lastAudit = audit(10, ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS)
+            history = listOf(test(5, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+            lastAudit = audit(3, ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS)
         )
         assertTrue(decision is ChessEnforcementPolicy.Decision.Allow)
         assertEquals(
@@ -324,21 +327,23 @@ class ChessEnforcementPolicyTest {
     @Test
     fun `terminate audit after a green test blocks until re-test opens`() {
         val decision = evaluate(
-            history = listOf(test(20, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
-            lastAudit = audit(10, ChessPhase2Engine.OutputState.TERMINATE_SESSION)
+            history = listOf(test(5, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+            lastAudit = audit(3, ChessPhase2Engine.OutputState.TERMINATE_SESSION)
         )
         assertTrue(decision is ChessEnforcementPolicy.Decision.Block)
         val block = decision as ChessEnforcementPolicy.Decision.Block
         assertEquals(ChessEnforcementPolicy.Reason.SESSION_TERMINATED, block.reason)
-        // Green test 20 min ago → the 60-min cool-down ends in 40 min.
-        assertEquals(now - 20 * minute + ChessReadinessEngine.COOLDOWN_MS, block.retryAt)
+        // Green test 5 min ago → the 60-min cool-down ends in 55 min.
+        assertEquals(now - 5 * minute + ChessReadinessEngine.COOLDOWN_MS, block.retryAt)
     }
 
     @Test
     fun `continue audit after a green test leaves the session green`() {
+        // The CONTINUE audit re-anchors the idle clock: only 4 min have
+        // passed since it — well inside the 10-minute window.
         val decision = evaluate(
-            history = listOf(test(20, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
-            lastAudit = audit(10, ChessPhase2Engine.OutputState.CONTINUE_RATED)
+            history = listOf(test(8, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+            lastAudit = audit(4, ChessPhase2Engine.OutputState.CONTINUE_RATED)
         )
         assertTrue(decision is ChessEnforcementPolicy.Decision.Allow)
         assertEquals(

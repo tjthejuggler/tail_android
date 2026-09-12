@@ -591,7 +591,9 @@ class ChessReadinessEngineTest {
 
     @Test
     fun `cooldown now tracks the session validity window`() {
-        // 30 min after a GREEN pass → still inside the authorization window.
+        // 30 min after a GREEN pass → the 10-min rolling rated window has
+        // long closed, and the re-test cool-down (SESSION_VALIDITY_MS) is
+        // still active — the gate must block, not allow.
         val history = listOf(
             test(NOW - 30L * 60 * 1000, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
         )

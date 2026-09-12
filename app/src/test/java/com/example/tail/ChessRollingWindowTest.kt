@@ -10,10 +10,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * ROLLING rated-play window (2026-09-09 redesign): the 30-minute idle
- * clock re-anchors to every CONTINUE_RATED audit, so playing well keeps
- * the session authorized indefinitely — only 30 minutes WITHOUT being
- * in a game (or a Yellow/Red audit) closes it and demands a new test.
+ * ROLLING rated-play window (idle close tightened 30 → 10 min on
+ * 2026-09-12): the idle clock re-anchors to every CONTINUE_RATED audit,
+ * so playing well keeps the session authorized indefinitely — only
+ * 10 minutes WITHOUT being in a game (or a Yellow/Red audit) closes it
+ * and demands a new test.
  */
 class ChessRollingWindowTest {
 
@@ -30,30 +31,30 @@ class ChessRollingWindowTest {
     ): Long? = ChessPhase2Engine.rollingWindowExpiresAt(green, audits, now)
 
     @Test
-    fun `no audits - idle closes the window after 30 minutes`() {
+    fun `no audits - idle closes the window after 10 minutes`() {
         assertEquals(green + validity, expiry(emptyList(), green + 1))
-        assertNull(expiry(emptyList(), green + 31 * min))
+        assertNull(expiry(emptyList(), green + 11 * min))
         assertNull(expiry(emptyList(), green + validity))
     }
 
     @Test
     fun `clean audit re-anchors the idle clock`() {
-        val audit = green + 10 * min
-        // 35 min after the GREEN test (only 25 min after the audit): live.
+        val audit = green + 5 * min
+        // 8 min after the GREEN test (only 3 min after the audit): live.
         assertEquals(
             audit + validity,
-            expiry(listOf(audit to cont), green + 35 * min)
+            expiry(listOf(audit to cont), green + 8 * min)
         )
-        // 41 min after the GREEN test exceeds the 30-min idle close.
-        assertNull(expiry(listOf(audit to cont), green + 41 * min))
+        // 10 min after the audit exceeds the 10-min idle close.
         assertNull(expiry(listOf(audit to cont), audit + validity))
     }
 
     @Test
     fun `a chain of clean audits stays open indefinitely`() {
-        val audits = (1..5).map { (green + it * 20 * min) to cont }
+        // 9-minute gaps keep every audit inside the 10-min idle close.
+        val audits = (1..5).map { (green + it * 9 * min) to cont }
         val last = audits.last().first
-        assertEquals(last + validity, expiry(audits, last + 29 * min))
+        assertEquals(last + validity, expiry(audits, last + 9 * min))
     }
 
     @Test
@@ -78,8 +79,8 @@ class ChessRollingWindowTest {
             ChessReadinessEngine.ReadinessTest(
                 timestamp = ts, ccrs = 80, state = state.name
             )
-        val start = green + 35 * min // 35 min after GREEN …
-        val audit = green + 10 * min // … but only 25 min after a clean audit
+        val start = green + 18 * min // 18 min after GREEN …
+        val audit = green + 10 * min // … but only 8 min after a clean audit
         assertTrue(
             ChessDeferredGameReconciler.authorizedAtPlay(
                 listOf(test(ChessReadinessEngine.ReadinessState.GREEN_LIGHT, green)),

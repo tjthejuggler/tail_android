@@ -1,12 +1,25 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-12T07:10Z
+**Last updated:** 2026-09-12T13:25Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---
+
+## 2026-09-12T13:25Z — Chess readiness: rolling idle close tightened 30 → 10 minutes
+- **Gap between games must now be ≤ 10 minutes to stay in the same session.**
+  The ROLLING rated-play window's idle close
+  ([`RATED_IDLE_CLOSE_MINUTES`](app/src/main/java/com/example/tail/widget/ChessPhase2Engine.kt:199))
+  dropped from 30 to 10 minutes. Everything else about the rolling window is
+  unchanged: every CONTINUE_RATED audit re-anchors the idle clock, so a chain
+  of clean audited games keeps the session authorized indefinitely; going
+  10 minutes without being in a game that ends clean (or flagging Yellow/Red)
+  closes the window and demands a fresh GREEN readiness test. The same 10-minute
+  gap applies at game START ([`ChessDeferredGameReconciler.authorizedAtPlay()`](app/src/main/java/com/example/tail/widget/ChessDeferredGameReconciler.kt:101))
+  and to the app-open gate ([`ChessEnforcementPolicy.evaluate()`](app/src/main/java/com/example/tail/widget/ChessEnforcementPolicy.kt:133)),
+  both of which share the constant. All 344 `Chess*` unit tests pass.
 
 ## 2026-09-12T07:10Z — Launcher icon: transparent shape-only glyph (tier-colour switching removed)
 - **The icon no longer mirrors the daily habit-points tier colour.** The launcher
