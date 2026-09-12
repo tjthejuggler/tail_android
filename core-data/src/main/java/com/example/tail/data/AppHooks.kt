@@ -19,4 +19,13 @@ object AppHooks {
     /** Recomputes the points-driven wallpaper after a successful DB save. */
     @Volatile
     var refreshWallpaperAfterSave: (suspend (Context, HabitsDatabase) -> Unit)? = null
+
+    /**
+     * Requests a (debounced) off-device backup push after a successful DB
+     * save. Installed in TailApplication.onCreate → BridgeBackupManager
+     * (same module); kept as a hook so the repository save path stays
+     * decoupled from the backup implementation.
+     */
+    @Volatile
+    var refreshBackupAfterSave: (suspend (Context) -> Unit)? = null
 }

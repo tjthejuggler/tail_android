@@ -85,6 +85,10 @@ object ChessReadinessLogStore {
     private fun file(context: Context): File =
         File(context.filesDir, FILE_NAME)
 
+    /** True when [t] is fatal at VM level (OOM etc.) and must rethrow. */
+    private fun isFatal(t: Throwable): Boolean =
+        t is java.lang.OutOfMemoryError || t is StackOverflowError
+
     // ── Writing ─────────────────────────────────────────────────────────────
 
     /**
@@ -356,7 +360,8 @@ object ChessReadinessLogStore {
     private fun readRoot(context: Context): JSONObject = try {
         val f = file(context)
         if (f.exists()) JSONObject(f.readText()) else JSONObject()
-    } catch (_: Exception) {
+    } catch (e: Throwable) {
+        if (isFatal(e)) throw e
         JSONObject() // corrupt file → start fresh rather than crash logging
     }
 
@@ -407,7 +412,8 @@ object ChessReadinessLogStore {
             trimOldest(root, KEY_RUSH_SESSIONS, MAX_EVENTS)
             trimOldest(root, KEY_BLOCKED, MAX_EVENTS / 10)
             file(context).writeText(root.toString())
-        } catch (_: Exception) {
+        } catch (e: Throwable) {
+            if (isFatal(e)) throw e
             // Logging must never take down the readiness flow.
         }
     }

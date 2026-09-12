@@ -12,6 +12,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.FilterReader
+import java.io.InputStreamReader
+import java.io.PushbackReader
 import java.time.LocalDate
 
 private const val TAG = "HabitsRepository"
@@ -167,35 +171,63 @@ class HabitsRepository {
                 Log.w(TAG, "loadDatabaseResult: openInputStream returned null for $uri")
                 return@withContext HabitsLoadResult.UriNotReadable
             }
-            val text = try {
-                stream.use { it.bufferedReader().readText() }
-            } catch (e: Exception) {
-                Log.w(TAG, "loadDatabaseResult: stream read failed: ${e.message}")
-                return@withContext HabitsLoadResult.IoFailure(e)
-            }
-            if (text.isBlank()) {
-                // A truly blank file is suspicious (Syncthing partial write, manual
-                // deletion, etc.). Treat as parse failure so we don't overwrite it.
-                Log.w(TAG, "loadDatabaseResult: file is blank/empty (${text.length} chars) — treating as ParseFailure")
-                return@withContext HabitsLoadResult.ParseFailure(
-                    IllegalStateException("file is blank"),
-                    rawBytesLen = text.length
-                )
-            }
-            try {
-                val parsed: HabitsDatabase? = gson.fromJson(text, dbType)
-                val db = parsed ?: emptyMap()
-                // Track the largest healthy DB we've ever seen so the anti-shrinkage
-                // guard has a baseline even when a later read fails mid-Syncthing-write.
-                recordGoodEntryCount(db.values.sumOf { it.size })
-                HabitsLoadResult.Success(db)
-            } catch (e: Throwable) {
-                // Throwable, not Exception: an OutOfMemoryError while parsing a
-                // multi-MB DB must surface as a (recoverable) ParseFailure, never
-                // kill the process — this exact path OOM-crash-looped the app on
-                // 2026-09-10.
-                Log.w(TAG, "loadDatabaseResult: JSON parse failed (${text.length} chars): ${e.message}")
-                HabitsLoadResult.ParseFailure(e, rawBytesLen = text.length)
+
+            // ── STREAMING PARSE (OOM hardening, 2026-09-11) ───────────────────
+            // The DB file is multi-MB and grows forever, and this process hosts
+            // a persistent notification-listener service that never exits. The
+            // old readText() → fromJson(String) sequence materialised the WHOLE
+            // file as a String (≈2 bytes/char) on top of Gson's object graph on
+            // every load — 18 call sites, several per user increment once the
+            // persist-verify path is counted. In the long-lived process that
+            // ratcheted the heap to its 256 MB growth limit until an allocation
+            // died — the exact crashes of 2026-09-09/09-10. Gson's
+            // fromJson(Reader, Type) streams the document; peak memory is now
+            // the object graph alone.
+            stream.use { s ->
+                val tracking = object : FilterReader(BufferedReader(InputStreamReader(s))) {
+                    var charsRead = 0L
+                    override fun read(): Int {
+                        val r = super.read(); if (r != -1) charsRead++; return r
+                    }
+                    override fun read(cbuf: CharArray, off: Int, len: Int): Int {
+                        val r = super.read(cbuf, off, len); if (r != -1) charsRead += r; return r
+                    }
+                }
+                val countingReader = PushbackReader(tracking, 1)
+                // Detect a genuinely blank file WITHOUT materialising it: skip
+                // leading whitespace one char at a time (pushback reader), then
+                // let Gson stream from the first real token. This preserves the
+                // exact ParseFailure taxonomy the anti-shrinkage guard depends
+                // on (blank ⇒ suspicious ⇒ never write back a skeleton).
+                while (true) {
+                    val c = countingReader.read()
+                    if (c == -1) {
+                        Log.w(TAG, "loadDatabaseResult: file is blank/empty — treating as ParseFailure")
+                        return@use HabitsLoadResult.ParseFailure(
+                            IllegalStateException("file is blank"),
+                            rawBytesLen = tracking.charsRead.toInt()
+                        )
+                    }
+                    if (!c.toChar().isWhitespace()) {
+                        countingReader.unread(c)
+                        break
+                    }
+                }
+                try {
+                    val parsed: HabitsDatabase? = gson.fromJson(countingReader, dbType)
+                    val db = parsed ?: emptyMap()
+                    // Track the largest healthy DB we've ever seen so the anti-shrinkage
+                    // guard has a baseline even when a later read fails mid-Syncthing-write.
+                    recordGoodEntryCount(db.values.sumOf { it.size })
+                    HabitsLoadResult.Success(db)
+                } catch (e: Throwable) {
+                    // Throwable, not Exception: an OutOfMemoryError while parsing a
+                    // multi-MB DB must surface as a (recoverable) ParseFailure, never
+                    // kill the process — this exact path OOM-crash-looped the app on
+                    // 2026-09-10.
+                    Log.w(TAG, "loadDatabaseResult: JSON parse failed (${tracking.charsRead} chars): ${e.message}")
+                    HabitsLoadResult.ParseFailure(e, rawBytesLen = tracking.charsRead.toInt())
+                }
             }
         }
 
@@ -346,6 +378,15 @@ class HabitsRepository {
                     AppHooks.refreshWallpaperAfterSave?.invoke(context, db)
                 } catch (e: Exception) {
                     Log.w(TAG, "post-save wallpaper refresh failed: ${e.message}")
+                }
+
+                // Off-device backup: request a (debounced) push of the new
+                // state to the Tail Bridge. Best-effort — never breaks the
+                // save (see BridgeBackupManager for the debounce/retry logic).
+                try {
+                    AppHooks.refreshBackupAfterSave?.invoke(context)
+                } catch (e: Exception) {
+                    Log.w(TAG, "post-save backup request failed: ${e.message}")
                 }
             }
         }

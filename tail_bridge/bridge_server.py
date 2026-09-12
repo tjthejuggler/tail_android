@@ -41,6 +41,7 @@ On the Android side:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -53,7 +54,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from fastapi import FastAPI, HTTPException, Security
+from fastapi import FastAPI, HTTPException, Request, Security
+from fastapi.responses import FileResponse
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -174,6 +176,137 @@ def _make_source_endpoints(source: BridgeSource):
 
 for _source in _sources.values():
     _make_source_endpoints(_source)
+
+
+# ── Habits DB backup endpoints ───────────────────────────────────────────────
+# Push-based off-device backup of the phone's habits database. Replaces the
+# old Syncthing folder-share for backup purposes: Syncthing is BIDIRECTIONAL
+# (it propagated corrupt/truncated writes to the "backup" and could sync a
+# stale desktop file back over the phone), while this is PUSH-ONLY with
+# immutable timestamped snapshots — a corrupt upload can never overwrite an
+# earlier good backup.
+#
+#   POST /api/v1/backup/habits          → phone pushes the exact DB bytes
+#   GET  /api/v1/backup/habits/latest   → most recent backup (restore path)
+#   GET  /api/v1/backup/habits/list     → inventory of retained snapshots
+#
+# Storage: backups/habits/latest.json (always the newest accepted payload,
+# atomically replaced) plus snap_<millis>_<hash8>.json timestamped copies,
+# deduped against the latest by content hash and pruned by count/age.
+
+BACKUP_DIR = SCRIPT_DIR / "backups" / "habits"
+BACKUP_LATEST = BACKUP_DIR / "latest.json"
+BACKUP_MAX_FILES = 200          # hard cap on retained timestamped copies
+BACKUP_MAX_AGE_DAYS = 90        # hard cap on retention age
+
+
+def _prune_habit_backups():
+    """Thin the timestamped backup store: newest BACKUP_MAX_FILES kept."""
+    try:
+        snaps = sorted(
+            (p for p in BACKUP_DIR.glob("snap_*.json")),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        cutoff = time.time() - BACKUP_MAX_AGE_DAYS * 86400
+        for i, p in enumerate(snaps):
+            if i >= BACKUP_MAX_FILES or p.stat().st_mtime < cutoff:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+@app.post("/api/v1/backup/habits", tags=["backup"])
+async def backup_habits_push(request: Request, api_key: str = Security(verify_key)):
+    """
+    Accept the phone's habits DB (raw JSON document body) as a backup.
+
+    The payload is validated as parseable JSON before anything is written;
+    writes are atomic (tmp + rename) so a dropped connection can never leave
+    a half-written backup that a restore might pick up.
+    """
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty backup payload")
+    try:
+        doc = json.loads(body)
+    except (ValueError, UnicodeDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f"Payload is not valid JSON: {e}")
+    if not isinstance(doc, dict):
+        raise HTTPException(status_code=400, detail="Payload must be a JSON object")
+    entry_count = 0
+    for v in doc.values():
+        if isinstance(v, dict):
+            entry_count += len(v)
+
+    digest = hashlib.sha256(body).hexdigest()[:8]
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Content dedup: identical to the latest accepted backup → skip the
+    # timestamped copy entirely (a quiet day must not flood the store).
+    deduped = False
+    try:
+        if BACKUP_LATEST.exists() and \
+                hashlib.sha256(BACKUP_LATEST.read_bytes()).hexdigest()[:8] == digest:
+            deduped = True
+    except OSError:
+        pass
+
+    if not deduped:
+        stamp_name = f"snap_{int(time.time() * 1000)}_{digest}.json"
+        tmp = BACKUP_DIR / (stamp_name + ".tmp")
+        tmp.write_bytes(body)
+        os.replace(tmp, BACKUP_DIR / stamp_name)
+        # latest.json atomically replaced too.
+        tmp_latest = BACKUP_DIR / "latest.json.tmp"
+        tmp_latest.write_bytes(body)
+        os.replace(tmp_latest, BACKUP_LATEST)
+        _prune_habit_backups()
+
+    logger.info(
+        "backup/habits: %s (%d habits, %d entries, %d bytes)",
+        "deduped" if deduped else "stored", len(doc), entry_count, len(body),
+    )
+    return {
+        "status": "ok",
+        "deduped": deduped,
+        "hash": digest,
+        "habits": len(doc),
+        "entries": entry_count,
+        "bytes": len(body),
+    }
+
+
+@app.get("/api/v1/backup/habits/latest", tags=["backup"])
+def backup_habits_latest(api_key: str = Security(verify_key)):
+    """Return the most recent accepted habits DB backup (restore path)."""
+    if not BACKUP_LATEST.exists():
+        raise HTTPException(status_code=404, detail="No backup available yet")
+    return FileResponse(
+        BACKUP_LATEST,
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/v1/backup/habits/list", tags=["backup"])
+def backup_habits_list(api_key: str = Security(verify_key)):
+    """Inventory of retained timestamped backups, newest first."""
+    if not BACKUP_DIR.exists():
+        return {"backups": [], "count": 0}
+    items = []
+    for p in sorted(BACKUP_DIR.glob("snap_*.json"),
+                    key=lambda p: p.stat().st_mtime, reverse=True):
+        st = p.stat()
+        items.append({
+            "name": p.name,
+            "bytes": st.st_size,
+            "modified": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+        })
+    return {"backups": items, "count": len(items)}
 
 
 # ── Movie-specific convenience endpoints ─────────────────────────────────────

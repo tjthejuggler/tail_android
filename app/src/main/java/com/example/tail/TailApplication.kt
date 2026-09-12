@@ -49,6 +49,11 @@ class TailApplication : Application() {
                 Log.w("TailApp", "post-save wallpaper refresh failed: ${e.message}")
             }
         }
+        // Off-device backup (Tail Bridge, push-only): coalesce save bursts
+        // into debounced pushes — see BridgeBackupManager for the logic.
+        com.example.tail.data.AppHooks.refreshBackupAfterSave = { ctx ->
+            com.example.tail.data.BridgeBackupManager.onDatabaseSaved(ctx)
+        }
 
         // Keep the home-screen widgets in sync with the pending-notification
         // list: both widgets repaint on every change — asks created (count

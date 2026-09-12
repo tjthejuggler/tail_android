@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.lang.ref.SoftReference
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -71,8 +72,19 @@ class HabitTimestampRepository(private val context: Context) {
             val data: Map<String, Map<String, List<String>>>
         )
 
+        /**
+         * SOFT cache (2026-09-11 OOM hardening): this file grows forever
+         * (1.4 MB after five months) and the process hosting it is a
+         * persistent notification-listener service that never exits. A strong
+         * reference pinned a full parsed object graph of that file for the
+         * process's entire life — exactly the kind of slow ratchet that filled
+         * the 256 MB heap in the 2026-09-09/09-10 OOM crashes. SoftReference
+         * keeps the hot-loop speedup (the GC clears it only when memory is
+         * actually needed) while guaranteeing the retained graph can never
+         * itself become the reason the heap runs out.
+         */
         @Volatile
-        private var cachedSnapshot: Snapshot? = null
+        private var cachedSnapshot: SoftReference<Snapshot>? = null
 
         /** Returns a time string for "right now" (HH:mm:ss). */
         fun nowTime(): String = LocalTime.now().format(TIME_FMT)
@@ -92,18 +104,20 @@ class HabitTimestampRepository(private val context: Context) {
     private suspend fun readSnapshot(): Map<String, Map<String, List<String>>> =
         withContext(Dispatchers.IO) {
             val (mtime, len) = fileStamps()
-            cachedSnapshot?.let { snap ->
+            cachedSnapshot?.get()?.let { snap ->
                 if (snap.lastModified == mtime && snap.length == len) {
                     return@withContext snap.data
                 }
             }
             val parsed: Map<String, Map<String, List<String>>> = try {
+                // Streaming parse: never materialise the whole file as a
+                // String before handing it to Gson (see loadDatabaseResult).
                 if (!file.exists()) emptyMap()
-                else gson.fromJson(file.readText(), mapType) ?: emptyMap()
+                else gson.fromJson(file.reader(), mapType) ?: emptyMap()
             } catch (_: Exception) {
                 emptyMap()
             }
-            cachedSnapshot = Snapshot(mtime, len, parsed)
+            cachedSnapshot = SoftReference(Snapshot(mtime, len, parsed))
             parsed
         }
 
@@ -120,15 +134,16 @@ class HabitTimestampRepository(private val context: Context) {
         withContext(Dispatchers.IO) {
             var saved = false
             try {
-                val json = prettyGson.toJson(data)
-                file.writeText(json)
+                // Stream the serialization straight to disk — no multi-MB
+                // intermediate String on the heap.
+                file.writer().use { w -> prettyGson.toJson(data, w) }
                 saved = true
             } catch (_: Exception) {
                 // Best-effort
             }
             if (saved) {
                 val (mtime, len) = fileStamps()
-                cachedSnapshot = Snapshot(mtime, len, deepCopy(data))
+                cachedSnapshot = SoftReference(Snapshot(mtime, len, deepCopy(data)))
             }
         }
 
@@ -305,7 +320,7 @@ class HabitTimestampRepository(private val context: Context) {
             // rarely read, so a plain parse (no snapshot cache) suffices.
             try {
                 if (!minutesFile.exists()) mutableMapOf()
-                else gson.fromJson(minutesFile.readText(), minutesMapType) ?: mutableMapOf()
+                else gson.fromJson(minutesFile.reader(), minutesMapType) ?: mutableMapOf()
             } catch (_: Exception) {
                 mutableMapOf()
             }
@@ -314,7 +329,12 @@ class HabitTimestampRepository(private val context: Context) {
     private suspend fun saveMinutes(data: Map<String, Map<String, Map<String, Int>>>) {
         withContext(Dispatchers.IO) {
             try {
-                if (data.isEmpty()) minutesFile.delete() else prettyGson.toJson(data).let(minutesFile::writeText)
+                if (data.isEmpty()) {
+                    minutesFile.delete()
+                } else {
+                    // Stream serialization straight to disk (OOM hardening).
+                    minutesFile.writer().use { w -> prettyGson.toJson(data, w) }
+                }
             } catch (_: Exception) {
                 // Best-effort
             }
@@ -332,9 +352,9 @@ class HabitTimestampRepository(private val context: Context) {
     fun getTimestampCountsForHabitSync(habitName: String): Map<String, Int> {
         return try {
             if (!file.exists()) return emptyMap()
-            val text = file.readText()
-            if (text.isBlank()) return emptyMap()
-            val parsed: Map<String, Map<String, List<String>>>? = gson.fromJson(text, mapType)
+            // Streaming parse — same OOM hardening as readSnapshot().
+            val parsed: Map<String, Map<String, List<String>>>? =
+                gson.fromJson(file.reader(), mapType)
             val habitTs = parsed?.get(habitName) ?: return emptyMap()
             habitTs.mapValues { it.value.size }
         } catch (e: Exception) {

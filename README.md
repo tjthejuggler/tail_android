@@ -1,12 +1,45 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-11T12:10Z
+**Last updated:** 2026-09-12T06:00Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
----31e8e7a8
+---
+
+## 2026-09-12T06:00Z — OOM crash fix + Phase 1 bridge backup (Syncthing → Tail Bridge)
+- **OOM crash root cause fixed (the Sep 9/10 crashes)**: the habits persistence
+  layer streamed its JSON I/O. [`HabitsRepository.loadDatabaseResult`](core-data/src/main/java/com/example/tail/data/HabitsRepository.kt:157)
+  now parses directly from the SAF stream (no more full-file String on the heap
+  on every load), [`HabitTimestampRepository`](core-data/src/main/java/com/example/tail/data/HabitTimestampRepository.kt:68)
+  caches its 1.4 MB+ parsed file in a SoftReference and streams its writes, and
+  snapshot restore parses from a reader. Peak memory is now the object graph
+  alone — the multi-MB String multiplier that ratcheted the 256 MB heap to OOM
+  in the persistent notification-listener process is gone. Full decision in the
+  graph ADR "Streaming JSON I/O for the habits persistence layer".
+- **Phase 1: off-device backup now flows over the Tail Bridge** (Syncthing kept
+  in parallel until Phase 2 parity is proven):
+  - Desktop: [`bridge_server.py`](tail_bridge/bridge_server.py:186) gained
+    `POST /api/v1/backup/habits` (JSON-validated, atomic tmp+rename writes,
+    content-hash dedup, 200-file/90-day retention),
+    `GET /api/v1/backup/habits/latest` (restore path) and
+    `GET /api/v1/backup/habits/list`. Store lives in `tail_bridge/backups/habits/`.
+  - Phone: [`BridgeBackupManager`](core-data/src/main/java/com/example/tail/data/BridgeBackupManager.kt:1)
+    pushes after every confirmed DB save, debounced to ≤1 push/minute with
+    5s/15s/45s retry backoff. It walks candidate bridge URLs (saved bridge →
+    Garmin-derived → last-known-good → desktop LAN IP) with a fast TCP probe,
+    so it self-heals past the unresolvable `twain` hostname in the current
+    settings. Wired into the save path via
+    [`AppHooks.refreshBackupAfterSave`](core-data/src/main/java/com/example/tail/data/AppHooks.kt:23)
+    → installed in [`TailApplication`](app/src/main/java/com/example/tail/TailApplication.kt:53).
+  - Verified live: 3,028,262 bytes (243 habits / 143,364 entries) pushed from
+    the phone, validated + stored on the desktop, backup re-parses identically.
+  - Why push beats Syncthing for backups: Syncthing is bidirectional (it
+    propagated corrupt/truncated writes into the "backup" and could sync a
+    stale desktop file back over the phone); the bridge store is push-only
+    with immutable timestamped snapshots — a corrupt upload can never
+    overwrite the last good backup.
 
 ## 2026-09-11T12:10Z — Chess Stats: correlations expanded to 13 charted subsections + Stockfish ACPL/blunders
 - The correlation section now renders **13 collapsible scatter subsections**

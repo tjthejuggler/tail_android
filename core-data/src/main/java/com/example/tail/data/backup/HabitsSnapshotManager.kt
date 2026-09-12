@@ -174,9 +174,10 @@ class HabitsSnapshotManager(private val context: Context) {
      */
     suspend fun readSnapshot(file: File): HabitsDatabase? = withContext(Dispatchers.IO) {
         try {
-            val text = file.readText()
-            if (text.isBlank()) return@withContext null
-            gson.fromJson<HabitsDatabase>(text, dbType)
+            // Streaming parse: a 3 MB snapshot no longer has to exist as a
+            // full String on the heap before Gson sees it — restoring a
+            // snapshot was itself an OOM risk in the persistent process.
+            gson.fromJson<HabitsDatabase>(file.reader(), dbType)
         } catch (e: Throwable) {
             // Throwable, not Exception: an OutOfMemoryError mid-parse of a
             // multi-MB snapshot must grey the snapshot out, never kill the process.
