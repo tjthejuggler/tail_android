@@ -63,3 +63,7 @@ zai_API_KEY.txt
 # Generated wallpaper images (raw + final)
 wallpaper_gen/raw/
 wallpaper_gen/final/
+
+# Phone habits-DB backups (personal data; rotated by bridge_server:
+# newest 200 snaps kept, 90-day max age — don't track)
+tail_bridge/backups/

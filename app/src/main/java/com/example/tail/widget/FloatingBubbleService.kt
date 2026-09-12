@@ -109,8 +109,33 @@ class FloatingBubbleService : Service() {
                 resources.displayMetrics
             ).toInt()
 
-        /** Action to stop the bubble from anywhere (e.g. notification action). */
+        /**
+         * Action to stop the bubble from anywhere (e.g. notification action).
+         * Ends any running session first — the user asked for a stop, and a
+         * timer must never keep counting with its only visible control gone.
+         * The monitor's hide-without-stopping requests use
+         * [ACTION_CANCEL_BUBBLE] instead.
+         */
         const val ACTION_STOP_BUBBLE = "com.example.tail.widget.STOP_BUBBLE"
+
+        /**
+         * Action sent by [WidgetTriggerService] (screen-off sweep / orphan
+         * sweep) to stop and record timed sessions WITHOUT showing a bubble:
+         * names the habits in [EXTRA_STOP_HABITS] whose timers must end, and
+         * [EXTRA_END_MULTI] when a live multi-timer group must be ended as a
+         * whole. Guarantees a timer can never keep counting invisibly after
+         * its trigger app is gone.
+         */
+        const val ACTION_STOP_TIMERS = "com.example.tail.widget.STOP_TIMERS"
+
+        /**
+         * Action sent by [WidgetTriggerService] when the bubble must hide
+         * WITHOUT ending any running timer (monitor shutdown / trigger apps
+         * deconfigured) — the session is meant to resume when the bubble
+         * comes back. User-facing stop requests use [ACTION_STOP_BUBBLE],
+         * which ends sessions.
+         */
+        const val ACTION_CANCEL_BUBBLE = "com.example.tail.widget.CANCEL_BUBBLE"
 
         /**
          * Action sent by [WidgetTriggerService] when Tail itself is in the
@@ -126,6 +151,21 @@ class FloatingBubbleService : Service() {
          * timer is stopped and recorded before the bubble hides itself.
          */
         const val ACTION_TRIGGER_APP_LEFT = "com.example.tail.widget.TRIGGER_APP_LEFT"
+
+        /**
+         * Intent extra: habits whose still-running timers the headless
+         * [ACTION_STOP_TIMERS] sweep must stop and record.
+         */
+        const val EXTRA_STOP_HABITS = "stop_habits"
+
+        /**
+         * Intent extra for [ACTION_STOP_TIMERS]: true when a live
+         * multi-timer group must be ended and recorded along with the named
+         * single timers. Decided by the monitor, which knows the
+         * persistent-timer config (a group with any persistent member is
+         * left running).
+         */
+        const val EXTRA_END_MULTI = "end_multi"
 
         /** Intent extra: name of the habit whose trigger app opened the bubble. */
         const val EXTRA_HABIT_NAME = "habit_name"
@@ -408,8 +448,46 @@ class FloatingBubbleService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP_BUBBLE -> {
+                // A user-facing stop ends any running session first —
+                // exactly like the trigger app leaving (stop & record, then
+                // hide; the self-stop is delayed past the increment flash).
+                noteDeliberateStop()
+                handleTriggerAppLeft()
+                return START_NOT_STICKY
+            }
+            ACTION_CANCEL_BUBBLE -> {
+                // Monitor shutdown / deconfig: hide the bubble but LEAVE any
+                // running timer alone so it can resume when the bubble
+                // returns (documented resume-on-return contract).
                 noteDeliberateStop()
                 stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_STOP_TIMERS -> {
+                // Headless finaliser (screen-off sweep / trigger-app-left
+                // with no bubble): stop & record the named timers — plus a
+                // live multi group when [EXTRA_END_MULTI] is set — while
+                // showing nothing on screen. Idempotent: already-stopped
+                // timers are skipped, so racing with ACTION_TRIGGER_APP_LEFT
+                // is harmless.
+                noteDeliberateStop()
+                val habits = intent.getStringArrayListExtra(EXTRA_STOP_HABITS).orEmpty()
+                val endMulti = intent.getBooleanExtra(EXTRA_END_MULTI, false)
+                val anyTimer = endMulti ||
+                    habits.any { WidgetTimerStore.isTimerRunning(this, it) }
+                if (!anyTimer) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                if (endMulti) stopMultiGroupAndRecord()
+                habits.forEach { habit ->
+                    if (WidgetTimerStore.isTimerRunning(this, habit)) {
+                        stopTimerAndRecord(habit)
+                    }
+                }
+                // The writes above run on persistenceScope and survive the
+                // stop; the linger only keeps the increment flash visible.
+                scheduleLingerStop()
                 return START_NOT_STICKY
             }
             ACTION_TRIGGER_APP_LEFT -> {
@@ -884,7 +962,11 @@ class FloatingBubbleService : Service() {
                         // Check if dropped on dismiss zone
                         if (isOverDismissZone(event.rawX, event.rawY)) {
                             noteDeliberateStop()
-                            stopSelf()
+                            // Dismissing the bubble ENDS any running session
+                            // (stop & record, then linger-stop): a timer must
+                            // never keep counting with its only visible
+                            // control gone. No-op when nothing is running.
+                            handleTriggerAppLeft()
                             return true
                         }
 

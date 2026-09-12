@@ -6,8 +6,10 @@ import android.app.NotificationManager
 import android.app.Service
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -166,6 +168,9 @@ class WidgetTriggerService : Service() {
     /** Package of the Chess Readiness app (null when feature is off/unset). */
     private var chessReadinessPackage: String? = null
 
+    /** Receives ACTION_SCREEN_OFF so timer sessions can be finalised. */
+    private var screenReceiver: BroadcastReceiver? = null
+
     /**
      * Reverse of the media-app setting: package → media habit names.
      * Habits here get AUTOMATIC listening-time tracking via
@@ -226,6 +231,11 @@ class WidgetTriggerService : Service() {
         WidgetWatchdogReceiver.schedule(this)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
+        // Screen transitions end app-scoped timer sessions that the
+        // usage-event poll can miss entirely (a locked screen emits no
+        // ACTIVITY_RESUMED, so the poll's "no events → unchanged" rule
+        // would leave a running timer invisible overnight).
+        registerScreenStateReceiver()
         // Baseline for the nav-mode rebind detector: never repaint on the
         // first poll after (re)start — only on real CHANGES.
         lastNavMode = try {
@@ -247,9 +257,49 @@ class WidgetTriggerService : Service() {
         isRunning = false
         Log.d(TAG, "Service destroyed")
         stopPolling()
+        unregisterScreenStateReceiver()
         // Ensure the bubble is removed when the service stops
         stopBubble()
         serviceScope.cancel()
+    }
+
+    /**
+     * Listens for screen off/on so timer sessions can be finalised the
+     * moment the display turns off: any non-persistent running timer or
+     * live multi-timer group is stopped and recorded right there — it
+     * cannot survive into a lock-screen overnight freeze.
+     */
+    private fun registerScreenStateReceiver() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                when (intent.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        Log.d(TAG, "Screen off — finalising non-persistent timer sessions")
+                        endOrphanedTimerSessions()
+                    }
+                    else -> Unit
+                }
+            }
+        }
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        screenReceiver = receiver
+        try {
+            // System screen broadcasts cannot target O+ receivers by
+            // exception; they are exempt (protected system broadcasts).
+            registerReceiver(receiver, filter)
+        } catch (e: Exception) {
+            Log.w(TAG, "Screen-off receiver registration failed: ${e.message}")
+            screenReceiver = null
+        }
+    }
+
+    private fun unregisterScreenStateReceiver() {
+        screenReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (e: Exception) { /* not registered */ }
+        }
+        screenReceiver = null
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -426,9 +476,16 @@ class WidgetTriggerService : Service() {
                     Log.d(TAG, "Tail is foreground — showing bubble in tail mode for '$tailHabit'")
                     startTailModeBubble(tailHabit)
                 }
-            } else if (bubbleActive) {
-                Log.d(TAG, "Tail is foreground — hiding bubble")
-                stopBubble(stopRunningTimer = true)
+            } else {
+                // No persistent timer is running: Tail is not a trigger app,
+                // so any non-persistent session must end NOW — even when the
+                // bubble was already dismissed or died (backstop against
+                // invisible timers).
+                endOrphanedTimerSessions()
+                if (bubbleActive) {
+                    Log.d(TAG, "Tail is foreground — hiding bubble")
+                    stopBubble(stopRunningTimer = true)
+                }
             }
             currentForegroundPackage = null
             return
@@ -490,9 +547,18 @@ class WidgetTriggerService : Service() {
                         Log.d(TAG, "Persistent timer running — showing bubble for '$persistentHabit'")
                         startTailModeBubble(persistentHabit)
                     }
-                } else if (bubbleActive) {
-                    Log.d(TAG, "Trigger app left — hiding bubble, stopping timer if running")
-                    stopBubble(stopRunningTimer = true)
+                } else {
+                    // No persistent timer: leaving a trigger app ends every
+                    // non-persistent session — EVEN when the bubble is
+                    // already gone (dismissed by the user, dead from a
+                    // crash, or the monitor simply believed otherwise).
+                    // The old bubbleActive-only guard let timers run
+                    // invisibly forever in exactly that case.
+                    endOrphanedTimerSessions()
+                    if (bubbleActive) {
+                        Log.d(TAG, "Trigger app left — hiding bubble, timers finalised")
+                        stopBubble(stopRunningTimer = true)
+                    }
                 }
                 // Leaving the chess app ends the "bypass session" — a
                 // later re-entry may warn again.
@@ -675,19 +741,62 @@ class WidgetTriggerService : Service() {
         persistentHabits.firstOrNull { WidgetTimerStore.isTimerRunning(this, it) }
 
     /**
+     * Finalises every NON-persistent timed session that is still running:
+     * single timers of trigger-app habits are stopped and recorded, and a
+     * live multi-timer group is ended as a whole — UNLESS any of its
+     * members is a persistent habit (a persistent session survives app
+     * switches and screen-off BY DESIGN, and its group travels with it).
+     *
+     * The work happens in [FloatingBubbleService] via
+     * [FloatingBubbleService.ACTION_STOP_TIMERS] — a headless, idempotent
+     * record-and-stop. Called when the screen turns off and whenever a
+     * trigger app (or Tail) is entered/left while no persistent session is
+     * running — closing the gap where a timer kept counting invisibly
+     * overnight with no bubble on screen.
+     */
+    private fun endOrphanedTimerSessions() {
+        val persistent = persistentHabits
+        val members = WidgetTimerStore.multiMembers(this)
+        val endMulti = members.isNotEmpty() && members.none { it in persistent }
+        val sweep = habitsByPackage.values.flatten()
+            .distinct()
+            .filter { it !in persistent && WidgetTimerStore.isTimerRunning(this, it) }
+        if (!endMulti && sweep.isEmpty()) return
+        Log.d(TAG, "Finalising orphaned timer sessions: habits=$sweep, multi=$endMulti")
+        val intent = Intent(this, FloatingBubbleService::class.java).apply {
+            action = FloatingBubbleService.ACTION_STOP_TIMERS
+            if (sweep.isNotEmpty()) {
+                putStringArrayListExtra(FloatingBubbleService.EXTRA_STOP_HABITS, ArrayList(sweep))
+            }
+            putExtra(FloatingBubbleService.EXTRA_END_MULTI, endMulti)
+        }
+        try {
+            startForegroundService(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to finalise orphaned timers", e)
+        }
+    }
+
+    /**
      * Tells the bubble service to hide itself. When [stopRunningTimer] is
      * true (the trigger app left the foreground) a still-running habit timer
-     * is stopped and recorded first; false (monitor shutdown / trigger apps
-     * deconfigured) leaves any timer running so it can resume if the bubble
-     * comes back.
+     * is stopped and recorded first (the sweep runs BEFORE this call);
+     * false (monitor shutdown / trigger apps deconfigured) leaves any timer
+     * running so it can resume if the bubble comes back.
      */
     private fun stopBubble(stopRunningTimer: Boolean = false) {
         if (!bubbleActive) return
         bubbleTailMode = false
+        // When stopRunningTimer is true the timer sweeps have ALREADY run
+        // (endOrphanedTimerSessions) or the record-and-stop happens inside
+        // the bubble via ACTION_TRIGGER_APP_LEFT; the hide request itself
+        // never needs to touch timers. Plain hides (monitor shutdown /
+        // deconfig) use ACTION_CANCEL_BUBBLE, which leaves timers running
+        // so they can resume when the bubble returns.
         val stopAction = if (stopRunningTimer) {
             FloatingBubbleService.ACTION_TRIGGER_APP_LEFT
         } else {
-            FloatingBubbleService.ACTION_STOP_BUBBLE
+            FloatingBubbleService.ACTION_CANCEL_BUBBLE
         }
         val intent = Intent(this, FloatingBubbleService::class.java)
             .apply { action = stopAction }
