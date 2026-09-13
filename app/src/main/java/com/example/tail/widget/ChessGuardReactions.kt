@@ -128,10 +128,14 @@ object ChessGuardReactions {
 
         when (decision) {
             is Decision.Allow -> {
-                // YELLOW session: the app stays open (casual play
-                // allowed), but every entry gets the full-screen
-                // rated-games-cost-24h warning — once per stint.
-                if (decision.reason == Reason.YELLOW_SESSION && !yellowWarnedThisStint) {
+                // Warnings fire on APP ENTRY only (user rule, 2026-09-13):
+                // in-app window events keep arriving while the user is
+                // playing, so a session that degrades GREEN → YELLOW (or
+                // expires into the trust window) MID-GAME must never pop
+                // an overlay over the board — the next real entry shows it.
+                if (decision.reason == Reason.YELLOW_SESSION &&
+                    isNewEntry && !yellowWarnedThisStint
+                ) {
                     yellowWarnedThisStint = true
                     Log.d(TAG, "Chess app entered during YELLOW — showing casual-play warning")
                     try {
@@ -144,7 +148,9 @@ object ChessGuardReactions {
                 // possible — the app must open (the test lives inside it),
                 // but every entry gets the full-screen "take the readiness
                 // test before anything else" notice — once per stint.
-                if (decision.reason == Reason.TEST_AVAILABLE && !testRequiredWarnedThisStint) {
+                if (decision.reason == Reason.TEST_AVAILABLE &&
+                    isNewEntry && !testRequiredWarnedThisStint
+                ) {
                     testRequiredWarnedThisStint = true
                     Log.d(TAG, "Chess app entered without authorization — test-required notice")
                     try {

@@ -799,4 +799,7 @@ dashboard.install(
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("TAIL_BRIDGE_PORT", "8001"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Loopback only: tailscale serve owns the tailscale-IP sockets for this
+    # port and forwards tailnet traffic to 127.0.0.1. Binding 0.0.0.0 dies
+    # with EADDRINUSE against the root tailscaled process.
+    uvicorn.run(app, host="127.0.0.1", port=port)

@@ -8,6 +8,29 @@ A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintai
 
 ---
 
+## 2026-09-13T17:30Z — Quick capture: "I ate …" utterances auto-route to the meal habit
+- **Saying (or typing) something that starts with "I ate" into quick capture now
+  lands in the Meal habit whenever the Meal type is in use anywhere**
+  (`mealHabits` non-empty) — no trigger word setup needed. Runs BEFORE the
+  trigger-word density heuristic in [`routeText()`](app/src/main/java/com/example/tail/ipc/SmartVoiceService.kt:418),
+  which would otherwise have filed such a sentence as a note.
+- New pure parser [`MealVoiceParser.kt`](core-data/src/main/java/com/example/tail/data/meal/MealVoiceParser.kt:1):
+  recognises "i ate" / "i've ate" / "i have ate" (case-insensitive, punctuation
+  and whitespace tolerant); resolves the meal habit (exactly-one wins; with
+  several configured, a mentioned subtype or habit name picks the target);
+  matches the meal habit's **subtype** in the description (e.g.
+  "I ate breakfast oats" → subtype `Breakfast`); builds the meal title.
+- New [`handleAsMeal()`](app/src/main/java/com/example/tail/ipc/SmartVoiceService.kt:749):
+  increments the meal habit +1 with the exact side-effects of a spoken habit
+  increment (subtype breakdown via [`SubtypeDataRepository`](core-data/src/main/java/com/example/tail/data/SubtypeDataRepository.kt:1),
+  increment timestamp, `HabitIncrementBus` + external broadcast) and logs a
+  transcript-only [`MealLog`](core-data/src/main/java/com/example/tail/data/meal/MealModels.kt:60)
+  (`isManual`, `countedIncrement`, full utterance as `voiceTranscript`) —
+  merging into an open 1-hour meal group when one exists, like a photo capture.
+- 18 unit tests in [`MealVoiceParserTest.kt`](app/src/test/java/com/example/tail/MealVoiceParserTest.kt:1)
+  (prefix parsing, habit/subtype resolution, title building) — all green;
+  installed via `installDebug`.
+
 ## 2026-09-12T13:25Z — Chess readiness: rolling idle close tightened 30 → 10 minutes
 - **Gap between games must now be ≤ 10 minutes to stay in the same session.**
   The ROLLING rated-play window's idle close

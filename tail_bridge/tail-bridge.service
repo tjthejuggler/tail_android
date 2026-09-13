@@ -7,7 +7,12 @@ Type=simple
 WorkingDirectory=/home/twain/AndroidStudioProjects/tail/tail_bridge
 Environment="PATH=/home/twain/AndroidStudioProjects/tail/tail_bridge/venv/bin:/usr/bin:/bin"
 EnvironmentFile=/home/twain/AndroidStudioProjects/tail/tail_bridge/.env
-ExecStart=/home/twain/AndroidStudioProjects/tail/tail_bridge/venv/bin/uvicorn bridge_server:app --host 0.0.0.0 --port 8001
+# NOTE: the tail-supervisor (tail-supervisor.service) now manages this
+# daemon from tail_services.toml; this standalone unit is kept only as a
+# fallback and must NOT run at the same time as the supervisor's copy
+# (they would fight over port 8001). Host is loopback-only because
+# tailscale serve owns the tailscale-IP sockets and forwards to 127.0.0.1.
+ExecStart=/home/twain/AndroidStudioProjects/tail/tail_bridge/venv/bin/uvicorn bridge_server:app --host 127.0.0.1 --port 8001
 Restart=always
 RestartSec=10
 

@@ -84,7 +84,11 @@ object ChessGuardPenalty {
                 history = tests,
                 session = null,
                 penalties = priorPenalties,
-                now = gameStartMs
+                now = gameStartMs,
+                // Audit chain as of the game's start instant — later
+                // verdicts must not retroactively judge this game.
+                audits = ChessPhase2Store.loadAudits(context)
+                    .filter { it.timestamp <= gameStartMs }
             )
             val casualAllowed = decisionAtStart is ChessEnforcementPolicy.Decision.Allow &&
                 (

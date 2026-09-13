@@ -29,6 +29,9 @@ import com.example.tail.data.SettingsRepository
 import com.example.tail.ipc.SpotifyDetector
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.SubtypeTimedMigrator
+import com.example.tail.data.meal.MealLog
+import com.example.tail.data.meal.MealLogRepository
+import com.example.tail.data.meal.MealVoiceParser
 import com.example.tail.ipc.SpotifyTrack
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
@@ -422,6 +425,18 @@ class SmartVoiceService : Service() {
         capturedSpotifyTrack: SpotifyTrack? = null,
         forceHabit: Boolean = false
     ) {
+        // ── Meal-utterance intercept ────────────────────────────────────────
+        // "I ate ..." (+ "I've ate") spoken or typed into quick capture is a
+        // meal log whenever the Meal habit type is in use anywhere. This runs
+        // BEFORE the trigger-word density heuristic, which would otherwise
+        // file a sentence like this as a note.
+        val mealUtterance = MealVoiceParser.parse(text)
+        if (mealUtterance != null && settings.mealHabits.isNotEmpty()) {
+            Log.i(TAG, "Routing: \"i ate\" prefix + meal habit(s) configured → MEAL mode")
+            handleAsMeal(mealUtterance, settings)
+            return
+        }
+
         // Strip hyphens so "pull-ups" matches "pullups"
         val normalisedText = text.lowercase().replace("-", "")
         val words = normalisedText.split(Regex("\\s+")).filter { it.isNotEmpty() }
@@ -727,6 +742,112 @@ class SmartVoiceService : Service() {
                 speakAndThenStop(ttsText)
             } catch (e: Exception) {
                 Log.e(TAG, "Error incrementing habits: ${e.message}", e)
+                handler.post { stopSelfCleanly() }
+            }
+        }
+    }
+
+    // ── Meal mode ("I ate …" quick capture) ──────────────────────────────
+
+    /**
+     * Handles a quick-capture utterance recognised as a meal log by
+     * [MealVoiceParser] (e.g. "I ate oatmeal with berries"). Increments the
+     * resolved meal habit (+ subtype breakdown when the description names
+     * one of the habit's subtypes), records the increment timestamp, and
+     * logs a transcript-only [MealLog] — merging into the still-open 1-hour
+     * meal group when one exists, exactly like a photo capture would.
+     */
+    private fun handleAsMeal(
+        utterance: MealVoiceParser.MealUtterance,
+        settings: com.example.tail.data.AppSettings
+    ) {
+        handler.post { Toast.makeText(applicationContext, "🧠→🍽️ Logging meal…", Toast.LENGTH_SHORT).show() }
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                val habitName = MealVoiceParser.pickMealHabit(
+                    utterance.description,
+                    settings.mealHabits,
+                    settings.habitSubtypes
+                )
+                if (habitName == null) {
+                    Log.w(TAG, "Meal mode but no meal habit resolvable — stopping")
+                    handler.post { Toast.makeText(applicationContext, "🧠 No meal habit found", Toast.LENGTH_SHORT).show() }
+                    stopSelfCleanly()
+                    return@launch
+                }
+
+                // Subtype: only when the habit actually has subtypes AND the
+                // description mentions one of them.
+                val subtypes = settings.habitSubtypes[habitName].orEmpty()
+                val subtypeName = if (habitName in settings.subtypedHabits) {
+                    MealVoiceParser.matchSubtype(utterance.description, subtypes)
+                } else null
+
+                if (settings.fileUri.isEmpty()) {
+                    Log.w(TAG, "No habits file URI configured — cannot increment meal habit")
+                    handler.post { Toast.makeText(applicationContext, "🧠 No habits file selected", Toast.LENGTH_SHORT).show() }
+                    stopSelfCleanly()
+                    return@launch
+                }
+                val uri = Uri.parse(settings.fileUri)
+                val now = System.currentTimeMillis()
+
+                // ── Increment + subtype breakdown + timestamp — the exact
+                // side-effects a spoken habit increment performs.
+                SubtypeTimedMigrator.runIfNeeded(applicationContext, settings)
+                HabitsRepository().incrementHabit(uri, applicationContext, habitName, 1)
+                HabitIncrementBus.emit(habitName)
+                if (subtypeName != null) {
+                    try {
+                        SubtypeDataRepository(applicationContext).addToDate(
+                            habitName, LocalDate.now().toString(), mapOf(subtypeName to 1)
+                        )
+                        Log.i(TAG, "Saved meal subtype breakdown '$habitName'/$subtypeName → 1")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to save meal subtype data: ${e.message}")
+                    }
+                }
+                try {
+                    HabitTimestampRepository(applicationContext).addTimestamp(habitName)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to record meal timestamp: ${e.message}")
+                }
+                HabitIncrementAnnouncer.announce(applicationContext, habitName, 1)
+
+                // ── Meal log entry (transcript-only, no photo/LLM data).
+                val mealLogRepo = MealLogRepository(applicationContext)
+                val activeGroup = mealLogRepo.findActiveGroup(habitName, now)
+                if (activeGroup != null) {
+                    mealLogRepo.updateLog(
+                        activeGroup.mergedWith(transcript = utterance.raw, newTimestamp = now)
+                    )
+                    Log.i(TAG, "Merged meal utterance into open group '${activeGroup.title}'")
+                } else {
+                    mealLogRepo.addLog(
+                        MealLog(
+                            id = java.util.UUID.randomUUID().toString(),
+                            habitId = habitName,
+                            timestamp = now,
+                            title = MealVoiceParser.buildTitle(utterance.description),
+                            summary = utterance.description.ifBlank { null },
+                            isManual = true,
+                            voiceTranscript = utterance.raw,
+                            countedIncrement = true,
+                            groupStartTimestamp = now
+                        )
+                    )
+                }
+
+                // Confirmation — habit style (single pulse, overlay, TTS)
+                vibrateConfirmation()
+                val confirmMsg = if (subtypeName != null) "$habitName ($subtypeName)" else habitName
+                handler.post { showHabitIncrementConfirmation(confirmMsg) }
+                Log.i(TAG, "Meal logged via quick capture: '$habitName'${subtypeName?.let { "/$it" } ?: ""}")
+                speakAndThenStop(confirmMsg)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error logging meal: ${e.message}", e)
+                handler.post { Toast.makeText(applicationContext, "🧠 Error logging meal: ${e.message}", Toast.LENGTH_LONG).show() }
                 handler.post { stopSelfCleanly() }
             }
         }
