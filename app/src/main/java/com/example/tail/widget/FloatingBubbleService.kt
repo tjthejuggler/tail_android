@@ -256,8 +256,6 @@ class FloatingBubbleService : Service() {
     private var timerChipTotalHeightPx = 0
 
     // ── Multi-timer group (linked timers for all habits on one app) ──────
-    /** Dedicated ⏹ control next to the bubble — stops the whole group. */
-    private var multiStopButtonView: TextView? = null
 
     /** Cached trigger-app → multi-timer-enabled config (menus are sync). */
     @Volatile private var multiTimerAppsCache: Set<String> = emptySet()
@@ -595,7 +593,6 @@ class FloatingBubbleService : Service() {
         removeBubble()
         removeDismissZone()
         hideTimerChip()
-        hideMultiStopButton()
         survivalResultPopup?.dismiss()
         survivalResultPopup = null
         hideSurvivalPanel()
@@ -712,14 +709,12 @@ class FloatingBubbleService : Service() {
             applyTailModeVisuals()
         } else if (multiModeLive()) {
             // A multi-timer group survived the bubble being hidden — resume
-            // the live display (active member's icon + banked+running time)
-            // and the dedicated stop control.
+            // the live display (active member's icon + banked+running time).
             val active = activeMultiHabit() ?: triggerHabitNames.firstOrNull()
             if (active != null) {
                 triggerHabitName = active
                 setBubbleRunningVisuals(running = activeMultiHabit() != null)
                 showTimerChip()
-                showMultiStopButton()
             }
         } else if (habit != null && WidgetTimerStore.isTimerRunning(this, habit)) {
             setBubbleRunningVisuals(running = true)
@@ -1126,11 +1121,12 @@ class FloatingBubbleService : Service() {
             return
         }
 
-        // Multi-timer group live: the tap SWITCHES the running clock to the
-        // next member (banking the outgoing one's time). Stopping the whole
-        // group is the ⏹ control's job — never the bubble tap.
+        // Multi-timer group live: the tap STOPS the whole group (every
+        // member's banked + running time is recorded) — the same contract as
+        // the other modes, where tapping the bubble ends the running timer.
+        // Switching the running clock is the timer chip's job (tap the chip).
         if (multiModeLive()) {
-            switchMultiTimer()
+            stopMultiGroupAndRecord()
             return
         }
 
@@ -1292,7 +1288,8 @@ class FloatingBubbleService : Service() {
             // Multi-timer: a member-selector chip — every group habit's icon
             // in a row (frozen totals under the inactive ones, the active one
             // highlighted), the active member's live total big underneath.
-            // The icons are tappable: tapping a member switches to it.
+            // The whole box is tappable: tapping it switches to the next
+            // member (stopping the group is the bubble tap's job).
             buildMultiChipView(habit, timeText, chipBg)
         } else if (persistentMode) {
             // Persistent mode: habit icon above the time.
@@ -1336,8 +1333,8 @@ class FloatingBubbleService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
                 LOCK_FLAGS or
-                // The multi chip's member icons are tappable (tap = switch);
-                // every other chip stays touch-through.
+                // The multi chip is tappable (tap = switch member); every
+                // other chip stays touch-through.
                 (if (multi) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE),
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -1363,10 +1360,11 @@ class FloatingBubbleService : Service() {
 
     /**
      * Builds the multi-timer member-selector chip: one column per group
-     * habit — its icon (tappable: tap = switch that member's clock on) with
-     * the member's FROZEN total in small text underneath; the active member
-     * is highlighted (green ring + ▶) and its live banked+running total is
-     * the big time line at the bottom.
+     * habit — its icon with the member's FROZEN total in small text
+     * underneath; the active member is highlighted (green ring + ▶) and its
+     * live banked+running total is the big time line at the bottom. The
+     * WHOLE box is one button: tapping it switches the running clock to the
+     * next member (the bubble tap stops the group).
      */
     private fun buildMultiChipView(activeHabit: String, timeText: TextView, chipBg: GradientDrawable): View {
         val iconSize = 26.dp(resources)
@@ -1399,7 +1397,6 @@ class FloatingBubbleService : Service() {
                         setStroke(1, 0xFF334455.toInt())
                     }
                 }
-                setOnClickListener { switchMultiTimerTo(member) }
             }
             loadHabitIconInto(member, icon)
 
@@ -1454,6 +1451,8 @@ class FloatingBubbleService : Service() {
                     ViewGroup.LayoutParams.MATCH_PARENT, timerChipHeight
                 )
             )
+            // One button for the whole box: tap = switch to the next member.
+            setOnClickListener { switchMultiTimer() }
         }
     }
 
@@ -1549,7 +1548,6 @@ class FloatingBubbleService : Service() {
         try {
             windowManager.updateViewLayout(chip, params)
         } catch (e: Exception) { /* view removed */ }
-        positionMultiStopButton()
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1589,8 +1587,8 @@ class FloatingBubbleService : Service() {
 
     /**
      * Arms a multi-timer group for [habits]: every member is linked, the
-     * first one's clock runs. Tapping the bubble from then on switches the
-     * running clock between members; the ⏹ control stops and records all.
+     * first one's clock runs. Tapping the timer chip switches the running
+     * clock between members; tapping the bubble stops and records all.
      */
     private fun startMultiTimerGroup(habits: List<String>) {
         if (habits.size < 2) return
@@ -1600,13 +1598,13 @@ class FloatingBubbleService : Service() {
         setBubbleRunningVisuals(running = true)
         hideTimerChip()
         showTimerChip()
-        showMultiStopButton()
     }
 
     /**
      * Switches the group's running clock to the next member (round-robin in
      * trigger-habit order): the outgoing member's elapsed time is banked and
-     * the incoming member resumes on top of its own bank.
+     * the incoming member resumes on top of its own bank. Bound to a tap on
+     * the multi-timer chip — the whole box acts as the switch control.
      */
     private fun switchMultiTimer() {
         val members = WidgetTimerStore.multiMembers(this)
@@ -1619,8 +1617,8 @@ class FloatingBubbleService : Service() {
     }
 
     /**
-     * Switches the group's running clock to [target] directly (chip icon
-     * tap) — the outgoing member's elapsed time is banked, [target] resumes
+     * Switches the group's running clock to [target] directly — the
+     * outgoing member's elapsed time is banked, [target] resumes
      * on top of its own bank, and the member-selector chip is rebuilt with
      * the new selection highlighted.
      */
@@ -1640,13 +1638,12 @@ class FloatingBubbleService : Service() {
     /**
      * Stops every member of the live multi-timer group and records each
      * one's banked + running minutes (members under a rounded minute are
-     * skipped). One shared ⏹ tap — or the trigger app leaving — ends the
-     * whole group at once.
+     * skipped). One bubble tap — or the trigger app leaving — ends the whole
+     * group at once.
      */
     private fun stopMultiGroupAndRecord(onFinished: (() -> Unit)? = null) {
         val minutesByHabit = WidgetTimerStore.stopMultiGroupAndComputeMinutes(this)
         hideTimerChip()
-        hideMultiStopButton()
         setBubbleRunningVisuals(running = false)
         val recordable = minutesByHabit.entries.filter { it.value > 0 }
         if (recordable.isEmpty()) {
@@ -1663,74 +1660,6 @@ class FloatingBubbleService : Service() {
                 if (index == recordable.lastIndex) onFinished else null
             )
         }
-    }
-
-    /**
-     * Shows the touchable ⏹ pill that stops the whole multi-timer group —
-     * the bubble tap is repurposed for SWITCHING while the group is live, so
-     * stopping needs its own dedicated control.
-     */
-    private fun showMultiStopButton() {
-        if (multiStopButtonView != null) return
-        val size = 40.dp(resources)
-        val btn = TextView(this).apply {
-            text = "✕"
-            textSize = 15f
-            setTextColor(0xFFFF5555.toInt())
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0xDD1A0E10.toInt())
-                setStroke(1, 0xFFCC3333.toInt())
-            }
-            setOnClickListener { stopMultiGroupAndRecord() }
-        }
-        val params = WindowManager.LayoutParams(
-            size, size,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
-                LOCK_FLAGS,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START }
-        try {
-            windowManager.addView(btn, params)
-            multiStopButtonView = btn
-            positionMultiStopButton()
-        } catch (_: Exception) {
-            multiStopButtonView = null
-        }
-    }
-
-    /** Removes the multi-timer ⏹ control. */
-    private fun hideMultiStopButton() {
-        multiStopButtonView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (_: Exception) { /* already removed */ }
-        }
-        multiStopButtonView = null
-    }
-
-    /**
-     * Places the ⏹ control on the opposite side of the bubble from the
-     * timer chip (below the bubble when the chip floats above it).
-     */
-    private fun positionMultiStopButton() {
-        val btn = multiStopButtonView ?: return
-        val params = btn.layoutParams as? WindowManager.LayoutParams ?: return
-        val gap = 8.dp(resources)
-        val size = params.width
-        params.x = bubbleParams.x + (bubbleSize - size) / 2
-        params.y = if (bubbleParams.y - timerChipTotalHeightPx - gap >= 0) {
-            bubbleParams.y + bubbleSize + gap
-        } else {
-            (bubbleParams.y - size - gap).coerceAtLeast(0)
-        }
-        try {
-            windowManager.updateViewLayout(btn, params)
-        } catch (_: Exception) { /* view removed */ }
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -2579,8 +2508,8 @@ class FloatingBubbleService : Service() {
         }
 
         // Multi-timer entry (opt-in per trigger app): arms ALL offered
-        // habits as one linked group — one clock runs at a time, bubble
-        // taps switch it, ⏹ stops and records everything.
+        // habits as one linked group — one clock runs at a time, chip taps
+        // switch it, bubble taps stop and record everything.
         multiTimerOfferedHabits(offeredHabits)?.let { members ->
             val multiItem = TextView(this).apply {
                 text = "⏱ Multi: ${members.joinToString(" + ")}"
@@ -3094,7 +3023,7 @@ class FloatingBubbleService : Service() {
      */
     private fun handleTriggerAppLeft() {
         // A live multi-timer group is stopped and recorded as a whole —
-        // exactly like the ⏹ control — before the bubble hides itself.
+        // exactly like a bubble tap — before the bubble hides itself.
         if (multiModeLive()) {
             stopMultiGroupAndRecord { scheduleLingerStop() }
             return
@@ -3201,7 +3130,6 @@ class FloatingBubbleService : Service() {
         bubbleRingView = null
         // Closing the bubble also removes the timer chip
         hideTimerChip()
-        hideMultiStopButton()
     }
 
     private fun removeDismissZone() {
