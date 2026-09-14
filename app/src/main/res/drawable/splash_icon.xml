@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash-screen icon for Android 12+ (API 31+).
+     Same spiral-tail glyph as the launcher foreground, wrapped with a small
+     inset so it draws ever so slightly smaller inside the system splash's
+     circular mask: 16dp on the ~500dp intrinsic canvas ≈ 6% shrink, matching
+     the earlier launcher-icon tweak in ic_launcher_foreground_inset.xml.
+     Referenced by values-v31/themes.xml → android:windowSplashScreenAnimatedIcon. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_foreground_custom"
+    android:insetLeft="16dp"
+    android:insetTop="16dp"
+    android:insetRight="16dp"
+    android:insetBottom="16dp" />

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Android 12+ (API 31) override of Theme.Tail.
+
+        On API 31+ the system draws a default splash screen that reuses the
+        launcher icon at full circular-mask size, which made the spiral-tail
+        glyph look oversized. Pointing android:windowSplashScreenAnimatedIcon
+        at the inset-wrapped glyph (drawable/splash_icon.xml) renders it
+        slightly smaller. Pre-31 devices never show a system splash, so the
+        base theme in values/themes.xml is left untouched.
+    -->
+    <style name="Theme.Tail" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
+    </style>
+
+</resources>
