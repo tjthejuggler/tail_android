@@ -1,7 +1,9 @@
 package com.example.tail.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +36,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import android.view.HapticFeedbackConstants
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -44,10 +48,12 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Vertical wheel picker with momentum fling and snap-to-item.
+ * Vertical wheel picker with damped fling and magnetic snap-to-item.
  *
  * Swiping up/down scrolls through items. After release, the picker
- * flings with momentum then snaps to the nearest item.
+ * flings with heavily damped momentum (a few items at most) then snaps
+ * to the nearest item with a spring. Each item crossing produces a
+ * subtle haptic tick, so values feel "sticky" like a mechanical wheel.
  *
  * @param items Labels to display (one per slot).
  * @param selectedIndex Currently selected item index.
@@ -79,6 +85,7 @@ fun WheelPicker(
 
     val halfVisible = visibleItems / 2
     val density = LocalDensity.current
+    val view = LocalView.current
     val itemPx = with(density) { itemHeight.toPx() }
     val maxIndex = items.size - 1
     val n = items.size
@@ -112,9 +119,12 @@ fun WheelPicker(
 
     fun wrapIndex(raw: Int): Int = ((raw % n) + n) % n
 
-    // Report a (possibly wrapped) position; fires the matching callback
+    // Report a (possibly wrapped) position; fires the matching callback.
+    // Every user-driven item crossing fires a haptic tick — the "gravity"
+    // that makes each number feel like a mechanical detent.
     fun reportRaw(raw: Int) {
         if (raw == lastReportedRaw) return
+        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         if (cyclic && currentOnCyclic != null) {
             val crossings = raw.floorDiv(n) - lastReportedRaw.floorDiv(n)
             lastReportedRaw = raw
@@ -144,7 +154,9 @@ fun WheelPicker(
             try {
                 animatable.animateDecay(
                     initialVelocity = flingVelocity,
-                    animationSpec = exponentialDecay(frictionMultiplier = 1.0f)
+                    // High friction: the fling coasts through at most a handful
+                    // of items instead of spinning freely — values stay reachable.
+                    animationSpec = exponentialDecay(frictionMultiplier = 4.0f)
                 )
             } catch (_: CancellationException) {
                 return@LaunchedEffect
@@ -159,7 +171,13 @@ fun WheelPicker(
         }
         if (abs(animatable.value - nearest) > 0.01f) {
             try {
-                animatable.animateTo(nearest.toFloat(), tween(150))
+                animatable.animateTo(
+                    nearest.toFloat(),
+                    spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                )
             } catch (_: CancellationException) {
                 return@LaunchedEffect
             }
@@ -254,8 +272,10 @@ fun WheelPicker(
                     isDragging = false
 
                     // Trigger fling via state change (no suspend calls here!)
+                    // Velocity is damped and capped so even a violent flick
+                    // moves the wheel only a few items — no runaway spinning.
                     flingStart = offsetValue
-                    flingVelocity = velocity / itemPx
+                    flingVelocity = (velocity / itemPx * 0.7f).coerceIn(-18f, 18f)
                     flingId++
                 }
             }
@@ -289,6 +309,8 @@ fun WheelPicker(
                 absDist < 1.5f -> 1f - (absDist - 0.5f) * 0.5f
                 else -> 0.25f.coerceAtLeast(0.1f)
             }
+            // Cylinder perspective: rows flatten as they roll away from center
+            val flatten = (absDist / (halfVisible + 1f)).coerceIn(0f, 1f)
 
             key(i) {
                 Box(
@@ -299,17 +321,21 @@ fun WheelPicker(
                         .graphicsLayer {
                             translationY = distance * itemPx
                             alpha = itemAlpha
+                            scaleY = 1f - 0.35f * flatten
+                            scaleX = 1f - 0.12f * flatten
                         },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = items[i],
                         color = if (absDist < 0.5f) accent else Color(0xFF666666),
-                        fontSize = if (absDist < 0.5f) 18.sp else 14.sp
+                        fontSize = if (absDist < 0.5f) 18.sp else 14.sp,
+                        fontWeight = if (absDist < 0.5f) FontWeight.Bold else FontWeight.Normal
                     )
                 }
             }
         }
+
     }
 }
 
