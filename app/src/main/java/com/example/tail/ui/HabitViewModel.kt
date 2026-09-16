@@ -1603,33 +1603,38 @@ class HabitViewModel(
             // When cache is empty (before re-fetch), fall back to DB value for the
             // primary GitHub metric so at least that one shows data immediately.
             val ghPrimaryKey = if (isGithubHabit(habitName)) primaryGithubMetricKey(habitName) else null
+            // Garmin-linked habits: the primary slot holds BAKED points
+            // (divider applied at sync time) — use the stored value as-is.
+            val pointsVal: Int = if (garminType != null) {
+                filteredRaw
+            } else if (minutesPrimary) {
+                // Minutes primary: minutes (dedicated slot) drive points,
+                // sessions are the fallback
+                com.example.tail.data.effectivePointsWithFallback(
+                    minutesVal ?: 0, divider, filteredRaw, true
+                )
+            } else {
+                // Sessions primary: the fallback value lives in the legacy
+                // secondary slot for habits that use it or have data there,
+                // the minutes slot otherwise
+                val fallbackVal = if (
+                    habitName in _settings.value.secondaryValueHabits ||
+                    !cachedPhoneDb[secondaryValueKey(habitName)].isNullOrEmpty()
+                ) {
+                    secVal ?: 0
+                } else {
+                    minutesVal ?: 0
+                }
+                com.example.tail.data.effectivePointsWithFallback(
+                    filteredRaw, divider, fallbackVal, useSecondaryFallback
+                )
+            }
             result.add(
                 GraphDataPoint(
                     date = cursor,
                     dateStr = ds,
                     rawValue = filteredRaw,
-                    pointsValue = if (minutesPrimary) {
-                        // Minutes primary: minutes (dedicated slot) drive points,
-                        // sessions are the fallback
-                        com.example.tail.data.effectivePointsWithFallback(
-                            minutesVal ?: 0, divider, filteredRaw, true
-                        )
-                    } else {
-                        // Sessions primary: the fallback value lives in the legacy
-                        // secondary slot for habits that use it or have data there,
-                        // the minutes slot otherwise
-                        val fallbackVal = if (
-                            habitName in _settings.value.secondaryValueHabits ||
-                            !cachedPhoneDb[secondaryValueKey(habitName)].isNullOrEmpty()
-                        ) {
-                            secVal ?: 0
-                        } else {
-                            minutesVal ?: 0
-                        }
-                        com.example.tail.data.effectivePointsWithFallback(
-                            filteredRaw, divider, fallbackVal, useSecondaryFallback
-                        )
-                    },
+                    pointsValue = pointsVal,
                     garminValue = garminVal,
                     secondaryValue = secVal,
                     tertiaryValue = tertiaryEntries?.get(ds),

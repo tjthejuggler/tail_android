@@ -1923,7 +1923,12 @@ fun HabitGridScreen(
                         onSetMinutesPrimaryFallback = { name, source ->
                             viewModel.setMinutesPrimaryFallback(name, source)
                         },
-                        onSetDivider = { name, divisor -> viewModel.setHabitDivider(name, divisor) },
+                        onSetDivider = { name, divisor, onGarminHistoryPrompt ->
+                            viewModel.setHabitDivider(name, divisor, onGarminHistoryPrompt)
+                        },
+                        onRecalculateGarminHistory = { name ->
+                            viewModel.reapplyGarminHistoryForHabit(name)
+                        },
                         onToggleConditional = { name -> viewModel.toggleConditional(name) },
                         onToggleConditionalFeedMaxOne = { name -> viewModel.toggleConditionalFeedMaxOne(name) },
                         onToggleConditionalFeedPoints = { name -> viewModel.toggleConditionalFeedPoints(name) },

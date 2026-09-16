@@ -501,13 +501,17 @@ fun computeTaskerStats(
     secondaryValueFallbackHabits: Set<String> = emptySet(),
     timerMinutesPrimaryHabits: Set<String> = emptySet(),
     invertedBinaryHabits: Set<String> = emptySet(),
-    secondaryValueHabits: Set<String> = emptySet()
+    secondaryValueHabits: Set<String> = emptySet(),
+    garminLinkedHabits: Set<String> = emptySet()
 ): TaskerStats {
     fun dayTotal(date: LocalDate): Int {
         val ds = dateString(date)
         return db.entries.sumOf { (habitName, entries) ->
             if (habitName in noPointsHabits) return@sumOf 0
             if (isInternalValueKey(habitName)) return@sumOf 0
+            // Garmin-linked habits store BAKED points (divider applied at
+            // sync time by applyGarminData) — use the stored value as-is.
+            if (habitName in garminLinkedHabits) return@sumOf entries[ds] ?: 0
             // Inverted-binary habits contribute 1 point on not-done days
             if (habitName in invertedBinaryHabits) {
                 return@sumOf invertedBinaryPointsForDate(entries, ds)

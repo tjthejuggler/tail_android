@@ -1846,7 +1846,9 @@ internal fun EditModeControlBar(
     minutesPrimaryFallbacks: Map<String, String> = emptyMap(),
     /** Called when the user picks the fallback source for a minutes-primary habit. */
     onSetMinutesPrimaryFallback: (String, String) -> Unit = { _, _ -> },
-    onSetDivider: (String, Int) -> Unit,
+    onSetDivider: (String, Int, (() -> Unit)?) -> Unit,
+    /** Called when the user accepts the retroactive Garmin history recalculation. */
+    onRecalculateGarminHistory: (String) -> Unit = {},
     onToggleConditional: (String) -> Unit,
     onSetConditionalLinks: (String) -> Unit,
     onBackfillConditional: (String) -> Unit = {},
@@ -2291,6 +2293,55 @@ internal fun EditModeControlBar(
                     var divisorText by remember(selectedHabitName) {
                         mutableStateOf(if (isDivider) currentDivisor.toString() else "")
                     }
+                    // Retroactive-history prompt state: shown when a Garmin-linked
+                    // habit's divider actually changes (points are baked into the
+                    // stored history at sync time, so the user decides whether to
+                    // recalculate past days from the cached Garmin data).
+                    var showGarminRecalcPrompt by remember(selectedHabitName) {
+                        mutableStateOf(false)
+                    }
+                    if (showGarminRecalcPrompt && selectedHabitName != null) {
+                        Dialog(onDismissRequest = { showGarminRecalcPrompt = false }) {
+                            Column(
+                                modifier = Modifier
+                                    .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                                    .padding(16.dp)
+                            ) {
+                                Text(
+                                    text = "Recalculate history?",
+                                    color = Color(0xFFFFAA00),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "'$selectedHabitName' is linked to Garmin. Its points " +
+                                        "are saved into your history at sync time, so changing " +
+                                        "the divider does not change past days automatically.",
+                                    color = Color(0xFFAAAAAA),
+                                    fontSize = 12.sp
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                                ) {
+                                    TextButton(onClick = { showGarminRecalcPrompt = false }) {
+                                        Text("Keep history", color = Color(0xFF888888))
+                                    }
+                                    TextButton(onClick = {
+                                        showGarminRecalcPrompt = false
+                                        selectedHabitName?.let(onRecalculateGarminHistory)
+                                    }) {
+                                        Text("Recalculate all", color = Color(0xFFFF88FF))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fun requestGarminRecalcPrompt() {
+                        showGarminRecalcPrompt = true
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2310,9 +2361,9 @@ internal fun EditModeControlBar(
                                     // Enable with default divisor of 2 if no text entered yet
                                     val d = divisorText.toIntOrNull()?.coerceAtLeast(2) ?: 2
                                     divisorText = d.toString()
-                                    onSetDivider(selectedHabitName, d)
+                                    onSetDivider(selectedHabitName, d, ::requestGarminRecalcPrompt)
                                 } else {
-                                    onSetDivider(selectedHabitName, 1)
+                                    onSetDivider(selectedHabitName, 1, ::requestGarminRecalcPrompt)
                                 }
                             },
                             colors = SwitchDefaults.colors(
@@ -2342,7 +2393,7 @@ internal fun EditModeControlBar(
                                 onValueChange = { v: String ->
                                     divisorText = v.filter { it.isDigit() }
                                     val d = divisorText.toIntOrNull() ?: 0
-                                    if (d >= 2) onSetDivider(selectedHabitName, d)
+                                    if (d >= 2) onSetDivider(selectedHabitName, d, ::requestGarminRecalcPrompt)
                                 },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(

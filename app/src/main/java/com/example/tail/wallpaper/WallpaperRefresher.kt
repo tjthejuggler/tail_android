@@ -123,7 +123,8 @@ object WallpaperRefresher {
             secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits,
             timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary,
             invertedBinaryHabits = settings.invertedBinaryHabits,
-            secondaryValueHabits = settings.secondaryValueHabits
+            secondaryValueHabits = settings.secondaryValueHabits,
+            garminLinkedHabits = settings.garminHabitLinks.keys
         )
         val metric = settings.wallpaperMetric
         val value = metric.select(stats)

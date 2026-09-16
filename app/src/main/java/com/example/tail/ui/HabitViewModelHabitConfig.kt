@@ -179,9 +179,13 @@ fun HabitViewModel.setHabitCount(habitName: String, newCount: Int) {
     val storedValue = rangePoints ?: clamped
 
     // Step 1: instant targeted UI update
+    // Garmin-linked habits store BAKED points — show the stored value as-is.
+    val isGarmin = habitName in _settings.value.garminHabitLinks
     _habits.value = _habits.value.map { h ->
         if (h.name == habitName) h.copy(
-            todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
+            todayCount = rangePoints ?: if (isGarmin) {
+                clamped
+            } else if (habitName in _settings.value.invertedBinaryHabits) {
                 com.example.tail.data.invertedBinaryPoints(clamped)
             } else applyDivider(clamped, divider),
             rawTodayCount = storedValue
@@ -350,9 +354,13 @@ fun HabitViewModel.setHabitCountWithRollForward(
     val storedValue = rangePoints ?: clamped
 
     // Step 1: instant targeted UI update
+    // Garmin-linked habits store BAKED points — show the stored value as-is.
+    val isGarmin = habitName in _settings.value.garminHabitLinks
     _habits.value = _habits.value.map { h ->
         if (h.name == habitName) h.copy(
-            todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
+            todayCount = rangePoints ?: if (isGarmin) {
+                clamped
+            } else if (habitName in _settings.value.invertedBinaryHabits) {
                 com.example.tail.data.invertedBinaryPoints(clamped)
             } else applyDivider(clamped, divider),
             rawTodayCount = storedValue
@@ -715,23 +723,44 @@ fun HabitViewModel.recordRecentIncrementAmount(habitName: String, amount: Int) {
  * Sets (or clears) the divider for [habitName].
  * [divisor] must be >= 2 to enable division; pass 1 (or 0) to disable.
  * When changed, the habit list is rebuilt so the displayed count updates immediately.
+ *
+ * Garmin-linked habits: the divider is baked into the stored points at sync
+ * time, so changing it does NOT retroactively change history. When [divisor]
+ * actually differs from the previous value AND the habit is Garmin-linked,
+ * [onGarminHistoryPrompt] fires so the UI can ask the user whether to
+ * recalculate all historical points from the cached Garmin data.
  */
-fun HabitViewModel.setHabitDivider(habitName: String, divisor: Int) {
+fun HabitViewModel.setHabitDivider(
+    habitName: String,
+    divisor: Int,
+    onGarminHistoryPrompt: (() -> Unit)? = null
+) {
     viewModelScope.launch {
-        val current = _settings.value.habitDividers.toMutableMap()
+        val s = _settings.value
+        val previousDivisor = s.habitDividers[habitName] ?: 1
+        val current = s.habitDividers.toMutableMap()
         if (divisor <= 1) {
             current.remove(habitName)
         } else {
             current[habitName] = divisor
         }
         settingsRepo.saveHabitDividers(current)
-        _settings.value = _settings.value.copy(habitDividers = current)
+        _settings.value = s.copy(habitDividers = current)
         rebuildHabitList()
         // The PC widget config carries the divider — refresh it when a
         // PC-widget habit's divider changes, or the PC keeps scoring with
         // the stale one (raw minutes shown as points).
         if (habitName in _settings.value.pcWidgetHabits) {
             pushPcWidgetConfig()
+        }
+        // Divider actually changed on a Garmin-linked habit → offer the
+        // retroactive history recalculation (the prompt itself lives in the
+        // edit bar UI; the recalc runs in reapplyGarminHistoryForHabit).
+        if (divisor != previousDivisor &&
+            habitName in _settings.value.garminHabitLinks &&
+            onGarminHistoryPrompt != null
+        ) {
+            onGarminHistoryPrompt()
         }
     }
 }

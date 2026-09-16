@@ -1196,7 +1196,11 @@ class HabitsRepository {
                 name = name,
                 entries = entries,
                 useCustomInput = name in settings.customInputHabits,
-                divider = settings.habitDividers[name] ?: 1,
+                // Garmin-linked habits store BAKED points (divider applied at
+                // sync time by applyGarminData), so the read-time divider must
+                // not run again — that would double-divide.
+                divider = if (name in settings.garminHabitLinks) 1
+                    else settings.habitDividers[name] ?: 1,
                 targetDate = targetDate,
                 secondaryEntries = fallbackEntries,
                 useSecondaryFallback = useFallback,

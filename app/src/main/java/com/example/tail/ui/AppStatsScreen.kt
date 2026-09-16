@@ -142,7 +142,7 @@ fun AppStatsScreen(
     LaunchedEffect(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits, listExcludedHabits) {
         computedStats = null
         computedStats = withContext(Dispatchers.Default) {
-            computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits, listExcludedHabits)
+            computeAppStats(db, dividers, disabledHabits, noPointsHabits, secondaryValueHabits, secondaryValueFallbackHabits, timerMinutesPrimaryHabits, invertedBinaryHabits, listExcludedHabits, garminHabits)
         }
     }
     val stats = computedStats ?: run {
@@ -1706,7 +1706,8 @@ private fun computeAppStats(
     secondaryValueFallbackHabits: Set<String> = emptySet(),
     timerMinutesPrimaryHabits: Set<String> = emptySet(),
     invertedBinaryHabits: Set<String> = emptySet(),
-    listExcludedHabits: Set<String> = emptySet()
+    listExcludedHabits: Set<String> = emptySet(),
+    garminLinkedHabits: Set<String> = emptySet()
 ): AppStats {
     if (db.isEmpty()) return AppStats()
 
@@ -1723,6 +1724,10 @@ private fun computeAppStats(
         if (habitName in invertedBinaryHabits) {
             return invertedBinaryPointsForDate(db[habitName] ?: emptyMap(), dateStr)
         }
+        // Garmin-linked habits: applyGarminData bakes the final points
+        // (divider-applied or custom-range tier) into the primary slot.
+        // The stored value IS the points — never divide again.
+        if (habitName in garminLinkedHabits) return raw
         val div = dividers[habitName] ?: 1
         if (habitName in timerMinutesPrimaryHabits) {
             // Minutes primary: minutes drive points, sessions are the fallback

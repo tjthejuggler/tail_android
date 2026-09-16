@@ -660,9 +660,11 @@ internal suspend fun HabitViewModel.applyGarminData(
         }
 
         // Custom point ranges (if enabled for this habit) map the raw Garmin
-        // value directly to a points tier; otherwise we always count as 1 point.
+        // value directly to a points tier; a divider (>1) bakes the divided
+        // points; otherwise we always count as 1 point.
         val useCustomRanges = habitName in settings.customPointRangesHabits
         val customRanges = settings.customPointRanges[habitName]
+        val divisor = settings.habitDividers[habitName] ?: 1
 
         val habitData = mutableDb[habitName]!!.toMutableMap()
         var appliedCount = 0
@@ -673,11 +675,16 @@ internal suspend fun HabitViewModel.applyGarminData(
             // (read-only) Garmin value. We always write the computed result —
             // including 0 — so that a corrected value from the laptop proxy/fetch
             // pipeline flips the point both UP and DOWN.
-            val newValue: Int = if (useCustomRanges && customRanges != null) {
-                com.example.tail.data.calculatePointsFromRanges(value, customRanges)
-            } else {
-                // Always accept Garmin data - count as 1 point if data exists
-                1
+            val newValue: Int = when {
+                useCustomRanges && customRanges != null ->
+                    com.example.tail.data.calculatePointsFromRanges(value, customRanges)
+                divisor > 1 ->
+                    // Bake the divider-applied points so the stored value IS
+                    // the final points (read paths must NOT divide again).
+                    com.example.tail.data.applyDivider(value, divisor)
+                else ->
+                    // Always accept Garmin data - count as 1 point if data exists
+                    1
             }
 
             val existing = habitData[date] ?: 0
@@ -789,6 +796,41 @@ internal suspend fun HabitViewModel.applyGarminData(
         }
 
         Log.d(TAG, "Garmin data applied to habits")
+    }
+}
+
+/**
+ * Re-applies the cached Garmin history for ONE linked habit with the CURRENT
+ * settings (divider / custom point ranges). Called after the user accepts the
+ * "recalculate history?" prompt shown when a Garmin-linked habit's divider
+ * changes: [applyGarminData] bakes points deterministically from the cache,
+ * so re-running it rewrites every historical day at the new divisor.
+ * Refuses politely when the habit is not Garmin-linked or the cache is empty.
+ */
+fun HabitViewModel.reapplyGarminHistoryForHabit(habitName: String) {
+    viewModelScope.launch {
+        val s = _settings.value
+        val typeKey = s.garminHabitLinks[habitName]
+        if (typeKey == null) {
+            _garminSyncStatus.value = "'$habitName' is not linked to a Garmin metric"
+            return@launch
+        }
+        try {
+            _garminSyncStatus.value = "Recalculating '$habitName' history…"
+            val cached = withContext(Dispatchers.IO) { garminRepo.loadAllCachedData() }
+            if (cached.isEmpty()) {
+                _garminSyncStatus.value = "No cached Garmin data — use Fetch Entire Backlog first"
+                return@launch
+            }
+            // Narrow the links so ONLY this habit is rewritten; applyGarminData
+            // is idempotent and deterministic (writes the same computed value
+            // for every cached date).
+            applyGarminData(cached, s.copy(garminHabitLinks = mapOf(habitName to typeKey)))
+            _garminSyncStatus.value = "History recalculated for '$habitName'"
+        } catch (e: Exception) {
+            Log.e(TAG, "reapplyGarminHistoryForHabit failed: ${e.message}", e)
+            _garminSyncStatus.value = "Failed: ${e.message?.take(50)}"
+        }
     }
 }
 

@@ -569,7 +569,8 @@ class StatsOverlayService : Service() {
                     secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits,
                     timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary,
                     invertedBinaryHabits = settings.invertedBinaryHabits,
-                    secondaryValueHabits = settings.secondaryValueHabits
+                    secondaryValueHabits = settings.secondaryValueHabits,
+                    garminLinkedHabits = settings.garminHabitLinks.keys
                 )
                 postStats(stats.today, stats.avg7, stats.avg30)
             } catch (e: Exception) {

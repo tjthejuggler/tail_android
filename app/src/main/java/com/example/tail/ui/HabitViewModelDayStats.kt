@@ -352,11 +352,16 @@ fun HabitViewModel.getDayStats(date: LocalDate): DayStats {
         val reversed = expanded.entries.sortedBy { it.key }.reversed()
 
         val divider = dividers[name] ?: 1
+        // Garmin-linked habits: applyGarminData bakes the final points into
+        // the primary slot — the stored value IS the points, no divider.
+        val isGarmin = name in _settings.value.garminHabitLinks
         var habStreak = 0
         for (entry in reversed) {
             val rawPrimary = rawEntries[entry.key] ?: 0
             val secVal = if (useFallback) secEntries[entry.key] ?: 0 else 0
-            val pts = if (swapped) {
+            val pts = if (isGarmin) {
+                rawPrimary
+            } else if (swapped) {
                 val fbVal = if (swappedUseFb) swappedFbEntries[entry.key] ?: 0 else 0
                 com.example.tail.data.effectivePointsWithFallback(secVal, divider, fbVal, swappedUseFb)
             } else {
@@ -368,7 +373,9 @@ fun HabitViewModel.getDayStats(date: LocalDate): DayStats {
         for (entry in reversed) {
             val rawPrimary = rawEntries[entry.key] ?: 0
             val secVal = if (useFallback) secEntries[entry.key] ?: 0 else 0
-            val pts = if (swapped) {
+            val pts = if (isGarmin) {
+                rawPrimary
+            } else if (swapped) {
                 val fbVal = if (swappedUseFb) swappedFbEntries[entry.key] ?: 0 else 0
                 com.example.tail.data.effectivePointsWithFallback(secVal, divider, fbVal, swappedUseFb)
             } else {

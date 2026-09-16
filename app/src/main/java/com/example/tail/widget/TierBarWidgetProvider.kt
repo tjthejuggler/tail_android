@@ -110,7 +110,8 @@ class TierBarWidgetProvider : AppWidgetProvider() {
                             secondaryValueFallbackHabits = settings.secondaryValueFallbackHabits,
                             timerMinutesPrimaryHabits = settings.widgetTimerMinutesPrimary,
                             invertedBinaryHabits = settings.invertedBinaryHabits,
-                            secondaryValueHabits = settings.secondaryValueHabits
+                            secondaryValueHabits = settings.secondaryValueHabits,
+                            garminLinkedHabits = settings.garminHabitLinks.keys
                         )
                         today = stats.today
                         avg7 = stats.avg7

@@ -24,6 +24,11 @@ object DailyPointsCalculator {
         db: HabitsDatabase,
         settings: AppSettings
     ): Int {
+        // Garmin-linked habits: the sync path (applyGarminData) bakes the final
+        // points into the primary slot — divider-applied or a custom-range
+        // tier — while the raw metric lives in the Garmin cache, not here.
+        // The stored value IS the points; never re-apply the divider.
+        if (habitName in settings.garminHabitLinks) return rawCount
         val divider = settings.habitDividers[habitName] ?: 1
         // Inverted-binary habits: 1 point on not-done days, 0 on done days —
         // but never before the habit's first recorded entry.

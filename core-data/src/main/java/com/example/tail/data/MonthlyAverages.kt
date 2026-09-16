@@ -56,6 +56,15 @@ fun monthlyAveragesBulk(
     val totals = IntArray(nDays)
     for (name in tracked) {
         val entries = db[name] ?: continue
+        // Garmin-linked habits: applyGarminData bakes the final points into
+        // the primary slot — the stored value IS the points, no divider.
+        if (name in settings.garminHabitLinks) {
+            for (i in 0 until nDays) {
+                val pts = entries[dateStrs[i]] ?: 0
+                if (pts > 0) totals[i] += pts
+            }
+            continue
+        }
         val divider = settings.habitDividers[name] ?: 1
         val inverted = name in settings.invertedBinaryHabits
         // Inverted habits earn nothing before their first day with actual

@@ -212,6 +212,9 @@ object AppStatsRecordNotifier {
             if (habitName in settings.invertedBinaryHabits) {
                 return invertedBinaryPointsForDate(db[habitName] ?: emptyMap(), dateStr)
             }
+            // Garmin-linked habits: applyGarminData bakes the final points
+            // into the primary slot — the stored value IS the points.
+            if (habitName in settings.garminHabitLinks) return raw
             val div = settings.habitDividers[habitName] ?: 1
             if (habitName in settings.widgetTimerMinutesPrimary) {
                 val minutes = db[minutesKey(habitName)]?.get(dateStr) ?: 0

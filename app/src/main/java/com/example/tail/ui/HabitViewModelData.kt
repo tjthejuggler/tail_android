@@ -846,9 +846,13 @@ fun HabitViewModel.incrementHabit(
     }
     if (affectsVisibleDate) {
         val divider = _settings.value.habitDividers[habitName] ?: 1
+        // Garmin-linked habits store BAKED points — show the stored value as-is.
+        val isGarmin = habitName in _settings.value.garminHabitLinks
         _habits.value = _habits.value.map { h ->
             if (h.name == habitName) h.copy(
-                todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
+                todayCount = rangePoints ?: if (isGarmin) {
+                    newCount
+                } else if (habitName in _settings.value.invertedBinaryHabits) {
                     com.example.tail.data.invertedBinaryPoints(newCount)
                 } else applyDivider(newCount, divider),
                 rawTodayCount = newCount
@@ -941,9 +945,13 @@ fun HabitViewModel.incrementHabit(
             updatedDb = habitsRepo.applyIncrementToDb(updatedDb, linkedName, feedAmount, targetDate)
             if (affectsVisibleDate) {
                 val linkedDivider = _settings.value.habitDividers[linkedName] ?: 1
+                // Garmin-linked habits store BAKED points — show as-is.
+                val linkedIsGarmin = linkedName in _settings.value.garminHabitLinks
                 _habits.value = _habits.value.map { h ->
                     if (h.name == linkedName) h.copy(
-                        todayCount = if (linkedName in _settings.value.invertedBinaryHabits) {
+                        todayCount = if (linkedIsGarmin) {
+                            linkedClamped
+                        } else if (linkedName in _settings.value.invertedBinaryHabits) {
                             com.example.tail.data.invertedBinaryPoints(linkedClamped)
                         } else applyDivider(linkedClamped, linkedDivider),
                         rawTodayCount = linkedClamped
@@ -1144,9 +1152,13 @@ fun HabitViewModel.incrementHabitWithRollForward(
         dbDelta = amount
     }
     val divider = _settings.value.habitDividers[habitName] ?: 1
+    // Garmin-linked habits store BAKED points — show the stored value as-is.
+    val isGarmin = habitName in _settings.value.garminHabitLinks
     _habits.value = _habits.value.map { h ->
         if (h.name == habitName) h.copy(
-            todayCount = rangePoints ?: if (habitName in _settings.value.invertedBinaryHabits) {
+            todayCount = rangePoints ?: if (isGarmin) {
+                newCount
+            } else if (habitName in _settings.value.invertedBinaryHabits) {
                 com.example.tail.data.invertedBinaryPoints(newCount)
             } else applyDivider(newCount, divider),
             rawTodayCount = newCount
