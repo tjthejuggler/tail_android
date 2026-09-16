@@ -445,60 +445,67 @@ fun HabitViewModel.deleteMealLog(habitName: String, logId: String) {
  */
 fun HabitViewModel.processVoiceMeal(habitName: String, transcript: String) {
     viewModelScope.launch(Dispatchers.IO) {
-        _mealVoiceStatus.value = "🎤 Parsing \"${transcript.take(60)}\"…"
-        val s = _settings.value
-        var fd: com.example.tail.data.meal.FoodData? = null
-        if (s.mealEnabled && s.mealApiKey.isNotBlank() &&
-            s.mealBaseUrl.isNotBlank() && s.mealModel.isNotBlank()
-        ) {
-            try {
-                val config = com.example.tail.data.meal.VisionConfig(
-                    baseUrl = s.mealBaseUrl,
-                    apiKey = s.mealApiKey,
-                    model = s.mealModel,
-                    userSystemPrompt = s.mealSystemPrompt
-                )
-                fd = com.example.tail.data.meal.VisionProcessingService()
-                    .processMealText(transcript, config)
-            } catch (e: Exception) {
-                Log.e(TAG, "Voice meal parse failed", e)
+        _mealAiParsing.value = true
+        try {
+            _mealVoiceStatus.value = "🎤 Parsing \"${transcript.take(60)}\"…"
+            val s = _settings.value
+            var fd: com.example.tail.data.meal.FoodData? = null
+            if (s.mealEnabled && s.mealApiKey.isNotBlank() &&
+                s.mealBaseUrl.isNotBlank() && s.mealModel.isNotBlank()
+            ) {
+                try {
+                    val config = com.example.tail.data.meal.VisionConfig(
+                        baseUrl = s.mealBaseUrl,
+                        apiKey = s.mealApiKey,
+                        model = s.mealModel,
+                        userSystemPrompt = s.mealSystemPrompt
+                    )
+                    fd = com.example.tail.data.meal.VisionProcessingService()
+                        .processMealText(transcript, config)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Voice meal parse failed", e)
+                }
             }
-        }
 
-        val now = System.currentTimeMillis()
-        val active = mealLogRepo.findActiveGroup(habitName, now)
-        if (active != null) {
-            // No newTimestamp: the log must keep the time its habit stamp
-            // was recorded at — drifting it orphans the stamp and shows
-            // duplicate chips on the schedule.
-            mealLogRepo.updateLog(
-                active.mergedWith(foodData = fd, transcript = transcript)
-            )
-            _mealVoiceStatus.value = "Merged into \"${active.title}\""
-        } else {
-            val log = com.example.tail.data.meal.MealLog(
-                id = UUID.randomUUID().toString(),
-                habitId = habitName,
-                timestamp = now,
-                title = fd?.title?.takeIf { it.isNotBlank() } ?: transcript.take(40),
-                summary = fd?.summary?.takeIf { it.isNotBlank() },
-                calories = fd?.estimatedCalories ?: 0,
-                macronutrients = fd?.macronutrients
-                    ?: com.example.tail.data.meal.Macronutrients(),
-                ingredientsDetected = fd?.ingredientsDetected ?: emptyList(),
-                isVeganVerified = fd?.isVeganVerified ?: false,
-                voiceTranscript = transcript,
-                macroRatings = fd?.macroRatings,
-                countedIncrement = true,
-                groupStartTimestamp = now
-            )
-            mealLogRepo.addLog(log)
-            recordMealIncrement(habitName, now)
-            _mealVoiceStatus.value =
-                if (fd != null) "Added \"${log.title}\""
-                else "Added card — tap it to add details"
+            val now = System.currentTimeMillis()
+            val active = mealLogRepo.findActiveGroup(habitName, now)
+            if (active != null) {
+                // No newTimestamp: the log must keep the time its habit stamp
+                // was recorded at — drifting it orphans the stamp and shows
+                // duplicate chips on the schedule.
+                mealLogRepo.updateLog(
+                    active.mergedWith(foodData = fd, transcript = transcript)
+                )
+                _mealVoiceStatus.value = "Merged into \"${active.title}\""
+            } else {
+                val log = com.example.tail.data.meal.MealLog(
+                    id = UUID.randomUUID().toString(),
+                    habitId = habitName,
+                    timestamp = now,
+                    title = fd?.title?.takeIf { it.isNotBlank() } ?: transcript.take(40),
+                    summary = fd?.summary?.takeIf { it.isNotBlank() },
+                    calories = fd?.estimatedCalories ?: 0,
+                    macronutrients = fd?.macronutrients
+                        ?: com.example.tail.data.meal.Macronutrients(),
+                    ingredientsDetected = fd?.ingredientsDetected ?: emptyList(),
+                    isVeganVerified = fd?.isVeganVerified ?: false,
+                    voiceTranscript = transcript,
+                    macroRatings = fd?.macroRatings,
+                    countedIncrement = true,
+                    groupStartTimestamp = now
+                )
+                mealLogRepo.addLog(log)
+                recordMealIncrement(habitName, now)
+                _mealVoiceStatus.value =
+                    if (fd != null) "Added \"${log.title}\""
+                    else "Added card — tap it to add details"
+            }
+            refreshMealFlows(habitName)
+        } finally {
+            // Always clear the parsing flag — even on cancellation/crash —
+            // so the UI's "Parse with AI" button never stays disabled.
+            _mealAiParsing.value = false
         }
-        refreshMealFlows(habitName)
     }
 }
 
@@ -554,13 +561,14 @@ fun HabitViewModel.clearMealVoiceStatus() {
  * Increments the habit for the meal's date and records the increment
  * timestamp — the shared "a meal happened" bookkeeping used by every
  * meal-creation path (manual, voice, worker).
- */
-
-
-/**
- * Increments the habit for the meal's date and records the increment
- * timestamp — the shared "a meal happened" bookkeeping used by every
- * meal-creation path (manual, voice, worker).
+ *
+ * CRITICAL: after the disk write, the SAME delta is applied to the
+ * ViewModel's in-memory [cachedPhoneDb] (with a dbEpoch bump) before
+ * rebuilding. The repository's read-modify-write only mutates the FILE —
+ * without the cache sync the rebuild re-published the stale snapshot and
+ * the NEXT optimistic persist (any habit tap) wrote that stale snapshot
+ * back to disk, silently erasing the meal's +1 ("meal logged but the
+ * square didn't move" bug).
  */
 internal suspend fun HabitViewModel.recordMealIncrement(habitName: String, atMillis: Long) {
     val uriString = _settings.value.fileUri
@@ -569,15 +577,13 @@ internal suspend fun HabitViewModel.recordMealIncrement(habitName: String, atMil
         val zdt = java.time.Instant.ofEpochMilli(atMillis)
             .atZone(java.time.ZoneId.systemDefault())
         val date = zdt.toLocalDate()
-        if (date == LocalDate.now()) {
-            habitsRepo.incrementHabit(
-                android.net.Uri.parse(uriString), context, habitName, 1
-            )
-        } else {
-            habitsRepo.incrementHabitForDate(
-                android.net.Uri.parse(uriString), context, habitName, 1, date
-            )
-        }
+        habitsRepo.incrementHabitForDate(
+            android.net.Uri.parse(uriString), context, habitName, 1, date
+        )
+        // Mirror the disk delta into the in-memory cache so the rebuild and
+        // every future optimistic persist see the incremented count.
+        cachedPhoneDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, 1, date)
+        dbEpoch++
         timestampRepo.addTimestamp(habitName, date, zdt.toLocalTime().format(mealTimeFmt))
         rebuildHabitList()
     } catch (e: Exception) {
@@ -585,19 +591,24 @@ internal suspend fun HabitViewModel.recordMealIncrement(habitName: String, atMil
     }
 }
 
-/** Rolls back a counted meal increment (habit count + timestamp). */
-
-
-/** Rolls back a counted meal increment (habit count + timestamp). */
+/**
+ * Rolls back a counted meal increment (habit count + timestamp). Mirrors
+ * the -1 into [cachedPhoneDb] for the same reason [recordMealIncrement]
+ * mirrors its +1 — otherwise the next optimistic persist resurrects the
+ * rolled-back count.
+ */
 internal suspend fun HabitViewModel.rollbackMealIncrement(habitName: String, atMillis: Long) {
     val uriString = _settings.value.fileUri
     if (uriString.isEmpty()) return
     try {
         val zdt = java.time.Instant.ofEpochMilli(atMillis)
             .atZone(java.time.ZoneId.systemDefault())
+        val date = zdt.toLocalDate()
         habitsRepo.incrementHabitForDate(
-            android.net.Uri.parse(uriString), context, habitName, -1, zdt.toLocalDate()
+            android.net.Uri.parse(uriString), context, habitName, -1, date
         )
+        cachedPhoneDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, -1, date)
+        dbEpoch++
         deleteMealStampNear(habitName, zdt)
         rebuildHabitList()
     } catch (e: Exception) {

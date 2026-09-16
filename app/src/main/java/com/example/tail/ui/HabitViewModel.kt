@@ -284,6 +284,10 @@ class HabitViewModel(
     internal val _mealVoiceStatus = MutableStateFlow<String?>(null)
     val mealVoiceStatus: StateFlow<String?> = _mealVoiceStatus.asStateFlow()
 
+    /** True while a voice/typed meal description is being parsed by the LLM. */
+    internal val _mealAiParsing = MutableStateFlow(false)
+    val mealAiParsing: StateFlow<Boolean> = _mealAiParsing.asStateFlow()
+
     /** Vision endpoint test result (null = not tested, empty = testing, non-empty = result). */
     data class MealTestState(
         val isTesting: Boolean = false,

@@ -40,8 +40,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -83,12 +85,17 @@ private val mealTimeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 /**
  * Full-screen Meal Detail panel for a meal habit.
  *
- * Redesigned around the "every meal gets a card" principle:
- *  - Capture row: 📷 photo, 🖼️ gallery upload, 🎤 voice describe (AI parses),
- *    ⚡ quick log — every path creates (or merges into) a card.
- *  - Every card is clickable → full editor (time, macros, ratings, tags,
+ * Layout hierarchy (top → bottom):
+ *  1. NUTRITION — the day's calorie/meal summary (the "what did I eat" data).
+ *  2. AI INPUT — one text box that accepts typed text OR dictated speech
+ *     (the mic fills the box; successive utterances append) and a single
+ *     "✨ Parse with AI" button that submits it to the LLM. No more
+ *     speak-without-pausing: nothing is sent until the button is tapped.
+ *  3. Secondary capture row — 📷 photo, 🖼️ gallery upload, ⚡ quick log;
+ *     every path creates (or merges into) a card.
+ *  4. HISTORY — ingredient tag filters + the day's clickable meal cards.
+ *  - Every card opens the full editor (time, macros, ratings, tags,
  *    transcript, photos, delete).
- *  - Ingredient tags double as filters (tap to narrow the feed).
  *  - Photos taken within the group window merge into one meal/increment.
  */
 @Composable
@@ -144,13 +151,32 @@ fun MealDetailDialog(
     var showQuickLog by remember { mutableStateOf(false) }
     var voiceError by remember { mutableStateOf<String?>(null) }
     var editorTranscript by remember { mutableStateOf<String?>(null) }
+    // Draft text for the AI input box: typed directly OR dictated via the
+    // mic. The mic FILLS this box instead of submitting immediately — the
+    // user can dictate in several passes (pausing between phrases is fine)
+    // and review/edit before the single "Parse with AI" action runs the
+    // LLM. This replaces the old behaviour where every recognised utterance
+    // was submitted straight to the parser (requiring uninterrupted speech).
+    var voiceText by remember { mutableStateOf("") }
+    val aiParsing by viewModel.mealAiParsing.collectAsState()
     val (speech, isListening) = rememberSpeechRecognizer(
         onResult = { text ->
-            if (editingLog != null) editorTranscript = text
-            else viewModel.processVoiceMeal(habitName, text)
+            if (editingLog != null) {
+                editorTranscript = text
+            } else {
+                // Append so successive dictation passes accumulate into one
+                // description instead of each pass replacing the last.
+                voiceText = if (voiceText.isBlank()) text else "$voiceText $text"
+            }
         },
         onError = { voiceError = it }
     )
+    val submitAiParse: () -> Unit = {
+        if (voiceText.isNotBlank() && !aiParsing) {
+            viewModel.processVoiceMeal(habitName, voiceText.trim())
+            voiceText = ""
+        }
+    }
 
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -231,37 +257,32 @@ fun MealDetailDialog(
                 }
             }
 
-            // ── Daily summary ─────────────────────────────────────────────
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    MacroSummaryItem(
-                        if (selectedDate == LocalDate.now()) "Today" else selectedDate.toString(),
-                        "$dayCalories", "kcal"
-                    )
-                    MacroSummaryItem("Meals", "${mealLogs.size}", "day")
-                    MacroSummaryItem(
-                        "Avg cal",
-                        if (mealLogs.isNotEmpty()) (dayCalories / mealLogs.size).toString() else "0",
-                        "/meal"
-                    )
-                }
-            }
+            // ════════════════════════════════════════════════════════════
+            //  SECTION 1 — NUTRITION (the meal's own numbers, always on top)
+            // ════════════════════════════════════════════════════════════
+            NutritionSummaryCard(
+                selectedDate = selectedDate,
+                dayCalories = dayCalories,
+                mealCount = mealLogs.size
+            )
 
-            // ── Capture row: every path creates (or merges) a card ────────
-            CaptureActionRow(
+            // ════════════════════════════════════════════════════════════
+            //  SECTION 2 — AI INPUT (one box: type OR dictate, one Parse)
+            // ════════════════════════════════════════════════════════════
+            AiInputCard(
+                text = voiceText,
+                onTextChange = { voiceText = it },
                 isListening = isListening,
+                isParsing = aiParsing,
+                onMic = startMic,
+                onClearMic = { if (isListening) speech.stop() },
+                onSubmit = submitAiParse,
+                voiceError = voiceError,
+                voiceStatus = voiceStatus
+            )
+
+            // ── Secondary capture actions: photos & quick log ─────────────
+            CaptureActionRow(
                 onPhoto = {
                     val intent = Intent(context, QuickCaptureActivity::class.java).apply {
                         putExtra(QuickCaptureActivity.EXTRA_HABIT_NAME, habitName)
@@ -273,27 +294,21 @@ fun MealDetailDialog(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                 },
-                onVoice = startMic,
                 onQuick = { showQuickLog = !showQuickLog }
             )
 
-            // Voice / queue status feedback
-            voiceError?.let {
-                Text(
-                    "🎤 $it",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            // ── Quick log (no photo, no AI — details editable on the card) ─
+            if (showQuickLog) {
+                ManualEntrySection(
+                    onAdd = { title, calories ->
+                        viewModel.addManualMealLog(
+                            habitName, title, calories,
+                            skipIncrement = incrementAlreadyDone
+                        )
+                    }
                 )
             }
-            voiceStatus?.let {
-                Text(
-                    it,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
-                )
-            }
+
             // ── AI queue status: per-item info + force reprocess control ──
             if (queueItems.isNotEmpty()) {
                 VisionQueueStatusCard(
@@ -310,19 +325,9 @@ fun MealDetailDialog(
                 )
             }
 
-            // ── Quick log (no photo, no AI — details editable on the card) ─
-            if (showQuickLog) {
-                ManualEntrySection(
-                    onAdd = { title, calories ->
-                        viewModel.addManualMealLog(
-                            habitName, title, calories,
-                            skipIncrement = incrementAlreadyDone
-                        )
-                    }
-                )
-            }
-
-            // ── Tag filter chips ──────────────────────────────────────────
+            // ════════════════════════════════════════════════════════════
+            //  SECTION 3 — HISTORY (tag filters + the day's meal cards)
+            // ════════════════════════════════════════════════════════════
             if (tagIndex.isNotEmpty()) {
                 TagFilterRow(
                     tags = tagIndex,
@@ -334,12 +339,13 @@ fun MealDetailDialog(
                 )
             }
 
-            // ── Meal history feed (clickable cards) ───────────────────────
             LazyColumn(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 6.dp)
             ) {
                 items(visibleLogs, key = { it.id }) { log ->
                     MealLogCard(
@@ -435,13 +441,190 @@ private fun MealEditEntryDialog(
     }
 }
 
-/** Four capture actions — every one of them results in a meal card. */
+/**
+ * Section 1 — the meal's own nutrition numbers for the selected day.
+ * Deliberately the FIRST thing on screen: the AI/photo inputs below are
+ * just means to fill this, so the summary leads the hierarchy.
+ */
+@Composable
+private fun NutritionSummaryCard(
+    selectedDate: LocalDate,
+    dayCalories: Int,
+    mealCount: Int
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                text = "NUTRITION — " +
+                    if (selectedDate == LocalDate.now()) "Today" else selectedDate.toString(),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.2.sp,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                MacroSummaryItem(
+                    if (selectedDate == LocalDate.now()) "Today" else selectedDate.toString(),
+                    "$dayCalories", "kcal"
+                )
+                MacroSummaryItem("Meals", "$mealCount", "day")
+                MacroSummaryItem(
+                    "Avg cal",
+                    if (mealCount > 0) (dayCalories / mealCount).toString() else "0",
+                    "/meal"
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Section 2 — ONE unified AI input: type or dictate into the same box,
+ * then a single "Parse with AI" action submits it. The mic appends to the
+ * box (multiple dictation passes accumulate), so pausing mid-description
+ * is fine — nothing is sent until the button is pressed.
+ */
+@Composable
+private fun AiInputCard(
+    text: String,
+    onTextChange: (String) -> Unit,
+    isListening: Boolean,
+    isParsing: Boolean,
+    onMic: () -> Unit,
+    onClearMic: () -> Unit,
+    onSubmit: () -> Unit,
+    voiceError: String?,
+    voiceStatus: String?
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "AI MEAL INPUT",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.2.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                if (isListening) {
+                    Text(
+                        "● listening",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            OutlinedTextField(
+                value = text,
+                onValueChange = onTextChange,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = {
+                    Text(
+                        "Describe what you ate — type or tap 🎤 to dictate",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                },
+                minLines = 2,
+                maxLines = 4,
+                shape = RoundedCornerShape(12.dp),
+                textStyle = LocalTextStyle.current.copy(fontSize = 14.sp)
+            )
+            voiceError?.let {
+                Text(
+                    "🎤 $it",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            voiceStatus?.let {
+                Text(
+                    it,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Mic: FILLS the box (append), never submits directly.
+                FilledTonalIconButton(
+                    onClick = { if (isListening) onClearMic() else onMic() },
+                    modifier = Modifier.size(52.dp),
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = if (isListening) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Mic,
+                        contentDescription = if (isListening) "Stop dictation" else "Dictate into box",
+                        tint = if (isListening) Color.White
+                        else MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+                // THE single AI submit for spoken/typed descriptions.
+                Button(
+                    onClick = onSubmit,
+                    enabled = !isParsing && text.isNotBlank(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    if (isParsing) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Parsing…", fontSize = 14.sp)
+                    } else {
+                        Text("✨ Parse with AI", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Photo / gallery / quick-log row — secondary paths under the AI input. */
 @Composable
 private fun CaptureActionRow(
-    isListening: Boolean,
     onPhoto: () -> Unit,
     onGallery: () -> Unit,
-    onVoice: () -> Unit,
     onQuick: () -> Unit
 ) {
     Row(
@@ -463,14 +646,6 @@ private fun CaptureActionRow(
             container = MaterialTheme.colorScheme.primary,
             modifier = Modifier.weight(1f),
             onClick = onGallery
-        )
-        CaptureActionButton(
-            icon = { Icon(Icons.Default.Mic, null, tint = Color.White) },
-            label = if (isListening) "Listening…" else "Voice",
-            container = if (isListening) MaterialTheme.colorScheme.error
-            else MaterialTheme.colorScheme.secondary,
-            modifier = Modifier.weight(1f),
-            onClick = onVoice
         )
         CaptureActionButton(
             icon = { Icon(Icons.Default.Add, null, tint = Color.White) },
