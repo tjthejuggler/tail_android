@@ -3160,7 +3160,7 @@ class HabitViewModel(
         // Deferred game pipeline: retry shares that were parked because the
         // game wasn't in any chess.com archive yet. Each poll re-fetches
         // them; whatever has appeared is classified by the readiness state
-        // at the moment the game ended (approved → full Phase 2 audit,
+        // at the moment the game started (approved → full Phase 2 audit,
         // otherwise → unapproved in the compliance stats).
         try {
             // Bridge credentials are auto-derived from the Garmin settings

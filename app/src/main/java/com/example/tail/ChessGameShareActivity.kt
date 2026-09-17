@@ -258,7 +258,7 @@ class ChessGameShareActivity : ComponentActivity() {
                         "yet (the share link can appear before the archives " +
                         "update). Tail has queued it — the audit will run " +
                         "automatically once it's available, classified by your " +
-                        "readiness state at the moment the game ended.",
+                        "readiness state at the moment the game started.",
                     retry = true
                 )
             )
@@ -315,7 +315,7 @@ class ChessGameShareActivity : ComponentActivity() {
             is ChessDeferredGameReconciler.GameOutcome.Unauthorized -> emit(
                 Ui.Message(
                     title = "Played outside authorization",
-                    message = "This rated game ended outside a valid green-light " +
+                    message = "This rated game started outside a valid green-light " +
                         "window" +
                         (
                             outcome.stateAtPlay?.let {

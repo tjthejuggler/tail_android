@@ -396,10 +396,10 @@ class ChessEnforcementPolicyTest {
 
     @Test
     fun `closed rolling window degrades green to casual yellow not a block`() {
-        // 15 min since the pass, no games since: the 10-minute idle window
-        // is closed but the 60-minute validity lives on. The re-test
-        // cooldown must NEVER wall the app (the old dead-zone red block) —
-        // casual play continues until validity expires.
+        // 15 min since the pass, no games since: the 15-minute idle window
+        // is closed (boundary) but the 60-minute validity lives on. The
+        // re-test cooldown must NEVER wall the app (the old dead-zone red
+        // block) — casual play continues until validity expires.
         val decision = evaluate(
             history = listOf(test(15, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT))
         )

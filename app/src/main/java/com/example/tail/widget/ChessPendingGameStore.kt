@@ -16,7 +16,7 @@ import org.json.JSONObject
  * [ChessDeferredGameReconciler.reconcilePending] on every chess.com poll
  * (and when the share sheet opens): once the game appears under ANY of the
  * recorded players, it is classified against the readiness state at the
- * moment it ENDED (approved → full Phase 2 audit; otherwise → unapproved in
+ * moment it STARTED (approved → full Phase 2 audit; otherwise → unapproved in
  * the compliance stats) and removed from the queue.
  *
  * Plain [android.content.SharedPreferences] (not DataStore) so the bubble

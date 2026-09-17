@@ -116,6 +116,30 @@ class ChessDeferredGameReconcilerTest {
     // ── Start-time authorization (user rule, 2026-08-25) ────────────────────
 
     @Test
+    fun `played games extend the window so continuous play stays authorized`() {
+        // The 2026-09-17 regression: GREEN test, then a game played and
+        // finished 7m15s in, then a second game starting 17m37s after the
+        // test — only 10m22s of REAL no-play time, well inside the
+        // 15-minute idle close. The old audit-only chain measured the gap
+        // from the TEST and wrongly flagged the second game unauthorized.
+        val tests = listOf(test(t0, ChessReadinessEngine.ReadinessState.GREEN_LIGHT))
+        val gameA = t0 to t0 + 7 * 60_000L + 15_000L
+        val gameBStart = t0 + 17 * 60_000L + 37_000L
+        assertTrue(
+            ChessDeferredGameReconciler.authorizedAtPlay(
+                tests, emptyList(), gameBStart, listOf(gameA)
+            )
+        )
+        // Without the played-game chain (pre-2026-09-17 behaviour) the same
+        // start was unauthorized — that is exactly the fixed bug.
+        assertFalse(
+            ChessDeferredGameReconciler.authorizedAtPlay(
+                tests, emptyList(), gameBStart
+            )
+        )
+    }
+
+    @Test
     fun `game started inside the window but ending after it stays authorized`() {
         // The exact bug from 2026-08-25: GREEN test opens the idle close;
         // a 10-minute rapid game starts 5 minutes before expiry and ends

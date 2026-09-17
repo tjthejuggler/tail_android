@@ -265,8 +265,10 @@ class TextInputRepository {
     /**
      * Moves one text entry to a different timestamp key ("yyyy-MM-dd HH:mm:ss").
      * Removes [oldTimestamp] and re-inserts its text at [newTimestamp]; when
-     * the destination key already exists, a "#M" suffix disambiguates so the
-     * existing entry is never clobbered. Returns true when the entry moved.
+     * the destination second is already occupied, the key advances one second
+     * at a time until free — keys stay canonical "yyyy-MM-dd HH:mm:ss" (the
+     * editor reads the time from the key's last 8 chars, so no suffixing).
+     * Returns true when the entry moved.
      */
     suspend fun moveTextEntry(
         uri: Uri,
@@ -278,11 +280,20 @@ class TextInputRepository {
         val existing = loadTextLog(uri, context).toMutableMap()
         val text = existing[oldTimestamp] ?: return@withContext false
         existing.remove(oldTimestamp)
+        val parsed = runCatching { LocalDateTime.parse(newTimestamp, TEXT_LOG_DATE_FMT) }.getOrNull()
         var key = newTimestamp
-        var n = 0
-        while (key in existing) {
-            n++
-            key = "$newTimestamp #M$n"
+        if (parsed != null) {
+            var candidate: LocalDateTime = parsed
+            while (key in existing) {
+                candidate = candidate.plusSeconds(1)
+                key = candidate.format(TEXT_LOG_DATE_FMT)
+            }
+        } else {
+            var n = 1
+            while (key in existing) {
+                key = "$newTimestamp-$n"
+                n++
+            }
         }
         existing[key] = text
         saveTextLog(uri, context, existing)

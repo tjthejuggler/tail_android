@@ -258,12 +258,13 @@ object ChessPhase2Store {
 
     /**
      * The epoch-ms expiry of the ROLLING rated-play authorization window,
-     * or null when rated play is currently NOT authorized. The 10-minute
+     * or null when rated play is currently NOT authorized. The 15-minute
      * idle clock re-anchors to every CONTINUE_RATED audit filed inside the
-     * window ([ChessPhase2Engine.rollingWindowExpiresAt]): playing well
-     * keeps the window open indefinitely, while 10 minutes without being
-     * in a game that ends clean — or any Yellow/Red audit — closes it
-     * until a new GREEN readiness test.
+     * window AND to every rated game actually played whose start was still
+     * inside it ([ChessPhase2Engine.rollingWindowExpiresAt]): playing well
+     * keeps the window open indefinitely, while 15 minutes of REAL no-play
+     * time — or any Yellow/Red audit — closes it until a new GREEN
+     * readiness test.
      */
     fun ratedPlayExpiresAt(
         context: Context,
@@ -276,7 +277,8 @@ object ChessPhase2Store {
             loadAudits(context)
                 .filter { it.timestamp >= last.timestamp && it.timestamp <= now }
                 .map { it.timestamp to it.outputState },
-            now
+            now,
+            ChessDeferredGameReconciler.ratedGameSpans(context, now)
         )
     }
 

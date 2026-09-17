@@ -195,36 +195,60 @@ object ChessPhase2Engine {
     data class DeltaERecord(val timestamp: Long, val deltaE: Double)
 
     /** Minutes of rated-play idleness (no completed clean game) that close
-     * an otherwise-healthy authorization window. */
-    const val RATED_IDLE_CLOSE_MINUTES = 10L
+     * an otherwise-healthy authorization window. User rule 2026-09-17:
+     * 10 → 15 minutes, and the gap must be REAL no-play time (last game's
+     * end → next game's start) — 10 minutes was tight enough to flag honest
+     * back-to-back sessions (the korosh935milad false positive: a real
+     * 10m22s break measured as a 17m37s audit gap). */
+    const val RATED_IDLE_CLOSE_MINUTES = 15L
 
     /**
      * ROLLING rated-play window (2026-09-12: idle close tightened from 30
-     * to 10 minutes): the idle clock re-anchors to every CONTINUE_RATED
-     * audit filed inside the window. Playing well keeps the window open
-     * indefinitely; going [RATED_IDLE_CLOSE_MINUTES] minutes without being
-     * in a game that ends clean (or flagging Yellow/Red) closes it and a
-     * new readiness test is required.
+     * to 10 minutes; 2026-09-17: close raised to 15 minutes AND the idle
+     * clock now also re-anchors to every RATED GAME ACTUALLY PLAYED whose
+     * start was still inside the window — not only to filed CONTINUE_RATED
+     * audits). The gap that closes the window is genuine no-play time
+     * (game end → next game start), so an audit landing late (batch archive
+     * fetch, deferred share) can no longer make continuous play look idle.
+     * Playing well keeps the window open indefinitely; going
+     * [RATED_IDLE_CLOSE_MINUTES] minutes without being in a game (or any
+     * Yellow/Red audit) closes it and a new readiness test is required.
      *
      * @param greenTestMs timestamp of the authorizing GREEN_LIGHT test
      * @param audits      (timestamp, [OutputState] name) pairs filed after
      *                    the test and at/before "now", oldest first
      * @param now         evaluation instant
+     * @param games       (startMs, endMs) spans of RATED games played after
+     *                    the test and finished at/before "now", any order —
+     *                    a game that BEGAN while the window was still live
+     *                    extends the window to that game's end
      * @return the epoch-ms expiry of the window, or null when revoked or
      *         already expired
      */
     fun rollingWindowExpiresAt(
         greenTestMs: Long,
         audits: List<Pair<Long, String>>,
-        now: Long
+        now: Long,
+        games: List<Pair<Long, Long>> = emptyList()
     ): Long? {
         val inWindow = audits.filter { it.first in greenTestMs..now }
         // A Yellow/Red audit since the authorization revokes rated play.
         if (inWindow.any {
                 it.second != OutputState.CONTINUE_RATED.name
             }) return null
-        val anchor = inWindow.lastOrNull()?.first ?: greenTestMs
         val idleCloseMs = RATED_IDLE_CLOSE_MINUTES * 60_000
+        // Chain of window-extending evidence: every clean audit re-anchors
+        // the idle clock to its instant (unchanged lenient semantics), then
+        // each played game whose start was still inside the live window
+        // extends the anchor to that game's end — continuous play never
+        // counts as idleness.
+        var anchor = greenTestMs
+        inWindow.forEach { anchor = maxOf(anchor, it.first) }
+        games.sortedBy { it.first }
+            .filter { it.first in greenTestMs..now && it.second <= now }
+            .forEach { (start, end) ->
+                if (start < anchor + idleCloseMs) anchor = maxOf(anchor, end)
+            }
         return if (now - anchor >= idleCloseMs) null
         else anchor + idleCloseMs
     }

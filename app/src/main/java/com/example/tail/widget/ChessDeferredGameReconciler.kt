@@ -93,15 +93,23 @@ object ChessDeferredGameReconciler {
      *  - the latest test at/before [gameStartMs] was GREEN_LIGHT, and
      *  - [gameStartMs] is inside the ROLLING window that test opened
      *    ([ChessPhase2Engine.rollingWindowExpiresAt] — every CONTINUE_RATED
-     *    audit between the test and the game re-anchors the 10-minute
-     *    idle clock), and
+     *    audit between the test and the game re-anchors the 15-minute idle
+     *    clock, and so does every rated game actually played whose start
+     *    was still inside the window: the gap that closes it is REAL
+     *    no-play time, game end → next game start), and
      *  - every Phase 2 audit filed between the test and [gameStartMs] left
      *    rated play alive (CONTINUE_RATED).
+     *
+     * @param games (startMs, endMs) spans of rated games played after the
+     *        authorizing test and finished at/before [gameStartMs], any
+     *        order — built by the callers from the activity log so an audit
+     *        landing late cannot make continuous play look idle
      */
     fun authorizedAtPlay(
         tests: List<ChessReadinessEngine.ReadinessTest>,
         audits: List<AuditStamp>,
-        gameStartMs: Long
+        gameStartMs: Long,
+        games: List<Pair<Long, Long>> = emptyList()
     ): Boolean {
         val last = tests
             .filter { it.timestamp <= gameStartMs }
@@ -112,8 +120,29 @@ object ChessDeferredGameReconciler {
             audits
                 .filter { it.timestamp in last.timestamp..gameStartMs }
                 .map { it.timestamp to it.outputState },
-            gameStartMs
+            gameStartMs,
+            games
         ) != null
+    }
+
+    /**
+     * Rated-game (startMs, endMs) spans from the activity log, usable as the
+     * [ChessPhase2Engine.rollingWindowExpiresAt] games chain: start times
+     * are the recorded end minus the base-clock estimate (the log does not
+     * persist exact PGN starts — same fallback the penalty detector uses).
+     * Only games ENDED at or before [atMs] are returned; the game currently
+     * being classified always ends AFTER it started, so it can never extend
+     * its own window.
+     */
+    fun ratedGameSpans(
+        context: Context,
+        atMs: Long
+    ): List<Pair<Long, Long>> = try {
+        ChessReadinessLogStore.loadGames(context)
+            .filter { it.rated && it.endTimeMs <= atMs }
+            .map { it.endTimeMs - (it.minutes * 60_000).toLong() to it.endTimeMs }
+    } catch (_: Exception) {
+        emptyList()
     }
 
    /**
@@ -182,7 +211,8 @@ object ChessDeferredGameReconciler {
             audits = ChessPhase2Store.loadAudits(context).map {
                 AuditStamp(it.timestamp, it.outputState)
             },
-            gameStartMs = gameStartMs
+            gameStartMs = gameStartMs,
+            games = ratedGameSpans(context, gameStartMs)
         )
 
         val mapping = ChessGameAuditMapper.buildInput(
@@ -284,7 +314,8 @@ object ChessDeferredGameReconciler {
             audits = ChessPhase2Store.loadAudits(context).map {
                 AuditStamp(it.timestamp, it.outputState)
             },
-            gameStartMs = gameStartMs
+            gameStartMs = gameStartMs,
+            games = ratedGameSpans(context, gameStartMs)
         )
         if (!authorized) {
             val stateAtPlay = tests
@@ -411,7 +442,8 @@ object ChessDeferredGameReconciler {
             audits = ChessPhase2Store.loadAudits(context).map {
                 AuditStamp(it.timestamp, it.outputState)
             },
-            gameStartMs = gameStartMs
+            gameStartMs = gameStartMs,
+            games = ratedGameSpans(context, gameStartMs)
         )
         if (!authorized) {
             val stateAtPlay = tests

@@ -1,12 +1,49 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-12T13:25Z
+**Last updated:** 2026-09-17T14:55Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---
+
+## 2026-09-17T14:55Z — Chess Guard: idle gap = REAL no-play time, raised 10 → 15 minutes; korosh false-positive repaired
+- **The user was right — the rule was wrong.** The rated game vs korosh935milad
+  (started 14:21:32) was flagged unauthorized and earned a 24-hour penalty
+  even though only **10m22s of real no-play time** had passed since the
+  volodiymir game ended (14:11:10). The old rolling-window check measured the
+  gap from the last *filed CONTINUE_RATED audit*, and 10m22s missed the old
+  10-minute cutoff by 22 seconds.
+- Two engine changes in
+  [`rollingWindowExpiresAt()`](app/src/main/java/com/example/tail/widget/ChessPhase2Engine.kt:216):
+  1. **Idle close 10 → 15 minutes**
+     ([`RATED_IDLE_CLOSE_MINUTES`](app/src/main/java/com/example/tail/widget/ChessPhase2Engine.kt:199)).
+  2. **The chain now also re-anchors on every rated game ACTUALLY PLAYED**
+     whose start was still inside the live window (new `games` parameter —
+     `(startMs, endMs)` spans): the gap that closes the window is genuine
+     game-end → next-game-start time, so an audit landing late (batch
+     archive fetch, deferred share) can never make continuous play look idle.
+- Wired through every authorization path: the penalty detector
+  ([`ChessGuardPenalty.evaluateAndApply()`](app/src/main/java/com/example/tail/widget/ChessGuardPenalty.kt:61)),
+  the deferred reconciler v1/v2/v3
+  ([`authorizedAtPlay()`](app/src/main/java/com/example/tail/widget/ChessDeferredGameReconciler.kt:101)
+  + new [`ratedGameSpans()`](app/src/main/java/com/example/tail/widget/ChessDeferredGameReconciler.kt:156)),
+  and the live store gate
+  ([`ChessPhase2Store.ratedPlayExpiresAt()`](app/src/main/java/com/example/tail/widget/ChessPhase2Store.kt:268)).
+- New regression tests: korosh timeline (10m22s real gap now authorized,
+  audit-only chain still flags it — proving the fix), game-extends-window,
+  late-game-does-not-retroactively-extend, and the 14/15-minute boundary in
+  [`ChessRollingWindowTest.kt`](app/src/test/java/com/example/tail/ChessRollingWindowTest.kt:1)
+  + [`ChessDeferredGameReconcilerTest.kt`](app/src/test/java/com/example/tail/ChessDeferredGameReconcilerTest.kt:1).
+- Device repair
+  ([`scripts/repair_korosh_penalty_20260917.py`](scripts/repair_korosh_penalty_20260917.py:1)):
+  cleared the violation penalty, flipped the log entry to authorized (it was
+  already — only the penalty detector disagreed), time-shifted the 14:03:55
+  GREEN pass (v1 + matching v3 PVT result) to "now". Verified on device:
+  `violation_penalties = []`, fresh GREEN_LIGHT session (ccrs 85), 15-minute
+  rolling window open.
+- All `Chess*` unit tests pass; installed via `installDebug`.
 
 ## 2026-09-13T17:30Z — Quick capture: "I ate …" utterances auto-route to the meal habit
 - **Saying (or typing) something that starts with "I ate" into quick capture now

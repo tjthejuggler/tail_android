@@ -18,12 +18,14 @@ import com.example.tail.data.ChessReadinessEngine
  *    a Phase 2 audit filed AFTER that test already pulled the brake:
  *    PIVOT_TO_DRILLS downgrades the session to casual-only (yellow
  *    entry warning), TERMINATE_SESSION blocks until a new test opens.
- *  - COOLDOWN DEGRADATION (2026-09-13): when the 10-minute rolling
- *    window closes but the GREEN session is still inside its 60-minute
+ *  - COOLDOWN DEGRADATION (2026-09-13): when the rolling idle window
+ *    closes but the GREEN session is still inside its 60-minute
  *    validity, the app degrades to YELLOW (casual play) for the rest of
  *    the validity instead of blocking — the re-test cooldown never walls
- *    the app. A game submitted with < 10 minutes since the previous one
- *    re-anchors the window back to GREEN (CONTINUE_RATED verdicts only).
+ *    the app. A game submitted with < 15 minutes of REAL no-play time
+ *    since the previous one re-anchors the window back to GREEN
+ *    (CONTINUE_RATED verdicts; the idle gap is game end → next game
+ *    start, user rule 2026-09-17).
  *  - YELLOW session still inside its validity → app ALLOWED for CASUAL
  *    play only (unrated games, bots, puzzles). Rated play stays
  *    prohibited: the guard shows a full-screen warning on entry, and a
@@ -134,8 +136,10 @@ object ChessEnforcementPolicy {
      * @param audits all persisted Phase 2 audits — the ones filed after
      *        the last Phase 1 test form the rolling-window chain: a PIVOT
      *        or TERMINATE verdict limits the session that test authorized,
-     *        every CONTINUE_RATED verdict re-anchors the 10-minute idle
-     *        clock (mirrors the reconciler's authorization rule).
+     *        every CONTINUE_RATED verdict re-anchors the 15-minute idle
+     *        clock (mirrors the reconciler's authorization rule; the
+     *        store-level gate also chains the rated games actually played
+     *        so the gap is real no-play time).
      */
     fun evaluate(
         enforcementEnabledAt: Long,
@@ -189,8 +193,8 @@ object ChessEnforcementPolicy {
         // User rule (2026-09-13): the re-test cooldown must NEVER wall the
         // app — a closed window degrades the session to YELLOW for the rest
         // of its validity instead of blocking, and any game submitted with
-        // < 10 minutes since the previous one re-anchors the window (a
-        // CONTINUE_RATED audit) back to GREEN.
+        // < 15 minutes of REAL no-play time since the previous one
+        // re-anchors the window (a CONTINUE_RATED audit) back to GREEN.
         if (last != null &&
             last.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name &&
             now - last.timestamp < ChessReadinessEngine.SESSION_VALIDITY_MS
@@ -208,8 +212,11 @@ object ChessEnforcementPolicy {
                 return Decision.Allow(Reason.YELLOW_SESSION)
             }
             // ROLLING GREEN window: every CONTINUE_RATED audit re-anchors
-            // the 10-minute idle clock — back-to-back games keep the
-            // session green; 10 idle minutes degrade it to casual yellow.
+            // the 15-minute idle clock, and so does every rated game
+            // ACTUALLY PLAYED (context unknown in this pure path — callers
+            // needing spans use the store-level gate) — back-to-back games
+            // keep the session green; 15 idle minutes degrade it to casual
+            // yellow.
             val windowLive = ChessPhase2Engine.rollingWindowExpiresAt(
                 last.timestamp,
                 auditsAfterTest.map { it.timestamp to it.outputState },

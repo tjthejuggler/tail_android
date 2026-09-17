@@ -14,11 +14,15 @@ import android.util.Log
  * [evaluateAndApply] for each NEWLY logged game, so no path can smuggle a
  * violation past the detector.
  *
- * The rules (user, 2026-08-23; start-time amendment 2026-08-25):
+ * The rules (user, 2026-08-23; start-time amendment 2026-08-25; idle-gap
+ * amendment 2026-09-17):
  *  - RATED game that BEGAN outside a valid GREEN authorization window
  *    (a YELLOW session does NOT authorize rated play) → penalty. A game
  *    that began inside the window stays clean even if it ended after the
- *    window expired.
+ *    window expired. The window's idle gap is REAL no-play time — every
+ *    rated game actually played (from the activity log) extends it to that
+ *    game's end, so an audit landing late can never make continuous play
+ *    look idle — and it closes after 15 idle minutes.
  *  - UNRATED / casual game is allowed only while the app was actually
  *    OPEN for casual play — i.e. the policy at the game's START moment was
  *    Allow(GREEN_SESSION) or Allow(YELLOW_SESSION). Casual games that
@@ -57,14 +61,18 @@ object ChessGuardPenalty {
             val tests = ChessReadinessStore.loadHistory(context)
 
             // Rule 1 — rated play requires a valid GREEN window at the
-            // moment the game BEGAN (YELLOW permits casual play only).
+            // moment the game BEGAN (YELLOW permits casual play only). The
+            // window chain includes the rated games ACTUALLY PLAYED before
+            // this one (ended at/before its start), so the idle gap is real
+            // no-play time, not audit-arrival time.
             if (rated) {
                 val authorized = ChessDeferredGameReconciler.authorizedAtPlay(
                     tests = tests,
                     audits = ChessPhase2Store.loadAudits(context).map {
                         ChessDeferredGameReconciler.AuditStamp(it.timestamp, it.outputState)
                     },
-                    gameStartMs = gameStartMs
+                    gameStartMs = gameStartMs,
+                    games = ChessDeferredGameReconciler.ratedGameSpans(context, gameStartMs)
                 )
                 if (!authorized) return append(context, gameId, rated = true)
                 return false
