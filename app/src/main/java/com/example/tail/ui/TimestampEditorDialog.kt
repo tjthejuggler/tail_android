@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
@@ -111,6 +113,14 @@ fun TimestampEditorDialog(
     onEditMeal: (time: String) -> Unit,
     /** Add a new single increment at [time]. */
     onAddTimestamp: (time: String) -> Unit,
+    /** The day the editor is viewing — "move to previous day" options are
+     *  computed backwards from it. */
+    viewedDate: LocalDate = LocalDate.now(),
+    /** Move the whole same-moment group at [time] to [toDate] (same time). */
+    onMoveTimeGroupToDay: (time: String, toDate: LocalDate) -> Unit = { _, _ -> },
+    /** Move EVERY instance of the viewed day (timestamps + text + counts) to
+     *  [toDate] — "this whole day actually happened the day before". */
+    onMoveWholeDay: (toDate: LocalDate) -> Unit = { _ -> },
     onDismiss: () -> Unit
 ) {
     // Aggregate duplicate time strings into per-moment groups (chronological).
@@ -134,6 +144,10 @@ fun TimestampEditorDialog(
     var editingTime by remember { mutableStateOf<String?>(null) }
     // null = no card in edit mode; a time string = that card is editable.
     var editingCard by remember { mutableStateOf<String?>(null) }
+    // null = no move in progress; a time string = that group's day picker is
+    // open; MOVE_WHOLE_DAY = the whole-day picker is open.
+    val moveWholeDaySentinel = "__move_whole_day__"
+    var movingTime by remember { mutableStateOf<String?>(null) }
 
     // Absolute time state for the inline wheel editor.
     var wheelHour24 by remember { mutableIntStateOf(0) }
@@ -217,6 +231,16 @@ fun TimestampEditorDialog(
                                     },
                                     onCancel = { editingTime = null }
                                 )
+                            } else if (movingTime == group.time) {
+                                // ── Move-to-day picker for this group ──
+                                MoveDayChooser(
+                                    viewedDate = viewedDate,
+                                    onPick = { picked ->
+                                        movingTime = null
+                                        onMoveTimeGroupToDay(group.time, picked)
+                                    },
+                                    onCancel = { movingTime = null }
+                                )
                             } else {
                                 TimestampCard(
                                     group = group,
@@ -241,6 +265,7 @@ fun TimestampEditorDialog(
                                         wheelMinute = parsed.minute
                                         editingTime = group.time
                                     },
+                                    onStartMoveDay = { movingTime = group.time },
                                     onStartEditInfo = {
                                         if (isMealHabit) {
                                             onEditMeal(group.time)
@@ -316,27 +341,57 @@ fun TimestampEditorDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // "Add Time" button — only when nothing is being edited
-                if (editingTime == null && editingCard == null) {
-                    Button(
-                        onClick = {
-                            val now = LocalTime.now()
-                            wheelOriginalTime = now
-                            wheelHour24 = now.hour
-                            wheelMinute = now.minute
-                            editingTime = addNewSentinel
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A3A)),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = "Add",
-                            tint = Color(0xFF44FFFF),
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Add Time", fontSize = 11.sp, color = Color(0xFF44FFFF))
+                if (editingTime == null && editingCard == null && movingTime == null) {
+                    Row {
+                        Button(
+                            onClick = {
+                                val now = LocalTime.now()
+                                wheelOriginalTime = now
+                                wheelHour24 = now.hour
+                                wheelMinute = now.minute
+                                editingTime = addNewSentinel
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF003A3A)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "Add",
+                                tint = Color(0xFF44FFFF),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Add Time", fontSize = 11.sp, color = Color(0xFF44FFFF))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { movingTime = moveWholeDaySentinel },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Move day",
+                                tint = Color(0xFFFFCC44),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Move Day", fontSize = 11.sp, color = Color(0xFFFFCC44))
+                        }
                     }
+                }
+
+                // ── Whole-day move picker (replaces the button row) ──
+                if (movingTime == moveWholeDaySentinel) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    MoveDayChooser(
+                        viewedDate = viewedDate,
+                        onPick = { picked ->
+                            movingTime = null
+                            onMoveWholeDay(picked)
+                        },
+                        onCancel = { movingTime = null }
+                    )
                 }
             }
         },
@@ -375,6 +430,7 @@ private fun TimestampCard(
     isMinutesPrimary: Boolean,
     displayAmount: Int,
     onStartEditTime: () -> Unit,
+    onStartMoveDay: () -> Unit,
     onStartEditInfo: () -> Unit,
     onCancelEditInfo: () -> Unit,
     onSaveEditInfo: (newAmount: Int, newText: String) -> Unit,
@@ -443,6 +499,17 @@ private fun TimestampCard(
                             RoundedCornerShape(6.dp)
                         )
                         .padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+            }
+            IconButton(
+                onClick = onStartMoveDay,
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Move to previous day",
+                    tint = Color(0xFFFFCC44),
+                    modifier = Modifier.size(16.dp)
                 )
             }
             IconButton(
@@ -745,6 +812,74 @@ private fun TimestampWheelEditor(
                 }
             }
         }
+    }
+}
+
+/**
+ * "Move to which day?" chooser: the 13 days before [viewedDate] as tappable
+ * chips (3 per row), with the immediate previous day labelled. Used for both
+ * per-group moves and the whole-day move in the timestamp editor.
+ */
+@Composable
+private fun MoveDayChooser(
+    viewedDate: LocalDate,
+    onPick: (LocalDate) -> Unit,
+    onCancel: () -> Unit
+) {
+    val fmt = DateTimeFormatter.ofPattern("EEE d MMM")
+    val options = remember(viewedDate) {
+        (1..13).map { viewedDate.minusDays(it.toLong()) }
+    }
+    val prevDay = viewedDate.minusDays(1)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1C1C1E), RoundedCornerShape(10.dp))
+            .border(1.dp, Color(0xFF554422), RoundedCornerShape(10.dp))
+            .padding(10.dp)
+    ) {
+        Text(
+            text = "Move to which day?",
+            fontSize = 12.sp,
+            color = Color(0xFFFFCC44),
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        options.chunked(3).forEach { rowDays ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                for (d in rowDays) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(Color(0xFF3A2A00), RoundedCornerShape(6.dp))
+                            .clickable { onPick(d) }
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = d.format(fmt) + if (d == prevDay) " ◀" else "",
+                            fontSize = 10.sp,
+                            color = Color(0xFFFFCC44),
+                            fontWeight = if (d == prevDay) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+                repeat(3 - rowDays.size) { Spacer(modifier = Modifier.weight(1f)) }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "Cancel",
+            fontSize = 12.sp,
+            color = Color(0xFFAAAAAA),
+            modifier = Modifier
+                .clickable(onClick = onCancel)
+                .padding(vertical = 4.dp)
+        )
     }
 }
 

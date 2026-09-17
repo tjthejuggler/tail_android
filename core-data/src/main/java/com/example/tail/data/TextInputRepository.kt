@@ -263,6 +263,34 @@ class TextInputRepository {
     }
 
     /**
+     * Moves one text entry to a different timestamp key ("yyyy-MM-dd HH:mm:ss").
+     * Removes [oldTimestamp] and re-inserts its text at [newTimestamp]; when
+     * the destination key already exists, a "#M" suffix disambiguates so the
+     * existing entry is never clobbered. Returns true when the entry moved.
+     */
+    suspend fun moveTextEntry(
+        uri: Uri,
+        context: Context,
+        oldTimestamp: String,
+        newTimestamp: String,
+        habitName: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val existing = loadTextLog(uri, context).toMutableMap()
+        val text = existing[oldTimestamp] ?: return@withContext false
+        existing.remove(oldTimestamp)
+        var key = newTimestamp
+        var n = 0
+        while (key in existing) {
+            n++
+            key = "$newTimestamp #M$n"
+        }
+        existing[key] = text
+        saveTextLog(uri, context, existing)
+        if (habitName != null) saveInternalBackup(context, habitName, existing)
+        true
+    }
+
+    /**
      * Updates multiple existing text entries in one atomic read-modify-write.
      * Keys in [updates] that don't exist yet are added (same semantics as
      * [updateTextEntry]). Used by the movie-minutes backlog, which rewrites

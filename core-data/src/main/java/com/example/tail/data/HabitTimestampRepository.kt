@@ -485,6 +485,57 @@ class HabitTimestampRepository(private val context: Context) {
     }
 
     /**
+     * Moves every timestamp equal to [time] (a whole same-moment increment
+     * group) from [fromDate] to [toDate], keeping the original time-of-day.
+     * The group's per-timestamp minutes move with it (merged with any minutes
+     * already recorded at the destination). Returns true when anything moved.
+     *
+     * Used by the timestamp editor's "move to previous day" action and by the
+     * ask-answer date fix (a movie watched yesterday and confirmed today).
+     */
+    suspend fun moveTimeGroupsToDate(
+        habitName: String,
+        fromDate: LocalDate,
+        toDate: LocalDate,
+        time: String
+    ): Boolean {
+        if (fromDate == toDate) return false
+        return fileMutex.withLock {
+            val data = loadMutable()
+            val fromStr = dateString(fromDate)
+            val toStr = dateString(toDate)
+            val habitMap = data[habitName] ?: return@withLock false
+            val dayList = habitMap[fromStr] ?: return@withLock false
+            val moving = dayList.filter { it == time }
+            if (moving.isEmpty()) return@withLock false
+            val remaining = dayList.filter { it != time }.toMutableList()
+            if (remaining.isEmpty()) habitMap.remove(fromStr) else habitMap[fromStr] = remaining
+            if (habitMap.isEmpty()) data.remove(habitName)
+            val destList = data.getOrPut(habitName) { mutableMapOf() }
+                .getOrPut(toStr) { mutableListOf() }
+            destList.addAll(moving)
+            destList.sort()
+            saveAll(data)
+            // The group's per-timestamp minutes move with it (merged at the
+            // destination time, same as a within-day re-time).
+            val minutesData = loadMinutesMutable()
+            val fromDayMinutes = minutesData[habitName]?.get(fromStr)
+            val movedMinutes = fromDayMinutes?.remove(time)
+            if (movedMinutes != null) {
+                val toDayMinutes = minutesData.getOrPut(habitName) { mutableMapOf() }
+                    .getOrPut(toStr) { mutableMapOf() }
+                toDayMinutes[time] = (toDayMinutes[time] ?: 0) + movedMinutes
+            }
+            if (fromDayMinutes != null && fromDayMinutes.isEmpty()) {
+                minutesData[habitName]?.remove(fromStr)
+            }
+            pruneEmptyMinutesEntries(minutesData)
+            saveMinutes(minutesData)
+            true
+        }
+    }
+
+    /**
      * Deletes ALL timestamps equal to [time] for [habitName] on [date].
      * Returns the updated day list.
      */

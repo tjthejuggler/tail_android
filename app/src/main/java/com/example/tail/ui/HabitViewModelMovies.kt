@@ -386,7 +386,11 @@ fun HabitViewModel.confirmMoviePrompt(
 ) {
     markMoviePromptHandled(movie)
     val entryTime = com.example.tail.notify.HabitAsks.moviePromptEntryTime(movie)
-    saveTextEntries(habitName, listOf(annotatedMovieTitle(movie)), null, entryTime)
+    // Log on the movie's own WATCH day (from the bridge), not blindly today —
+    // confirming yesterday's late-night film the next morning lands the entry
+    // and the habit count on the day it was actually watched.
+    val watchDay = com.example.tail.notify.HabitAsks.movieWatchDay(movie)
+    saveTextEntries(habitName, listOf(annotatedMovieTitle(movie)), watchDay, entryTime)
     onLogged(entryTime.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
 }
 

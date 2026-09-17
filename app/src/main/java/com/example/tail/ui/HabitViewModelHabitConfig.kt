@@ -168,6 +168,16 @@ internal fun HabitViewModel.customRangePointsForInput(habitName: String, rawValu
  * Garmin-linked write path.
  */
 fun HabitViewModel.setHabitCount(habitName: String, newCount: Int) {
+    setHabitCountForDate(habitName, newCount, _selectedDate.value)
+}
+
+/**
+ * Date-aware variant of [setHabitCount]: writes [date]'s count regardless of
+ * which day is being viewed (the instant row flip only fires when [date] IS
+ * the viewed day). Used by the timestamp editor's move-to-day action, which
+ * adjusts BOTH the source and the destination day in one gesture.
+ */
+fun HabitViewModel.setHabitCountForDate(habitName: String, newCount: Int, date: LocalDate) {
     val uriString = _settings.value.fileUri
     if (uriString.isEmpty()) {
         _errorMessage.value = "No file selected. Please pick a file in Settings."
@@ -178,43 +188,47 @@ fun HabitViewModel.setHabitCount(habitName: String, newCount: Int) {
     val rangePoints = customRangePointsForInput(habitName, clamped)
     val storedValue = rangePoints ?: clamped
 
-    // Step 1: instant targeted UI update
+    val affectsVisibleDate = date == _selectedDate.value
+
+    // Step 1: instant targeted UI update (only when the edited day is visible)
     // Garmin-linked habits store BAKED points — show the stored value as-is.
-    val isGarmin = habitName in _settings.value.garminHabitLinks
-    _habits.value = _habits.value.map { h ->
-        if (h.name == habitName) h.copy(
-            todayCount = rangePoints ?: if (isGarmin) {
-                clamped
-            } else if (habitName in _settings.value.invertedBinaryHabits) {
-                com.example.tail.data.invertedBinaryPoints(clamped)
-            } else applyDivider(clamped, divider),
-            rawTodayCount = storedValue
-        ) else h
+    if (affectsVisibleDate) {
+        val isGarmin = habitName in _settings.value.garminHabitLinks
+        _habits.value = _habits.value.map { h ->
+            if (h.name == habitName) h.copy(
+                todayCount = rangePoints ?: if (isGarmin) {
+                    clamped
+                } else if (habitName in _settings.value.invertedBinaryHabits) {
+                    com.example.tail.data.invertedBinaryPoints(clamped)
+                } else applyDivider(clamped, divider),
+                rawTodayCount = storedValue
+            ) else h
+        }
+        // Keep per-screen cache in sync
+        screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
     }
-    // Keep per-screen cache in sync
-    screenHabitCache[Pair(_activeScreenIndex.value, _selectedDate.value)] = _habits.value
 
     // Step 2: update in-memory cache — compute delta from current stored value
-    val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+    val dateStr = com.example.tail.data.dateString(date)
     val currentEntries = cachedPhoneDb[habitName] ?: emptyMap()
     val currentCount = currentEntries[dateStr] ?: 0
     val delta = storedValue - currentCount
-    
+
     // For roll forward habits, find the next manually set date BEFORE applying the change
     val nextManualDate = if (habitName in _settings.value.rollForwardHabits && delta != 0) {
         val manualDates = _settings.value.rollForwardManualDates[habitName] ?: emptySet()
         manualDates.mapNotNull { dateStr ->
             com.example.tail.data.parseDate(dateStr)
         }.sorted()
-        .firstOrNull { it > _selectedDate.value }
+        .firstOrNull { it > date }
     } else null
-    
+
     var updatedDb = if (delta != 0) {
-        habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, delta, _selectedDate.value)
+        habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, delta, date)
     } else {
         cachedPhoneDb
     }
-    
+
     // Step 2.5: Track this date as manually set for roll forward habits
     if (habitName in _settings.value.rollForwardHabits && delta != 0) {
         val currentManualDates = _settings.value.rollForwardManualDates[habitName]?.toMutableSet() ?: mutableSetOf()
@@ -230,24 +244,23 @@ fun HabitViewModel.setHabitCount(habitName: String, newCount: Int) {
     // Step 2.6: Roll forward logic - fill subsequent days for roll forward habits
     if (habitName in _settings.value.rollForwardHabits && delta != 0) {
         val habitEntries = updatedDb[habitName]?.toMutableMap() ?: mutableMapOf()
-        val selectedDate = _selectedDate.value
         val today = java.time.LocalDate.now()
-        
-        // Fill all dates from selectedDate to nextManualDate (exclusive) or today (inclusive)
-        var currentDate = selectedDate.plusDays(1)
+
+        // Fill all dates from the edited date to nextManualDate (exclusive) or today (inclusive)
+        var currentDate = date.plusDays(1)
         val endDate = nextManualDate?.minusDays(1) ?: today
-        
+
         while (currentDate <= endDate) {
             val currentDateStr = com.example.tail.data.dateString(currentDate)
             habitEntries[currentDateStr] = storedValue
             currentDate = currentDate.plusDays(1)
         }
-        
+
         // Update the database with the filled entries
         updatedDb = updatedDb.toMutableMap()
         updatedDb[habitName] = habitEntries
     }
-    
+
     cachedPhoneDb = updatedDb
 
     // Step 3: full rebuild + disk write in background
@@ -1554,11 +1567,20 @@ fun HabitViewModel.getMinutesTodayCount(habitName: String): Int {
  * OutOfMemoryError crash when editing a media habit's minutes.
  */
 fun HabitViewModel.setHabitMinutesCount(habitName: String, newCount: Int) {
+    setHabitMinutesCountForDate(habitName, newCount, _selectedDate.value)
+}
+
+/**
+ * Date-aware variant of [setHabitMinutesCount]: writes [date]'s minutes-slot
+ * total regardless of the viewed day. Used by the timestamp editor's
+ * move-to-day action to adjust both days' minutes in one gesture.
+ */
+fun HabitViewModel.setHabitMinutesCountForDate(habitName: String, newCount: Int, date: LocalDate) {
     val uriString = _settings.value.fileUri
     if (uriString.isNullOrEmpty()) return
     val clamped = newCount.coerceAtLeast(0)
     val minKey = minutesKey(habitName)
-    val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+    val dateStr = com.example.tail.data.dateString(date)
 
     // Step 1: instant in-memory cache update — no DB reload per keystroke.
     val updatedDb = cachedPhoneDb.toMutableMap()

@@ -119,8 +119,15 @@ object HabitAsks {
      * - Movie + Yes  → appends the title as a text entry at the stored entry
      *   time AND increments the habit count (with retry — see below)
      * - Movie + No   → nothing (marker still persisted so it is never re-asked)
-     * - Schedule + Yes → increments today's count by 1 (respecting max-1)
+     * - Schedule + Yes → increments the ask day's count by 1 (respecting max-1)
      * - Schedule + No  → nothing
+     *
+     * DATE SEMANTICS: an ask is about the event's day, not the day it happens
+     * to be answered. Movies carry their watch day in the payload (a movie
+     * started late yesterday and confirmed this morning must land on
+     * yesterday); scheduled asks belong to the day embedded in their id
+     * (an alarm fired at 23:50 but answered at 00:10 counts for the firing
+     * day). Asks without any embedded day fall back to today.
      *
      * ROBUSTNESS: the SAF-backed habits/text files can transiently fail to
      * load or write (provider busy, sync in flight). Both effects are
@@ -169,6 +176,12 @@ object HabitAsks {
             }
             val (payloadTime, payloadMinutes) = HabitNotification.parseMoviePayload(ask.payload)
             val time = payloadTime?.let { parseTime(it) } ?: LocalTime.now()
+            // The movie's watch day: embedded in the payload when the ask was
+            // created, falling back to the id's marker day (legacy asks), then
+            // today. A movie watched yesterday but confirmed today must land
+            // on YESTERDAY.
+            val watchDay = HabitNotification.movieAskWatchDay(ask.id, ask.payload)
+                ?: LocalDate.now()
             // Carry the watch length onto the logged entry so the minutes
             // slot fills from the annotation at the next sync.
             val text = if (payloadMinutes > 0) "${ask.title} ($payloadMinutes min)" else ask.title
@@ -178,11 +191,12 @@ object HabitAsks {
             for (attempt in 1..ANSWER_RETRY_ATTEMPTS) {
                 try {
                     TextInputRepository().appendTextEntry(
-                        entryUri, appContext, text, null, time, ask.habitName
+                        entryUri, appContext, text, watchDay, time, ask.habitName
                     )
                     // Verify: the entry must actually be on disk — a silently
-                    // dropped SAF write must not count as logged.
-                    val dayPrefix = LocalDate.now().toString()
+                    // dropped SAF write must not count as logged. Verified on
+                    // the WATCH day, where the entry was just written.
+                    val dayPrefix = watchDay.toString()
                     val onDisk = TextInputRepository()
                         .loadTextLog(entryUri, appContext)
                         .filterKeys { it.startsWith(dayPrefix) }
@@ -225,25 +239,26 @@ object HabitAsks {
                 return true
             }
             val habitsUri = Uri.parse(habitsUriStr)
-            // Respect the "max 1" cap: skip when already done today.
+            // Respect the "max 1" cap: skip when already done on the WATCH day.
             if (ask.habitName in settings.maxOneHabits) {
                 val db = HabitsRepository().loadDatabase(habitsUri, appContext)
-                val todayCount = db[ask.habitName]?.get(LocalDate.now().toString()) ?: 0
-                if (todayCount >= 1) {
-                    Log.i(TAG, "Skipping movie increment for '${ask.habitName}' — already at max 1 today")
+                val watchDayCount = db[ask.habitName]?.get(watchDay.toString()) ?: 0
+                if (watchDayCount >= 1) {
+                    Log.i(TAG, "Skipping movie increment for '${ask.habitName}' — already at max 1 on $watchDay")
                     markHandled()
                     return true
                 }
             }
-            val incremented = incrementHabitVerified(habitsUri, appContext, ask.habitName)
+            val incremented = incrementHabitVerified(habitsUri, appContext, ask.habitName, watchDay)
             if (incremented) {
                 HabitIncrementBus.emit(ask.habitName)
                 try {
-                    HabitTimestampRepository(appContext).addTimestamp(ask.habitName)
+                    HabitTimestampRepository(appContext)
+                        .addTimestamp(ask.habitName, watchDay, time.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to record timestamp for '${ask.habitName}': ${e.message}")
                 }
-                Log.i(TAG, "Incremented '${ask.habitName}' for confirmed movie")
+                Log.i(TAG, "Incremented '${ask.habitName}' for confirmed movie on $watchDay")
                 try {
                     com.example.tail.ipc.HabitIncrementAnnouncer.announce(appContext, ask.habitName, 1)
                 } catch (e: Exception) {
@@ -276,26 +291,30 @@ object HabitAsks {
         }
         val uri = Uri.parse(uriStr)
         val habitsRepo = HabitsRepository()
-        // Respect the "max 1" cap: skip when already done today.
+        // The ask belongs to the day its schedule fired (embedded in the id),
+        // not the day the user gets around to answering it — an alarm fired
+        // at 23:50 and answered at 00:10 counts for the FIRING day.
+        val askDay = HabitNotification.scheduleDay(ask.id) ?: LocalDate.now()
+        // Respect the "max 1" cap: skip when already done on the ask day.
         if (ask.habitName in settings.maxOneHabits) {
             val db = habitsRepo.loadDatabase(uri, appContext)
-            val todayCount = db[ask.habitName]?.get(LocalDate.now().toString()) ?: 0
-            if (todayCount >= 1) {
-                Log.i(TAG, "Skipping answer increment for '${ask.habitName}' — already at max 1 today")
+            val askDayCount = db[ask.habitName]?.get(askDay.toString()) ?: 0
+            if (askDayCount >= 1) {
+                Log.i(TAG, "Skipping answer increment for '${ask.habitName}' — already at max 1 on $askDay")
                 return true
             }
         }
-        if (!incrementHabitVerified(uri, appContext, ask.habitName)) {
+        if (!incrementHabitVerified(uri, appContext, ask.habitName, askDay)) {
             Log.e(TAG, "Schedule-answer increment for '${ask.habitName}' failed — keeping ask")
             return false
         }
         HabitIncrementBus.emit(ask.habitName)
         try {
-            HabitTimestampRepository(appContext).addTimestamp(ask.habitName)
+            HabitTimestampRepository(appContext).addTimestamp(ask.habitName, askDay)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to record timestamp for '${ask.habitName}': ${e.message}")
         }
-        Log.i(TAG, "Incremented '${ask.habitName}' from notification answer")
+        Log.i(TAG, "Incremented '${ask.habitName}' from notification answer for $askDay")
         try {
             com.example.tail.ipc.HabitIncrementAnnouncer.announce(appContext, ask.habitName, 1)
         } catch (e: Exception) {
@@ -311,27 +330,28 @@ object HabitAsks {
     private const val ANSWER_RETRY_BACKOFF_MS = 1000L
 
     /**
-     * Increments today's count for [habitName] with retries and read-back
+     * Increments [habitName]'s count on [date] with retries and read-back
      * verification: each attempt performs the atomic read-modify-write of
-     * [HabitsRepository.incrementHabit], then reloads the file and confirms
-     * today's count actually increased. Transient SAF failures (which
-     * previously escaped as exceptions and silently lost the increment) are
-     * retried with backoff instead.
+     * [HabitsRepository.incrementHabitForDate], then reloads the file and
+     * confirms the count on [date] actually increased. Transient SAF failures
+     * (which previously escaped as exceptions and silently lost the
+     * increment) are retried with backoff instead.
      *
      * @return true when the increment is verified on disk.
      */
     private suspend fun incrementHabitVerified(
         uri: Uri,
         appContext: Context,
-        habitName: String
+        habitName: String,
+        date: LocalDate = LocalDate.now()
     ): Boolean {
         val repo = HabitsRepository()
-        val today = LocalDate.now().toString()
+        val dateStr = date.toString()
         for (attempt in 1..ANSWER_RETRY_ATTEMPTS) {
             try {
-                val before = repo.loadDatabase(uri, appContext)[habitName]?.get(today) ?: 0
-                repo.incrementHabit(uri, appContext, habitName, 1)
-                val after = repo.loadDatabase(uri, appContext)[habitName]?.get(today) ?: 0
+                val before = repo.loadDatabase(uri, appContext)[habitName]?.get(dateStr) ?: 0
+                repo.incrementHabitForDate(uri, appContext, habitName, 1, date)
+                val after = repo.loadDatabase(uri, appContext)[habitName]?.get(dateStr) ?: 0
                 if (after > before) return true
                 Log.w(TAG, "Increment verify failed for '$habitName' (attempt $attempt): " +
                     "before=$before after=$after — write did not land")
@@ -437,6 +457,25 @@ object HabitAsks {
     }
 
     /**
+     * The day a confirmed movie must be logged on: the movie's own watch day
+     * (from the bridge's date field, falling back to the last session start's
+     * day), NEVER the day the confirmation happens. A film started at 23:30
+     * and confirmed the next morning lands on its watch day.
+     */
+    fun movieWatchDay(movie: BridgeMovie): LocalDate {
+        movie.date.takeIf { it.isNotBlank() }?.let { day ->
+            return parseDateOrNull(day) ?: LocalDate.now()
+        }
+        val parsed = try {
+            java.time.LocalDateTime.parse(
+                movie.lastWatched,
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            )
+        } catch (e: Exception) { null }
+        return parsed?.toLocalDate() ?: LocalDate.now()
+    }
+
+    /**
      * Scans [movies] (newest-first, as served by the bridge / kept in the
      * phone-local cache) for ones worth asking about, and registers an ask in
      * the notification system (in-app center + system notification) for EVERY
@@ -508,9 +547,13 @@ object HabitAsks {
                 title = movie.title,
                 question = "Watched this?",
                 createdAtMillis = System.currentTimeMillis(),
-                // "HH:mm:ss|<minutes>" — the length lets the answer path
-                // annotate the entry so the minutes slot fills automatically.
-                payload = HabitNotification.moviePayload(entryTime, movie.totalWatchMin ?: 0)
+                // "HH:mm:ss|<minutes>|<yyyy-MM-dd>" — the length lets the
+                // answer path annotate the entry so the minutes slot fills
+                // automatically; the day makes a LATE answer (next morning)
+                // land the movie on its watch day, not the answer day.
+                payload = HabitNotification.moviePayload(
+                    entryTime, movie.totalWatchMin ?: 0, watchDay.toString()
+                )
             )
             store.add(ask)
             HabitNotifier.postAsk(appContext, ask)

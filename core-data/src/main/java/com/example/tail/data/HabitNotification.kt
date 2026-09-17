@@ -1,5 +1,7 @@
 package com.example.tail.data
 
+import java.time.LocalDate
+
 /**
  * One pending "ask" notification — a habit confirmation the system is waiting
  * for an answer on ("Did you floss?", "Watched this movie?").
@@ -53,12 +55,19 @@ data class HabitNotification(
 
         /**
          * Encodes a movie-ask payload: the pre-computed "HH:mm:ss" entry time,
-         * optionally followed by the watch length in minutes ("HH:mm:ss|113").
-         * The length lets the answer path annotate the logged entry with
-         * "(N min)" so the habit's minutes slot fills automatically.
+         * optionally followed by the watch length in minutes ("HH:mm:ss|113")
+         * and the watch day ("HH:mm:ss|113|2026-09-16"). The length lets the
+         * answer path annotate the logged entry with "(N min)" so the habit's
+         * minutes slot fills automatically; the date lets a LATE answer (the
+         * next morning) log the movie on its watch day instead of the day the
+         * notification happens to be answered on.
          */
-        fun moviePayload(time: String, minutes: Int): String =
-            if (minutes > 0) "$time|$minutes" else time
+        fun moviePayload(time: String, minutes: Int, date: String? = null): String =
+            listOfNotNull(
+                time,
+                if (minutes > 0 || !date.isNullOrBlank()) minutes.toString() else null,
+                date?.takeIf { it.isNotBlank() }
+            ).joinToString("|")
 
         /**
          * Decodes a movie-ask payload into its "HH:mm:ss" entry time (null
@@ -70,6 +79,44 @@ data class HabitNotification(
             val time = parts.getOrNull(0)?.takeIf { it.isNotBlank() }
             val minutes = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
             return time to minutes
+        }
+
+        /**
+         * The watch day embedded in a movie-ask payload ("yyyy-MM-dd"), or
+         * null for legacy asks that carry time (and maybe minutes) only.
+         */
+        fun parseMoviePayloadDate(payload: String): String? =
+            payload.split('|').getOrNull(2)?.trim()?.takeIf { it.isNotBlank() }
+
+        /**
+         * The day a scheduled ask belongs to: the date embedded in its id
+         * ("schedule:<habit>:<yyyy-MM-dd>"), or null when [id] is not a
+         * schedule id. Answers must count for this day — an ask answered the
+         * morning after it fired belongs to the day it fired on.
+         */
+        fun scheduleDay(id: String): LocalDate? {
+            if (!id.startsWith("schedule:")) return null
+            return try {
+                LocalDate.parse(id.substringAfterLast(':'))
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /**
+         * The watch day of a movie ask: the date embedded in the payload when
+         * present, else the date in the id's "<title>@<yyyy-MM-dd>" marker
+         * (legacy asks created before payloads carried dates), else null.
+         */
+        fun movieAskWatchDay(id: String, payload: String): LocalDate? {
+            parseMoviePayloadDate(payload)?.let { day ->
+                return runCatching { LocalDate.parse(day) }.getOrNull()
+            }
+            return try {
+                LocalDate.parse(id.substringAfterLast('@'))
+            } catch (e: Exception) {
+                null
+            }
         }
     }
 }

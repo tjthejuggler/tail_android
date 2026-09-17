@@ -1696,3 +1696,139 @@ fun HabitViewModel.screenIndexForHabit(habitName: String): Int {
 
 /** Public read-only access to the cached database for stats computation. */
 fun HabitViewModel.getCachedDatabase(): HabitsDatabase = cachedPhoneDb
+
+/**
+ * Moves habit instances (timestamps + their text + minutes) recorded on
+ * [fromDate] at [time] over to [toDate], keeping the time-of-day, and keeps
+ * BOTH days' stored habit counts (and minutes-slot totals) in step so the
+ * counters never drift from what the timestamps show.
+ *
+ * Moves ALL of: the timestamp group (the whole same-moment run of duplicate
+ * time strings), the per-timestamp minutes, the text entry logged at that
+ * moment, and count deltas (-moved on [fromDate], +moved on [toDate]).
+ *
+ * When [time] is null the habit's ENTIRE day moves (every timestamp, every
+ * text entry, and the full count/minutes deltas) — "this whole day was
+ * actually the day before".
+ *
+ * Used by the timestamp editor's move-to-day action; a movie-bridge habit
+ * also re-syncs its timestamp store and minutes slot from the text log
+ * afterwards so the bridge never reverses the move.
+ *
+ * @param onDone Called on completion with true when anything was moved.
+ */
+fun HabitViewModel.moveHabitDayInstances(
+    habitName: String,
+    fromDate: LocalDate,
+    toDate: LocalDate,
+    time: String?,
+    onDone: (moved: Boolean) -> Unit = {}
+) {
+    if (fromDate == toDate) {
+        onDone(false)
+        return
+    }
+    viewModelScope.launch {
+        var moved = false
+        try {
+            val fromStr = com.example.tail.data.dateString(fromDate)
+            val toStr = com.example.tail.data.dateString(toDate)
+
+            if (time != null) {
+                // ── Single same-moment group ─────────────────────────────
+                // Minutes moving with the group: minutes-primary habits carry
+                // them per-timestamp; the day totals (minutes slot) adjust by
+                // the group's minutes below.
+                val minutesPrimary = isMinutesPrimaryHabit(habitName)
+                val groupMinutes = if (minutesPrimary) {
+                    timestampRepo.getMinutesForDay(habitName, fromDate)[time] ?: 0
+                } else 0
+                val groupCount = timestampRepo
+                    .getTimestampsForDay(habitName, fromDate).count { it == time }
+
+                moved = timestampRepo.moveTimeGroupsToDate(habitName, fromDate, toDate, time)
+
+                if (moved) {
+                    // Text entry logged at that moment goes with the group.
+                    val uriString = _settings.value.textInputFileUris[habitName]
+                    if (!uriString.isNullOrEmpty()) {
+                        textInputRepo.moveTextEntry(
+                            Uri.parse(uriString), context,
+                            "$fromStr $time", "$toStr $time", habitName = habitName
+                        )
+                    }
+                    // Counts: -group on the source day, +group on the target.
+                    val srcCount = cachedPhoneDb[habitName]?.get(fromStr) ?: 0
+                    val dstCount = cachedPhoneDb[habitName]?.get(toStr) ?: 0
+                    setHabitCountForDate(habitName, (srcCount - groupCount).coerceAtLeast(0), fromDate)
+                    setHabitCountForDate(habitName, dstCount + groupCount, toDate)
+                    // Minutes-primary: move the group's minutes between the
+                    // days' minutes-slot totals too.
+                    if (minutesPrimary && groupMinutes > 0) {
+                        val srcMin = cachedPhoneDb[minutesKey(habitName)]?.get(fromStr) ?: 0
+                        val dstMin = cachedPhoneDb[minutesKey(habitName)]?.get(toStr) ?: 0
+                        setHabitMinutesCountForDate(
+                            habitName, (srcMin - groupMinutes).coerceAtLeast(0), fromDate
+                        )
+                        setHabitMinutesCountForDate(habitName, dstMin + groupMinutes, toDate)
+                    }
+                    if (isMovieBridgeHabit(habitName)) {
+                        syncMovieTimestamps(habitName)
+                        syncMovieMinutesSlot(habitName)
+                    }
+                }
+            } else {
+                // ── Whole day ────────────────────────────────────────────
+                val dayTimestamps = timestampRepo.getTimestampsForDay(habitName, fromDate)
+                val uriString = _settings.value.textInputFileUris[habitName]
+                val dayTextKeys = if (!uriString.isNullOrEmpty()) {
+                    textInputRepo.loadTextLog(Uri.parse(uriString), context).keys
+                        .filter { it.startsWith("$fromStr ") }
+                } else emptyList()
+                if (dayTimestamps.isEmpty() && dayTextKeys.isEmpty()) {
+                    onDone(false)
+                    return@launch
+                }
+
+                // Minutes-primary: carry the day's minutes across.
+                val minutesPrimary = isMinutesPrimaryHabit(habitName)
+                val dayMinutes = if (minutesPrimary) {
+                    cachedPhoneDb[minutesKey(habitName)]?.get(fromStr) ?: 0
+                } else 0
+
+                moved = true
+                // Timestamps: one move per distinct time (each call is atomic).
+                for (t in dayTimestamps.distinct()) {
+                    timestampRepo.moveTimeGroupsToDate(habitName, fromDate, toDate, t)
+                }
+                // Text entries: move each key to the same time on [toDate].
+                if (!uriString.isNullOrEmpty()) {
+                    for (key in dayTextKeys) {
+                        textInputRepo.moveTextEntry(
+                            Uri.parse(uriString), context, key,
+                            "$toStr ${key.takeLast(8)}", habitName = habitName
+                        )
+                    }
+                }
+                // Counts: the whole day's totals transfer.
+                val srcCount = cachedPhoneDb[habitName]?.get(fromStr) ?: 0
+                val dstCount = cachedPhoneDb[habitName]?.get(toStr) ?: 0
+                setHabitCountForDate(habitName, 0, fromDate)
+                setHabitCountForDate(habitName, dstCount + srcCount, toDate)
+                if (minutesPrimary && dayMinutes > 0) {
+                    val dstMin = cachedPhoneDb[minutesKey(habitName)]?.get(toStr) ?: 0
+                    setHabitMinutesCountForDate(habitName, 0, fromDate)
+                    setHabitMinutesCountForDate(habitName, dstMin + dayMinutes, toDate)
+                }
+                if (isMovieBridgeHabit(habitName)) {
+                    syncMovieTimestamps(habitName)
+                    syncMovieMinutesSlot(habitName)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to move instances of '$habitName' from $fromDate to $toDate: ${e.message}", e)
+            moved = false
+        }
+        onDone(moved)
+    }
+}

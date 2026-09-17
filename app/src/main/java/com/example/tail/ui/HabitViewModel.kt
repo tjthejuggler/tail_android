@@ -4039,6 +4039,14 @@ class HabitViewModel(
                                 java.time.LocalTime.now()
                             }
                         } ?: java.time.LocalTime.now()
+                        // The movie's watch day is embedded in the payload (or
+                        // the ask id for legacy asks) — answering a day later
+                        // (notification answered the next morning) must log
+                        // the film on its watch day, never the day the answer
+                        // happens.
+                        val watchDay =
+                            HabitNotification.movieAskWatchDay(ask.id, ask.payload)
+                                ?: LocalDate.now()
                         // The length annotation can be overridden at answer
                         // time (partial watch) — the minutes slot re-syncs
                         // from whatever lands in the text.
@@ -4048,18 +4056,24 @@ class HabitViewModel(
                         } else {
                             ask.title
                         }
-                        saveTextEntries(ask.habitName, listOf(text), null, time)
+                        saveTextEntries(ask.habitName, listOf(text), watchDay, time)
                         onEntryLogged(time.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
                     } else {
                         onEntryLogged(null)
                     }
                 } else if (yes && ask.type == HabitNotification.TYPE_SCHEDULE) {
-                    // The ask is about TODAY — never the date the user happens
-                    // to be viewing. Matches the system-notification answer
-                    // path (HabitAsks.applyAnswer → HabitsRepository.incrementHabit).
+                    // The ask counts for the day its schedule FIRED (embedded
+                    // in the id) — an alarm answered the morning after still
+                    // belongs to the firing day. Never the date the user
+                    // happens to be viewing, and not blindly today either.
+                    // Matches the system-notification answer path
+                    // (HabitAsks.applyAnswer → incrementHabitVerified).
                     // TYPE_INFO asks carry no effect — acknowledging one only
                     // removes it everywhere (the else branch below).
-                    incrementHabit(ask.habitName, date = LocalDate.now())
+                    incrementHabit(
+                        ask.habitName,
+                        date = HabitNotification.scheduleDay(ask.id) ?: LocalDate.now()
+                    )
                     onEntryLogged(null)
                 } else {
                     onEntryLogged(null)

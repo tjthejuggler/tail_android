@@ -2475,6 +2475,45 @@ fun HabitGridScreen(
             canEditText = habitName in settings.textInputHabits,
             isMinutesPrimary = viewModel.isMinutesPrimaryHabit(habitName),
             minutesByTime = timestampEditorMinutes,
+            viewedDate = selectedDate,
+            onMoveTimeGroupToDay = { time, toDate ->
+                timestampScope.launch {
+                    viewModel.moveHabitDayInstances(habitName, selectedDate, toDate, time) { moved ->
+                        if (moved) {
+                            timestampScope.launch {
+                                timestampEditorList = viewModel.timestampRepo
+                                    .getTimestampsForDay(habitName, selectedDate)
+                                timestampEditorMinutes =
+                                    if (viewModel.isMinutesPrimaryHabit(habitName)) {
+                                        viewModel.timestampRepo.getMinutesForDay(habitName, selectedDate)
+                                    } else emptyMap()
+                                selectedHabitTimestampCount = timestampEditorList.size
+                                viewModel.loadTextEntriesWithTimestamps(habitName, selectedDate) { entries ->
+                                    editModeTextEntries = entries
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            onMoveWholeDay = { toDate ->
+                timestampScope.launch {
+                    viewModel.moveHabitDayInstances(habitName, selectedDate, toDate, null) { moved ->
+                        if (moved) {
+                            timestampScope.launch {
+                                timestampEditorList = viewModel.timestampRepo
+                                    .getTimestampsForDay(habitName, selectedDate)
+                                timestampEditorMinutes =
+                                    if (viewModel.isMinutesPrimaryHabit(habitName)) {
+                                        viewModel.timestampRepo.getMinutesForDay(habitName, selectedDate)
+                                    } else emptyMap()
+                                selectedHabitTimestampCount = timestampEditorList.size
+                                editModeTextEntries = emptyList()
+                            }
+                        }
+                    }
+                }
+            },
             onUpdateTimeGroup = { oldTime, newTime ->
                 timestampScope.launch {
                     timestampEditorList = viewModel.timestampRepo.updateTimestampsAtTime(
