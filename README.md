@@ -1,12 +1,17 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-17T14:55Z
+**Last updated:** 2026-09-18T08:15Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---
+
+## 2026-09-18T08:15Z — Widget art repair: lizard alpha holes filled, magenta remnants scrubbed from scenery layers
+- **The see-through "holes" in the mecha-lizard are gone.** The tier-bar strips keyed/feathered their own artwork away: morph strips (`tier_bar_lizard_m*`) chroma-keyed on pure blue ate the lizard's BLUE glow accents (spans m3/m10) wherever they were enclosed, and milestone strips (`tier_bar_lizard_t*`) had a brightness feather that made every dark-metal pixel semi-transparent (up to 134k px/strip). Pose sprites (`lizard_pose_*`) suffered the same erosion via their magenta/green keys. [`wallpaper_gen/fix_lizard_alpha.py`](wallpaper_gen/fix_lizard_alpha.py:1) restores alpha-only: border-connected transparency stays, enclosed creature-detail regions (RGB intact underneath — verified) become opaque again; legit voids (black erase rects for dummy squares in poses, dark coil gaps in milestones) are preserved. 236 files repaired, ~4.5M pixels.
+- **The pink specks showing through the blue scenery are removed.** `gen_scene_layers.py` had keyed the magenta negative space with an edge flood-fill only, leaving enclosed magenta pockets between grass blades and pink fringe halos on silhouette edges (visible when the env layer composites over the sky). [`wallpaper_gen/fix_env_magenta.py`](wallpaper_gen/fix_env_magenta.py:1) removes ALL relaxed-magenta pixels in the non-pink tiers (their art contains zero magenta — verified against `raw/env_*.png`) plus neighbour-based despill on fringes; pink tiers (4/11) get connectivity-limited strict removal so their own magenta blade art survives. 13 env layers cleaned.
+- Originals of every overwritten PNG are backed up once under `wallpaper_gen/raw/alpha_fix_backup/`; [`wallpaper_gen/audit_alpha_and_chroma.py`](wallpaper_gen/audit_alpha_and_chroma.py:1) re-audits both defect classes any time.
 
 ## 2026-09-17T14:55Z — Chess Guard: idle gap = REAL no-play time, raised 10 → 15 minutes; korosh false-positive repaired
 - **The user was right — the rule was wrong.** The rated game vs korosh935milad
