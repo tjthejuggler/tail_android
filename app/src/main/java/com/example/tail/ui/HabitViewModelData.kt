@@ -1781,6 +1781,9 @@ fun HabitViewModel.moveHabitDayInstances(
 
             // ── 1. Text entries (bridge source of truth — moves FIRST) ──
             var textMovedCount = 0
+            // Times-of-day of the text entries actually moved — the bridge
+            // path must clear exactly these from the source-day store below.
+            val movedTextTimes = mutableSetOf<String>()
             if (!textUriStr.isNullOrEmpty()) {
                 val textUri = Uri.parse(textUriStr)
                 val fromKeys = textInputRepo.loadTextLog(textUri, context).keys
@@ -1806,7 +1809,10 @@ fun HabitViewModel.moveHabitDayInstances(
                             textUri, context, key,
                             "$toStr ${key.takeLast(8)}", habitName = habitName
                         )
-                    ) textMovedCount++
+                    ) {
+                        textMovedCount++
+                        movedTextTimes += key.takeLast(8)
+                    }
                 }
             }
 
@@ -1823,11 +1829,16 @@ fun HabitViewModel.moveHabitDayInstances(
                     }
                 }
             } else {
-                // The text log now reflects the move — re-derive the
-                // timestamp store and minutes slot from it. This both places
-                // the instance on [toDate] and clears it from [fromDate];
-                // running it AFTER the text move means the sync REINFORCES
-                // the move instead of reverting it.
+                // Bridge habits: the TEXT LOG owns the watch time. First clear
+                // the moved times from the source-day store — the sync itself
+                // never removes stamps (union semantics, 2026-09-18: the old
+                // full-replace branch leaked the source-day stamp on every
+                // bridge move). Then re-sync: it places the instances on
+                // [toDate] and re-derives the minutes slot. Running AFTER the
+                // text move means it REINFORCES the move, never reverts it.
+                for (movedTime in movedTextTimes) {
+                    timestampRepo.deleteTimestampsAtTime(habitName, fromDate, movedTime)
+                }
                 syncMovieTimestamps(habitName)
                 syncMovieMinutesSlot(habitName)
             }

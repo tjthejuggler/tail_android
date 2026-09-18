@@ -1919,11 +1919,17 @@ class HabitViewModel(
      * each entry's "HH:mm:ss" watch-start time is THE timestamp for its date
      * — one time per movie, never a separate confirm-time increment.
      *
-     * Per date: when the day has at most as many distinct timestamps as text
-     * entries, every timestamp belongs to a logged movie and the day is
-     * rewritten to the entry times; when there are extra timestamps (manual
-     * additions via the editor), only missing entry times are added and the
-     * extras are preserved. Idempotent — no write when already in sync.
+     * UNION semantics per date: every text-log time missing from the store is
+     * added and duplicate stored times collapse to one each (duplicates are
+     * corruption, never data — the 2026-09-08 bug wrote 23 copies of the same
+     * second), but stored times the text log doesn't know about are NEVER
+     * dropped. Those extras are manual editor additions or deliberate re-times
+     * of a watched movie — the old full-replace branch wiped exactly them
+     * whenever the day's counts lined up ("3 timestamps, it says (2)"), and
+     * reverting a re-time made movie timestamps uneditable. Removal is the
+     * job of the explicit paths that remove/move the text itself
+     * ([deleteTextEntry], [moveHabitDayInstances]), which clean the store in
+     * the same gesture. Idempotent — no write when already in sync.
      */
     internal suspend fun syncMovieTimestamps(habitName: String) {
         val uriString = _settings.value.textInputFileUris[habitName] ?: return
@@ -1937,25 +1943,12 @@ class HabitViewModel(
         for ((dateStr, times) in byDate) {
             val date = com.example.tail.data.parseDate(dateStr) ?: continue
             val desired = times.distinct().sorted()
-            val currentDistinct = timestampRepo.getTimestampsForDay(habitName, date)
-                .distinct().sorted()
-            if (currentDistinct == desired) continue
-            if (currentDistinct.size <= desired.size) {
-                timestampRepo.setTimestampsForDay(habitName, date, desired)
-            } else {
-                // More stored times than log entries: add any missing log
-                // times AND collapse duplicate stored times down to one each.
-                // Duplicates are corruption, never data: one movie text
-                // entry is exactly one watch instance (the 2026-09-08 bug
-                // wrote a stale minutes value into the timestamp amount,
-                // creating 23 copies of the same second). Extra DISTINCT
-                // times are kept — they may be manual increments.
-                val missing = desired.filter { it !in currentDistinct }
-                if (missing.isNotEmpty()) {
-                    timestampRepo.addTimestampsAt(habitName, date, missing)
-                }
-                timestampRepo.setTimestampsForDay(habitName, date, currentDistinct)
-            }
+            val current = timestampRepo.getTimestampsForDay(habitName, date)
+            val currentDistinct = current.distinct().sorted()
+            val missing = desired.filter { it !in currentDistinct }
+            val hasDuplicates = current.size > currentDistinct.size
+            if (missing.isEmpty() && !hasDuplicates) continue
+            timestampRepo.setTimestampsForDay(habitName, date, (currentDistinct + missing).sorted())
         }
     }
 

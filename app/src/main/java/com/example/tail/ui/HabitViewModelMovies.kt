@@ -514,6 +514,58 @@ fun HabitViewModel.isMovieBridgeHabit(habitName: String): Boolean {
 }
 
 /**
+ * Moves a movie entry's time-of-day: rewrites the TEXT LOG key(s) at
+ * [oldTime] to [newTime] and re-syncs the timestamp store + minutes slot.
+ *
+ * The text log is a movie-bridge habit's source of truth — editing only the
+ * timestamp store gets reverted by the next [HabitViewModel.syncMovieTimestamps]
+ * pass, which is why re-timing a watched movie used to silently snap back.
+ * Returns true when a text entry moved. Exact-key matches move first; when
+ * the store's stamp drifted from its text key (SAF write latency), the
+ * nearest entry within ±2 minutes moves instead (same tolerance as the
+ * whole-day move in HabitViewModelData).
+ */
+suspend fun HabitViewModel.moveMovieEntryTime(
+    habitName: String,
+    date: java.time.LocalDate,
+    oldTime: String,
+    newTime: String
+): Boolean {
+    val uriString = _settings.value.textInputFileUris[habitName] ?: return false
+    val dateStr = com.example.tail.data.dateString(date)
+    fun secsOf(ts: String): Int = ts.substringAfter(' ')
+        .split(':').fold(0) { acc, v -> acc * 60 + (v.toIntOrNull() ?: 0) }
+    val target = secsOf("$dateStr $oldTime")
+    val log = try {
+        textInputRepo.loadTextLog(Uri.parse(uriString), context)
+    } catch (e: Exception) {
+        Log.w(TAG, "moveMovieEntryTime: failed to load text log for '$habitName': ${e.message}")
+        return false
+    }
+    val dayKeys = log.keys.filter { it.startsWith("$dateStr ") }.sorted()
+    var keys = dayKeys.filter { it == "$dateStr $oldTime" }
+    if (keys.isEmpty()) {
+        val nearest = dayKeys.minByOrNull { kotlin.math.abs(secsOf(it) - target) }
+        if (nearest != null && kotlin.math.abs(secsOf(nearest) - target) <= 120) {
+            keys = listOf(nearest)
+        }
+    }
+    if (keys.isEmpty()) return false
+    var moved = false
+    for (key in keys) {
+        if (textInputRepo.moveTextEntry(
+                Uri.parse(uriString), context, key, "$dateStr $newTime", habitName = habitName
+            )
+        ) moved = true
+    }
+    if (moved) {
+        syncMovieTimestamps(habitName)
+        syncMovieMinutesSlot(habitName)
+    }
+    return moved
+}
+
+/**
  * Returns true if IMDb ratings are available for [habitName]:
  * the habit is bridge-linked AND an OMDb API key is configured.
  */

@@ -2525,6 +2525,19 @@ fun HabitGridScreen(
                         timestampEditorMinutes = viewModel.timestampRepo
                             .getMinutesForDay(habitName, selectedDate)
                     }
+                    // Movie-bridge habits: the TEXT LOG owns the entry's time.
+                    // Move the text key(s) too — editing only the timestamp
+                    // store was reverted by the next movie sync (the "can't
+                    // edit a watched movie's time" bug).
+                    if (viewModel.isMovieBridgeHabit(habitName)) {
+                        viewModel.moveMovieEntryTime(habitName, selectedDate, oldTime, newTime)
+                        timestampEditorList = viewModel.timestampRepo
+                            .getTimestampsForDay(habitName, selectedDate)
+                        selectedHabitTimestampCount = timestampEditorList.size
+                        viewModel.loadTextEntriesWithTimestamps(habitName, selectedDate) { entries ->
+                            editModeTextEntries = entries
+                        }
+                    }
                     // Group size unchanged — no habit count adjustment needed.
                 }
             },
@@ -3176,6 +3189,13 @@ fun HabitGridScreen(
                         viewModel.timestampRepo.updateTimestampsAtTime(
                             habitName, selectedDate, quickEditOriginalTime, newTime
                         )
+                        // Movie-bridge habits: move the text-log key(s) too —
+                        // the next movie sync reverts store-only re-times.
+                        if (viewModel.isMovieBridgeHabit(habitName)) {
+                            viewModel.moveMovieEntryTime(
+                                habitName, selectedDate, quickEditOriginalTime, newTime
+                            )
+                        }
                     }
                 }
                 quickEditHabitName = null
