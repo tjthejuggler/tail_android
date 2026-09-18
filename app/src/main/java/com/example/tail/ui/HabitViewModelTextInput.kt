@@ -366,14 +366,19 @@ fun HabitViewModel.saveTextEntry(
     }
     viewModelScope.launch {
         try {
+            // Capture ONE time for both the text-log key and the increment
+            // stamp: a stamp recorded separately ("now" after the slow file
+            // write) drifts seconds past its text key and renders as a
+            // phantom text-less card in the timestamp editor.
+            val entryDate = date ?: java.time.LocalDate.now()
+            val entryClock = time ?: java.time.LocalTime.now()
+            val stampTime = entryClock.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
             // Save the text entry for the current date
-            textInputRepo.appendTextEntry(Uri.parse(uriString), context, text, date, time, habitName = habitName)
+            textInputRepo.appendTextEntry(Uri.parse(uriString), context, text, entryDate, entryClock, habitName = habitName)
 
             // If this is a roll forward habit, also roll forward the text
             if (habitName in _settings.value.rollForwardHabits) {
-                val entryDate = date ?: java.time.LocalDate.now()
-                val effectiveTime = time ?: java.time.LocalTime.NOON
-                val timestamp = java.time.LocalDateTime.of(entryDate, effectiveTime)
+                val timestamp = java.time.LocalDateTime.of(entryDate, entryClock)
                     .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
 
                 // Find the next manual date (same logic as incrementHabit)
@@ -406,7 +411,8 @@ fun HabitViewModel.saveTextEntry(
                 // day the user happens to be viewing (the movie-ask answer
                 // bug: answered while browsing a past day → count on the
                 // wrong day). Null date = "current date" per the doc above.
-                date = date ?: java.time.LocalDate.now()
+                date = entryDate,
+                stampTime = stampTime
             )
 
             // Movie-bridge habits: reconcile the timestamp store to the

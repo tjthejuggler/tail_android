@@ -774,7 +774,12 @@ fun HabitViewModel.incrementHabit(
     habitName: String,
     amount: Int = 1,
     recordTimestamp: Boolean = true,
-    date: LocalDate? = null
+    date: LocalDate? = null,
+    /** Exact "HH:mm:ss" for the recorded stamp. Callers that also write a
+     *  text-log key (the text-input dialog) pass THE SAME time here so the
+     *  stamp and the text key never drift apart — a drifted stamp renders as
+     *  a phantom text-less card in the timestamp editor (took-pills bug). */
+    stampTime: String? = null
 ) {
     val uriString = _settings.value.fileUri
     if (uriString.isEmpty()) {
@@ -795,7 +800,7 @@ fun HabitViewModel.incrementHabit(
                 cachedPhoneDb = habitsRepo.loadDatabase(Uri.parse(uriString), context)
                 dbLoaded = true
                 rebuildHabitList()
-                incrementHabit(habitName, amount, recordTimestamp, date)
+                incrementHabit(habitName, amount, recordTimestamp, date, stampTime)
             } catch (e: Exception) {
                 Log.e(TAG, "DB not loaded and reload failed — increment of '$habitName' aborted", e)
                 _errorMessage.value =
@@ -1069,6 +1074,37 @@ fun HabitViewModel.incrementHabit(
         // stale snapshot over the optimistic UI update from Step 1.
         cachedPhoneDb = updatedDb
         dbEpoch++
+        // Step 5 (moved BEFORE the bus emit / rebuild — the took-pills fix):
+        // record the timestamp(s) now so every observer woken by the bus or
+        // the rebuild reads a store that ALREADY contains them. Recorded
+        // after the rebuild, the edit-mode "Timestamps (N)" label effect ran
+        // against the still-empty store and — StateFlow conflates equal
+        // lists, so nothing ever re-triggered it — stayed at 0 forever.
+        // One timestamp PER stored unit (storedDelta, not amount) so the
+        // timestamp editor's increment amounts always match the day's count
+        // — including max-1 clamps and point tiers. [stampTime] aligns the
+        // stamp with the text log's key when the caller logged text at a
+        // known time; a drifted stamp renders as a phantom text-less card.
+        if (recordTimestamp && storedDelta > 0) {
+            try {
+                timestampRepo.addTimestamps(
+                    habitName, storedDelta, targetDate,
+                    stampTime ?: com.example.tail.data.HabitTimestampRepository.nowTime()
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to record timestamps for '$habitName': ${e.message}")
+            }
+        }
+        for (linkedName in pendingLinkedTimestamps) {
+            try {
+                timestampRepo.addTimestamp(
+                    linkedName, targetDate,
+                    stampTime ?: com.example.tail.data.HabitTimestampRepository.nowTime()
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to record linked timestamp for '$linkedName': ${e.message}")
+            }
+        }
         HabitsDataChangedBus.emit()
         // Tier-bar widget sync: the in-app tap path only notifies the
         // StatsOverlayService (via HabitsDataChangedBus) — nothing pushed
@@ -1097,23 +1133,6 @@ fun HabitViewModel.incrementHabit(
                 timedDataRepo.appendEntries(habitName, mapOf(null to amount))
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to append timed entry for '$habitName': ${e.message}")
-            }
-        }
-        // Step 5: record timestamp(s) if requested. One timestamp PER stored unit
-        // (storedDelta, not amount) so the timestamp editor's increment amounts
-        // always match the day's count — including max-1 clamps and point tiers.
-        if (recordTimestamp && storedDelta > 0) {
-            try {
-                timestampRepo.addTimestamps(habitName, storedDelta, targetDate)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to record timestamps for '$habitName': ${e.message}")
-            }
-        }
-        for (linkedName in pendingLinkedTimestamps) {
-            try {
-                timestampRepo.addTimestamp(linkedName, targetDate)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to record linked timestamp for '$linkedName': ${e.message}")
             }
         }
         // Step 6: broadcast a generic "habit incremented" event so same-keystore apps

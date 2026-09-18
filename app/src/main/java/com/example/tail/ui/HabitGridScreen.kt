@@ -2402,8 +2402,14 @@ fun HabitGridScreen(
         }
     }
 
-    // Load timestamp count when selected edit habit changes (or the viewed day changes)
-    LaunchedEffect(selectedEditIndex, editMode, habits, selectedDate) {
+    // Load timestamp count when selected edit habit changes (or the viewed day
+    // changes). Also keyed on the timestamp store's dataVersion: increment
+    // stamps land asynchronously AFTER the habits-list update, so without
+    // this the label read the still-empty store and — nothing re-firing —
+    // stayed blank even with many stamps recorded ("took pills" bug).
+    val tsDataVersion by com.example.tail.data.HabitTimestampRepository
+        .dataVersion.collectAsState()
+    LaunchedEffect(selectedEditIndex, editMode, habits, selectedDate, tsDataVersion) {
         if (editMode && selectedEditIndex >= 0 && selectedEditIndex < habits.size) {
             val name = habits[selectedEditIndex].name
             if (name.isNotEmpty()) {

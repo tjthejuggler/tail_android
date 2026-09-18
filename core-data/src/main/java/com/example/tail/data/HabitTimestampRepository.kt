@@ -88,6 +88,18 @@ class HabitTimestampRepository(private val context: Context) {
 
         /** Returns a time string for "right now" (HH:mm:ss). */
         fun nowTime(): String = LocalTime.now().format(TIME_FMT)
+
+        /**
+         * Process-wide counter bumped after every successful write to the
+         * timestamp file. UI that reads counts through the snapshot cache
+         * (e.g. the edit-mode "Timestamps (N)" label) collects this to
+         * re-read as soon as a stamp lands — increment stamps are written
+         * asynchronously after the habits-file persist, so recomposition
+         * keys alone (habits list, selected date) can fire while the store
+         * is still empty and never re-fire afterwards (the took-pills
+         * "6 timestamps but no number" bug).
+         */
+        val dataVersion = kotlinx.coroutines.flow.MutableStateFlow(0L)
     }
 
     /** Current (lastModified, length) stamps of the file — two stat() calls. */
@@ -144,6 +156,7 @@ class HabitTimestampRepository(private val context: Context) {
             if (saved) {
                 val (mtime, len) = fileStamps()
                 cachedSnapshot = SoftReference(Snapshot(mtime, len, deepCopy(data)))
+                dataVersion.value += 1
             }
         }
 

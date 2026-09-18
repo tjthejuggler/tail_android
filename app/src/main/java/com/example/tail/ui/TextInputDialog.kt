@@ -711,28 +711,38 @@ fun TextInputDialog(
                     val hasFreeText = trimmedInput.isNotEmpty()
                     Button(
                         onClick = {
-                            val entries = mutableListOf<String>()
-                            // Add selected options first
+                            // ONE entry per submit: selections + free text are
+                            // JOINED with newlines into a single multiline entry.
+                            // The text log is a map keyed by "yyyy-MM-dd HH:mm:ss"
+                            // — separate entries forced 1-second-apart keys, which
+                            // rendered as separate timestamp cards for what was a
+                            // single increment (the "took pills" bug). One joined
+                            // entry = one key = one time = one increment stamp.
+                            val parts = mutableListOf<String>()
                             selectedOptions.filterValues { it }.keys.forEach { opt ->
-                                entries.add(opt)
+                                parts.add(opt)
                             }
-                            // Add free text if non-empty (skip duplicates of selected
-                            // options, compared case-insensitively so leftover search
-                            // text can never ride along with a checked option).
-                            // For movie suggestions, append the wheel-edited length as
-                            // "(N min)" unless the text already carries a duration.
-                            if (hasFreeText && entries.none { it.equals(trimmedInput, ignoreCase = true) }) {
-                                val alreadyHasDuration = Regex("""\(\d+\s*min\)\s*$""")
-                                    .containsMatchIn(trimmedInput)
-                                val textWithLength = when {
-                                    !hasLengthSuggestion || alreadyHasDuration -> trimmedInput
-                                    lengthMinutes > 0 -> "$trimmedInput ($lengthMinutes min)"
-                                    else -> trimmedInput
+                            // Free text if non-empty (skip duplicates of selected
+                            // options, compared case-insensitively so leftover
+                            // search text can never ride along with a checked
+                            // option). Movie-length annotation only on a pure
+                            // free-text submit — never stapled onto a combo.
+                            if (hasFreeText && parts.none { it.equals(trimmedInput, ignoreCase = true) }) {
+                                if (parts.isEmpty()) {
+                                    val alreadyHasDuration = Regex("""\(\d+\s*min\)\s*$""")
+                                        .containsMatchIn(trimmedInput)
+                                    val textWithLength = when {
+                                        !hasLengthSuggestion || alreadyHasDuration -> trimmedInput
+                                        lengthMinutes > 0 -> "$trimmedInput ($lengthMinutes min)"
+                                        else -> trimmedInput
+                                    }
+                                    parts.add(textWithLength)
+                                } else {
+                                    parts.add(trimmedInput)
                                 }
-                                entries.add(textWithLength)
                             }
-                            if (entries.isNotEmpty()) {
-                                onConfirm(entries, selectedHour, selectedMinute)
+                            if (parts.isNotEmpty()) {
+                                onConfirm(listOf(parts.joinToString("\n")), selectedHour, selectedMinute)
                             }
                         },
                         enabled = hasFreeText || hasSelections,
