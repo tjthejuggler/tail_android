@@ -46,6 +46,66 @@ python3 compose_final.py     # PIL only; fills final/
 `compose_final.py` verifies every output is 1440x3088 and prints an offset
 summary; rerun it alone any time to rebuild `final/` from `raw/`.
 
+## Lizard per-point growth morphs (widget) — ALL 12 SPANS — 2026-09-17
+
+`gen_lizard_morph.py` generates the point-by-point GROWTH art between two
+tier milestones: the shape eases from the smaller milestone lizard toward
+the next one while the glow colour stays the YOUNGEST tier's colour
+(colour is points-based; only shape morphs). Outputs
+`app/src/main/res/drawable-nodpi/tier_bar_lizard_m{tier}_p{NN}.png`
+(2048x512 RGBA, right-anchored, vertically centred — same format as the
+milestone strips). The widget (`TierBarWidgetProvider.lizardBitmap`)
+prefers the per-point asset and falls back to the milestone strip.
+
+**RECURSIVE MIDPOINT BISECTION (user protocol, final design).** Earlier
+chained "one small step from previous" generation failed: the edit model
+is BIMODAL — it copies the previous image or snaps to the distant target
+(13 rolls: 4 baby-copies, then one giant leap). The working protocol asks
+for the age EXACTLY BETWEEN two already-close references:
+
+1. (0,14) -> p07, the exact middle of the two ORIGINAL milestones.
+2. (0,7) -> p03 and (7,14) -> p10, then quarters, eighths, ... until all
+   13 slots exist (`bracket_tree()` spans-biggest-first; every blend's two
+   references already exist on disk). Because each new image blends two
+   nearly-identical neighbours, adjacent-picture jumps are structurally
+   impossible (measured silhouette IoU 0.70–0.92 between neighbours).
+3. Prompt: "age exactly halfway between IMAGE 1 (younger) and IMAGE 2
+   (older)"; ALL glow stays the YOUNGER one's colour (red). Validation
+   rejects duplicates, edge clipping, sparse renders, glow violations and
+   out-of-bracket proportions; accepted blends get a mild horizontal
+   stretch onto the exact linear aspect schedule (`geometric_correct`),
+   then strips are scaled to the linear height schedule (`to_strip`).
+4. `--verify` re-checks every strip on disk (height ±6px, aspect ±0.03,
+   glow discipline).
+
+Chroma background: pure blue `#0000FF` (measured: zero glow pixels in the
+200–260° hue band on the red/orange strips). Milestones (p0 = shipped t0
+strip, p14 = shipped t1 strip) are NEVER regenerated.
+
+Commands:
+```bash
+python3 wallpaper_gen/gen_lizard_morph.py               # full tree + strips + verify
+python3 wallpaper_gen/gen_lizard_morph.py --build-only  # strips from cached blends
+python3 wallpaper_gen/gen_lizard_morph.py --only 12     # redo one blend
+python3 wallpaper_gen/gen_lizard_morph.py --verify      # ladder check only
+```
+First set shipped: red→orange, points 01–13 (`tier_bar_lizard_m0_p01..13`).
+Reroll history: p12 redone once (tail-coil pose noise vs p11).
+
+### Full rollout (same day, later session)
+
+Extended to ALL 12 spans (86 blend strips total: 13+6+9+10+6×8):
+`tier_bar_lizard_m{tier}_p{point}.png` for every non-milestone point value.
+Glow discipline per span: keep the FROM tier's palette (e.g. orange stays
+orange through span 1), ban the TO tier's new hue until the milestone.
+Best-of-N selection by neighbour silhouette IoU (accept >= 0.75, else keep
+the highest-IoU pass) smooths endings; span 0 p13 rerolled with it
+(12→13 IoU 0.705, 13→14 0.790). Adult spans (>= 3) use a 2048×720
+reference canvas — at 1536×864 the longer lizards clipped the frame edges.
+Measured span ladder: aspects 2.23→2.80 (t0→t1) rising smoothly to
+3.57 (t11→t12); heights follow the milestone schedule within ±6px.
+Verify: `python3 wallpaper_gen/gen_lizard_morph.py --verify` (86/86 PASS).
+
 ## Lizard tier strips (widget)
 
 `tier_bar_lizard_t{0..12}.png` in `app/src/main/res/drawable-nodpi/` are the

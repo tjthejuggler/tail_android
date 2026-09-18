@@ -1070,6 +1070,18 @@ fun HabitViewModel.incrementHabit(
         cachedPhoneDb = updatedDb
         dbEpoch++
         HabitsDataChangedBus.emit()
+        // Tier-bar widget sync: the in-app tap path only notifies the
+        // StatsOverlayService (via HabitsDataChangedBus) — nothing pushed
+        // TierBarWidgetProvider, so the lizard/gradient lagged a tier
+        // change until the 30-minute OS tick or a host rebind (the
+        // 20->21 orange->green stale-lizard bug). External increments get
+        // this via the HabitIncrementBus debounce; in-app must do it here,
+        // AFTER the verified persist (the widget re-reads the file).
+        try {
+            com.example.tail.data.AppHooks.refreshWidgets?.invoke(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "Post-increment tier-bar refresh failed: ${e.message}")
+        }
         // Full rebuild (streak/ATH recalc) — AFTER the write, and guarded so
         // a rebuild failure can never starve the effects below.
         try {
