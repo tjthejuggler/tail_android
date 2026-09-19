@@ -44,6 +44,13 @@ private val KEY_ACTIVE_SCREEN_INDEX = intPreferencesKey("active_screen_index")
 private val KEY_TEXT_INPUT_HABITS = stringSetPreferencesKey("text_input_habits")
 private val KEY_TEXT_INPUT_OPTIONS_HABITS = stringSetPreferencesKey("text_input_options_habits")
 private val KEY_SHARABLE_TEXT_HABITS = stringSetPreferencesKey("sharable_text_habits")
+// Per-habit option descriptions for text-input "options" (habit → option text → description),
+// stored with the nested-map codec (see [encodeNestedStringMap]).
+private val KEY_TEXT_INPUT_OPTION_DESCRIPTIONS = stringPreferencesKey("text_input_option_descriptions")
+// Per-habit hidden multi-option groupings (habit → set of '\n'-joined combo texts)
+// filtered out of the increment popup; history is untouched. Uses the
+// Map<String, Set<String>> codec (see [encodeLinkedHabitsMap]).
+private val KEY_TEXT_INPUT_HIDDEN_GROUPINGS = stringPreferencesKey("text_input_hidden_groupings")
 // Inuit (trivia trainer) integration: master switch + text habits shared with it
 private val KEY_INUIT_INTEGRATION_ENABLED = booleanPreferencesKey("inuit_integration_enabled")
 private val KEY_INUIT_TEXT_HABITS = stringSetPreferencesKey("inuit_text_habits")
@@ -1001,6 +1008,8 @@ class SettingsRepository(private val context: Context) {
             conditionalFeedPointsHabits = prefs[KEY_CONDITIONAL_FEED_POINTS_HABITS] ?: emptySet(),
             conditionalLinkValues = decodeNestedStringMap(prefs[KEY_CONDITIONAL_LINK_VALUES] ?: ""),
             valueDisplayLabels = decodeNestedStringMap(prefs[KEY_VALUE_DISPLAY_LABELS] ?: ""),
+            textInputOptionDescriptions = decodeNestedStringMap(prefs[KEY_TEXT_INPUT_OPTION_DESCRIPTIONS] ?: ""),
+            textInputHiddenGroupings = decodeLinkedHabitsMap(prefs[KEY_TEXT_INPUT_HIDDEN_GROUPINGS] ?: ""),
             aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
             aiIconsApiKey = prefs[KEY_AI_ICONS_API_KEY] ?: "",
             aiIconsBaseUrl = prefs[KEY_AI_ICONS_BASE_URL] ?: "",
@@ -1228,6 +1237,20 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveTextInputOptionsHabits(habits: Set<String>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_TEXT_INPUT_OPTIONS_HABITS] = habits
+        }
+    }
+
+    /** Saves the per-habit option descriptions for text-input "options" (habit → option text → description). */
+    suspend fun saveTextInputOptionDescriptions(descriptions: Map<String, Map<String, String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TEXT_INPUT_OPTION_DESCRIPTIONS] = encodeNestedStringMap(descriptions)
+        }
+    }
+
+    /** Saves the per-habit hidden multi-option groupings (habit → set of '\n'-joined combo texts). */
+    suspend fun saveTextInputHiddenGroupings(hidden: Map<String, Set<String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TEXT_INPUT_HIDDEN_GROUPINGS] = encodeLinkedHabitsMap(hidden)
         }
     }
 

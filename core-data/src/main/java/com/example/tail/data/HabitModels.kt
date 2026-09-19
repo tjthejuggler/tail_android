@@ -995,6 +995,22 @@ data class AppSettings(
     val textInputFileUris: Map<String, String> = emptyMap(),
 
     /**
+     * Maps habit name → (option text → description) for the "options"
+     * sub-feature of text-input habits. Descriptions are metadata shown
+     * ONLY in the options editor popup — never in the increment picker.
+     * Keyed by the option text itself so they survive renames only when
+     * explicitly remapped (see renameTextOption).
+     */
+    val textInputOptionDescriptions: Map<String, Map<String, String>> = emptyMap(),
+
+    /**
+     * Maps habit name → set of multi-option grouping values (the '\n'-joined
+     * combo texts) that the user removed from the increment popup. History is
+     * untouched — this only filters the options list shown when logging.
+     */
+    val textInputHiddenGroupings: Map<String, Set<String>> = emptyMap(),
+
+    /**
      * Maps habit name → icon name (without .png extension) for custom icon overrides.
      * When a habit is in this map, its icon is shown from the named drawable instead of
      * the default HABIT_ICON mapping.

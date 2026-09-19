@@ -4,7 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import com.example.tail.data.GitHubMetric
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 
 /**
@@ -62,6 +65,26 @@ internal fun EditBarHost(
     val githubSyncStatus by viewModel.githubSyncStatus.collectAsState()
     val timestampScope = rememberCoroutineScope()
 
+    // ── Text-input options editor popup state ─────────────────────────────
+    // Non-null = the popup is open for this habit; the inventory holds the
+    // decomposed singles + groupings with usage counts, reloaded after every
+    // rename/hide so the lists stay accurate. Descriptions and hidden sets
+    // come live from settings (never stale).
+    var optionsEditorHabit by remember { mutableStateOf<String?>(null) }
+    var optionsEditorSingles by remember {
+        mutableStateOf<List<Pair<String, Int>>>(emptyList())
+    }
+    var optionsEditorGroupings by remember {
+        mutableStateOf<List<Pair<String, Int>>>(emptyList())
+    }
+
+    fun reloadOptionsEditor(habitName: String) {
+        viewModel.loadTextOptionInventory(habitName) { inventory ->
+            optionsEditorSingles = inventory.singles
+            optionsEditorGroupings = inventory.groupings
+        }
+    }
+
     EditModeControlBar(
         selectedIndex = selectedEditIndex,
         selectedHabitName = selectedHabitName,
@@ -103,6 +126,10 @@ internal fun EditBarHost(
         onSetCustomInputAmounts = { name, amounts -> viewModel.setCustomInputAmounts(name, amounts) },
         onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
         onToggleTextInputOptions = { name -> viewModel.toggleTextInputOptions(name) },
+        onEditTextInputOptions = { name ->
+            optionsEditorHabit = name
+            reloadOptionsEditor(name)
+        },
         onToggleSharableText = { name -> viewModel.toggleSharableText(name) },
         onPickTextInputFile = onPickTextInputFile,
         onCreateTextInputFile = onCreateTextInputFile,
@@ -350,4 +377,31 @@ internal fun EditBarHost(
         onInvertHabit = { name -> viewModel.invertHabit(name) },
         onGetInvertPreview = { name -> viewModel.getInvertPreview(name) }
     )
+
+    // ── Text-input options editor popup (large, retro-rename + descriptions) ──
+    val editorHabit = optionsEditorHabit
+    if (editorHabit != null) {
+        TextInputOptionsEditorDialog(
+            habitName = editorHabit,
+            singles = optionsEditorSingles,
+            groupings = optionsEditorGroupings,
+            hiddenGroupings = settings.textInputHiddenGroupings[editorHabit]?.toList() ?: emptyList(),
+            descriptions = settings.textInputOptionDescriptions[editorHabit] ?: emptyMap(),
+            onRename = { oldText, newText ->
+                viewModel.renameTextOption(editorHabit, oldText, newText) {
+                    reloadOptionsEditor(editorHabit)
+                }
+            },
+            onSetDescription = { optionText, description ->
+                viewModel.setTextOptionDescription(editorHabit, optionText, description)
+            },
+            onHideGrouping = { grouping ->
+                viewModel.hideTextOptionGrouping(editorHabit, grouping)
+            },
+            onUnhideGrouping = { grouping ->
+                viewModel.unhideTextOptionGrouping(editorHabit, grouping)
+            },
+            onDismiss = { optionsEditorHabit = null }
+        )
+    }
 }

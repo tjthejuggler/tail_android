@@ -242,6 +242,86 @@ class TextInputRepository {
         }
 
     /**
+     * Inventory of an option list for the options editor popup.
+     *
+     * Multi-option submits are stored as ONE log value whose parts are joined
+     * with '\n' (the shared-timestamp change), so a raw unique-values listing
+     * shows "Iron\nC\nB12" as a single item. Instead:
+     *  - [singles] lists every individual option text (parts of combos count
+     *    toward their own identity) with how many log values contain it.
+     *  - [groupings] lists the multi-part combo values themselves with how
+     *    often each exact grouping occurs.
+     */
+    data class TextOptionInventory(
+        val singles: List<Pair<String, Int>>,
+        val groupings: List<Pair<String, Int>>
+    )
+
+    /**
+     * Builds the decomposed option inventory (see [TextOptionInventory]).
+     * Both lists are sorted alphabetically.
+     */
+    suspend fun loadOptionInventory(uri: Uri, context: Context): TextOptionInventory =
+        withContext(Dispatchers.IO) {
+            val singleCounts = mutableMapOf<String, Int>()
+            val groupingCounts = mutableMapOf<String, Int>()
+            for (text in loadTextLog(uri, context).values) {
+                if (text.contains('\n')) {
+                    groupingCounts[text] = (groupingCounts[text] ?: 0) + 1
+                    for (part in text.split('\n')) {
+                        val p = part.trim()
+                        if (p.isNotEmpty()) singleCounts[p] = (singleCounts[p] ?: 0) + 1
+                    }
+                } else {
+                    singleCounts[text] = (singleCounts[text] ?: 0) + 1
+                }
+            }
+            TextOptionInventory(
+                singles = singleCounts.entries.sortedBy { it.key }.map { it.key to it.value },
+                groupings = groupingCounts.entries.sortedBy { it.key }.map { it.key to it.value }
+            )
+        }
+
+    /**
+     * Retroactively renames an option value: EVERY entry in the log whose text
+     * equals [oldText] is rewritten to [newText] in one atomic read-modify-write.
+     * Multi-part combo values (parts joined with '\n') are handled line-wise:
+     * renaming a part rewrites just that line inside every combo containing it,
+     * so "Iron\nC\nB12" becomes "Iron 25\nC\nB12" after Iron → Iron 25.
+     * When [newText] already occurs in the log, those entries simply merge into
+     * the same value (the options list is unique values, so nothing is lost).
+     * @param habitName If provided, also mirrors the updated log to internal storage.
+     * Returns the updated log map.
+     */
+    suspend fun renameOptionValues(
+        uri: Uri,
+        context: Context,
+        oldText: String,
+        newText: String,
+        habitName: String? = null
+    ): Map<String, String> = withContext(Dispatchers.IO) {
+        val existing = loadTextLog(uri, context).toMutableMap()
+        var changed = false
+        for ((ts, text) in existing) {
+            if (text == oldText) {
+                existing[ts] = newText
+                changed = true
+            } else if (text.contains('\n')) {
+                val parts = text.split('\n')
+                if (oldText in parts) {
+                    existing[ts] = parts.joinToString("\n") { if (it == oldText) newText else it }
+                    changed = true
+                }
+            }
+        }
+        if (changed) {
+            saveTextLog(uri, context, existing)
+            if (habitName != null) saveInternalBackup(context, habitName, existing)
+        }
+        existing
+    }
+
+    /**
      * Updates an existing text entry in the log file.
      * [oldTimestamp] is the exact key to match; [newText] replaces the old value.
      * If the key is not found, it will be added (for adding text to increments without text).

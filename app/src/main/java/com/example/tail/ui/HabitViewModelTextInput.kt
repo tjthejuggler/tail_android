@@ -554,11 +554,132 @@ fun HabitViewModel.loadTextOptions(habitName: String, onResult: (List<String>) -
     }
     viewModelScope.launch {
         try {
+            val hidden = _settings.value.textInputHiddenGroupings[habitName] ?: emptySet()
             val options = textInputRepo.loadUniqueOptions(Uri.parse(uriString), context)
-            onResult(options)
+            // Multi-option groupings the user removed from this picker are
+            // filtered here — history is untouched, only the popup list is.
+            onResult(options.filter { it !in hidden })
         } catch (e: Exception) {
             onResult(emptyList())
         }
+    }
+}
+
+/**
+ * Loads the decomposed option inventory for [habitName] for the options
+ * editor popup: singles (each option has its own identity, even when it
+ * only appears as a part of a multi-option grouping) and groupings (the
+ * exact multi-part combos). Calls [onResult] on the main thread; empty
+ * lists when no log file is configured.
+ */
+fun HabitViewModel.loadTextOptionInventory(
+    habitName: String,
+    onResult: (TextInputRepository.TextOptionInventory) -> Unit
+) {
+    val uriString = _settings.value.textInputFileUris[habitName]
+    if (uriString.isNullOrEmpty()) {
+        onResult(TextInputRepository.TextOptionInventory(emptyList(), emptyList()))
+        return
+    }
+    viewModelScope.launch {
+        try {
+            onResult(textInputRepo.loadOptionInventory(Uri.parse(uriString), context))
+        } catch (e: Exception) {
+            onResult(TextInputRepository.TextOptionInventory(emptyList(), emptyList()))
+        }
+    }
+}
+
+/**
+ * Retroactively renames an option value for [habitName]: every log entry
+ * whose text equals [oldText] is rewritten to [newText] (one atomic file
+ * write; multi-option groupings are rewritten line-wise so parts keep
+ * their identity inside combos), AND any description stored for the old
+ * option text is remapped to the new text so descriptions survive renames.
+ * [onDone] fires when both writes have completed.
+ */
+fun HabitViewModel.renameTextOption(
+    habitName: String,
+    oldText: String,
+    newText: String,
+    onDone: () -> Unit = {}
+) {
+    val uriString = _settings.value.textInputFileUris[habitName]
+    if (uriString.isNullOrEmpty() || newText == oldText) {
+        onDone()
+        return
+    }
+    viewModelScope.launch {
+        try {
+            textInputRepo.renameOptionValues(
+                Uri.parse(uriString), context, oldText, newText, habitName = habitName
+            )
+            // Carry the description (if any) over to the new option text
+            val descriptions = _settings.value.textInputOptionDescriptions.toMutableMap()
+            val inner = descriptions[habitName]
+            if (inner != null && inner.containsKey(oldText)) {
+                val newInner = inner.toMutableMap()
+                val desc = newInner.remove(oldText)
+                if (desc != null) newInner[newText] = desc
+                descriptions[habitName] = newInner
+                settingsRepo.saveTextInputOptionDescriptions(descriptions)
+                _settings.value = _settings.value.copy(textInputOptionDescriptions = descriptions)
+            }
+            HabitsDataChangedBus.emit()
+        } catch (e: Exception) {
+            _errorMessage.value = "Failed to rename option: ${e.message}"
+        }
+        onDone()
+    }
+}
+
+/**
+ * Hides a multi-option grouping for [habitName]: it disappears from the
+ * increment popup's options list but its history stays untouched.
+ */
+fun HabitViewModel.hideTextOptionGrouping(habitName: String, grouping: String) {
+    viewModelScope.launch {
+        val hidden = _settings.value.textInputHiddenGroupings.toMutableMap()
+        val set = hidden[habitName]?.toMutableSet() ?: mutableSetOf()
+        set.add(grouping)
+        hidden[habitName] = set
+        settingsRepo.saveTextInputHiddenGroupings(hidden)
+        _settings.value = _settings.value.copy(textInputHiddenGroupings = hidden)
+    }
+}
+
+/**
+ * Un-hides a previously hidden multi-option grouping so it shows again in
+ * the increment popup.
+ */
+fun HabitViewModel.unhideTextOptionGrouping(habitName: String, grouping: String) {
+    viewModelScope.launch {
+        val hidden = _settings.value.textInputHiddenGroupings.toMutableMap()
+        val set = hidden[habitName]?.toMutableSet() ?: return@launch
+        set.remove(grouping)
+        if (set.isEmpty()) hidden.remove(habitName) else hidden[habitName] = set
+        settingsRepo.saveTextInputHiddenGroupings(hidden)
+        _settings.value = _settings.value.copy(textInputHiddenGroupings = hidden)
+    }
+}
+
+/**
+ * Sets (or clears, when [description] is blank) the hidden description for
+ * option [optionText] of [habitName]. Descriptions are shown only in the
+ * options editor popup — never in the increment picker.
+ */
+fun HabitViewModel.setTextOptionDescription(
+    habitName: String,
+    optionText: String,
+    description: String
+) {
+    viewModelScope.launch {
+        val descriptions = _settings.value.textInputOptionDescriptions.toMutableMap()
+        val inner = descriptions[habitName]?.toMutableMap() ?: mutableMapOf()
+        if (description.isBlank()) inner.remove(optionText) else inner[optionText] = description
+        if (inner.isEmpty()) descriptions.remove(habitName) else descriptions[habitName] = inner
+        settingsRepo.saveTextInputOptionDescriptions(descriptions)
+        _settings.value = _settings.value.copy(textInputOptionDescriptions = descriptions)
     }
 }
 // ── Graph mode ────────────────────────────────────────────────────────────

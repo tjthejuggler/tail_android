@@ -1897,6 +1897,8 @@ internal fun EditModeControlBar(
     onSetCustomInputAmounts: (String, List<Int>) -> Unit = { _, _ -> },
     onToggleTextInput: (String) -> Unit,
     onToggleTextInputOptions: (String) -> Unit,
+    /** Called when the user taps the Edit button next to the Options toggle. */
+    onEditTextInputOptions: (String) -> Unit = {},
     /** Called when the user toggles the "Sharable" sub-feature for a habit. */
     onToggleSharableText: (String) -> Unit = {},
     onPickTextInputFile: (String) -> Unit,
@@ -2523,180 +2525,21 @@ internal fun EditModeControlBar(
                         onToggleTextInputOptions = onToggleTextInputOptions,
                         onToggleSharableText = onToggleSharableText,
                         onPickTextInputFile = onPickTextInputFile,
-                        onCreateTextInputFile = onCreateTextInputFile
+                        onCreateTextInputFile = onCreateTextInputFile,
+                        onEditTextInputOptions = onEditTextInputOptions
                     )
 
                     // ── Today's text entries (view/edit) ──────────────────────
-                    if (isTextInput && textInputFileUris.containsKey(selectedHabitName)) {
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        val visibleTextEntries = todayTextEntries.filter { it.second.isNotBlank() }
-                        if (visibleTextEntries.isNotEmpty()) {
-                            Text(
-                                text = "  Today's entries",
-                                color = Color(0xFF88CCFF),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            for ((timestamp, text) in visibleTextEntries) {
-                                var isEditing by remember { mutableStateOf(false) }
-                                var editText by remember { mutableStateOf(text) }
-
-                                if (isEditing) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(start = 16.dp, bottom = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        OutlinedTextField(
-                                            value = editText,
-                                            onValueChange = { editText = it },
-                                            singleLine = true,
-                                            modifier = Modifier.weight(1f),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedTextColor = Color.White,
-                                                unfocusedTextColor = Color.White,
-                                                focusedBorderColor = Color(0xFF44AAFF),
-                                                unfocusedBorderColor = Color(0xFF555555),
-                                                cursorColor = Color(0xFF44AAFF)
-                                            ),
-                                            textStyle = TextStyle(fontSize = 12.sp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        TextButton(
-                                            onClick = {
-                                                if (editText.trim().isNotEmpty()) {
-                                                    onEditTextEntry(selectedHabitName, timestamp, editText.trim())
-                                                }
-                                                isEditing = false
-                                            }
-                                        ) {
-                                            Text("✓", color = Color(0xFF88FF88), fontSize = 14.sp)
-                                        }
-                                        TextButton(
-                                            onClick = {
-                                                editText = text
-                                                isEditing = false
-                                            }
-                                        ) {
-                                            Text("✕", color = Color(0xFF888888), fontSize = 13.sp)
-                                        }
-                                    }
-                                } else {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(start = 16.dp, bottom = 2.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = text,
-                                            color = Color(0xFFCCCCCC),
-                                            fontSize = 12.sp,
-                                            modifier = Modifier.weight(1f),
-                                            maxLines = 2
-                                        )
-                                        TextButton(
-                                            onClick = { isEditing = true; editText = text },
-                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                                start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
-                                            )
-                                        ) {
-                                            Text("✎", color = Color(0xFF888888), fontSize = 14.sp)
-                                        }
-                                        TextButton(
-                                            onClick = { onDeleteTextEntry(selectedHabitName, timestamp) },
-                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                                start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
-                                            )
-                                        ) {
-                                            Text("✕", color = Color(0xFF666666), fontSize = 13.sp)
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            // No entries for this day — still offer an edit button so the
-                            // user can set text for a past (or empty) day.
-                            Text(
-                                text = "  Today's entries",
-                                color = Color(0xFF88CCFF),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            var isAdding by remember { mutableStateOf(false) }
-                            var addText by remember { mutableStateOf("") }
-
-                            if (isAdding) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = 16.dp, bottom = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedTextField(
-                                        value = addText,
-                                        onValueChange = { addText = it },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(1f),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedTextColor = Color.White,
-                                            unfocusedTextColor = Color.White,
-                                            focusedBorderColor = Color(0xFF44AAFF),
-                                            unfocusedBorderColor = Color(0xFF555555),
-                                            cursorColor = Color(0xFF44AAFF)
-                                        ),
-                                        textStyle = TextStyle(fontSize = 12.sp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    TextButton(
-                                        onClick = {
-                                            if (addText.trim().isNotEmpty()) {
-                                                onAddTextEntry(selectedHabitName, addText.trim())
-                                            }
-                                            isAdding = false
-                                            addText = ""
-                                        }
-                                    ) {
-                                        Text("✓", color = Color(0xFF88FF88), fontSize = 14.sp)
-                                    }
-                                    TextButton(
-                                        onClick = {
-                                            addText = ""
-                                            isAdding = false
-                                        }
-                                    ) {
-                                        Text("✕", color = Color(0xFF888888), fontSize = 13.sp)
-                                    }
-                                }
-                            } else {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = 16.dp, bottom = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "(no text)",
-                                        color = Color(0xFF666666),
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    TextButton(
-                                        onClick = { isAdding = true },
-                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                            start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
-                                        )
-                                    ) {
-                                        Text("✎", color = Color(0xFF888888), fontSize = 14.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // Extracted into [TodayTextEntriesSection] to keep
+                    // EditModeControlBar under the JVM method-size limit.
+                    TodayTextEntriesSection(
+                        isVisible = isTextInput && textInputFileUris.containsKey(selectedHabitName),
+                        habitName = selectedHabitName,
+                        todayTextEntries = todayTextEntries,
+                        onEditTextEntry = onEditTextEntry,
+                        onAddTextEntry = onAddTextEntry,
+                        onDeleteTextEntry = onDeleteTextEntry
+                    )
 
                     Spacer(modifier = Modifier.height(6.dp))
 
@@ -3862,6 +3705,195 @@ internal fun EditModeHabitActionRows(
 }
 
 /**
+ * Edit-mode "Today's text entries" list for the selected text-input habit
+ * (view / inline-edit / add / delete). Extracted from [EditModeControlBar]
+ * to keep it under the JVM 64KB method-size limit — behaviour identical
+ * to the original inline block.
+ */
+@Composable
+internal fun TodayTextEntriesSection(
+    /** Render only when the habit is a text-input habit with a log file. */
+    isVisible: Boolean,
+    habitName: String,
+    todayTextEntries: List<Pair<String, String>>,
+    onEditTextEntry: (String, String, String) -> Unit,
+    onAddTextEntry: (String, String) -> Unit,
+    onDeleteTextEntry: (String, String) -> Unit
+) {
+    if (!isVisible) return
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    val visibleTextEntries = todayTextEntries.filter { it.second.isNotBlank() }
+    if (visibleTextEntries.isNotEmpty()) {
+        Text(
+            text = "  Today's entries",
+            color = Color(0xFF88CCFF),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        for ((timestamp, text) in visibleTextEntries) {
+            var isEditing by remember { mutableStateOf(false) }
+            var editText by remember { mutableStateOf(text) }
+
+            if (isEditing) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = editText,
+                        onValueChange = { editText = it },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF44AAFF),
+                            unfocusedBorderColor = Color(0xFF555555),
+                            cursorColor = Color(0xFF44AAFF)
+                        ),
+                        textStyle = TextStyle(fontSize = 12.sp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    TextButton(
+                        onClick = {
+                            if (editText.trim().isNotEmpty()) {
+                                onEditTextEntry(habitName, timestamp, editText.trim())
+                            }
+                            isEditing = false
+                        }
+                    ) {
+                        Text("✓", color = Color(0xFF88FF88), fontSize = 14.sp)
+                    }
+                    TextButton(
+                        onClick = {
+                            editText = text
+                            isEditing = false
+                        }
+                    ) {
+                        Text("✕", color = Color(0xFF888888), fontSize = 13.sp)
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = text,
+                        color = Color(0xFFCCCCCC),
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 2
+                    )
+                    TextButton(
+                        onClick = { isEditing = true; editText = text },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                        )
+                    ) {
+                        Text("✎", color = Color(0xFF888888), fontSize = 14.sp)
+                    }
+                    TextButton(
+                        onClick = { onDeleteTextEntry(habitName, timestamp) },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                        )
+                    ) {
+                        Text("✕", color = Color(0xFF666666), fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+    } else {
+        // No entries for this day — still offer an edit button so the
+        // user can set text for a past (or empty) day.
+        Text(
+            text = "  Today's entries",
+            color = Color(0xFF88CCFF),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        var isAdding by remember { mutableStateOf(false) }
+        var addText by remember { mutableStateOf("") }
+
+        if (isAdding) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = addText,
+                    onValueChange = { addText = it },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFF44AAFF),
+                        unfocusedBorderColor = Color(0xFF555555),
+                        cursorColor = Color(0xFF44AAFF)
+                    ),
+                    textStyle = TextStyle(fontSize = 12.sp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                TextButton(
+                    onClick = {
+                        if (addText.trim().isNotEmpty()) {
+                            onAddTextEntry(habitName, addText.trim())
+                        }
+                        isAdding = false
+                        addText = ""
+                    }
+                ) {
+                    Text("✓", color = Color(0xFF88FF88), fontSize = 14.sp)
+                }
+                TextButton(
+                    onClick = {
+                        addText = ""
+                        isAdding = false
+                    }
+                ) {
+                    Text("✕", color = Color(0xFF888888), fontSize = 13.sp)
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "(no text)",
+                    color = Color(0xFF666666),
+                    fontSize = 12.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = { isAdding = true },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        start = 4.dp, end = 4.dp, top = 0.dp, bottom = 0.dp
+                    )
+                ) {
+                    Text("✎", color = Color(0xFF888888), fontSize = 14.sp)
+                }
+            }
+        }
+    }
+}
+
+
+/**
  * Edit-mode rows for the selected habit's note, "1 max" daily cap, custom
  * input increment amounts, and text-input features (options sub-toggle,
  * sharable text, log-file picker).
@@ -3893,7 +3925,9 @@ internal fun HabitInputModesSection(
     onToggleTextInputOptions: (String) -> Unit,
     onToggleSharableText: (String) -> Unit,
     onPickTextInputFile: (String) -> Unit,
-    onCreateTextInputFile: (String) -> Unit = {}
+    onCreateTextInputFile: (String) -> Unit = {},
+    /** Opens the large past-entries options editor popup for the habit. */
+    onEditTextInputOptions: (String) -> Unit = {}
 ) {
     // ── Note section ───────────────────────────────────────────
     val currentNote = habitNotes[selectedHabitName] ?: ""
@@ -4092,19 +4126,30 @@ internal fun HabitInputModesSection(
     if (isTextInput) {
         Spacer(modifier = Modifier.height(4.dp))
 
-        // Options sub-toggle
+        // Options sub-toggle (+ Edit button opening the past-entries editor)
         val isOptions = selectedHabitName in textInputOptionsHabits
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(text = "  Options", color = Color(0xFFAAAAAA), fontSize = 12.sp)
                 Text(
                     text = if (isOptions) "Shows past entries as choices" else "Free-text only",
                     color = Color(0xFF666666), fontSize = 10.sp
                 )
+            }
+            if (isOptions) {
+                Button(
+                    onClick = { onEditTextInputOptions(selectedHabitName) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004433)),
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                ) {
+                    Text("Edit", fontSize = 11.sp, color = Color(0xFF88FFCC))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
             }
             Switch(
                 checked = isOptions,

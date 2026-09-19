@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -104,6 +105,13 @@ fun TextInputDialog(
 
     // Multi-select state for past options
     val selectedOptions = remember { mutableStateMapOf<String, Boolean>() }
+
+    // Quantity per checked option (default 1): logging MULTIPLE of the same
+    // item (e.g. 3 of a pill) in one submit. On OK a checked option is
+    // written once per unit — N lines of the '\n'-joined shared-timestamp
+    // entry — so the options editor counts each unit and line-wise renames
+    // still hit every occurrence.
+    val optionQuantities = remember { mutableStateMapOf<String, Int>() }
 
     // Search query for the past-options list. Deliberately separate from the
     // entry field so filter text can never be submitted as an entry.
@@ -656,6 +664,7 @@ fun TextInputDialog(
                             LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
                                 items(filteredOptions) { option ->
                                     val isChecked = selectedOptions[option] == true
+                                    val quantity = optionQuantities[option] ?: 1
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -669,6 +678,10 @@ fun TextInputDialog(
                                             checked = isChecked,
                                             onCheckedChange = { checked ->
                                                 selectedOptions[option] = checked
+                                                if (!checked) optionQuantities.remove(option)
+                                                else if ((optionQuantities[option] ?: 1) < 1) {
+                                                    optionQuantities[option] = 1
+                                                }
                                             },
                                             colors = CheckboxDefaults.colors(
                                                 checkedColor = Color(0xFFFFAA00),
@@ -677,11 +690,47 @@ fun TextInputDialog(
                                             )
                                         )
                                         Text(
-                                            text = option,
+                                            text = if (isChecked && quantity > 1) "$option ×$quantity"
+                                                   else option,
                                             color = if (isChecked) Color(0xFFFFD700) else Color(0xFFCCCCCC),
                                             fontSize = 13.sp,
                                             modifier = Modifier.weight(1f)
                                         )
+                                        // Quantity stepper — logging MULTIPLES of
+                                        // one item (e.g. 3 pills) in a single submit
+                                        if (isChecked) {
+                                            val box = Modifier.size(22.dp)
+                                            Text(
+                                                text = "−",
+                                                color = if (quantity > 1) Color(0xFFFFAA00) else Color(0xFF555555),
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = box
+                                                    .clickable(enabled = quantity > 1) {
+                                                        val q = quantity - 1
+                                                        if (q <= 1) optionQuantities.remove(option)
+                                                        else optionQuantities[option] = q
+                                                    }
+                                                    .wrapContentSize(Alignment.Center)
+                                            )
+                                            Text(
+                                                text = "×$quantity",
+                                                color = Color(0xFFFFD700),
+                                                fontSize = 12.sp,
+                                                modifier = Modifier.padding(horizontal = 2.dp)
+                                            )
+                                            Text(
+                                                text = "+",
+                                                color = Color(0xFFFFAA00),
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = box
+                                                    .clickable {
+                                                        optionQuantities[option] = quantity + 1
+                                                    }
+                                                    .wrapContentSize(Alignment.Center)
+                                            )
+                                        }
                                     }
                                     HorizontalDivider(
                                         color = Color(0xFF2A2A2A),
@@ -720,7 +769,13 @@ fun TextInputDialog(
                             // entry = one key = one time = one increment stamp.
                             val parts = mutableListOf<String>()
                             selectedOptions.filterValues { it }.keys.forEach { opt ->
-                                parts.add(opt)
+                                // Quantity > 1 expands to that many identical
+                                // lines of the shared-timestamp entry, so the
+                                // options editor counts every unit and a
+                                // line-wise option rename rewrites all of them.
+                                repeat(optionQuantities[opt] ?: 1) {
+                                    parts.add(opt)
+                                }
                             }
                             // Free text if non-empty (skip duplicates of selected
                             // options, compared case-insensitively so leftover

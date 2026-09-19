@@ -1739,6 +1739,8 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
                 sharableTextHabits = settings.sharableTextHabits.replaceElement(oldName, newName),
                 inuitTextHabits = settings.inuitTextHabits.replaceElement(oldName, newName),
                 textInputFileUris = settings.textInputFileUris.replaceKey(oldName, newName),
+                textInputOptionDescriptions = settings.textInputOptionDescriptions.replaceKey(oldName, newName),
+                textInputHiddenGroupings = settings.textInputHiddenGroupings.replaceKey(oldName, newName),
                 // renamedHabitIcons re-keys an existing override AND materialises the
                 // hardcoded HABIT_ICON default (keyed by the original name) as an
                 // explicit override under the new name — otherwise a renamed habit
@@ -1818,6 +1820,8 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             settingsRepo.saveSharableTextHabits(newSettings.sharableTextHabits)
             settingsRepo.saveInuitTextHabits(newSettings.inuitTextHabits)
             settingsRepo.saveTextInputFileUris(newSettings.textInputFileUris)
+            settingsRepo.saveTextInputOptionDescriptions(newSettings.textInputOptionDescriptions)
+            settingsRepo.saveTextInputHiddenGroupings(newSettings.textInputHiddenGroupings)
             settingsRepo.saveHabitIcons(newSettings.habitIcons)
             settingsRepo.saveDatedEntryHabits(newSettings.datedEntryHabits)
             settingsRepo.saveDatedEntryFileUris(newSettings.datedEntryFileUris)
