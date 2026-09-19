@@ -78,6 +78,9 @@ private val KEY_CONDITIONAL_FEED_POINTS_HABITS = stringSetPreferencesKey("condit
 // Subtyped habit type keys
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
+// Sleep habit type keys (sleep-time / wake-time suite)
+private val KEY_SLEEP_HABITS = stringSetPreferencesKey("sleep_habits")
+private val KEY_SLEEP_HABIT_VARIANTS = stringPreferencesKey("sleep_habit_variants")
 private val KEY_SUBTYPE_DATA_FILE_URIS = stringPreferencesKey("subtype_data_file_uris")
 // Timed habit type keys
 private val KEY_TIMED_HABITS = stringSetPreferencesKey("timed_habits")
@@ -984,6 +987,8 @@ class SettingsRepository(private val context: Context) {
             subtypedHabits = prefs[KEY_SUBTYPED_HABITS] ?: emptySet(),
             habitSubtypes = decodeSubtypesMap(habitSubtypesRaw),
             subtypeDataFileUris = decodeFileUriMap(subtypeDataFileUrisRaw),
+            sleepHabits = prefs[KEY_SLEEP_HABITS] ?: emptySet(),
+            sleepHabitVariants = decodeFileUriMap(prefs[KEY_SLEEP_HABIT_VARIANTS] ?: ""),
             timedHabits = prefs[KEY_TIMED_HABITS] ?: emptySet(),
             timedDataFileUris = decodeFileUriMap(timedDataFileUrisRaw),
             timelessHabits = prefs[KEY_TIMELESS_HABITS] ?: emptySet(),
@@ -1322,6 +1327,16 @@ class SettingsRepository(private val context: Context) {
     /** Saves the map of habit name → SAF URI for the subtype data file. */
     suspend fun saveSubtypeDataFileUris(uris: Map<String, String>) {
         context.dataStore.edit { prefs -> prefs[KEY_SUBTYPE_DATA_FILE_URIS] = encodeFileUriMap(uris) }
+    }
+
+    /** Saves the set of habits that have the "sleep" type enabled. */
+    suspend fun saveSleepHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_SLEEP_HABITS] = habits }
+    }
+
+    /** Saves the map of sleep habit name → variant key (SLEEP_TIME / WAKE_TIME). */
+    suspend fun saveSleepHabitVariants(variants: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_SLEEP_HABIT_VARIANTS] = encodeFileUriMap(variants) }
     }
 
     /** Saves the set of habits that have the "timed" type enabled. */

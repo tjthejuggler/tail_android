@@ -503,28 +503,67 @@ fun GraphsPanel(
                 }
             }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(
-                        if (isLandscape) Modifier.weight(1f)
-                        else Modifier.height(220.dp)
+            // ── Sleep-suite habits render the combined TIMELINE graph instead
+            // of the standard line chart: sessions merge the SLEEP_TIME half
+            // (bed + temp + conditions) with the WAKE_TIME half (wake +
+            // awakenings + awake minutes + quality) and show duration + stats.
+            val selectedSleepHabits = graphSelectedHabits.filter { viewModel.isSleepHabit(it) }
+            val sleepBedHabits = selectedSleepHabits.filter {
+                viewModel.sleepVariantOf(it) == com.example.tail.data.SLEEP_VARIANT_SLEEP_TIME
+            }
+            val sleepWakeHabits = selectedSleepHabits.filter {
+                viewModel.sleepVariantOf(it) == com.example.tail.data.SLEEP_VARIANT_WAKE_TIME
+            }
+            val sleepSessions = rememberSleepSessions(
+                viewModel = viewModel,
+                sleepHabits = sleepBedHabits,
+                wakeHabits = sleepWakeHabits,
+                startDate = fullStartDate,
+                endDate = fullEndDate,
+                refreshKey = settings
+            )
+
+            if (selectedSleepHabits.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (isLandscape) Modifier.weight(1f) else Modifier.heightIn(max = 420.dp))
+                        .padding(horizontal = 4.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    SleepTimelineChart(
+                        sessions = sleepSessions,
+                        startDate = fullStartDate,
+                        endDate = fullEndDate,
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    .padding(horizontal = 4.dp)
-            ) {
-                HabitLineChart(
-                    seriesData = allSeriesData,
-                    fullStartDate = fullStartDate,
-                    fullEndDate = fullEndDate,
-                    onPointSelected = { point -> selectedDataPoint = point },
-                    selectedPoint = selectedDataPoint,
-                    onZoom = { newStart, newEnd ->
-                        viewModel.setGraphZoomRange(newStart, newEnd)
-                    },
-                    onZoomReset = { viewModel.clearGraphZoom() },
-                    garminHabitLinks = garminHabitLinks,
-                    modifier = Modifier.fillMaxSize()
-                )
+                }
+            }
+
+            if (selectedSleepHabits.size < graphSelectedHabits.size) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isLandscape) Modifier.weight(1f)
+                            else Modifier.height(220.dp)
+                        )
+                        .padding(horizontal = 4.dp)
+                ) {
+                    HabitLineChart(
+                        seriesData = allSeriesData,
+                        fullStartDate = fullStartDate,
+                        fullEndDate = fullEndDate,
+                        onPointSelected = { point -> selectedDataPoint = point },
+                        selectedPoint = selectedDataPoint,
+                        onZoom = { newStart, newEnd ->
+                            viewModel.setGraphZoomRange(newStart, newEnd)
+                        },
+                        onZoomReset = { viewModel.clearGraphZoom() },
+                        garminHabitLinks = garminHabitLinks,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
             // ── Scrollable area below the chart (tooltip / stats / legend) ─

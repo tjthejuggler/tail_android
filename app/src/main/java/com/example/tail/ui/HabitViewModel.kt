@@ -103,6 +103,7 @@ import com.example.tail.data.SearchStateStore
 import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.bridgeConnectionFrom
 import com.example.tail.data.TextInputRepository
+import com.example.tail.data.SleepDataRepository
 import com.example.tail.data.applyDivider
 import com.example.tail.widget.ChessDeferredGameReconciler
 import com.example.tail.widget.ChessReadinessLogStore
@@ -222,6 +223,9 @@ class HabitViewModel(
 
     /** Repository for recording habit increment timestamps (internal storage). */
     val timestampRepo = HabitTimestampRepository(context)
+
+    /** Repository for sleep-suite records (internal storage). */
+    val sleepDataRepo = SleepDataRepository(context)
 
     /** Repository for per-day exercise/machine names of weights habits (internal storage). */
     val weightsExerciseRepo = com.example.tail.data.WeightsExerciseRepository(context)

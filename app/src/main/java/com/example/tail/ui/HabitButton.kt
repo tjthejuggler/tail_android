@@ -80,7 +80,7 @@ private val tightTextStyle = TextStyle(
 /**
  * Tiny corner badge identifying a special (integration-linked) habit.
  */
-enum class HabitSpecialBadge { MOVIE, MEAL, GARMIN, CHESS, WEIGHTS }
+enum class HabitSpecialBadge { MOVIE, MEAL, GARMIN, CHESS, WEIGHTS, SLEEP }
 
 /**
  * A single habit cell in the 8×10 grid.
@@ -452,6 +452,7 @@ fun HabitButton(
                 HabitSpecialBadge.MEAL -> Text(text = "🍽️", fontSize = 9.sp, style = tightTextStyle)
                 HabitSpecialBadge.GARMIN -> Text(text = "⌚", fontSize = 9.sp, style = tightTextStyle)
                 HabitSpecialBadge.WEIGHTS -> Text(text = "🏋️", fontSize = 9.sp, style = tightTextStyle)
+                HabitSpecialBadge.SLEEP -> Text(text = "😴", fontSize = 9.sp, style = tightTextStyle)
                 HabitSpecialBadge.CHESS -> Text(
                     text = "♞",
                     color = Color(0xFF9DC463),

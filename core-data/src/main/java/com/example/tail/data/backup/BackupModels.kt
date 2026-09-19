@@ -114,6 +114,8 @@ data class SettingsSection(
     val subtypedHabits: List<String> = emptyList(),
     val habitSubtypes: Map<String, List<String>> = emptyMap(),
     val subtypeDataFileUris: Map<String, String> = emptyMap(),
+    val sleepHabits: List<String> = emptyList(),
+    val sleepHabitVariants: Map<String, String> = emptyMap(),
     val timedHabits: List<String> = emptyList(),
     val timedDataFileUris: Map<String, String> = emptyMap(),
     val timelessHabits: List<String> = emptyList(),

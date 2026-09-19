@@ -201,24 +201,9 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.flow.collectLatest
 
-// Sentinel used to track which habit's text-input dialog is open
-private data class TextInputDialogState(
-    val habit: Habit,
-    val showOptions: Boolean,
-    val options: List<String>,
-    val todayEntries: List<Pair<String, String>> = emptyList(),
-    /** Pre-filled text (e.g. from a movie bridge suggestion). Empty by default. */
-    val suggestedText: String = "",
-    /** Label shown above the text field when suggestedText is non-empty. */
-    val suggestionLabel: String = "",
-    /** Suggested watch-length in minutes (movie bridge); null = no length section. */
-    val suggestedMinutes: Int? = null,
-    /** True while the movie suggestion is still resolving (cache → bridge). */
-    val suggestionLoading: Boolean = false,
-    /** Last watched movies (newest first) for the quick picker. */
-    val recentMovies: List<BridgeMovie> = emptyList()
-)
-
+// TextInputDialogState and RollForwardDialogState moved to
+// HabitGridTextDialogHost.kt (promoted to internal) so the extracted
+// text-input dialog host can reference them.
 // Grid is 8 columns × 10 rows = 80 cells
 internal const val GRID_COLUMNS = 8
 internal const val TOTAL_CELLS = 80
@@ -826,6 +811,8 @@ fun HabitGridScreen(
     var subtypeDialogBreakdown by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     // Weights input dialog state (weights-type habits)
     var weightsDialogHabit by remember { mutableStateOf<Habit?>(null) }
+    // Sleep-suite dialog state (SleepDialogs.kt keeps this composable small)
+    val sleepDialogState = remember { SleepDialogStateHolder() }
     var showCalendarPicker by remember { mutableStateOf(false) }
     var showAddScreenDialog by remember { mutableStateOf(false) }
     // Index of screen being renamed (-1 = none)
@@ -858,13 +845,7 @@ fun HabitGridScreen(
     var maxOneRestoreHabit by remember { mutableStateOf<String?>(null) }
 
     // Roll forward confirmation dialog state
-    data class RollForwardDialogState(
-        val habitName: String,
-        val actionType: String, // "increment" or "text"
-        val startDate: LocalDate,
-        val initialEndDate: LocalDate,
-        val onConfirm: (LocalDate) -> Unit
-    )
+    // (RollForwardDialogState itself lives in HabitGridTextDialogHost.kt)
     var rollForwardDialogState by remember { mutableStateOf<RollForwardDialogState?>(null) }
 
     // Text-input dialog state: non-null when the dialog should be shown
@@ -1448,6 +1429,7 @@ fun HabitGridScreen(
                         habitAppAssociations = settings.habitAppAssociations,
                         mealHabits = settings.mealHabits,
                         weightsHabits = settings.weightsHabits,
+                        sleepHabits = settings.sleepHabits,
                         bridgeMovieHabits = if (settings.bridgeEnabled) settings.bridgeMovieHabits else emptySet(),
                         chessComHabitLinks = settings.chessComHabitLinks,
                         habitLongPressActions = settings.habitLongPressActions,
@@ -1491,6 +1473,13 @@ fun HabitGridScreen(
                                     mealDialogFromTap = true
                                     mealDialogHabit = habit.name
                                 }
+                                habit.name in settings.sleepHabits -> {
+                                    if (!openSleepDialog(sleepDialogState, viewModel, habit, selectedDate)) {
+                                        viewModel.selectEditHabit(index)
+                                        revealCellIndex = index
+                                        revealNonce++
+                                    }
+                                }
                                 habit.name in settings.subtypedHabits -> {
                                     viewModel.loadSubtypeBreakdown(habit.name) { breakdown ->
                                         subtypeDialogBreakdown = breakdown
@@ -1499,182 +1488,42 @@ fun HabitGridScreen(
                                 }
                                 habit.name in settings.weightsHabits -> weightsDialogHabit = habit
                                 habit.name in settings.textInputHabits -> {
-                                    val showOpts = habit.name in settings.textInputOptionsHabits
-                                    val isMovieLinked = habit.name in settings.bridgeMovieHabits &&
-                                        settings.bridgeEnabled
-
-                                    // Helper: open the dialog IMMEDIATELY with what is
-                                    // already known; today's entries (and options) stream
-                                    // in afterwards — the dialog reacts to state updates,
-                                    // so nothing blocks the popup from appearing.
-                                    fun showDialog(
-                                        suggestedText: String = "",
-                                        suggestionLabel: String = "",
-                                        suggestedMinutes: Int? = null,
-                                        suggestionLoading: Boolean = false,
-                                        recentMovies: List<BridgeMovie> = emptyList()
-                                    ) {
-                                        textInputDialogState = TextInputDialogState(
-                                            habit = habit,
-                                            showOptions = showOpts,
-                                            options = emptyList(),
-                                            todayEntries = emptyList(),
-                                            suggestedText = suggestedText,
-                                            suggestionLabel = suggestionLabel,
-                                            suggestedMinutes = suggestedMinutes,
-                                            suggestionLoading = suggestionLoading,
-                                            recentMovies = recentMovies
-                                        )
-                                        viewModel.loadTextEntriesWithTimestamps(habit.name, selectedDate) { todayEntries ->
-                                            val cur = textInputDialogState
-                                            if (cur?.habit?.name == habit.name) {
-                                                textInputDialogState = cur.copy(todayEntries = todayEntries)
-                                            }
-                                            if (showOpts) {
-                                                viewModel.loadTextOptions(habit.name) { opts ->
-                                                    val c2 = textInputDialogState
-                                                    if (c2?.habit?.name == habit.name) {
-                                                        textInputDialogState = c2.copy(options = opts)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if (isMovieLinked) {
-                                        // The dialog opens instantly; the suggestion is
-                                        // resolved from the phone-local movie cache (no
-                                        // network wait) and topped up by a background
-                                        // bridge refresh. While it resolves, the dialog
-                                        // shows a small loading indicator.
-                                        showDialog(
-                                            suggestionLoading = true,
-                                            recentMovies = viewModel.currentMovieCache().take(5)
-                                        )
-                                        viewModel.streamMovieSuggestion(habit.name, selectedDate) { sugg ->
-                                            val cur = textInputDialogState
-                                            if (cur?.habit?.name == habit.name) {
-                                                textInputDialogState = cur.copy(
-                                                    suggestedText = sugg.movie?.title ?: "",
-                                                    suggestionLabel = sugg.movie?.let { movie ->
-                                                        buildString {
-                                                            append("🎬 Suggested from desktop")
-                                                            if (movie.lastWatched.isNotBlank()) {
-                                                                append(" — watched ${movie.lastWatched.take(10)}")
-                                                            }
-                                                        }
-                                                    } ?: "",
-                                                    // The file duration (from ffprobe) goes into
-                                                    // the separate, wheel-editable Length field.
-                                                    suggestedMinutes = sugg.movie?.totalWatchMin
-                                                        ?.takeIf { it > 0 },
-                                                    suggestionLoading = sugg.loading,
-                                                    recentMovies = sugg.recent
-                                                )
-                                            }
-                                        }
-                                    } else {
-                                        showDialog()
-                                    }
+                                    openTextInputDialog(
+                                        setState = { textInputDialogState = it },
+                                        getState = { textInputDialogState },
+                                        viewModel = viewModel,
+                                        habit = habit,
+                                        selectedDate = selectedDate,
+                                        showOpts = habit.name in settings.textInputOptionsHabits,
+                                        isMovieLinked = habit.name in settings.bridgeMovieHabits &&
+                                            settings.bridgeEnabled
+                                    )
                                 }
                                 habit.useCustomInput -> dialogHabit = habit
-                                else -> {
-                                    // When viewing a different day or habit is timeless, increment without timestamp
-                                    val timeless = !isToday || habit.name in settings.timelessHabits
-                                    
-                                    // Camera-enabled habit tapped for TODAY → capture-driven
-                                    // increment: the camera opens IMMEDIATELY and this tap
-                                    // performs NO direct increment — the background vision
-                                    // pipeline creates the meal log and performs the
-                                    // increment (merging into an active meal group when one
-                                    // exists, so multiple courses never double-count).
-                                    if (isToday && habit.name in settings.cameraHabits) {
-                                        val cameraIntent = android.content.Intent(
-                                            context,
-                                            com.example.tail.QuickCaptureActivity::class.java
-                                        ).apply {
-                                            putExtra(
-                                                com.example.tail.QuickCaptureActivity.EXTRA_HABIT_NAME,
-                                                habit.name
-                                            )
-                                        }
-                                        context.startActivity(cameraIntent)
-                                    }
-                                    // Check if this is a roll forward habit and we're viewing a past date
-                                    else if (habit.name in settings.rollForwardHabits && !isToday) {
-                                        // Find the next manual date
-                                        val nextManualDate = settings.rollForwardManualDates[habit.name]?.mapNotNull { dateStr ->
-                                            com.example.tail.data.parseDate(dateStr)
-                                        }?.sorted()?.firstOrNull { it > selectedDate }
-                                        
-                                        val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
-                                        
-                                        // Show roll forward confirmation dialog
-                                        rollForwardDialogState = RollForwardDialogState(
-                                            habitName = habit.name,
-                                            actionType = "increment",
-                                            startDate = selectedDate,
-                                            initialEndDate = endDate,
-                                            onConfirm = { confirmedEndDate ->
-                                                viewModel.incrementHabitWithRollForward(
-                                                    habitName = habit.name,
-                                                    amount = 1,
-                                                    recordTimestamp = isToday,
-                                                    customEndDate = confirmedEndDate
-                                                )
-                                                // Popup-gated increment: the roll-forward
-                                                // confirmation was submitted — now the
-                                                // lizard shimmer may fire.
-                                                lizardShimmerGen.intValue++
-                                                // Show increment toast with edit-time option
-                                                incrementToastVersion++
-                                                incrementToastHabit = habit.name
-                                                incrementToastIsTimeless = !isToday
-                                                incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
-                                                val currentVersion = incrementToastVersion
-                                                toastScope.launch {
-                                                    delay(3500)
-                                                    if (incrementToastVersion == currentVersion) {
-                                                        incrementToastHabit = null
-                                                    }
-                                                }
-                                            }
-                                        )
-                                    } else {
-                                        // Normal increment without roll forward — always
-                                        // record a timestamp when incrementing for today.
-                                        viewModel.incrementHabit(habit.name, 1, recordTimestamp = isToday)
-                                        // EXPERIMENT: a click-increment is the ONLY
-                                        // trigger for the lizard shimmer cycle.
-                                        lizardShimmerGen.intValue++
-                                        // Manually incrementing the linked Puzzle Rush habit
-                                        // = back-filling a rush run the timer missed: open
-                                        // the same report overlay the bubble uses, in manual
-                                        // mode (extra minutes input).
-                                        val rushHabit = com.example.tail.widget.ChessReadinessStore
-                                            .linkedRushHabit(context).trim()
-                                        if (rushHabit.isNotEmpty() && habit.name == rushHabit) {
-                                            try {
-                                                com.example.tail.widget.ChessPuzzleRushOverlay(
-                                                    context, manual = true
-                                                ).show()
-                                            } catch (_: Exception) { /* overlay best-effort */ }
-                                        }
-                                        // Show increment toast with edit-time option
+                                else -> handlePlainIncrementTap(
+                                    viewModel = viewModel,
+                                    habit = habit,
+                                    context = context,
+                                    isToday = isToday,
+                                    selectedDate = selectedDate,
+                                    settings = settings,
+                                    lizardShimmerGen = lizardShimmerGen,
+                                    toastScope = toastScope,
+                                    onShowRollForward = { rollForwardDialogState = it },
+                                    onShowIncrementToast = { habitName, isTimeless ->
                                         incrementToastVersion++
-                                        incrementToastHabit = habit.name
-                                        incrementToastIsTimeless = !isToday
+                                        incrementToastHabit = habitName
+                                        incrementToastIsTimeless = isTimeless
                                         incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
                                         val currentVersion = incrementToastVersion
                                         toastScope.launch {
                                             delay(3500)
-                                            // Only clear if no newer toast has replaced this one
                                             if (incrementToastVersion == currentVersion) {
                                                 incrementToastHabit = null
                                             }
                                         }
                                     }
-                                }
+                                )
                             }
                         },
                         onHabitLongClick = { habit ->
@@ -1845,41 +1694,23 @@ fun HabitGridScreen(
                     val weightsDayExerciseNames = selectedHabitName
                         ?.let { name -> weightsExerciseNamesForDay[name] }
                         ?: emptyMap()
-                    EditModeControlBar(
-                        selectedIndex = selectedEditIndex,
+                    EditBarHost(
+                        viewModel = viewModel,
+                        settings = settings,
+                        selectedEditIndex = selectedEditIndex,
                         selectedHabitName = selectedHabitName,
                         selectedHabitRawTodayCount = selectedHabitAtIndex?.rawTodayCount ?: 0,
                         selectedHabitTodayCount = selectedHabitAtIndex?.todayCount ?: 0,
                         isPlaceholderSelected = isPlaceholderSelected,
                         habitScreens = habitScreens,
                         activeScreenIndex = activeScreenIndex,
-                        selectedHabitScreenIndex = if (selectedHabitName != null)
-                            viewModel.screenIndexForHabit(selectedHabitName) else -1,
-                        maxOneHabits = settings.maxOneHabits,
-                        invertedBinaryHabits = settings.invertedBinaryHabits,
-                        customInputHabits = settings.customInputHabits,
-                        customInputAmounts = settings.customInputAmounts,
-                        textInputHabits = settings.textInputHabits,
-                        textInputOptionsHabits = settings.textInputOptionsHabits,
-                        sharableTextHabits = settings.sharableTextHabits,
-                        textInputFileUris = settings.textInputFileUris,
-                        datedEntryHabits = settings.datedEntryHabits,
-                        datedEntryFileUris = settings.datedEntryFileUris,
-                        habitDividers = settings.habitDividers,
-                        conditionalHabits = settings.conditionalHabits,
-                        conditionalLinkedHabits = settings.conditionalLinkedHabits,
-                        conditionalLinkValues = settings.conditionalLinkValues,
-                        conditionalFeedMaxOneHabits = settings.conditionalFeedMaxOneHabits,
-                        conditionalFeedPointsHabits = settings.conditionalFeedPointsHabits,
-                        subtypedHabits = settings.subtypedHabits,
-                        habitSubtypes = settings.habitSubtypes,
-                        allHabitNames = viewModel.getAllHabitNames(),
-                        rollForwardHabits = settings.rollForwardHabits,
-                        rollForwardManualDates = settings.rollForwardManualDates,
+                        selectedDate = selectedDate,
+                        selectedHabitTimestampCount = selectedHabitTimestampCount,
+                        editModeTextEntries = editModeTextEntries,
+                        weightsDayExerciseNames = weightsDayExerciseNames,
                         onAddHabit = { addHabitAtIndex = selectedEditIndex },
                         onAddAppLink = { addAppLinkAtIndex = selectedEditIndex },
-                        onAddScreen = { showAddScreenDialog = true },
-                        onDeleteScreen = { viewModel.deleteScreen(activeScreenIndex) },
+                        onShowAddScreen = { showAddScreenDialog = true },
                         onToggleMaxOne = { name ->
                             if (name in settings.maxOneHabits) {
                                 // Disabling — ask whether to restore past entries from timestamps
@@ -1889,12 +1720,6 @@ fun HabitGridScreen(
                                 maxOneRecalcHabit = name
                             }
                         },
-                        onToggleInvertedBinary = { name -> viewModel.toggleInvertedBinary(name) },
-                        onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) },
-                        onSetCustomInputAmounts = { name, amounts -> viewModel.setCustomInputAmounts(name, amounts) },
-                        onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
-                        onToggleTextInputOptions = { name -> viewModel.toggleTextInputOptions(name) },
-                        onToggleSharableText = { name -> viewModel.toggleSharableText(name) },
                         onPickTextInputFile = { name ->
                             textInputPickerHabit = name
                             textInputFilePicker.launch(arrayOf("application/json", "*/*"))
@@ -1903,270 +1728,22 @@ fun HabitGridScreen(
                             textInputCreateHabit = name
                             textInputCreateDirPicker.launch(null)
                         },
-                        onToggleDatedEntry = { name -> viewModel.toggleDatedEntry(name) },
                         onPickDatedEntryFile = { name ->
                             datedEntryPickerHabit = name
                             datedEntryFilePicker.launch(arrayOf("text/plain", "text/markdown", "*/*"))
                         },
-                        onRefreshDatedEntry = { name -> viewModel.previewDatedEntryRefresh(name) },
                         onDeleteHabit = { name -> deleteConfirmHabitName = name },
                         onChangeIcon = { name -> iconPickerHabitName = name },
-                        onSetCount = { name, count -> viewModel.setHabitCount(name, count) },
-                        onSetCountWithRollForward = { name, count, endDate -> viewModel.setHabitCountWithRollForward(name, count, endDate) },
-                        onSetMinutesCount = { name, count -> viewModel.setHabitMinutesCount(name, count) },
-                        selectedHabitMinutesTodayCount = selectedHabitName?.let {
-                            viewModel.getMinutesTodayCount(it)
-                        } ?: 0,
-                        minutesFallbackHabits = settings.secondaryValueFallbackHabits,
-                        onToggleMinutesFallback = { name -> viewModel.toggleMinutesFallbackHabit(name) },
-                        minutesPrimaryFallbacks = settings.minutesPrimaryFallbacks,
-                        onSetMinutesPrimaryFallback = { name, source ->
-                            viewModel.setMinutesPrimaryFallback(name, source)
-                        },
-                        onSetDivider = { name, divisor, onGarminHistoryPrompt ->
-                            viewModel.setHabitDivider(name, divisor, onGarminHistoryPrompt)
-                        },
-                        onRecalculateGarminHistory = { name ->
-                            viewModel.reapplyGarminHistoryForHabit(name)
-                        },
-                        onToggleConditional = { name -> viewModel.toggleConditional(name) },
-                        onToggleConditionalFeedMaxOne = { name -> viewModel.toggleConditionalFeedMaxOne(name) },
-                        onToggleConditionalFeedPoints = { name -> viewModel.toggleConditionalFeedPoints(name) },
                         onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name },
                         onBackfillConditional = { name -> conditionalBackfillHabit = name },
-                        onToggleSubtyped = { name -> viewModel.toggleSubtyped(name) },
-                        onSetSubtypes = { name, types -> viewModel.setHabitSubtypes(name, types) },
-                        mealHabits = settings.mealHabits,
-                        onToggleMeal = { name -> viewModel.toggleMealHabit(name) },
-                        weightsHabits = settings.weightsHabits,
-                        onToggleWeights = { name -> viewModel.toggleWeightsHabit(name) },
-                        weightsDayValues = selectedHabitName
-                            ?.takeIf { it in settings.weightsHabits }
-                            ?.let { viewModel.getWeightsDayValues(it) },
-                        weightsUnit = settings.graphWeightUnit,
-                        onSetWeightsDayValues = { name, values, exerciseName ->
-                            viewModel.setWeightsDayValues(name, values, exerciseName)
-                        },
-                        weightsRecentExercises = selectedHabitName
-                            ?.let { settings.weightsRecentExercises[it] } ?: emptyList(),
-                        weightsDayExerciseNames = weightsDayExerciseNames,
-                        onDeleteWeightsDay = { name -> viewModel.deleteWeightsDay(name) },
                         onOpenMealDetails = { name ->
                             mealDialogFromTap = false
                             mealDialogHabit = name
                         },
-                        timelineExcludedHabits = settings.timelineExcludedHabits,
-                        onToggleTimelineExcluded = { name -> viewModel.toggleTimelineExcluded(name) },
-                        cameraHabits = settings.cameraHabits,
-                        onToggleCamera = { name -> viewModel.toggleCameraHabit(name) },
-                        habitLongPressActions = settings.habitLongPressActions,
-                        onSetLongPressAction = { name, action ->
-                            viewModel.setHabitLongPressAction(name, action)
-                        },
-                        habitLongPressUrls = settings.habitLongPressUrls,
-                        onSetLongPressUrl = { name, url ->
-                            viewModel.setHabitLongPressUrl(name, url)
-                        },
-                        habitLongPressUrlApps = settings.habitLongPressUrlApps,
                         onPickLongPressUrlApp = { name -> longPressUrlAppPickerHabit = name },
-                        onClearLongPressUrlApp = { name -> viewModel.setHabitLongPressUrlApp(name, null) },
-                        hiddenScreenIds = settings.hiddenScreens,
-                        onToggleScreenHidden = { viewModel.toggleScreenHidden(activeScreenIndex) },
-                        disabledHabits = settings.disabledHabits,
-                        onToggleDisabled = { name -> viewModel.toggleDisabledHabit(name) },
-                        noPointsHabits = settings.noPointsHabits,
-                        onToggleNoPoints = { name -> viewModel.toggleNoPointsHabit(name) },
-                        secondaryValueSettings = SecondaryValueSettings(
-                            habits = settings.secondaryValueHabits,
-                            onToggleSecondaryValue = { name -> viewModel.toggleSecondaryValueHabit(name) },
-                            fallbackHabits = settings.secondaryValueFallbackHabits,
-                            onToggleSecondaryValueFallback = { name -> viewModel.toggleSecondaryValueFallbackHabit(name) }
-                        ),
-                        valueDisplayLabels = settings.valueDisplayLabels,
-                        onSetValueDisplayLabel = { name, key, label ->
-                            viewModel.setValueDisplayLabel(name, key, label)
-                        },
-                        chessComEnabled = settings.chessComEnabled,
-                        chessComHabitLinks = settings.chessComHabitLinks,
-                        onSetChessComLink = { name, type -> viewModel.setChessComHabitLink(name, type) },
-                        garminEnabled = settings.garminEnabled,
-                        garminHabitLinks = settings.garminHabitLinks,
-                        onSetGarminLink = { name, type -> viewModel.setGarminHabitLink(name, type) },
-                        garminDateOfBirth = settings.garminDateOfBirth,
-                        githubContent = {
-                            if (settings.githubEnabled && selectedHabitName != null) {
-                                GitHubLinkToggleSection(
-                                    habitName = selectedHabitName,
-                                    repoUrls = settings.githubRepoUrls,
-                                    metrics = settings.githubMetrics,
-                                    syncStatus = githubSyncStatus,
-                                    onSetRepoUrl = { url -> viewModel.setGithubRepoUrl(selectedHabitName, url) },
-                                    onSetMetric = { metric -> viewModel.setGithubMetric(selectedHabitName, GitHubMetric.fromKey(metric)) },
-                                    onRefetch = { viewModel.fetchGithubBacklog(selectedHabitName) }
-                                )
-                            }
-                        },
-                        movieBridgeContent = {
-                            if (settings.bridgeEnabled && selectedHabitName != null &&
-                                selectedHabitName in settings.textInputHabits
-                            ) {
-                                MovieBridgeToggleSection(
-                                    isMovieLinked = selectedHabitName in settings.bridgeMovieHabits,
-                                    onToggle = { viewModel.toggleBridgeMovieHabit(selectedHabitName) }
-                                )
-                            }
-                        },
-                        pcWidgetContent = {
-                            if (selectedHabitName != null) {
-                                Column {
-                                    PcWidgetToggleSection(
-                                        isOnPcWidget = selectedHabitName in settings.pcWidgetHabits,
-                                        syncConfigured = settings.garminProxyUrl.isNotEmpty(),
-                                        onToggle = { viewModel.togglePcWidgetHabit(selectedHabitName) }
-                                    )
-                                    LockWidgetToggleSection(
-                                        isIncluded = selectedHabitName !in settings.lockWidgetExcludedHabits,
-                                        onToggle = { viewModel.toggleLockWidgetHabit(selectedHabitName) }
-                                    )
-                                }
-                            }
-                        },
-                        garminMonthlyData = garminMonthlyData,
-                        selectedDate = selectedDate,
-                        voiceTriggerEnabled = settings.voiceTriggerEnabled,
-                        voiceTriggerHabits = settings.voiceTriggerHabits,
-                        voiceTriggerWords = settings.voiceTriggerWords,
-                        voiceTriggerIncrements = settings.voiceTriggerIncrements,
-                        onToggleVoiceTrigger = { name -> viewModel.toggleVoiceTrigger(name) },
-                        onSetVoiceTriggerWords = { name, words -> viewModel.setVoiceTriggerWords(name, words) },
-                        onSetVoiceTriggerIncrement = { name, amount -> viewModel.setVoiceTriggerIncrement(name, amount) },
-                        voiceSubtypeHabits = settings.voiceSubtypeHabits,
-                        onToggleVoiceSubtype = { name -> viewModel.toggleVoiceSubtype(name) },
-                        timelessHabits = settings.timelessHabits,
-                        onToggleTimeless = { name -> viewModel.toggleTimeless(name) },
-                        customPointRangesHabits = settings.customPointRangesHabits,
-                        customPointRanges = settings.customPointRanges,
-                        onToggleCustomPointRanges = { name -> viewModel.toggleCustomPointRanges(name) },
-                        onSetCustomPointRanges = { name, ranges -> viewModel.setCustomPointRanges(name, ranges) },
-                        selectedHabitTimestampCount = selectedHabitTimestampCount,
-                        onShowTimestamps = { name ->
-                            timestampScope.launch {
-                                timestampEditorList = viewModel.timestampRepo.getTimestampsForDay(name, selectedDate)
-                                timestampEditorMinutes =
-                                    if (viewModel.isMinutesPrimaryHabit(name)) {
-                                        viewModel.timestampRepo.getMinutesForDay(name, selectedDate)
-                                    } else emptyMap()
-                                timestampEditorHabitName = name
-                            }
-                            // Refresh text entries so the timestamp cards can show
-                            // the text logged at each increment time.
-                            if (name in settings.textInputHabits) {
-                                viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
-                                    // Discard out-of-order loads so a stale
-                                    // result never shows another habit's log.
-                                    if (timestampEditorHabitName == name) {
-                                        editModeTextEntries = entries
-                                    }
-                                }
-                            }
-                        },
-                        todayTextEntries = editModeTextEntries,
-                        onLoadTextEntries = { name, onResult ->
-                            viewModel.loadTextEntriesWithTimestamps(name, selectedDate, onResult)
-                        },
-                        onEditTextEntry = { name, timestamp, newText ->
-                            // Check if this is a roll forward habit and we're viewing a past date
-                            if (name in settings.rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
-                                // Parse the date from the timestamp
-                                val dateStr = timestamp.substring(0, 10)
-                                val entryDate = com.example.tail.data.parseDate(dateStr)
-                                
-                                if (entryDate != null) {
-                                    // Find the next manual date
-                                    val nextManualDate = settings.rollForwardManualDates[name]?.mapNotNull { dateStr ->
-                                        com.example.tail.data.parseDate(dateStr)
-                                    }?.sorted()?.firstOrNull { it > entryDate }
-                                    
-                                    val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
-                                    
-                                    // Show roll forward confirmation dialog
-                                    rollForwardDialogState = RollForwardDialogState(
-                                        habitName = name,
-                                        actionType = "text",
-                                        startDate = entryDate,
-                                        initialEndDate = endDate,
-                                        onConfirm = { confirmedEndDate ->
-                                            viewModel.updateTextEntryWithRollForward(name, timestamp, newText, confirmedEndDate) {
-                                                // Reload entries after edit
-                                                viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
-                                                    editModeTextEntries = entries
-                                                }
-                                            }
-                                        }
-                                    )
-                                    return@EditModeControlBar
-                                }
-                            }
-                            
-                            // Normal update without roll forward
-                            viewModel.updateTextEntry(name, timestamp, newText)
-                            // Reload entries after edit
-                            viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
-                                editModeTextEntries = entries
-                            }
-                        },
-                        onAddTextEntry = { name, newText ->
-                            // Check if this is a roll forward habit and we're viewing a past date
-                            if (name in settings.rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
-                                // Find the next manual date
-                                val nextManualDate = settings.rollForwardManualDates[name]?.mapNotNull { dateStr ->
-                                    com.example.tail.data.parseDate(dateStr)
-                                }?.sorted()?.firstOrNull { it > selectedDate }
-                                
-                                val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
-                                
-                                // Show roll forward confirmation dialog
-                                rollForwardDialogState = RollForwardDialogState(
-                                    habitName = name,
-                                    actionType = "text",
-                                    startDate = selectedDate,
-                                    initialEndDate = endDate,
-                                    onConfirm = { confirmedEndDate ->
-                                        viewModel.setTextEntryForDateWithRollForward(name, selectedDate, newText, confirmedEndDate) {
-                                            // Reload entries after add
-                                            viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
-                                                editModeTextEntries = entries
-                                            }
-                                        }
-                                    }
-                                )
-                                return@EditModeControlBar
-                            }
-                            
-                            // Normal add without roll forward
-                            viewModel.setTextEntryForDate(name, selectedDate, newText) {
-                                // Reload entries after add
-                                viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
-                                    editModeTextEntries = entries
-                                }
-                            }
-                        },
-                        onDeleteTextEntry = { name, timestamp ->
-                            viewModel.deleteTextEntry(name, timestamp) {
-                                // Reload entries after delete completes so the
-                                // removed row vanishes instantly from the list.
-                                viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
-                                    editModeTextEntries = entries
-                                }
-                            }
-                        },
-                        habitNotes = settings.habitNotes,
-                        onSetHabitNote = { name, note -> viewModel.setHabitNote(name, note) },
-                        onToggleRollForward = { name -> viewModel.toggleRollForward(name) },
-                        habitScheduleTimes = settings.habitScheduleTimes,
-                        onSetHabitScheduleTime = { name, time ->
-                            viewModel.setHabitScheduleTime(name, time)
-                        },
+                        onPickAppAssociation = { name -> appAssociationPickerHabit = name },
+                        onPickWidgetTriggerApp = { name -> widgetTriggerPickerHabit = name },
+                        onPickMediaApp = { name -> mediaAppPickerHabit = name },
                         onRestoreFromBackup = {
                             val name = editHabitName
                             if (name != null) {
@@ -2174,49 +1751,11 @@ fun HabitGridScreen(
                                 restoreBackupPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
                             }
                         },
-                        onRenameHabit = { oldName, newName -> viewModel.renameHabit(oldName, newName) },
-                        habitAppAssociations = settings.habitAppAssociations,
-                        onAddAppAssociation = { name -> appAssociationPickerHabit = name },
-                        onRemoveAppAssociation = { name, pkg -> viewModel.removeHabitAppAssociation(name, pkg) },
-                        onMoveAppAssociation = { name, from, to -> viewModel.moveHabitAppAssociation(name, from, to) },
-                        widgetTriggerHabits = settings.widgetTriggerHabits,
-                        widgetTriggerApps = settings.widgetTriggerApps,
-                        onToggleWidgetTrigger = { name -> viewModel.toggleWidgetTrigger(name) },
-                        onSetWidgetTriggerApp = { name -> widgetTriggerPickerHabit = name },
-                        widgetPersistentTimerHabits = settings.widgetPersistentTimerHabits,
-                        onTogglePersistentTimer = { name -> viewModel.toggleWidgetPersistentTimer(name) },
-                        bubbleFullScreenApps = settings.bubbleFullScreenApps,
-                        onToggleFullScreenMenu = { name, enabled ->
-                            viewModel.setBubbleFullScreenMenu(name, enabled)
-                        },
-                        bubbleMultiTimerApps = settings.bubbleMultiTimerApps,
-                        onToggleMultiTimer = { name, enabled ->
-                            viewModel.setBubbleMultiTimer(name, enabled)
-                        },
-                        hasUsageAccess = viewModel.hasUsageAccess(),
-                        onRequestUsageAccess = { viewModel.openUsageAccessSettings() },
-                        widgetTimerMinutesPrimary = settings.widgetTimerMinutesPrimary,
-                        onSetTimerPrimaryValue = { name, minutesPrimary ->
-                            viewModel.setWidgetTimerPrimaryValue(name, minutesPrimary)
-                        },
-                        minutesEnabled = selectedHabitName?.let {
-                            viewModel.isMinutesEnabled(it)
-                        } ?: false,
-                        minutesForcedByWidget = selectedHabitName?.let {
-                            viewModel.isMinutesForcedByWidget(it)
-                        } ?: false,
-                        onToggleMinutesEnabled = { name -> viewModel.toggleMinutesEnabled(name) },
-                        mediaHabits = settings.mediaHabits,
-                        mediaApps = settings.mediaApps,
-                        onToggleMedia = { name -> viewModel.toggleMediaHabit(name) },
-                        onSetMediaApp = { name -> mediaAppPickerHabit = name },
-                        hasNotificationAccess = viewModel.hasNotificationListenerAccess(),
-                        onRequestNotificationAccess = { viewModel.openNotificationListenerSettings() },
-                        mediaTodayShows = viewModel.mediaTodayShows.collectAsState().value,
-                        onLoadMediaShows = { name -> viewModel.loadMediaTodayShows(name) },
-                        onRemoveMediaShow = { name, show -> viewModel.removeMediaShowFromToday(name, show) },
-                        onInvertHabit = { name -> viewModel.invertHabit(name) },
-                        onGetInvertPreview = { name -> viewModel.getInvertPreview(name) }
+                        onShowRollForward = { rollForwardDialogState = it },
+                        setEditModeTextEntries = { editModeTextEntries = it },
+                        setTimestampHabit = { timestampEditorHabitName = it },
+                        setTimestampList = { timestampEditorList = it },
+                        setTimestampMinutes = { timestampEditorMinutes = it }
                     )
                 }
             }
@@ -2734,197 +2273,79 @@ fun HabitGridScreen(
         )
     }
 
+    // Sleep-suite dialog (sleep time / wake time variant forms)
+    SleepDialogRenderer(
+        holder = sleepDialogState,
+        viewModel = viewModel,
+        date = selectedDate,
+        onDismiss = { sleepDialogState.habit = null }
+    )
+
     // Subtype increment dialog
     subtypeDialogHabit?.let { habit ->
-        val subtypes = settings.habitSubtypes[habit.name] ?: emptyList()
-        if (subtypes.isNotEmpty()) {
-            SubtypeIncrementDialog(
-                habitName = habit.name,
-                subtypes = subtypes,
-                currentTotal = habit.rawTodayCount,
-                currentBreakdown = subtypeDialogBreakdown,
-                displayLabels = settings.valueDisplayLabels[habit.name] ?: emptyMap(),
-                onConfirm = { increments ->
-                    viewModel.saveSubtypeIncrement(habit.name, increments)
-                    subtypeDialogHabit = null
-                    // Popup-gated increment: the lizard shimmer fires only
-                    // now, on subtype dialog submission.
-                    lizardShimmerGen.intValue++
-                },
-                onDismiss = { subtypeDialogHabit = null }
-            )
-        }
+        SubtypeDialogHost(
+            habit = habit,
+            subtypes = settings.habitSubtypes[habit.name] ?: emptyList(),
+            currentBreakdown = subtypeDialogBreakdown,
+            displayLabels = settings.valueDisplayLabels[habit.name] ?: emptyMap(),
+            viewModel = viewModel,
+            lizardShimmerGen = lizardShimmerGen,
+            onDismiss = { subtypeDialogHabit = null }
+        )
     }
 
     // Weights input dialog (weights-type habits)
     weightsDialogHabit?.let { habit ->
-        WeightsInputDialog(
-            habitName = habit.name,
-            defaultUnit = settings.graphWeightUnit,
-            recentExercises = settings.weightsRecentExercises[habit.name] ?: emptyList(),
-            getStats = { exerciseName, machine ->
-                viewModel.getWeightsExerciseStats(habit.name, exerciseName, machine)
-            },
-            onConfirm = { weightGrams, reps, machine, exerciseName ->
-                viewModel.saveWeightsEntry(habit.name, weightGrams, reps, machine, exerciseName)
-                weightsDialogHabit = null
-                // Popup-gated increment: the lizard shimmer fires only now,
-                // on weights dialog submission.
-                lizardShimmerGen.intValue++
-            },
+        WeightsDialogHost(
+            habit = habit,
+            settings = settings,
+            viewModel = viewModel,
+            lizardShimmerGen = lizardShimmerGen,
             onDismiss = { weightsDialogHabit = null }
         )
     }
 
     // Meal detail dialog
     mealDialogHabit?.let { habitName ->
-        MealDetailDialog(
+        MealDialogHost(
             habitName = habitName,
             viewModel = viewModel,
+            incrementAlreadyDone = mealDialogFromTap,
+            selectedDate = selectedDate,
+            focusLogId = mealDialogFocusLogId,
             onDismiss = {
                 mealDialogHabit = null
                 mealDialogFocusLogId = null
-            },
-            incrementAlreadyDone = mealDialogFromTap,
-            selectedDate = selectedDate,
-            focusLogId = mealDialogFocusLogId
+            }
         )
     }
 
-    // Text-input dialog
+    // Text-input dialog (host extracted to HabitGridTextDialogHost.kt to keep
+    // this composable under the JVM method-size limit)
     textInputDialogState?.let { state ->
-        // Default time: current time for today, noon for past dates
-        val initHour = if (isToday) java.time.LocalTime.now().hour else 12
-        val initMinute = if (isToday) java.time.LocalTime.now().minute else 0
-
-        TextInputDialog(
-            habitName = state.habit.name,
-            showOptions = state.showOptions,
-            options = state.options,
-            todayEntries = state.todayEntries,
-            initialHour = initHour,
-            initialMinute = initMinute,
-            initialText = state.suggestedText,
-            suggestionLabel = state.suggestionLabel,
-            suggestedMinutes = state.suggestedMinutes,
-            recentMovies = state.recentMovies,
-            suggestionLoading = state.suggestionLoading,
+        TextInputDialogHost(
+            state = state,
+            isToday = isToday,
+            selectedDate = selectedDate,
+            today = today,
             loadingMetrics = loadingMetrics,
-            onConfirm = { entries, hour, minute ->
-                val entryTime = java.time.LocalTime.of(hour, minute)
-                // Only pass selectedDate if it's not today - for today, use current date
-                val dateForEntry = if (selectedDate == today) null else selectedDate
-
-                // Check if this is a roll forward habit and we're viewing a past date
-                if (state.habit.name in settings.rollForwardHabits && dateForEntry != null) {
-                    // Find the next manual date
-                    val nextManualDate = settings.rollForwardManualDates[state.habit.name]?.mapNotNull { dateStr ->
-                        com.example.tail.data.parseDate(dateStr)
-                    }?.sorted()?.firstOrNull { it > dateForEntry }
-
-                    val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
-
-                    // Show roll forward confirmation dialog
-                    rollForwardDialogState = RollForwardDialogState(
-                        habitName = state.habit.name,
-                        actionType = "text",
-                        startDate = dateForEntry,
-                        initialEndDate = endDate,
-                        onConfirm = { confirmedEndDate ->
-                            viewModel.setTextEntriesForDateWithRollForward(state.habit.name, dateForEntry, entries, confirmedEndDate, entryTime) {
-                                // Reload entries after add completes, then dismiss dialog
-                                viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { _ ->
-                                    // Don't reopen the dialog - just dismiss it
-                                    textInputDialogState = null
-                                    // Popup-gated increment confirmed: fire the
-                                    // lizard shimmer now that every dialog in the
-                                    // chain (text input + roll-forward) is settled.
-                                    lizardShimmerGen.intValue++
-                                    // Show increment toast with edit-time option
-                                    incrementToastVersion++
-                                    incrementToastHabit = state.habit.name
-                                    incrementToastIsTimeless = !isToday
-                                    incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
-                                    val currentVersion = incrementToastVersion
-                                    toastScope.launch {
-                                        delay(3500)
-                                        if (incrementToastVersion == currentVersion) {
-                                            incrementToastHabit = null
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    )
-                } else {
-                    viewModel.saveTextEntries(state.habit.name, entries, dateForEntry, entryTime)
-                    textInputDialogState = null
-                    // Popup-gated increment: the lizard shimmer fires only
-                    // now, on text-input dialog submission.
-                    lizardShimmerGen.intValue++
-                    // Show increment toast with edit-time option
-                    incrementToastVersion++
-                    incrementToastHabit = state.habit.name
-                    incrementToastIsTimeless = !isToday
-                    incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
-                    val currentVersion = incrementToastVersion
-                    toastScope.launch {
-                        delay(3500)
-                        if (incrementToastVersion == currentVersion) {
-                            incrementToastHabit = null
-                        }
-                    }
-                }
-            },
+            settings = settings,
+            viewModel = viewModel,
+            lizardShimmerGen = lizardShimmerGen,
+            toastScope = toastScope,
             onDismiss = { textInputDialogState = null },
-            onEdit = { oldTimestamp, newText ->
-                // Check if this is a roll forward habit and we're viewing a past date
-                if (state.habit.name in settings.rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
-                    // Parse the date from the timestamp
-                    val dateStr = oldTimestamp.substring(0, 10)
-                    val entryDate = com.example.tail.data.parseDate(dateStr)
-                    
-                    if (entryDate != null) {
-                        // Find the next manual date
-                        val nextManualDate = settings.rollForwardManualDates[state.habit.name]?.mapNotNull { dateStr ->
-                            com.example.tail.data.parseDate(dateStr)
-                        }?.sorted()?.firstOrNull { it > entryDate }
-                        
-                        val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
-                        
-                        // Show roll forward confirmation dialog
-                        rollForwardDialogState = RollForwardDialogState(
-                            habitName = state.habit.name,
-                            actionType = "text",
-                            startDate = entryDate,
-                            initialEndDate = endDate,
-                            onConfirm = { confirmedEndDate ->
-                                viewModel.updateTextEntryWithRollForward(state.habit.name, oldTimestamp, newText, confirmedEndDate) {
-                                    // Reload entries after edit completes, then dismiss dialog
-                                    viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
-                                        // Don't reopen the dialog - just dismiss it
-                                        textInputDialogState = null
-                                    }
-                                }
-                            }
-                        )
-                        return@TextInputDialog
-                    }
-                }
-                
-                // Normal update without roll forward
-                viewModel.updateTextEntry(state.habit.name, oldTimestamp, newText) {
-                    // Reload entries after edit completes
-                    viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
-                        textInputDialogState = state.copy(todayEntries = entries)
-                    }
-                }
-            },
-            onDelete = { timestamp ->
-                viewModel.deleteTextEntry(state.habit.name, timestamp) {
-                    // Reload entries after delete completes
-                    viewModel.loadTextEntriesWithTimestamps(state.habit.name, selectedDate) { entries ->
-                        textInputDialogState = state.copy(todayEntries = entries)
+            onUpdateState = { textInputDialogState = it },
+            onShowRollForward = { rollForwardDialogState = it },
+            onShowIncrementToast = { habitName, isTimeless ->
+                incrementToastVersion++
+                incrementToastHabit = habitName
+                incrementToastIsTimeless = isTimeless
+                incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                val currentVersion = incrementToastVersion
+                toastScope.launch {
+                    delay(3500)
+                    if (incrementToastVersion == currentVersion) {
+                        incrementToastHabit = null
                     }
                 }
             }
@@ -4014,6 +3435,8 @@ internal fun HabitGrid(
     mealHabits: Set<String> = emptySet(),
     /** Weights-type habits (weights input dialog on tap, 🏋️ corner badge). */
     weightsHabits: Set<String> = emptySet(),
+    /** Sleep-suite habits (sleep/wake dialog on tap, 😴 corner badge). */
+    sleepHabits: Set<String> = emptySet(),
     /** Movie-bridge-linked habits (auto-filled from the tail_bridge watcher). */
     bridgeMovieHabits: Set<String> = emptySet(),
     /** Map of habit name → chess.com time control for chess.com-linked habits. */
@@ -4126,6 +3549,7 @@ internal fun HabitGrid(
                         habit.name in garminHabitLinks -> HabitSpecialBadge.GARMIN
                         habit.name in chessComHabitLinks -> HabitSpecialBadge.CHESS
                         habit.name in weightsHabits -> HabitSpecialBadge.WEIGHTS
+                        habit.name in sleepHabits -> HabitSpecialBadge.SLEEP
                         else -> null
                     }
                     HabitButton(

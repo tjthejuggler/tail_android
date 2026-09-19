@@ -763,6 +763,8 @@ class BackupManager(
         settingsRepo.saveSubtypedHabits(s.subtypedHabits.toSet())
         settingsRepo.saveHabitSubtypes(s.habitSubtypes)
         settingsRepo.saveSubtypeDataFileUris(s.subtypeDataFileUris)
+        settingsRepo.saveSleepHabits(s.sleepHabits.toSet())
+        settingsRepo.saveSleepHabitVariants(s.sleepHabitVariants)
 
         settingsRepo.saveTimedHabits(s.timedHabits.toSet())
         settingsRepo.saveTimedDataFileUris(s.timedDataFileUris)
@@ -1152,6 +1154,8 @@ class BackupManager(
         subtypedHabits = s.subtypedHabits.toList(),
         habitSubtypes = s.habitSubtypes,
         subtypeDataFileUris = s.subtypeDataFileUris,
+        sleepHabits = s.sleepHabits.toList(),
+        sleepHabitVariants = s.sleepHabitVariants,
         timedHabits = s.timedHabits.toList(),
         timedDataFileUris = s.timedDataFileUris,
         timelessHabits = s.timelessHabits.toList(),

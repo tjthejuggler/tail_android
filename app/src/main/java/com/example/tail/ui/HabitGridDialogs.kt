@@ -193,6 +193,60 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.flow.collectLatest
 
+/**
+ * Host wrapper for the meal detail dialog. Extracted from HabitGridScreen so
+ * the grid composable stays under the JVM 64KB method-size limit.
+ */
+@Composable
+internal fun MealDialogHost(
+    habitName: String,
+    viewModel: HabitViewModel,
+    incrementAlreadyDone: Boolean,
+    selectedDate: java.time.LocalDate,
+    focusLogId: String?,
+    onDismiss: () -> Unit
+) {
+    MealDetailDialog(
+        habitName = habitName,
+        viewModel = viewModel,
+        onDismiss = onDismiss,
+        incrementAlreadyDone = incrementAlreadyDone,
+        selectedDate = selectedDate,
+        focusLogId = focusLogId
+    )
+}
+
+/**
+ * Host wrapper for the weights input dialog. Extracted from HabitGridScreen
+ * so the grid composable stays under the JVM 64KB method-size limit (adding
+ * the sleep-suite dialog pushed it over).
+ */
+@Composable
+internal fun WeightsDialogHost(
+    habit: Habit,
+    settings: com.example.tail.data.AppSettings,
+    viewModel: HabitViewModel,
+    lizardShimmerGen: androidx.compose.runtime.MutableIntState,
+    onDismiss: () -> Unit
+) {
+    WeightsInputDialog(
+        habitName = habit.name,
+        defaultUnit = settings.graphWeightUnit,
+        recentExercises = settings.weightsRecentExercises[habit.name] ?: emptyList(),
+        getStats = { exerciseName, machine ->
+            viewModel.getWeightsExerciseStats(habit.name, exerciseName, machine)
+        },
+        onConfirm = { weightGrams, reps, machine, exerciseName ->
+            viewModel.saveWeightsEntry(habit.name, weightGrams, reps, machine, exerciseName)
+            onDismiss()
+            // Popup-gated increment: the lizard shimmer fires only now,
+            // on weights dialog submission.
+            lizardShimmerGen.intValue++
+        },
+        onDismiss = onDismiss
+    )
+}
+
 @Composable
 internal fun DatedEntryRefreshConfirmDialog(
     preview: HabitViewModel.DatedEntryRefreshPreview,

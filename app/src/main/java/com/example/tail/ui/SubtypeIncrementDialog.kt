@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.data.Habit
 
 private val QUICK_AMOUNTS = listOf(1, 5, 10)
 
@@ -100,6 +101,39 @@ fun SubtypeIncrementDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
+    )
+}
+
+/**
+ * Host wrapper for the subtype increment dialog. Extracted from
+ * HabitGridScreen to keep the grid composable under the JVM 64KB
+ * method-size limit.
+ */
+@Composable
+internal fun SubtypeDialogHost(
+    habit: Habit,
+    subtypes: List<String>,
+    currentBreakdown: Map<String, Int>,
+    displayLabels: Map<String, String>,
+    viewModel: HabitViewModel,
+    lizardShimmerGen: androidx.compose.runtime.MutableIntState,
+    onDismiss: () -> Unit
+) {
+    if (subtypes.isEmpty()) return
+    SubtypeIncrementDialog(
+        habitName = habit.name,
+        subtypes = subtypes,
+        currentTotal = habit.rawTodayCount,
+        currentBreakdown = currentBreakdown,
+        displayLabels = displayLabels,
+        onConfirm = { increments ->
+            viewModel.saveSubtypeIncrement(habit.name, increments)
+            onDismiss()
+            // Popup-gated increment: the lizard shimmer fires only
+            // now, on subtype dialog submission.
+            lizardShimmerGen.intValue++
+        },
+        onDismiss = onDismiss
     )
 }
 

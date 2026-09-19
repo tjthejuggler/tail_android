@@ -913,6 +913,83 @@ internal fun WeightsToggleSection(
 }
 
 /**
+ * Toggle for the "Sleep" habit type. [variant] is the active variant key
+ * (null = not a sleep habit). Tapping a segment switches the type on and
+ * moves the habit between the two halves; the sleep pill again turns it off.
+ * The sleep-time variant logs bed time + room temperature + conditions (with
+ * past-input suggestions); the wake-time variant logs wake time + the
+ * awakenings / awake-minutes / quality mini survey.
+ */
+
+@Composable
+internal fun SleepToggleSection(
+    habitName: String,
+    variant: String?,
+    onSetVariant: (String, String?) -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = "😴 Sleep Habit", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(
+                    text = when (variant) {
+                        com.example.tail.data.SLEEP_VARIANT_SLEEP_TIME -> "Bed time + temp + conditions"
+                        com.example.tail.data.SLEEP_VARIANT_WAKE_TIME -> "Wake time + night survey"
+                        else -> "Normal counter"
+                    },
+                    color = Color(0xFF888888), fontSize = 10.sp
+                )
+            }
+            Switch(
+                checked = variant != null,
+                onCheckedChange = { checked ->
+                    onSetVariant(
+                        habitName,
+                        if (checked) com.example.tail.data.SLEEP_VARIANT_SLEEP_TIME else null
+                    )
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF7986CB),
+                    checkedTrackColor = Color(0xFF1A1A2E),
+                    uncheckedThumbColor = Color(0xFF888888),
+                    uncheckedTrackColor = Color(0xFF333333)
+                )
+            )
+        }
+        if (variant != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(
+                    com.example.tail.data.SLEEP_VARIANT_SLEEP_TIME to "😴 Sleep time",
+                    com.example.tail.data.SLEEP_VARIANT_WAKE_TIME to "🌅 Wake time"
+                ).forEach { (key, label) ->
+                    val isActive = variant == key
+                    Text(
+                        text = label,
+                        color = if (isActive) Color(0xFF000000) else Color(0xFF99A0B5),
+                        fontSize = 11.sp,
+                        modifier = Modifier
+                            .background(
+                                if (isActive) Color(0xFF7986CB) else Color(0xFF1A1A2E),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) { onSetVariant(habitName, key) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * "Meal Detail" button for meal habits — opens the meal detail editor
  * (vision logging setup). Rendered at the top of the SETTINGS section in
  * [EditModeControlBar] so it is immediately visible instead of buried in
@@ -1854,6 +1931,12 @@ internal fun EditModeControlBar(
     onBackfillConditional: (String) -> Unit = {},
     onToggleSubtyped: (String) -> Unit,
     onSetSubtypes: (String, List<String>) -> Unit,
+    /** Habits that have the "sleep" type enabled (sleep-time / wake-time suite). */
+    sleepHabits: Set<String> = emptySet(),
+    /** Maps sleep habit name → variant key (SLEEP_TIME / WAKE_TIME). */
+    sleepHabitVariants: Map<String, String> = emptyMap(),
+    /** Called when the user sets/clears the sleep variant for a habit. */
+    onSetSleepVariant: (String, String?) -> Unit = { _, _ -> },
     mealHabits: Set<String> = emptySet(),
     onToggleMeal: (String) -> Unit = {},
     /** Weights-type habits (kg/lb + reps machine/free logging on tap). */
@@ -3400,6 +3483,13 @@ internal fun EditModeControlBar(
                                 habitName = selHabitName,
                                 isWeights = selHabitName in weightsHabits,
                                 onToggleWeights = onToggleWeights
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            SleepToggleSection(
+                                habitName = selHabitName,
+                                variant = sleepHabitVariants[selHabitName]
+                                    ?.takeIf { selHabitName in sleepHabits },
+                                onSetVariant = onSetSleepVariant
                             )
                         },
                         chessComContent = {

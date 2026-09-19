@@ -829,6 +829,46 @@ data class QuickCaptureActionType(
 /**
  * App settings stored in DataStore.
  */
+
+// ── Sleep habit type constants ──────────────────────────────────────────────
+/** Variant key: this sleep habit records the SLEEP half (bed time + room temperature + conditions text). */
+const val SLEEP_VARIANT_SLEEP_TIME = "SLEEP_TIME"
+/** Variant key: this sleep habit records the WAKE half (wake time + awakenings + awake minutes + quality). */
+const val SLEEP_VARIANT_WAKE_TIME = "WAKE_TIME"
+
+/** Minutes in a day — used when a sleep session spans midnight (wake < bed). */
+const val MINUTES_PER_DAY = 1440
+
+/**
+ * True when [name] is a sleep-suite habit variant key, i.e. one of the two
+ * [SLEEP_VARIANT_*] constants. Used for graph metric detection and settings
+ * iteration.
+ */
+fun isSleepVariantKey(name: String?): Boolean =
+    name == SLEEP_VARIANT_SLEEP_TIME || name == SLEEP_VARIANT_WAKE_TIME
+
+/**
+ * Computes the sleep duration in minutes from a bed minute and a wake minute
+ * (both "minutes since midnight" of the same entry date). A session spanning
+ * midnight (wake ≤ bed) wraps via +[MINUTES_PER_DAY]. Returns null when either
+ * half is missing.
+ */
+fun sleepDurationMinutes(bed: Int?, wake: Int?): Int? {
+    if (bed == null || wake == null) return null
+    var duration = wake - bed
+    if (duration <= 0) duration += MINUTES_PER_DAY
+    return duration
+}
+
+/**
+ * Formats "minutes since midnight" as a 24-hour "HH:mm" clock string.
+ */
+fun minutesToClockString(minutes: Int?): String {
+    if (minutes == null) return "—"
+    val m = ((minutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
+    return "%02d:%02d".format(m / 60, m % 60)
+}
+
 data class AppSettings(
     /** SAF URI for habitsdb.txt — the single unified habit database shared with the PC. */
     val fileUri: String = "",
@@ -1040,6 +1080,19 @@ data class AppSettings(
 
     /** Habits that have the "subtyped" feature enabled. */
     val subtypedHabits: Set<String> = emptySet(),
+
+    /**
+     * Habits that have the "sleep" type enabled — the sleep-suite suite:
+     * each habit is additionally mapped in [sleepHabitVariants] to either
+     * SLEEP_TIME (bed time + room temperature + conditions text with
+     * past-input suggestions) or WAKE_TIME (wake time + awakenings +
+     * awake minutes + perceived quality mini-survey). The raw habit count
+     * still increments on save so streaks/points behave like any habit.
+     */
+    val sleepHabits: Set<String> = emptySet(),
+
+    /** Maps sleep habit name → variant key ([SLEEP_VARIANT_SLEEP_TIME] / [SLEEP_VARIANT_WAKE_TIME]). */
+    val sleepHabitVariants: Map<String, String> = emptyMap(),
 
     /**
      * Maps habit name → ordered list of subtype names.

@@ -1756,6 +1756,8 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
                 subtypedHabits = settings.subtypedHabits.replaceElement(oldName, newName),
                 habitSubtypes = settings.habitSubtypes.replaceKey(oldName, newName),
                 subtypeDataFileUris = settings.subtypeDataFileUris.replaceKey(oldName, newName),
+                sleepHabits = settings.sleepHabits.replaceElement(oldName, newName),
+                sleepHabitVariants = settings.sleepHabitVariants.replaceKey(oldName, newName),
                 timedHabits = settings.timedHabits.replaceElement(oldName, newName),
                 timedDataFileUris = settings.timedDataFileUris.replaceKey(oldName, newName),
                 timelessHabits = settings.timelessHabits.replaceElement(oldName, newName),
@@ -1884,6 +1886,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             // timed sessions survive the rename too
             subtypeDataRepo.renameHabit(oldName, newName)
             timedDataRepo.renameHabit(oldName, newName)
+            sleepDataRepo.renameHabit(oldName, newName)
 
             // Rename in the weights exercise-name sidecar so per-day exercise
             // attribution (PB display, graph filter, edit screen) survives too
