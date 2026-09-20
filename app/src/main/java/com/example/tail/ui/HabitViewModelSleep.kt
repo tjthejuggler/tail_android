@@ -13,7 +13,6 @@ import com.example.tail.data.isSleepVariantKey
 import com.example.tail.data.sleepDurationMinutes
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import java.time.LocalTime
 
 private const val TAG = "SleepVM"
 
@@ -135,7 +134,7 @@ fun HabitViewModel.saveSleepTimeEntry(
 /**
  * Saves the WAKE half of a night's record: wake time (minutes since midnight),
  * the mini-survey answers (awakenings count, minutes awake, perceived quality
- * 1–5). Increments the habit count by 1 — only when the wake half was
+ * 1–10). Increments the habit count by 1 — only when the wake half was
  * previously unset for that date (re-edits don't re-count).
  */
 fun HabitViewModel.saveWakeSurveyEntry(
@@ -197,7 +196,7 @@ data class SleepSession(
     val awakenings: Int?,
     /** Mini-survey: total minutes awake during the night. */
     val awakeMin: Int?,
-    /** Mini-survey: perceived overall sleep quality 1–5. */
+    /** Mini-survey: perceived overall sleep quality 1–10. */
     val quality: Int?
 )
 
@@ -307,11 +306,9 @@ fun HabitViewModel.loadSleepSessions(
     }
 }
 
-/** Default bed time used to pre-fill the sleep dialog: 22:30. */
-internal val DEFAULT_BED_MINUTES: Int = LocalTime.of(22, 30).let { it.hour * 60 + it.minute }
-
-/** Default wake time used to pre-fill the wake dialog: 07:00. */
-internal val DEFAULT_WAKE_MINUTES: Int = 7 * 60
+// (Former DEFAULT_BED_MINUTES / DEFAULT_WAKE_MINUTES were removed: both sleep
+// dialogs now pre-fill their time wheel with the CURRENT wall-clock time at
+// the moment the habit tile is tapped — see nowMinutesOfDay() in SleepDialogs.kt.)
 
 /** Rounds "minutes since midnight" into the 0..[MINUTES_PER_DAY) range. */
 internal fun clampMinutes(m: Int): Int = ((m % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY

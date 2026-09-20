@@ -155,14 +155,20 @@ fun SleepTimelineChart(
                     }
                 }
 
-                // Quality dots inside the band (only when both halves exist)
-                if (s.quality != null && bed != null) {
-                    repeat(s.quality) { q ->
+                // Quality dots inside the band (only when both halves exist).
+                // With the 1–10 scale up to 10 dots are drawn, so the spread is
+                // proportional to the band width — dots stay inside short naps.
+                val q = s.quality
+                if (q != null && bed != null && wake != null && s.durationMin != null) {
+                    val startF = (((bed - AXIS_START + MINUTES_PER_DAY) % MINUTES_PER_DAY).toFloat()) / MINUTES_PER_DAY
+                    val spanF = (s.durationMin.toFloat() / MINUTES_PER_DAY) * 0.8f
+                    val step = spanF / q
+                    repeat(q) { i ->
                         drawCircle(
                             color = Color(0xFFFFFFFF).copy(alpha = 0.5f),
                             radius = barH / 8f,
                             center = Offset(
-                                labelSpace + (((bed - AXIS_START + MINUTES_PER_DAY) % MINUTES_PER_DAY).toFloat() / MINUTES_PER_DAY + 0.012f * (q + 1)) * axisW,
+                                labelSpace + (startF + step * (i + 1)) * axisW,
                                 y + barH / 2
                             )
                         )
@@ -236,7 +242,7 @@ fun SleepTimelineChart(
                     s.conditions?.takeIf { it.isNotBlank() }?.let { "Conditions: $it" },
                     s.awakenings?.let { "Awakenings: $it" },
                     s.awakeMin?.let { "Time awake: ${formatSleepDuration(it)}" },
-                    s.quality?.let { "Quality: ${"★".repeat(it)}" }
+                    s.quality?.let { "Quality: $it/10" }
                 )
                 lines.forEach {
                     Text(text = it, color = Color(0xFFAAB4CC), fontSize = 11.sp)
@@ -279,7 +285,7 @@ private fun SleepStatsGrid(
         avgTemp?.let { SleepStat("Avg temp", "${(it / 10).let { t -> "%.1f".format(t / 10.0) }}°C") },
         if (totalAwakenings > 0) SleepStat("Awakenings", "$totalAwakenings") else null,
         if (totalAwakeMin > 0) SleepStat("Time awake", formatSleepDuration(totalAwakeMin)) else null,
-        avgQual?.let { SleepStat("Avg quality", "%.1f★".format(it)) }
+        avgQual?.let { SleepStat("Avg quality", "%.1f/10".format(it)) }
     )
 
     Column(

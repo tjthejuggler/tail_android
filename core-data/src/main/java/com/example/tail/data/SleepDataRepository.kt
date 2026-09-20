@@ -26,7 +26,7 @@ import java.io.File
  *
  * Temperature is stored as tenths of a degree (°C × 10) to stay integral.
  *
- * Quality is the perceived overall sleep quality on a 1–5 scale (5 = best).
+ * Quality is the perceived overall sleep quality on a 1–10 scale (10 = best).
  */
 data class SleepRecord(
     /** Bed time — minutes since midnight of the entry date. Null = not set. */
@@ -41,7 +41,7 @@ data class SleepRecord(
     val awakenings: Int? = null,
     /** Total minutes spent awake during the night. Null = not set. */
     val awakeMin: Int? = null,
-    /** Perceived overall sleep quality, 1–5. Null = not set. */
+    /** Perceived overall sleep quality, 1–10. Null = not set. */
     val quality: Int? = null
 ) {
     /** Returns this record with every non-null field of [other] overriding it. */
@@ -113,13 +113,18 @@ class SleepDataRepository(private val context: Context) {
         loadHabitData(habitName)[dateStr] ?: SleepRecord()
 
     /**
-     * All distinct non-blank conditions strings ever recorded for [habitName],
-     * MOST RECENT FIRST — powers the "options from past inputs" suggestion list.
+     * All distinct non-blank conditions fragments ever recorded for [habitName],
+     * MOST RECENT FIRST. Stored conditions are comma-joined multi-select
+     * strings ("fan, window open"), so they are split back into individual
+     * fragments here — each value ever used on any past night becomes its own
+     * selectable checkbox entry in the sleep dialog.
      */
     suspend fun loadConditionsHistory(habitName: String): List<String> {
         val seen = LinkedHashSet<String>()
         loadHabitData(habitName).toSortedMap(reverseOrder()).values.forEach { rec ->
-            rec.conditions?.trim()?.takeIf { it.isNotEmpty() }?.let { seen.add(it) }
+            rec.conditions?.split(',')?.forEach { frag ->
+                frag.trim().takeIf { it.isNotEmpty() }?.let { seen.add(it) }
+            }
         }
         return seen.toList()
     }

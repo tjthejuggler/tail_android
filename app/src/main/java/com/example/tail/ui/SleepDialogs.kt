@@ -20,7 +20,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.Habit
 import com.example.tail.data.SleepRecord
-import com.example.tail.data.minutesToClockString
+import java.time.LocalTime
+
+/** Current wall-clock time as minutes since midnight — the default position
+ *  for the bed/wake time wheels: opening the dialog at tap time pre-sets the
+ *  wheel to "now". */
+private fun nowMinutesOfDay(): Int = LocalTime.now().let { it.hour * 60 + it.minute }
+
+/** Wake-quality wheel items — a 1–10 scale (replaces the old 1–5 stars). */
+private val QUALITY_ITEMS: List<String> = (1..10).map { it.toString() }
 
 /** Holder for the sleep-suite dialog state — kept out of HabitGridScreen so
  *  the grid composable stays under the JVM 64KB method-size limit. */
@@ -178,74 +186,18 @@ internal fun SleepDialogHost(
 }
 
 /**
- * Wheel-based clock row with ±15 min quick buttons — shared by both sleep dialogs.
- */
-@Composable
-private fun SleepClockPicker(
-    minutes: Int,
-    onMinutesChange: (Int) -> Unit,
-    accent: Color
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "−15",
-            color = accent,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .background(Color(0xFF1A2438), RoundedCornerShape(8.dp))
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() }
-                ) { onMinutesChange(((minutes - 15) + 1440) % 1440) }
-                .padding(horizontal = 10.dp, vertical = 6.dp)
-        )
-        Spacer(modifier = Modifier.width(10.dp))
-        Text(
-            text = minutesToClockString(minutes),
-            color = accent,
-            fontSize = 30.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.width(10.dp))
-        Text(
-            text = "+15",
-            color = accent,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .background(Color(0xFF1A2438), RoundedCornerShape(8.dp))
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() }
-                ) { onMinutesChange((minutes + 15) % 1440) }
-                .padding(horizontal = 10.dp, vertical = 6.dp)
-        )
-    }
-    Spacer(modifier = Modifier.height(2.dp))
-    TimeWheelPicker(
-        hour24 = minutes / 60,
-        minute = minutes % 60,
-        onTimeChange = { h, m -> onMinutesChange(h * 60 + m) },
-        accent = accent,
-        compact = true,
-        itemHeight = 32.dp
-    )
-}
-
-/**
  * SLEEP-TIME variant dialog.
  *
- * - Bed time: ±15 buttons + [TimeWheelPicker].
+ * - Bed time: a single [TimeWheelPicker] (the only time control), pre-set to
+ *   the current wall-clock time when the dialog opens — or the earlier
+ *   entry's time when re-editing the same night.
  * - Room temperature: numeric text field (°C, one decimal allowed) with
  *   quick chips for common values and a "—" clear chip.
- * - Sleep conditions: free-text field PLUS option chips built from every
- *   past conditions input ([options], most recent first) — tapping a chip
- *   fills the field. Blank submission is allowed (conditions optional).
+ * - Sleep conditions: a text field with an Add button feeding a CHECKBOX
+ *   list that combines everything added in this session with every
+ *   conditions string ever used on past nights ([options], most recent
+ *   first) — any number of entries can be selected; the selected items are
+ *   saved comma-joined (none selected clears the stored conditions).
  *
  * [existing] pre-fills the dialog from an earlier same-night entry.
  */
@@ -258,13 +210,39 @@ fun SleepTimeDialog(
     onDismiss: () -> Unit
 ) {
     val accent = Color(0xFF9FA8FF) // soft indigo — sleep palette
-    var bed by remember { mutableIntStateOf(existing.bed ?: DEFAULT_BED_MINUTES) }
-    var tempText by remember {
+    // Field state is keyed on [existing]: the record loads right after the
+    // dialog opens, and the new instance re-seeds every field exactly once.
+    var bed by remember(existing) { mutableIntStateOf(existing.bed ?: nowMinutesOfDay()) }
+    var tempText by remember(existing) {
         mutableStateOf(
             existing.temp?.let { (it / 10.0).toString() } ?: ""
         )
     }
-    var conditions by remember { mutableStateOf(existing.conditions ?: "") }
+    // Selected conditions as a set — stored back comma-joined on save.
+    var selectedConds by remember(existing) {
+        mutableStateOf(
+            existing.conditions?.split(',')
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.toSet()
+                ?: emptySet()
+        )
+    }
+    // Entries added in THIS dialog session (pre-seeded from the stored entry
+    // so its fragments always appear as selectable checkboxes).
+    var addedConds by remember(existing) {
+        mutableStateOf(
+            existing.conditions?.split(',')
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.distinct()
+                ?: emptyList()
+        )
+    }
+    var newCond by remember { mutableStateOf("") }
+
+    /** Checkbox list: newly added entries first, then everything ever used. */
+    val allCondOptions = (addedConds + options).distinct()
 
     val tempTenths: Int? = tempText.trim().replace(',', '.').toDoubleOrNull()
         ?.let { (it * 10).toInt().takeIf { t -> t in -400..600 } } // −40..60 °C sanity
@@ -273,11 +251,22 @@ fun SleepTimeDialog(
         title = "😴 $habitName",
         saveEnabled = true,
         saveLabel = "Save",
-        onSave = { onSave(bed, tempTenths, conditions.trim()) },
+        onSave = {
+            val conditions = allCondOptions.filter { it in selectedConds }
+                .joinToString(", ")
+                .trim()
+            onSave(bed, tempTenths, conditions)
+        },
         onDismiss = onDismiss
     ) {
         Text("Bed time", color = Color(0xFF888888), fontSize = 11.sp)
-        SleepClockPicker(minutes = bed, onMinutesChange = { bed = it }, accent = accent)
+        TimeWheelPicker(
+            hour24 = bed / 60,
+            minute = bed % 60,
+            onTimeChange = { h, m -> bed = h * 60 + m },
+            accent = accent,
+            modifier = Modifier.fillMaxWidth()
+        )
 
         HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
 
@@ -331,36 +320,72 @@ fun SleepTimeDialog(
 
         HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
 
-        // ── Sleep conditions (text + past-input options) ──
+        // ── Sleep conditions (add + multi-select checkboxes) ──
         Text("Sleep conditions", color = Color(0xFF888888), fontSize = 11.sp)
-        OutlinedTextField(
-            value = conditions,
-            onValueChange = { conditions = it.take(200) },
-            placeholder = {
-                Text("fan, window open, heavy blanket…", fontSize = 12.sp, color = Color(0xFF555566))
-            },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        if (options.isNotEmpty()) {
-            Text("Past inputs:", color = Color(0xFF666677), fontSize = 10.sp)
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                options.take(12).forEach { opt ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = newCond,
+                onValueChange = { newCond = it.take(100) },
+                placeholder = {
+                    Text("fan, window open, heavy blanket…", fontSize = 12.sp, color = Color(0xFF555566))
+                },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = "+ Add",
+                color = accent,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .background(Color(0xFF1A2438), RoundedCornerShape(8.dp))
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) {
+                        val parts = newCond.split(',')
+                            .map { it.trim() }
+                            .filter { it.isNotEmpty() }
+                        if (parts.isNotEmpty()) {
+                            addedConds = (addedConds + parts).distinct()
+                            selectedConds = selectedConds + parts.toSet()
+                            newCond = ""
+                        }
+                    }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            )
+        }
+        if (allCondOptions.isNotEmpty()) {
+            Text("Select all that apply:", color = Color(0xFF666677), fontSize = 10.sp)
+            allCondOptions.forEach { opt ->
+                val checked = opt in selectedConds
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {
+                            selectedConds =
+                                if (checked) selectedConds - opt else selectedConds + opt
+                        },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = checked,
+                        // null handler: the surrounding row owns the toggle so a
+                        // tap on the box itself doesn't double-fire.
+                        onCheckedChange = null,
+                        modifier = Modifier.height(32.dp)
+                    )
                     Text(
                         text = opt,
                         color = Color(0xFFCCEECC),
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .background(Color(0xFF1A2E1A), RoundedCornerShape(8.dp))
-                            .clickable(
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() }
-                            ) { conditions = opt }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                        fontSize = 12.sp
                     )
                 }
             }
@@ -369,9 +394,10 @@ fun SleepTimeDialog(
 }
 
 /**
- * WAKE-TIME variant dialog — wake clock plus the mini survey:
- * number of awakenings, minutes spent awake, perceived overall quality 1–5.
- * All survey answers are optional; the wake time alone saves fine.
+ * WAKE-TIME variant dialog — wake wheel plus the mini survey:
+ * number of awakenings, minutes spent awake, and perceived overall quality
+ * on a 1–10 wheel scroller. All survey answers are optional; the wake time
+ * alone saves fine, and "clear" removes the quality rating.
  */
 @Composable
 fun WakeTimeDialog(
@@ -381,10 +407,12 @@ fun WakeTimeDialog(
     onDismiss: () -> Unit
 ) {
     val accent = Color(0xFFFFB74D) // warm amber — morning palette
-    var wake by remember { mutableIntStateOf(existing.wake ?: DEFAULT_WAKE_MINUTES) }
-    var awText by remember { mutableStateOf(existing.awakenings?.toString() ?: "") }
-    var awakeText by remember { mutableStateOf(existing.awakeMin?.toString() ?: "") }
-    var quality by remember { mutableIntStateOf(existing.quality ?: 0) } // 0 = unanswered
+    // Keyed on [existing] so the async pre-fill re-seeds every field once;
+    // the wake wheel defaults to the current time at dialog open.
+    var wake by remember(existing) { mutableIntStateOf(existing.wake ?: nowMinutesOfDay()) }
+    var awText by remember(existing) { mutableStateOf(existing.awakenings?.toString() ?: "") }
+    var awakeText by remember(existing) { mutableStateOf(existing.awakeMin?.toString() ?: "") }
+    var quality by remember(existing) { mutableStateOf<Int?>(existing.quality) } // null = not rated
 
     SleepDialogScaffold(
         title = "🌅 $habitName",
@@ -395,13 +423,19 @@ fun WakeTimeDialog(
                 wake,
                 awText.toIntOrNull()?.coerceIn(0, 99),
                 awakeText.toIntOrNull()?.coerceIn(0, 1439),
-                quality.takeIf { it in 1..5 }
+                quality?.takeIf { it in 1..10 }
             )
         },
         onDismiss = onDismiss
     ) {
         Text("Wake time", color = Color(0xFF888888), fontSize = 11.sp)
-        SleepClockPicker(minutes = wake, onMinutesChange = { wake = it }, accent = accent)
+        TimeWheelPicker(
+            hour24 = wake / 60,
+            minute = wake % 60,
+            onTimeChange = { h, m -> wake = h * 60 + m },
+            accent = accent,
+            modifier = Modifier.fillMaxWidth()
+        )
 
         HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
 
@@ -432,29 +466,35 @@ fun WakeTimeDialog(
         }
 
         Spacer(modifier = Modifier.height(4.dp))
-        Text("Overall sleep quality", color = Color(0xFF888888), fontSize = 11.sp)
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            (1..5).forEach { q ->
-                val isActive = quality == q
-                Text(
-                    text = "${"★".repeat(q)}",
-                    color = if (isActive) Color(0xFFFFD54F) else Color(0xFF444455),
-                    fontSize = if (isActive) 15.sp else 13.sp,
-                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                    modifier = Modifier
-                        .background(
-                            if (isActive) Color(0xFF33270A) else Color(0xFF1A1A2E),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) { quality = if (quality == q) 0 else q }
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                )
-            }
+        Text("Overall sleep quality (1–10)", color = Color(0xFF888888), fontSize = 11.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            WheelPicker(
+                items = QUALITY_ITEMS,
+                selectedIndex = (quality ?: 5) - 1,
+                onSelectedChange = { idx -> quality = idx + 1 },
+                itemHeight = 32.dp,
+                accent = accent,
+                modifier = Modifier.width(72.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = quality?.let { "$it / 10" } ?: "not rated",
+                color = Color(0xFF888888),
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = "clear",
+                color = Color(0xFF888888),
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .background(Color(0xFF222222), RoundedCornerShape(8.dp))
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { quality = null }
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            )
         }
     }
 }
