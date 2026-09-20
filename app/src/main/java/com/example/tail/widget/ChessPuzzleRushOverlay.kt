@@ -227,7 +227,11 @@ class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = fal
     private fun submit() {
         val rushScore = rushScoreField?.text?.toString()?.toIntOrNull() ?: return
         if (rushMinutesMode != 3 && rushMinutesMode != 5) return
-        val ath = ChessReadinessStore.lastRushAllTimeHigh(context)
+        // Per-mode discipline: the 3- and 5-minute all-time highs are
+        // tracked separately; the legacy global baseline is kept in sync
+        // for the stats chart and the (retired) v1 readiness test.
+        val modeAth = ChessReadinessStore.rushAllTimeHigh(context, rushMinutesMode)
+        val legacyAth = ChessReadinessStore.lastRushAllTimeHigh(context)
 
         val (startedAt, durationSec) = if (manual) {
             val minutes = manualMinutesField?.text?.toString()?.toIntOrNull() ?: return
@@ -252,22 +256,63 @@ class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = fal
                 strikes = rushStrikes.coerceAtLeast(0),
                 // Null for strike-free runs — the question was never asked.
                 reviewedWrong = if (rushStrikes > 0) reviewedWrong else null,
-                allTimeHigh = ath,
+                allTimeHigh = modeAth,
                 minutesMode = rushMinutesMode
             )
         )
-        // The rush all-time high feeds the record line of the stats chart
-        // (and the v1 readiness baseline, should v1 ever be re-enabled).
-        val newAth = ChessReadinessEngine.nextAllTimeHigh(ath, rushScore)
-        if (newAth != ath) {
-            ChessReadinessStore.saveRushAllTimeHigh(context, newAth)
+        // Record check FIRST (against the mode's previous high), then
+        // persist the new highs — global feeds the stats chart + v1
+        // baseline, per-mode drives the SPECIAL GREEN eligibility.
+        val outcome = com.example.tail.data.evaluateRushRecord(modeAth, rushScore)
+        if (outcome.newAth != modeAth) {
+            ChessReadinessStore.saveRushAllTimeHigh(context, rushMinutesMode, outcome.newAth)
+        }
+        val newLegacyAth = ChessReadinessEngine.nextAllTimeHigh(legacyAth, rushScore)
+        if (newLegacyAth != legacyAth) {
+            ChessReadinessStore.saveRushAllTimeHigh(context, newLegacyAth)
         }
         if (manual) {
             writeManualMinutes((durationSec / 60).toInt())
         } else {
             ChessPuzzleRushStore.clearPending(context)
         }
-        dismiss()
+        if (outcome.isRecord) {
+            // NEW ALL-TIME RECORD → SPECIAL GREEN: rated play unlocks
+            // exactly as if a pre-game readiness test had been passed.
+            ChessReadinessStore.grantSpecialGreen(context, rushScore, rushMinutesMode)
+            showSpecialGreenCelebration(rushScore, rushMinutesMode, modeAth)
+        } else {
+            dismiss()
+        }
+    }
+
+    /**
+     * The reward screen for a new all-time Puzzle Rush record. Replaces
+     * the report card with a celebration that says WHAT was granted: a
+     * SPECIAL GREEN session, identical to a passed readiness test
+     * (60-minute validity, rolling rated-play window).
+     */
+    private fun showSpecialGreenCelebration(score: Int, minutesMode: Int, prevAth: Int) {
+        dialog.setContent(
+            "🏆 New All-Time Record!",
+            "Puzzle Rush $minutesMode-minute mode"
+        ) {
+            bigScore("$score", "#22C55E")
+            stateLabel("SPECIAL GREEN GRANTED", "#22C55E")
+            spacer(10)
+            body(
+                "Your new $minutesMode-minute all-time best (previous: $prevAth) " +
+                    "has earned you a special green — rated play is unlocked " +
+                    "RIGHT NOW, exactly as if you had passed a pre-game " +
+                    "readiness test.",
+                size = 14
+            )
+            spacer(8)
+            bullet("• 60-minute GREEN session starts now", 0xFF22C55E.toInt())
+            bullet("• Rated games authorized (rolling window)", 0xFF22C55E.toInt())
+            bullet("• The next readiness test unlocks when the session ends", 0xFF999999.toInt())
+            primaryButton("Play — enjoy!") { dismiss() }
+        }
     }
 
     /**

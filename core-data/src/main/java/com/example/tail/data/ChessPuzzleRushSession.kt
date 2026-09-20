@@ -87,6 +87,40 @@ fun computeRushSessionPoints(
         )
     }
 
+// ── Record detection (SPECIAL GREEN trigger) ────────────────────────────
+
+/**
+ * Outcome of checking a reported Puzzle Rush score against the mode's
+ * all-time high — the input to the SPECIAL GREEN grant (a new all-time
+ * record unlocks rated play exactly like a passed readiness test).
+ */
+data class RushRecordOutcome(
+    /** Mode all-time high in effect BEFORE the run. */
+    val previousAth: Int,
+    /** The mode's all-time high AFTER the run. */
+    val newAth: Int,
+    /** True when the run BEAT an existing all-time high (grants special green). */
+    val isRecord: Boolean,
+    /** True when this was the mode's first scored run (sets the baseline, no grant). */
+    val isNewBaseline: Boolean
+)
+
+/**
+ * Pure record check for one rush run. A record must BEAT an existing
+ * all-time high ([previousAth] > 0 and [score] above it) — a first-ever
+ * score for a mode merely sets the baseline, so switching to a new mode
+ * never hands out a free unlock.
+ */
+fun evaluateRushRecord(previousAth: Int, score: Int): RushRecordOutcome {
+    val s = score.coerceAtLeast(0)
+    return RushRecordOutcome(
+        previousAth = previousAth,
+        newAth = maxOf(previousAth, s),
+        isRecord = previousAth > 0 && s > previousAth,
+        isNewBaseline = previousAth <= 0 && s > 0
+    )
+}
+
 /**
  * Merges the rush points of readiness tests with those of standalone
  * timer sessions into one chronological series for the stats screen.

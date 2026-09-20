@@ -1,12 +1,19 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-19T15:00Z
+**Last updated:** 2026-09-20T14:20Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---
+
+## 2026-09-20T14:20Z — Chess: SPECIAL GREEN — a new all-time Puzzle Rush record unlocks rated play
+- **The feature.** Set a new all-time record in **3- or 5-minute Puzzle Rush** (they are separate disciplines, tracked separately in [`ChessReadinessStore.rushAllTimeHigh`](app/src/main/java/com/example/tail/widget/ChessReadinessStore.kt:143)) and you are granted a **SPECIAL GREEN**: rated play unlocks exactly as if a pre-game readiness test had been passed — same 60-minute validity, same rolling window. Both entry paths work: the bubble rush timer's end-of-session report AND manual back-fill when tapping the linked rush habit (both converge in [`ChessPuzzleRushOverlay.submit()`](app/src/main/java/com/example/tail/widget/ChessPuzzleRushOverlay.kt:228)).
+- **How it unlocks.** The grant appends a marked `GREEN_LIGHT` entry ([`ChessReadinessStore.grantSpecialGreen`](app/src/main/java/com/example/tail/widget/ChessReadinessStore.kt:189)) to the v1 test history — every gate consumer ([`ChessEnforcementPolicy.evaluate`](app/src/main/java/com/example/tail/widget/ChessEnforcementPolicy.kt:198), [`ChessPhase2Store.ratedPlayExpiresAt`](app/src/main/java/com/example/tail/widget/ChessPhase2Store.kt:273), the deferred-game reconciler) already keys off the latest GREEN_LIGHT entry, so the full session/rolling-window machinery applies with zero gate changes. The entry carries the new record as its `ccrs`/`rushScore` and a `specialGreen` provenance flag (persisted in the v1 codec).
+- **Anti-abuse.** A record must BEAT an existing per-mode high ([`evaluateRushRecord`](core-data/src/main/java/com/example/tail/data/ChessPuzzleRushSession.kt:96)); a mode's first-ever score only sets the baseline — no free unlock for trying a new mode. Equaling the high doesn't count. The legacy global ATH stays in sync for the stats chart, and the report's `allTimeHigh` telemetry now records the mode's baseline.
+- **The reward screen.** On a record, the report card becomes a celebration: score, "SPECIAL GREEN GRANTED", what was unlocked, and the note that the next readiness test unlocks when the session ends ([`showSpecialGreenCelebration`](app/src/main/java/com/example/tail/widget/ChessPuzzleRushOverlay.kt:310)).
+- **Tests.** 10 new cases in [`ChessSpecialGreenTest.kt`](app/src/test/java/com/example/tail/ChessSpecialGreenTest.kt:1) — record-check purity (beat/equal/below/first-run/zero), the grant's GREEN_SESSION verdict, overriding an earlier RED fail, expiry behaviour, re-test-gate interaction, and penalty-still-trumps. Full `Chess*` suite green.
 
 ## 2026-09-19T15:00Z — Companion Read API: /v2 ContentProvider endpoints for full-history companion apps
 - **R1** — [`/v2/habits`](plans/tail_integration_guide.md:895) enumerates opted-in habits with `habit_id`, `habit_name`, `habit_type` (counter/text/meal/timed/dated_entry/sleep/subtyped), `has_options`, `is_sharable`, `subtype_names`; [`/v2/apps`](plans/tail_integration_guide.md:895) lists app-link groupings. [`CompanionReadEndpoints.kt`](app/src/main/java/com/example/tail/ipc/CompanionReadEndpoints.kt:1) implements all v2 queries behind the existing [`HabitsContentProvider`](app/src/main/java/com/example/tail/ipc/HabitsContentProvider.kt:88) authority + signature permission.

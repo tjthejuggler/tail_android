@@ -377,7 +377,16 @@ object ChessReadinessEngine {
         /** Rated-puzzle sub-score 0–25. */
         val pPuzzle: Int? = null,
         /** Puzzle-Rush sub-score 0–25. */
-        val pRush: Int? = null
+        val pRush: Int? = null,
+        /**
+         * True when this authorization was granted OUTSIDE the test flow —
+         * a new all-time Puzzle Rush record (3- or 5-minute mode) earns a
+         * SPECIAL GREEN: rated play unlocks exactly as if a pre-game
+         * readiness test had been passed. Display layers use the flag to
+         * distinguish the provenance; the gate treats the entry
+         * identically to a normal GREEN pass.
+         */
+        val specialGreen: Boolean = false
     )
 
     /** What the adaptive thresholds were derived from. */

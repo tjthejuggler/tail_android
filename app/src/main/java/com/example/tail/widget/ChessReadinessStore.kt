@@ -53,6 +53,13 @@ object ChessReadinessStore {
     private const val KEY_PUZZLE_HABIT = "linked_puzzle_habit"
     private const val KEY_RUSH_HABIT = "linked_rush_habit"
 
+    // Per-mode Puzzle Rush all-time highs (3- and 5-minute runs are
+    // separate disciplines — a record in one says nothing about the
+    // other). The legacy single [KEY_LAST_RUSH_ATH] value seeds the
+    // 3-minute bucket on first read.
+    private const val KEY_RUSH_ATH_3 = "rush_all_time_high_3min"
+    private const val KEY_RUSH_ATH_5 = "rush_all_time_high_5min"
+
     // ── Chess Guard (hard enforcement) keys ──────────────────────────────
     // Enforcement state deliberately lives HERE (synchronous prefs), not in
     // DataStore: the ChessGuardService accessibility callback must never
@@ -94,7 +101,9 @@ object ChessReadinessStore {
                     puzzleAvgSec = o.optNullableInt("puzzleAvgSec"),
                     rushScore = o.optNullableInt("rushScore"),
                     pPuzzle = o.optNullableInt("pPuzzle"),
-                    pRush = o.optNullableInt("pRush")
+                    pRush = o.optNullableInt("pRush"),
+                    // SPECIAL GREEN provenance — absent on legacy records.
+                    specialGreen = o.optBoolean("specialGreen", false)
                 )
             }
         } catch (_: Exception) {
@@ -117,6 +126,7 @@ object ChessReadinessStore {
                 it.rushScore?.let { v -> put("rushScore", v) }
                 it.pPuzzle?.let { v -> put("pPuzzle", v) }
                 it.pRush?.let { v -> put("pRush", v) }
+                if (it.specialGreen) put("specialGreen", true)
             })
         }
         prefs(context).edit().putString(KEY_HISTORY, arr.toString()).apply()
@@ -136,6 +146,55 @@ object ChessReadinessStore {
 
     fun saveRushAllTimeHigh(context: Context, value: Int) {
         prefs(context).edit().putInt(KEY_LAST_RUSH_ATH, value).apply()
+    }
+
+    /**
+     * The 3- and 5-minute Puzzle Rush all-time highs, tracked SEPARATELY —
+     * a record in one mode says nothing about the other. The legacy single
+     * value (v1-test baseline, always a 3-minute run) seeds the 3-minute
+     * bucket on first read so historical achievements carry over.
+     */
+    fun rushAllTimeHigh(context: Context, minutesMode: Int): Int {
+        val p = prefs(context)
+        return when (minutesMode) {
+            5 -> p.getInt(KEY_RUSH_ATH_5, 0)
+            else -> p.getInt(KEY_RUSH_ATH_3, p.getInt(KEY_LAST_RUSH_ATH, 0))
+        }
+    }
+
+    fun saveRushAllTimeHigh(context: Context, minutesMode: Int, value: Int) {
+        prefs(context).edit()
+            .putInt(if (minutesMode == 5) KEY_RUSH_ATH_5 else KEY_RUSH_ATH_3, value)
+            .apply()
+    }
+
+    /**
+     * SPECIAL GREEN grant: a new all-time Puzzle Rush record (3- or
+     * 5-minute mode) unlocks rated play exactly like a passed pre-game
+     * readiness test. Implemented as a marked GREEN_LIGHT entry in the v1
+     * test history — every gate consumer (Chess Guard evaluate(),
+     * [ChessPhase2Store.ratedPlayExpiresAt], the deferred-game reconciler)
+     * already keys off the latest GREEN_LIGHT entry, so the whole
+     * 60-minute session / rolling-window machinery applies unchanged. The
+     * entry carries the new record as its score and the [specialGreen]
+     * provenance flag for the UI.
+     *
+     * @return the appended authorization entry.
+     */
+    fun grantSpecialGreen(
+        context: Context,
+        rushScore: Int,
+        minutesMode: Int
+    ): ChessReadinessEngine.ReadinessTest {
+        val test = ChessReadinessEngine.ReadinessTest(
+            timestamp = System.currentTimeMillis(),
+            ccrs = rushScore.coerceIn(0, 100),
+            state = ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name,
+            rushScore = rushScore,
+            specialGreen = true
+        )
+        appendTest(context, test)
+        return test
     }
 
     // ── Linked habits (puzzle / rush credit) ───────────────────────────────
