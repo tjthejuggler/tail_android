@@ -388,6 +388,15 @@ class HabitsRepository {
                 } catch (e: Exception) {
                     Log.w(TAG, "post-save backup request failed: ${e.message}")
                 }
+
+                // Companion read API change feed: bump the last-change stamp,
+                // notify ContentObservers and fire ACTION_ENTRY_ADDED. Pure
+                // notification — must never break the save itself.
+                try {
+                    TailChangeLog.noteChange(context)
+                } catch (e: Exception) {
+                    Log.w(TAG, "companion change notification failed: ${e.message}")
+                }
             }
         }
 

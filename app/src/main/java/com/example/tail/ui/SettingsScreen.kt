@@ -361,6 +361,8 @@ fun SettingsScreen(
                     BridgeSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     InuitSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    CompanionApiSettingsSection(viewModel = viewModel, settings = settings)
                 }
             }
 
@@ -1283,6 +1285,108 @@ private fun InuitSettingsSection(
                         fontSize = 11.sp,
                         color = Color(0xFF66BB6A)
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Companion Read API settings section — master switch + per-habit opt-in for
+ * the /v2 ContentProvider endpoints (full history, meal rows, change feed).
+ * Same-keystore apps only (signature permission); the switch and per-habit
+ * checkboxes are the user's consent surface, exactly like the Inuit section.
+ */
+@Composable
+private fun CompanionApiSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    var enabled by remember(settings.companionApiEnabled) {
+        mutableStateOf(settings.companionApiEnabled)
+    }
+
+    Column {
+        Text("🤝 Companion Read API", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            text = "Let same-keystore companion apps (Hoot, Inuit, WAGS, …) read " +
+                   "habit data over the v2 content provider: habit types, FULL " +
+                   "history (text entries, meal logs with macros, daily counts), " +
+                   "option descriptions and change notifications. Only apps signed " +
+                   "with this keystore can ever read anything.",
+            fontSize = 11.sp,
+            color = Color(0xFF888888)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Enabled", fontSize = 14.sp)
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    viewModel.setCompanionApiEnabled(it)
+                }
+            )
+        }
+        Text(
+            text = "Off = every v2 endpoint returns nothing (kill switch).",
+            fontSize = 11.sp,
+            color = Color(0xFF888888)
+        )
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            val eligible = (settings.habitScreens.flatMap { it.habitNames } +
+                settings.habitOrder + com.example.tail.data.HABIT_ORDER)
+                .filter {
+                    it.isNotBlank() && !it.startsWith("app_link:") &&
+                        !it.startsWith("secondary_value") && !it.startsWith("minutes:")
+                }
+                .distinct()
+                .sorted()
+            if (settings.companionReadHabits.isEmpty()) {
+                Text(
+                    text = "All ${eligible.size} habits are shared.",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF66BB6A)
+                )
+                Text(
+                    text = "Tick habits below to RESTRICT sharing to only those.",
+                    fontSize = 11.sp,
+                    color = Color(0xFF888888)
+                )
+            } else {
+                Text(
+                    text = "Sharing restricted to ${settings.companionReadHabits.size} habit(s).",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFFFFB74D)
+                )
+                Text(
+                    text = "Only ticked habits are visible to companions.",
+                    fontSize = 11.sp,
+                    color = Color(0xFF888888)
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            eligible.forEach { habit ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.toggleCompanionReadHabit(habit) },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = habit in settings.companionReadHabits,
+                        onCheckedChange = { viewModel.toggleCompanionReadHabit(habit) }
+                    )
+                    Text(habit, fontSize = 14.sp)
                 }
             }
         }

@@ -1,12 +1,22 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-18T08:15Z
+**Last updated:** 2026-09-19T15:00Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---
+
+## 2026-09-19T15:00Z — Companion Read API: /v2 ContentProvider endpoints for full-history companion apps
+- **R1** — [`/v2/habits`](plans/tail_integration_guide.md:895) enumerates opted-in habits with `habit_id`, `habit_name`, `habit_type` (counter/text/meal/timed/dated_entry/sleep/subtyped), `has_options`, `is_sharable`, `subtype_names`; [`/v2/apps`](plans/tail_integration_guide.md:895) lists app-link groupings. [`CompanionReadEndpoints.kt`](app/src/main/java/com/example/tail/ipc/CompanionReadEndpoints.kt:1) implements all v2 queries behind the existing [`HabitsContentProvider`](app/src/main/java/com/example/tail/ipc/HabitsContentProvider.kt:88) authority + signature permission.
+- **R2+R3** — [`/v2/habits/{id}/entries`](plans/tail_integration_guide.md:895) returns the FULL history (text entries untruncated — the 300-char/14-day caps stay Inuit-only), meal habits expose rich MealLog rows (macros, ingredients, vegan flag, group anchor), value habits expose daily/subtype/timed-session rows; `?from=` / `?to=` / `?after=` (string or epoch-millis) enable incremental sync, oldest-first ordering.
+- **R4** — all three notification options shipped in [`TailChangeLog.kt`](core-data/src/main/java/com/example/tail/data/TailChangeLog.kt:1): `notifyChange()` on the v2 URIs (ContentObserver), the permission-guarded `ACTION_ENTRY_ADDED` broadcast with `EXTRA_HABIT_ID`, and the `/v2/changes` `last_change_ts` endpoint. Hooks fire from the habitsdb save, text-log write and meal CRUD paths.
+- **R5** — meal rows carry the internal MealLog UUID (rename-proof); other rows use documented 32-hex SHA-256 ids over `namespace|habit|ts|subtype`.
+- **R6** — [`/v2/capabilities`](plans/tail_integration_guide.md:895) serves `api_version=2`, `min_supported_version=1` and a `features` JSON array so companions adapt instead of crash.
+- **§3 minimum** — [`/v2/habits/{id}/labels`](plans/tail_integration_guide.md:895) exposes the option inventory with `textInputOptionDescriptions` as `description`; `default_amount`/`default_unit`/`nutrient_tags` columns reserved for the upcoming labels feature.
+- **Consent** — ships ON by default (the signature permission is the trust boundary, same as v1); user controls are the kill switch `companionApiEnabled` and the restriction list `companionReadHabits` ([`AppSettings`](core-data/src/main/java/com/example/tail/data/HabitModels.kt:1745)) at Settings → Integrations → Companion Read API ([`CompanionApiSettingsSection`](app/src/main/java/com/example/tail/ui/SettingsScreen.kt:1294)) — empty list = all habits shared, non-empty = only ticked ones. V1 endpoints and the full protocol documentation live in [`plans/tail_integration_guide.md`](plans/tail_integration_guide.md:889) (Protocol v5).
+- **Hoot unblocked** — the same-keystore nutrition companion's "meal logs not exposed" banner resolved: with defaults, `/v2/habits` now lists meal habits (`habit_type=meal`), their `/entries` rows carry the `ingredients`/macro columns its [`TailClient`](../Hoot/app/src/main/java/com/example/hoot/data/tail/TailClient.kt:109) probes for, and `?limit=1` probes are honoured.
 
 ## 2026-09-18T08:15Z — Widget art repair: lizard alpha holes filled, magenta remnants scrubbed from scenery layers
 - **The see-through "holes" in the mecha-lizard are gone.** The tier-bar strips keyed/feathered their own artwork away: morph strips (`tier_bar_lizard_m*`) chroma-keyed on pure blue ate the lizard's BLUE glow accents (spans m3/m10) wherever they were enclosed, and milestone strips (`tier_bar_lizard_t*`) had a brightness feather that made every dark-metal pixel semi-transparent (up to 134k px/strip). Pose sprites (`lizard_pose_*`) suffered the same erosion via their magenta/green keys. [`wallpaper_gen/fix_lizard_alpha.py`](wallpaper_gen/fix_lizard_alpha.py:1) restores alpha-only: border-connected transparency stays, enclosed creature-detail regions (RGB intact underneath — verified) become opaque again; legit voids (black erase rects for dummy squares in poses, dark coil gaps in milestones) are preserved. 236 files repaired, ~4.5M pixels.

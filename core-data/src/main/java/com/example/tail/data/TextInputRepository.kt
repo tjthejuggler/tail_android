@@ -156,7 +156,7 @@ class TextInputRepository {
             else -> LocalDateTime.now()
         }.format(TEXT_LOG_DATE_FMT)
         existing[timestamp] = text
-        saveTextLog(uri, context, existing)
+        saveTextLog(uri, context, existing, habitHint = habitName)
         if (habitName != null) saveInternalBackup(context, habitName, existing)
         existing
     }
@@ -195,7 +195,7 @@ class TextInputRepository {
             val ts = baseDateTime.plusSeconds(index.toLong()).format(TEXT_LOG_DATE_FMT)
             existing[ts] = text
         }
-        saveTextLog(uri, context, existing)
+        saveTextLog(uri, context, existing, habitHint = habitName)
         if (habitName != null) saveInternalBackup(context, habitName, existing)
         existing
     }
@@ -211,7 +211,9 @@ class TextInputRepository {
     private suspend fun saveTextLog(
         uri: Uri,
         context: Context,
-        log: Map<String, String>
+        log: Map<String, String>,
+        /** Habit the write belongs to, when the caller knows it — used only for the companion change broadcast. */
+        habitHint: String? = null
     ) = withContext(Dispatchers.IO) {
         // Sort entries chronologically by timestamp (keys are "YYYY-MM-DD HH:mm:ss")
         val sortedLog = log.toSortedMap()
@@ -228,6 +230,11 @@ class TextInputRepository {
                 textLogCache = TextLogCache(key, java.util.Collections.unmodifiableMap(sortedLog))
             } else {
                 textLogCache = null
+            }
+            // Companion read API change feed — fire-and-forget, never breaks the save.
+            try {
+                TailChangeLog.noteChange(context, habitHint)
+            } catch (_: Exception) {
             }
         }
     }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
+import com.example.tail.data.TailChangeLog
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
@@ -174,6 +175,7 @@ class MealLogRepository(private val context: Context) {
             val current = loadLogs(log.habitId).toMutableList()
             current.add(0, log)
             logFile(log.habitId).writeText(gson.toJson(current))
+            notifyCompanion(log.habitId)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add meal log", e)
         }
@@ -187,6 +189,7 @@ class MealLogRepository(private val context: Context) {
             if (idx >= 0) {
                 current[idx] = updated
                 logFile(updated.habitId).writeText(gson.toJson(current))
+                notifyCompanion(updated.habitId)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to update meal log ${updated.id}", e)
@@ -202,9 +205,21 @@ class MealLogRepository(private val context: Context) {
                 deleteImage(target.imageUri)
                 current.removeAll { it.id == logId }
                 logFile(habitId).writeText(gson.toJson(current))
+                notifyCompanion(habitId)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete meal log $logId", e)
+        }
+    }
+
+    /**
+     * Companion read API change feed — fire-and-forget; a notification
+     * failure must never break the meal CRUD operation itself.
+     */
+    private fun notifyCompanion(habitId: String) {
+        try {
+            TailChangeLog.noteChange(context, habitId)
+        } catch (_: Exception) {
         }
     }
 

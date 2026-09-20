@@ -884,4 +884,139 @@ ANNOUNCEMENT (Tail → you):
 
 ---
 
-*This guide covers the complete IPC surface of Tail as of 2026-08-22 (Protocol v4). The endpoints (ContentProvider + BroadcastReceiver + SetValuesReceiver + increment announcements) are the only supported integration points. Direct file access to `habitsdb_phone.txt` is not recommended as it bypasses Tail's atomic read-modify-write logic and risks data corruption.*
+## Part 5 — Companion Read API (Protocol v5, 2026-09-19)
+
+**Status: implemented.** Fulfils the 2026-09-19 "Extended Read API for External
+Companion Apps" request (R1–R6 + the §3 option-descriptions minimum). All v2
+endpoints live under the existing authority `content://com.example.tail.provider`,
+are read-only, and are covered by the SAME signature permission
+(`com.example.tail.permission.TAIL_INTEGRATION` on the provider's
+`android:readPermission`) — nothing changed for v1 callers.
+
+**Consent model (read this first):** the signature permission (same-keystore
+only) is the primary trust boundary — identical to v1, which exposes all habit
+names with no switch at all. The v2 surface therefore ships **ON by default**;
+two user controls exist for curation and emergencies:
+1. the kill switch **Settings → Integrations → Companion Read API** (`companionApiEnabled`, default ON) — off = every v2 endpoint returns nothing;
+2. the restriction list in the same section (`companionReadHabits`) — when empty (default) ALL habits are shared; when non-empty ONLY the ticked habits are visible to v2.
+The v1
+Inuit endpoints and their tight bounds are unchanged.
+
+Implementation: `app/src/main/java/com/example/tail/ipc/CompanionReadEndpoints.kt`
+(query logic) + `core-data/.../data/TailChangeLog.kt` (change feed).
+
+### R6 — Capabilities
+
+`content://com.example.tail.provider/v2/capabilities` → one row:
+
+| Column | Type | Value today |
+|---|---|---|
+| `api_version` | Int | `2` |
+| `min_supported_version` | Int | `1` |
+| `features` | String | JSON array: `["habits_v2","apps_v2","entries_full","entries_incremental","meal_logs","text_entries","value_entries","option_descriptions","change_feed","capability_flags"]` |
+
+Always query this first and degrade to v1 endpoints when a flag is missing.
+
+### R1 — Habit & app enumeration
+
+`content://com.example.tail.provider/v2/habits` → opted-in habits only:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `habit_id` | String | the habit name (Tail's internal key; see rename caveat below) |
+| `habit_name` | String | display name |
+| `habit_type` | String | `counter` · `text` · `meal` · `timed` · `dated_entry` · `sleep` · `subtyped` |
+| `has_options` | Boolean (Int) | text-habit "show options" sub-feature on |
+| `is_sharable` | Boolean (Int) | text-habit share-sheet sub-feature on |
+| `subtype_names` | String? | JSON array for subtyped habits, else null |
+
+`content://com.example.tail.provider/v2/apps` → `app_id` (package name),
+`app_name`, `habit_count` for the app-link groupings.
+
+### R2 + R3 + R5 — Full history
+
+`content://com.example.tail.provider/v2/habits/{habit_id}/entries`
+(also accepts bare `/v2/habits/{habit_id}`) — every entry of that habit,
+**oldest first**, filtered by query params:
+
+- `?from=YYYY-MM-DD HH:mm:ss` — inclusive lower bound
+- `?to=YYYY-MM-DD HH:mm:ss` — inclusive upper bound
+- `?after=<ts>` — strictly-greater; accepts the log format above **or epoch millis** (all-digit value). Store the max seen and pass it back for incremental sync.
+- `?limit=N` — optional row cap (applied AFTER oldest-first sort). Capability probes can ask for one row cheaply; omit for the full backlog.
+
+Columns (union projection; unused columns are null for a given row shape):
+
+| Column | Text row | Value row | Meal row |
+|---|---|---|---|
+| `entry_id` | SHA-256(32 hex) | SHA-256(32 hex) | **MealLog UUID** |
+| `habit_name` | ✓ | ✓ | ✓ |
+| `entry_ts` | `"yyyy-MM-dd HH:mm:ss"` | `"date 00:00:00"` | log time |
+| `value` | — | daily count / session count | — |
+| `subtype` | — | subtyped & timed rows | — |
+| `entry_text` | FULL, untruncated | — | — |
+| `timestamp` | — | — | epoch millis |
+| `group_start_timestamp` | — | — | group anchor or null |
+| `title` / `summary` / `calories` | — | — | ✓ |
+| `protein_grams` / `carbs_grams` / `fat_grams` | — | — | Doubles |
+| `ingredients` | — | — | JSON array string |
+| `is_vegan_verified` / `is_manual` / `counted_increment` | — | — | Booleans (Int) |
+| `health_notes` / `voice_transcript` | — | — | nullable strings |
+
+Value rows cover counter habits (daily counts from habitsdb.txt), subtyped
+habits (one row per subtype per day, from subtype_data.json) and timed habits
+(one row per session, from timed_data.json).
+
+**R5 entry-id semantics:** meal rows carry the internal `MealLog.id` UUID —
+globally unique, rename-proof, survives restarts. Non-meal ids are documented
+SHA-256 digests over `"namespace|habit|ts(|subtype)"` — deterministic across
+restarts and Tail updates, but they incorporate the habit NAME (Tail keys
+habits by name internally), so a habit rename changes them. Meal rows are
+immune; value/text rows should be re-keyed by companions on rename (detect
+via `/v2/habits` listing the new name with the same shape).
+
+### §3 — Labels / option descriptions (minimum viable)
+
+`content://com.example.tail.provider/v2/habits/{habit_id}/labels` → the
+text-habit option inventory with the `textInputOptionDescriptions` metadata:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `label_id` | String | SHA-256(32 hex) over `"label|habit|option_text"` |
+| `label_text` | String | the option text as logged (e.g. "Magnesium") |
+| `description` | String? | the stored option description (e.g. "400 mg citrate, morning") |
+| `default_amount` / `default_unit` / `nutrient_tags` | — | always null today; reserved for the upcoming labels feature |
+
+Note on renames: Tail's option renames are retroactive (they rewrite past log
+entries), and descriptions are keyed by option text, so a rename effectively
+moves the description too. The stable `label_id` therefore hashes the CURRENT
+text; companions should re-resolve labels after any observed change rather
+than caching ids forever. A `labels/changes` old→new feed is future work once
+the structured labels feature (stable ids + amounts + units) ships.
+
+### R4 — Change notification (all three options provided)
+
+1. **ContentObserver** — register on `content://com.example.tail.provider/v2/habits`
+   (or `/v2/changes`) with `notifyForDescendants=true`; Tail calls
+   `notifyChange()` after every habit-DB save, text-log write and meal CRUD.
+2. **Broadcast** — `com.example.tail.ACTION_ENTRY_ADDED` with optional extra
+   `EXTRA_HABIT_ID` (String), sent with receiver permission
+   `com.example.tail.permission.TAIL_INTEGRATION`. Manifest entry:
+
+   ```xml
+   <receiver android:name=".YourChangeReceiver" android:exported="true"
+       android:permission="com.example.tail.permission.TAIL_INTEGRATION">
+       <intent-filter>
+           <action android:name="com.example.tail.ACTION_ENTRY_ADDED" />
+       </intent-filter>
+   </receiver>
+   ```
+3. **Cheap poll** — `content://com.example.tail.provider/v2/changes` → one row,
+   `last_change_ts` (Long epoch millis; 0 = nothing recorded yet). Poll on your
+   own schedule; when it moved, run an `?after=` incremental pull.
+
+*This guide covers the complete IPC surface of Tail as of 2026-09-19 (Protocol v5).
+The endpoints (ContentProvider v1+v2, BroadcastReceiver, SetValuesReceiver,
+increment announcements, companion change feed) are the only supported
+integration points. Direct file access to `habitsdb_phone.txt` is not
+recommended as it bypasses Tail's atomic read-modify-write logic and risks
+data corruption.*

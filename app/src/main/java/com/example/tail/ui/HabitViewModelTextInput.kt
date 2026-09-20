@@ -254,6 +254,32 @@ fun HabitViewModel.toggleInuitTextHabit(habitName: String) {
 }
 
 /**
+ * Master switch for the companion read API. When off, the ContentProvider
+ * v2 endpoints (full history / meal rows / change feed) expose nothing
+ * even if habits remain opted in.
+ */
+fun HabitViewModel.setCompanionApiEnabled(enabled: Boolean) {
+    viewModelScope.launch {
+        settingsRepo.saveCompanionApiEnabled(enabled)
+        _settings.value = _settings.value.copy(companionApiEnabled = enabled)
+    }
+}
+
+/**
+ * Toggles whether [habitName]'s FULL history is shared with companion apps
+ * via the v2 provider endpoints. A habit that is not opted in is invisible
+ * there — full-backlog read is sensitive, so consent is per habit.
+ */
+fun HabitViewModel.toggleCompanionReadHabit(habitName: String) {
+    viewModelScope.launch {
+        val current = _settings.value.companionReadHabits.toMutableSet()
+        if (habitName in current) current.remove(habitName) else current.add(habitName)
+        settingsRepo.saveCompanionReadHabits(current)
+        _settings.value = _settings.value.copy(companionReadHabits = current)
+    }
+}
+
+/**
  * Associates [uri] as the text-log file for [habitName].
  * Takes a persistent read+write permission on the URI.
  */

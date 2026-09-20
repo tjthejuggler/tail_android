@@ -1742,6 +1742,26 @@ data class AppSettings(
     /** ISO date ("YYYY-MM-DD") of the most recent successful Drive auto-backup. */
     val gdriveLastBackupDate: String = "",
 
+    // ── Companion Read API (v2 ContentProvider endpoints) ─────────────────
+    /**
+     * Master switch (kill switch) for the companion read API — the /v2
+     * endpoints of HabitsContentProvider (full history, meal rows, change
+     * feed). ON by default: the signature permission (same-keystore only)
+     * is the trust boundary, mirroring the v1 endpoints which expose all
+     * habit names with no switch at all. Turning this off makes every v2
+     * endpoint return empty.
+     */
+    val companionApiEnabled: Boolean = true,
+
+    /**
+     * RESTRICTION list for full-history sharing (Settings → Integrations →
+     * Companion Read API). EMPTY (the default) = ALL habits are shared with
+     * same-keystore companion apps; a non-empty set shares ONLY the listed
+     * habits. Lets privacy-conscious users curate the v2 surface without
+     * blocking the happy path.
+     */
+    val companionReadHabits: Set<String> = emptySet(),
+
     // ── Points-driven wallpaper ────────────────────────────────────────────
     /** Master switch for the points-driven wallpaper feature. */
     val wallpaperEnabled: Boolean = false,

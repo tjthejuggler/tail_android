@@ -54,6 +54,9 @@ private val KEY_TEXT_INPUT_HIDDEN_GROUPINGS = stringPreferencesKey("text_input_h
 // Inuit (trivia trainer) integration: master switch + text habits shared with it
 private val KEY_INUIT_INTEGRATION_ENABLED = booleanPreferencesKey("inuit_integration_enabled")
 private val KEY_INUIT_TEXT_HABITS = stringSetPreferencesKey("inuit_text_habits")
+// Companion read API (v2 provider endpoints): master switch + per-habit opt-in
+private val KEY_COMPANION_API_ENABLED = booleanPreferencesKey("companion_api_enabled")
+private val KEY_COMPANION_READ_HABITS = stringSetPreferencesKey("companion_read_habits")
 // Stored as "habitName\x00uri|||habitName\x00uri" pairs
 private val KEY_TEXT_INPUT_FILE_URIS = stringPreferencesKey("text_input_file_uris")
 // Stored as "habitName\x00iconName|||habitName\x00iconName" pairs
@@ -983,6 +986,8 @@ class SettingsRepository(private val context: Context) {
             sharableTextHabits = prefs[KEY_SHARABLE_TEXT_HABITS] ?: emptySet(),
             inuitIntegrationEnabled = prefs[KEY_INUIT_INTEGRATION_ENABLED] ?: false,
             inuitTextHabits = prefs[KEY_INUIT_TEXT_HABITS] ?: emptySet(),
+            companionApiEnabled = prefs[KEY_COMPANION_API_ENABLED] ?: true,
+            companionReadHabits = prefs[KEY_COMPANION_READ_HABITS] ?: emptySet(),
             textInputFileUris = decodeFileUriMap(textInputFileUrisRaw),
             habitIcons = decodeFileUriMap(habitIconsRaw),
             datedEntryHabits = prefs[KEY_DATED_ENTRY_HABITS] ?: emptySet(),
@@ -1272,6 +1277,20 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveInuitTextHabits(habits: Set<String>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_INUIT_TEXT_HABITS] = habits
+        }
+    }
+
+    /** Saves the master switch for the companion read API (v2 provider endpoints). */
+    suspend fun saveCompanionApiEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_COMPANION_API_ENABLED] = enabled
+        }
+    }
+
+    /** Saves the set of habits opted in for full-history companion sharing. */
+    suspend fun saveCompanionReadHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_COMPANION_READ_HABITS] = habits
         }
     }
 
