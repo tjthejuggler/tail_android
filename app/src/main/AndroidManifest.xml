@@ -232,6 +232,25 @@
             </intent-filter>
         </receiver>
 
+        <!--
+            BroadcastReceiver (Protocol v6): companion WRITE path — lets a
+            same-keystore app (Hoot) append text entries to shared text habits
+            (pills / water / electrolytes) and insert structured meal logs into
+            meal habits, closing the joint-habit loop: a change made in either
+            app reflects in the other for that day. Every successful write
+            fires the change feed (TailChangeLog), so the companion's existing
+            pull pipeline picks the reflection up.
+        -->
+        <receiver
+            android:name=".ipc.CompanionEntryReceiver"
+            android:exported="true"
+            android:permission="com.example.tail.permission.TAIL_INTEGRATION">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_ADD_TEXT_ENTRY" />
+                <action android:name="com.example.tail.ACTION_ADD_MEAL_LOG" />
+            </intent-filter>
+        </receiver>
+
 -------
         <!--
             HabitIncrementConfirmActivity: shows a brief confirmation message
