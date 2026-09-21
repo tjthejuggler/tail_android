@@ -46,6 +46,32 @@ python3 compose_final.py     # PIL only; fills final/
 `compose_final.py` verifies every output is 1440x3088 and prints an offset
 summary; rerun it alone any time to rebuild `final/` from `raw/`.
 
+## Pose placement + size sweep — 14 finals repaired — 2026-09-20
+
+User-reported defects ("lizards float above the blocks they should fill /
+sit on", "later-tier lizards too small, make them 3-4 squares wide"). New
+`audit_lizard_placements.py` measured every shipped final the way the app
+composites it and found 4 FLOAT (grounded poses hanging up to 74% of a cell
+above their squares: t2_p06 controller, t4_p06 dj, t7_p02 curled, t8_p06
+blueprint) and 10 SMALL (bulk under 0.85x of band, all tiers 5-11) —
+`verify()` only WARNS about these at generation time, so they had shipped.
+
+`repair_lizard_placements.py` fixed them deterministically, no API calls:
+FLOAT layers shifted down onto the square's top face (+12px toe grip, the
+fix_t12_p07_rebase precedent); SMALL lizards rescaled toward the band
+midpoint on WIDER canvases (2 cols -> 3-4 cols per the user's directive,
+dummy-cell runs extended under the scaled feet) — normalize_lizard_size()
+alone couldn't do this because its horizontal fit-cap pins the layer to its
+old centre. t11_p04 origami needed a second pass (`fix_t11_p04_origami.py`)
+adding a headroom row (canvas 4x3). 13 bulk bands raised for late-tier
+poses in `pose_sets.py` (t5 coffee/repair, t6 hourglass/incense, t7 banner,
+t8 curled, t9 flasks/butterfly/crystal_chamber, t10 tesla/ice/
+lightning_bottle, t11 music_box/doves/love_letter), defs updated to the new
+3-4 col geometry, manifest rewritten. Re-audit: 144 OK / 0 FLOAT / 0 SMALL
+/ 0 GEO. Pre-repair finals backed up in `raw/poses_backup_20260920/`.
+Tier 1 shipped-art defs remain byte-identical (only a canvas-geometry fix
+to one PNG would touch it; none did — t1 needed no repairs).
+
 ## Lizard per-point growth morphs (widget) — ALL 12 SPANS — 2026-09-17
 
 `gen_lizard_morph.py` generates the point-by-point GROWTH art between two

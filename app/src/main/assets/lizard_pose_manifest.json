@@ -1396,12 +1396,12 @@
       {
         "file": "lizard_pose_t5_p03",
         "name": "coffee",
-        "cols": 2,
+        "cols": 4,
         "rows": 2,
         "anchored": "below",
         "bulk": [
-          0.22,
-          0.42
+          0.4,
+          0.6
         ],
         "dummies": [
           [
@@ -1414,8 +1414,8 @@
           ]
         ],
         "cells": [
-          "00",
-          "11"
+          "0000",
+          "1100"
         ]
       },
       {
@@ -1425,8 +1425,8 @@
         "rows": 2,
         "anchored": "below",
         "bulk": [
-          0.24,
-          0.44
+          0.4,
+          0.6
         ],
         "dummies": [
           [
@@ -1813,8 +1813,8 @@
         "rows": 2,
         "anchored": "below",
         "bulk": [
-          0.35,
-          0.55
+          0.45,
+          0.65
         ],
         "dummies": [
           [
@@ -1834,12 +1834,12 @@
       {
         "file": "lizard_pose_t6_p10",
         "name": "incense",
-        "cols": 2,
+        "cols": 4,
         "rows": 2,
         "anchored": "below",
         "bulk": [
-          0.3,
-          0.5
+          0.45,
+          0.65
         ],
         "dummies": [
           [
@@ -1849,11 +1849,15 @@
           [
             1,
             1
+          ],
+          [
+            1,
+            2
           ]
         ],
         "cells": [
-          "00",
-          "11"
+          "0000",
+          "1110"
         ]
       },
       {
@@ -2045,7 +2049,7 @@
       {
         "file": "lizard_pose_t7_p06",
         "name": "banner",
-        "cols": 2,
+        "cols": 4,
         "rows": 3,
         "anchored": "below",
         "bulk": [
@@ -2060,12 +2064,16 @@
           [
             2,
             1
+          ],
+          [
+            2,
+            2
           ]
         ],
         "cells": [
-          "00",
-          "00",
-          "11"
+          "0000",
+          "0000",
+          "1110"
         ]
       },
       {
@@ -2257,7 +2265,7 @@
       {
         "file": "lizard_pose_t8_p02",
         "name": "curled",
-        "cols": 2,
+        "cols": 3,
         "rows": 3,
         "anchored": "below",
         "bulk": [
@@ -2275,9 +2283,9 @@
           ]
         ],
         "cells": [
-          "00",
-          "00",
-          "11"
+          "000",
+          "000",
+          "110"
         ]
       },
       {
@@ -2599,27 +2607,27 @@
       {
         "file": "lizard_pose_t9_p03",
         "name": "flasks",
-        "cols": 2,
+        "cols": 4,
         "rows": 3,
         "anchored": "below",
         "bulk": [
-          0.24,
-          0.44
+          0.45,
+          0.65
         ],
         "dummies": [
           [
             2,
-            0
+            1
           ],
           [
             2,
-            1
+            2
           ]
         ],
         "cells": [
-          "00",
-          "00",
-          "11"
+          "0000",
+          "0000",
+          "0110"
         ]
       },
       {
@@ -2705,8 +2713,8 @@
         "rows": 2,
         "anchored": "below",
         "bulk": [
-          0.32,
-          0.52
+          0.45,
+          0.65
         ],
         "dummies": [
           [
@@ -2730,8 +2738,8 @@
         "rows": 3,
         "anchored": "below",
         "bulk": [
-          0.35,
-          0.55
+          0.5,
+          0.7
         ],
         "dummies": [
           [
@@ -2915,8 +2923,8 @@
         "rows": 3,
         "anchored": "below",
         "bulk": [
-          0.4,
-          0.6
+          0.5,
+          0.7
         ],
         "dummies": [
           [
@@ -2937,12 +2945,12 @@
       {
         "file": "lizard_pose_t10_p04",
         "name": "ice",
-        "cols": 2,
+        "cols": 4,
         "rows": 2,
         "anchored": "below",
         "bulk": [
-          0.28,
-          0.48
+          0.45,
+          0.65
         ],
         "dummies": [
           [
@@ -2955,8 +2963,8 @@
           ]
         ],
         "cells": [
-          "00",
-          "11"
+          "0000",
+          "1100"
         ]
       },
       {
@@ -2966,8 +2974,8 @@
         "rows": 2,
         "anchored": "below",
         "bulk": [
-          0.3,
-          0.5
+          0.45,
+          0.65
         ],
         "dummies": [
           [
@@ -3172,7 +3180,7 @@
       {
         "file": "lizard_pose_t11_p01",
         "name": "face_on",
-        "cols": 2,
+        "cols": 4,
         "rows": 2,
         "anchored": "below",
         "bulk": [
@@ -3190,8 +3198,8 @@
           ]
         ],
         "cells": [
-          "00",
-          "11"
+          "0000",
+          "1100"
         ]
       },
       {
@@ -3223,7 +3231,7 @@
       {
         "file": "lizard_pose_t11_p03",
         "name": "bandage",
-        "cols": 2,
+        "cols": 4,
         "rows": 3,
         "anchored": "below",
         "bulk": [
@@ -3238,19 +3246,27 @@
           [
             2,
             1
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            2,
+            3
           ]
         ],
         "cells": [
-          "00",
-          "00",
-          "11"
+          "0000",
+          "0000",
+          "1111"
         ]
       },
       {
         "file": "lizard_pose_t11_p04",
         "name": "origami",
-        "cols": 2,
-        "rows": 2,
+        "cols": 4,
+        "rows": 3,
         "anchored": "below",
         "bulk": [
           0.45,
@@ -3258,17 +3274,18 @@
         ],
         "dummies": [
           [
-            1,
-            0
+            2,
+            1
           ],
           [
-            1,
-            1
+            2,
+            2
           ]
         ],
         "cells": [
-          "00",
-          "11"
+          "0000",
+          "0000",
+          "0110"
         ]
       },
       {
@@ -3304,8 +3321,8 @@
         "rows": 2,
         "anchored": "below",
         "bulk": [
-          0.3,
-          0.5
+          0.45,
+          0.65
         ],
         "dummies": [
           [
@@ -3355,8 +3372,8 @@
         "rows": 2,
         "anchored": "below",
         "bulk": [
-          0.3,
-          0.5
+          0.45,
+          0.65
         ],
         "dummies": [
           [
@@ -3376,12 +3393,12 @@
       {
         "file": "lizard_pose_t11_p09",
         "name": "love_letter",
-        "cols": 2,
+        "cols": 3,
         "rows": 3,
         "anchored": "below",
         "bulk": [
-          0.28,
-          0.48
+          0.45,
+          0.65
         ],
         "dummies": [
           [
@@ -3394,9 +3411,9 @@
           ]
         ],
         "cells": [
-          "00",
-          "00",
-          "11"
+          "000",
+          "000",
+          "110"
         ]
       },
       {

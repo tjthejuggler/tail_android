@@ -18,6 +18,9 @@ Layout templates (dummy coords are (row, col), row 0 = top; canvases stay
 Rules (ADR "pose SCALE consistency" + README 2026-09-05):
   · bulk bands are posture-derived: low-slung 0.30-0.55, standing 0.30-0.65,
     upright 0.48-0.75, curled 0.70-0.95, levitation 0.55-0.80;
+  · 2026-09-20 policy: late-age (t5+) poses must read BIG — standing bands
+    below 0.45 were raised (see tier 5/6/9/10/11 edits); never ship a
+    late-tier lizard miniature next to its squares;
   · grounded poses must physically touch the blocks; only inherently
     mid-air actions set anchored="airborne";
   · glowing props take the lizard's OWN accent colour, never a chroma-key
@@ -34,9 +37,11 @@ def _walk(pose):
                 dummies=[(1, 0), (1, 1)], bulk=(0.30, 0.45), pose=pose)
 
 
-def _face_on(pose):
-    return dict(name="face_on", cols=2, rows=2,
-                dummies=[(1, 0), (1, 1)], bulk=(0.55, 0.75), pose=pose)
+def _face_on(pose, **kw):
+    d = dict(name="face_on", cols=2, rows=2,
+             dummies=[(1, 0), (1, 1)], bulk=(0.55, 0.75), pose=pose)
+    d.update(kw)
+    return d
 
 
 def _curled(name, pose, **kw):
@@ -431,14 +436,14 @@ POSES_BY_TIER = {
                  "mug in both front feet, savouring the aroma with eyes "
                  "half closed, a tiny folded newspaper lying on the block "
                  "beside him",
-                 bulk=(0.22, 0.42)),
+                 bulk=(0.4, 0.6), cols=4),
         _gap("repair",
              "kneeling on the left block, repairing a small vertical "
              "valve assembly mounted on a brushed-steel pipe that runs "
              "up from the right block's top face, a leather toolbelt "
              "around his hips, turning a big spanner on the valve with "
              "both front feet, head lowered to the work",
-             bulk=(0.24, 0.44)),
+             bulk=(0.4, 0.6)),
         _gap("grill",
              "standing on the left block tending a small kettle grill, "
              "turning two skewers with tiny tongs, a thin ribbon of smoke "
@@ -523,13 +528,14 @@ POSES_BY_TIER = {
                  "himself resting on the block, one claw resting on its "
                  "frame, watching the last white sand trickle, "
                  "contemplative",
-                 bulk=(0.35, 0.55)),
+                 bulk=(0.45, 0.65)),
         _onblock("incense",
                  "sitting serenely before a small brass dish holding a "
                  "coiled incense spiral on the block, a single thin "
                  "ribbon of grey smoke rising straight up from the "
                  "coil, eyes closed",
-                 bulk=(0.3, 0.5)),
+                 bulk=(0.45, 0.65), cols=4,
+                 dummies=[(1, 0), (1, 1), (1, 2)]),
         _upright("starmap",
                  "standing upright on the block holding a cream star "
                  "chart scroll unrolled in both front feet at chest "
@@ -581,7 +587,8 @@ POSES_BY_TIER = {
                  "block, a long flowing red banner unfurling from the "
                  "pole's top and streaming sideways in the wind, chin "
                  "high and proud",
-                 bulk=(0.55, 0.75),
+                 bulk=(0.55, 0.75), cols=4,
+                 dummies=[(2, 0), (2, 1), (2, 2)],
                  avoid="The banner is his red accent colour — never "
                        "blue, never green."),
         _gap("catapult",
@@ -637,7 +644,8 @@ POSES_BY_TIER = {
                 "spiral resting ON TOP of the block, the whole coiled "
                 "body fully ABOVE the block's top edge, tail wrapped "
                 "around the upper part of the body, eye half closed "
-                "and content"),
+                "and content",
+                cols=3),
         _upright("anvil",
                  "hammering a small glowing ingot on a tiny steel anvil "
                  "set on the block, hammer raised mid-swing in one front "
@@ -725,7 +733,8 @@ POSES_BY_TIER = {
                  "tending a small row of round glass flasks with "
                  "bubbling liquids set on the block, giving one flask a "
                  "gentle swirl with a claw, tiny bubbles rising",
-                 bulk=(0.24, 0.44),
+                 bulk=(0.45, 0.65), cols=4,
+                 dummies=[(2, 1), (2, 2)],
                  avoid="The liquids glow his green accent colour — "
                        "never yellow, never magenta."),
         _onblock("mortar",
@@ -754,14 +763,14 @@ POSES_BY_TIER = {
                  "standing perfectly still with one front foot extended, "
                  "a delicate glowing butterfly with antenna perched on "
                  "his claw, gazing at it fondly — his familiar",
-                 bulk=(0.32, 0.52),
+                 bulk=(0.45, 0.65),
                  avoid="The butterfly's wings glow his green accent "
                        "colour — never yellow, never magenta."),
         _upright("crystal_chamber",
                  "watching a cluster of small raw crystals growing in "
                  "an open glass case on the block, one palm flat on the "
                  "glass, face close and wondering",
-                 bulk=(0.35, 0.55),
+                 bulk=(0.5, 0.7),
                  avoid="The crystals glow his green accent colour — "
                        "never yellow, never magenta."),
         _onblock("smoke_div",
@@ -812,7 +821,7 @@ POSES_BY_TIER = {
                  "block, one claw raised — a thin electric arc snapping "
                  "from the coil's top to his claw tip, hair-raised "
                  "delight on his face",
-                 bulk=(0.4, 0.6),
+                 bulk=(0.5, 0.7),
                  avoid="The arc glows his pale blue accent colour — "
                        "never magenta, never green."),
         _onblock("ice",
@@ -820,7 +829,7 @@ POSES_BY_TIER = {
                  "tiny lizard standing on the block, a slim chisel in "
                  "one front foot mid-tap, ice chips scattered around "
                  "the base",
-                 bulk=(0.28, 0.48),
+                 bulk=(0.45, 0.65), cols=4,
                  avoid="The ice is clear with a faint cold blue tint "
                        "like his accents — never magenta, never "
                        "green."),
@@ -828,7 +837,7 @@ POSES_BY_TIER = {
                  "holding up a corked glass bottle in both front feet "
                  "in which a tiny branching lightning bolt is trapped, "
                  "examining it like a prized specimen",
-                 bulk=(0.3, 0.5),
+                 bulk=(0.45, 0.65),
                  avoid="The trapped bolt glows his pale blue accent "
                        "colour — never magenta, never green."),
         _gap("aurora",
@@ -885,7 +894,8 @@ POSES_BY_TIER = {
               "caregiver's soft walk"),
         _face_on("seen face-on, a warm kind gaze straight at the viewer, "
                  "body foreshortened and narrow, front feet on the "
-                 "block, head tilted fondly"),
+                 "block, head tilted fondly",
+                 cols=4),
         _curled("curled",
                 "curled up like a napping cat, body coiled in a tight "
                 "spiral resting ON TOP of the block, the whole coiled "
@@ -897,13 +907,15 @@ POSES_BY_TIER = {
                  "around the tail of a little clockwork mouse sitting "
                  "on the block, tongue tip in concentration, the mouse "
                  "calm in his gentle grip",
+                 cols=4, dummies=[(2, 0), (2, 1), (2, 2), (2, 3)],
                  avoid="The mouse is grey steel with one small warm "
                        "white eye-light — never blue, never green."),
         _onblock("origami",
                  "sitting on the block mid-fold of a crisp paper crane, "
                  "two finished white paper cranes standing neatly in a "
                  "row beside him",
-                 bulk=(0.45, 0.65),
+                 bulk=(0.45, 0.65), cols=4, rows=3,
+                 dummies=[(2, 1), (2, 2)],
                  avoid="The paper is soft cream and pale pink — never "
                        "blue, never green."),
         _upright("flower_crown",
@@ -918,7 +930,7 @@ POSES_BY_TIER = {
                  "sitting with eyes closed beside an open brass music "
                  "box on the block, its little lid up and cylinder "
                  "pins visible, head swaying gently to the tune",
-                 bulk=(0.3, 0.5)),
+                 bulk=(0.45, 0.65)),
         _upright("carousel",
                  "standing UPRIGHT on the block, both hind feet planted "
                  "flat on the block's top face, winding the brass key on "
@@ -936,14 +948,14 @@ POSES_BY_TIER = {
                  "crouching to scatter seeds from one palm for two "
                  "plump white doves pecking on the block's top face "
                  "beside him, cooing quietly",
-                 bulk=(0.3, 0.5),
+                 bulk=(0.45, 0.65),
                  avoid="The doves are soft white with grey wing tips — "
                        "never blue, never green."),
         _upright("love_letter",
                  "hunched over a small cream letter laid flat on the "
                  "block, writing with a slender white quill, a stick "
                  "of red sealing wax and a tiny stamp beside the page",
-                 bulk=(0.28, 0.48)),
+                 bulk=(0.45, 0.65), cols=3),
         _upright("quilt",
                  "sitting with a small patchwork quilt draped across "
                  "his folded legs, pulling a needle and thread through "
