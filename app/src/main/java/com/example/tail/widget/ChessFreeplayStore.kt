@@ -2,11 +2,11 @@ package com.example.tail.widget
 
 import android.content.Context
 import android.util.Log
-import com.example.tail.data.ChessReadinessEngine
-import com.example.tail.data.freeplaySessionLastGameEnd
-import com.example.tail.data.freeplaySessionNetRatingChange
-import com.example.tail.data.freeplaySessionRefundDue
-import com.example.tail.data.freeplaySessionSettleAt
+import com.example.tail.data.chess.ChessReadinessEngine
+import com.example.tail.data.chess.freeplaySessionLastGameEnd
+import com.example.tail.data.chess.freeplaySessionNetRatingChange
+import com.example.tail.data.chess.freeplaySessionRefundDue
+import com.example.tail.data.chess.freeplaySessionSettleAt
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
@@ -253,7 +253,7 @@ object ChessFreeplayStore {
     /**
      * Settles every provisionally-spent freeplay whose session is
      * COMPLETE: either the 60-minute window expired, or the session
-     * idle-closed — no game for [com.example.tail.data.FREEPLAY_SETTLE_IDLE_MS]
+     * idle-closed — no game for [com.example.tail.data.chess.FREEPLAY_SETTLE_IDLE_MS]
      * after its last game (the same close semantics as the post-game
      * audit), so a net-positive session refunds minutes after the user
      * stops playing instead of an hour later.
@@ -304,7 +304,7 @@ object ChessFreeplayStore {
         context: Context,
         nowMs: Long = System.currentTimeMillis()
     ): Boolean = try {
-        val idle = com.example.tail.data.FREEPLAY_SETTLE_IDLE_MS
+        val idle = com.example.tail.data.chess.FREEPLAY_SETTLE_IDLE_MS
         usageLedger(context).any {
             it.netRatingChange == null && it.timestamp + idle <= nowMs
         }

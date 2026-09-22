@@ -1,6 +1,5 @@
-package com.example.tail.ui
+package com.example.tail.ui.loading
 
-import com.example.tail.data.habitPointsTier
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -10,6 +9,20 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.tail.data.habitPointsTier
+import com.example.tail.ui.common.BorderBlue
+import com.example.tail.ui.common.BorderGlass
+import com.example.tail.ui.common.BorderGreen
+import com.example.tail.ui.common.BorderOrange
+import com.example.tail.ui.common.BorderPink
+import com.example.tail.ui.common.BorderRed
+import com.example.tail.ui.common.BorderWhiteBlue
+import com.example.tail.ui.common.BorderWhiteGreen
+import com.example.tail.ui.common.BorderWhiteOrange
+import com.example.tail.ui.common.BorderWhitePink
+import com.example.tail.ui.common.BorderWhiteRed
+import com.example.tail.ui.common.BorderWhiteYellow
+import com.example.tail.ui.common.BorderYellow
 import kotlin.math.roundToInt
 
 /**

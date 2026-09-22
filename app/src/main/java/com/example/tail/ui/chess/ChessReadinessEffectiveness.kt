@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.chess
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -30,10 +30,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.tail.data.CcrsBandStats
-import com.example.tail.data.DayOfWeekStats
-import com.example.tail.data.GameCategory
-import com.example.tail.data.GameCategoryAggregate
+import com.example.tail.data.chess.CcrsBandStats
+import com.example.tail.data.chess.DayOfWeekStats
+import com.example.tail.data.chess.GameCategory
+import com.example.tail.data.chess.GameCategoryAggregate
+import com.example.tail.ui.common.rememberSectionExpansion
 import java.util.Locale
 import kotlin.math.roundToInt
 

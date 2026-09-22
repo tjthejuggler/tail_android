@@ -37,11 +37,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.lifecycleScope
-import com.example.tail.data.ChessComService
+import com.example.tail.data.chess.ChessComService
 import com.example.tail.data.SettingsRepository
 import com.example.tail.ui.theme.TailTheme
 import com.example.tail.widget.ChessAnalysisFetcher
-import com.example.tail.data.ChessComGameDetail
+import com.example.tail.data.chess.ChessComGameDetail
 import com.example.tail.widget.ChessDeferredGameReconciler
 import com.example.tail.widget.ChessGameAuditMapper
 import com.example.tail.widget.ChessPendingGameStore

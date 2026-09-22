@@ -9,8 +9,8 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import com.example.tail.data.MovieBridgeService
-import com.example.tail.data.MovieCacheStore
+import com.example.tail.data.movie.MovieBridgeService
+import com.example.tail.data.movie.MovieCacheStore
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.bridgeConnectionFrom
 import kotlinx.coroutines.flow.first

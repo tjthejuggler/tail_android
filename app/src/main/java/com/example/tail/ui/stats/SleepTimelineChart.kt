@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.stats
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -25,6 +25,9 @@ import androidx.compose.ui.unit.sp
 import com.example.tail.data.MINUTES_PER_DAY
 import com.example.tail.data.minutesToClockString
 import com.example.tail.data.parseDate
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.SleepSession
+import com.example.tail.ui.viewmodel.loadSleepSessions
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 

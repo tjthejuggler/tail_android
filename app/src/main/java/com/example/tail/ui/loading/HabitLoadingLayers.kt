@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.loading
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -11,6 +11,19 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.lerp
+import com.example.tail.ui.common.BorderBlue
+import com.example.tail.ui.common.BorderGlass
+import com.example.tail.ui.common.BorderGreen
+import com.example.tail.ui.common.BorderOrange
+import com.example.tail.ui.common.BorderPink
+import com.example.tail.ui.common.BorderRed
+import com.example.tail.ui.common.BorderWhiteBlue
+import com.example.tail.ui.common.BorderWhiteGreen
+import com.example.tail.ui.common.BorderWhiteOrange
+import com.example.tail.ui.common.BorderWhitePink
+import com.example.tail.ui.common.BorderWhiteRed
+import com.example.tail.ui.common.BorderWhiteYellow
+import com.example.tail.ui.common.BorderYellow
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin

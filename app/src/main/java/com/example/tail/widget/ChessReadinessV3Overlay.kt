@@ -1,6 +1,6 @@
 package com.example.tail.widget
 
-import com.example.tail.data.ChessReadinessEngine
+import com.example.tail.data.chess.ChessReadinessEngine
 import com.example.tail.widget.ChessReadinessV3Engine.Verdict
 import java.time.Instant
 import java.time.ZoneId
@@ -136,7 +136,7 @@ class ChessReadinessV3Overlay(
                     .settingsFlow.first()
                 val username = settings.chessComUsername.trim()
                 if (username.isNotEmpty()) {
-                    val fresh = com.example.tail.data.ChessComService()
+                    val fresh = com.example.tail.data.chess.ChessComService()
                         .getVariantRatings(username)
                     if (fresh.values.any { it > 0 }) {
                         ChessReadinessV3Store.saveVariantRatings(context, fresh)

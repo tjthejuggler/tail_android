@@ -1,4 +1,4 @@
-package com.example.tail.data
+package com.example.tail.data.media
 
 import android.content.BroadcastReceiver
 import android.content.Context

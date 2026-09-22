@@ -37,10 +37,11 @@ import com.example.tail.R
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
 import com.example.tail.data.BridgeClient
-import com.example.tail.data.GarminRepository
-import com.example.tail.data.GarminType
-import com.example.tail.data.HabitsRepository
+import com.example.tail.data.health.GarminRepository
+import com.example.tail.data.health.GarminType
+import com.example.tail.data.HabitIncrementBus
 import com.example.tail.data.HabitTimestampRepository
+import com.example.tail.data.HabitsRepository
 import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.appIconMonochromeOf
@@ -51,16 +52,16 @@ import com.example.tail.data.loadAppIconBitmap
 import com.example.tail.data.renderTextIconBitmap
 import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.textIconCharOf
-import com.example.tail.ui.getHabitIconRes
-import com.example.tail.data.HabitIncrementBus
+import com.example.tail.ui.common.getHabitIconRes
+import com.example.tail.ui.common.getHabitIconRes
 import java.time.LocalDate
+import kotlin.math.hypot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlin.math.hypot
 
 /**
  * Foreground service that displays a draggable floating bubble over other apps.

@@ -1,10 +1,10 @@
 package com.example.tail.widget
 
-import com.example.tail.data.ChessReadinessEngine
+import com.example.tail.data.chess.ChessReadinessEngine
 import android.content.Context
 import android.util.Log
-import com.example.tail.data.ChessComGameDetail
-import com.example.tail.data.ChessComService
+import com.example.tail.data.chess.ChessComGameDetail
+import com.example.tail.data.chess.ChessComService
 
 /**
  * ════════════════════════════════════════════════════════════════════════
@@ -118,7 +118,7 @@ object ChessDeferredGameReconciler {
         // The rolling-window rule lives in core-data (shared with the stats
         // layer) — ChessPhase2Engine delegates to the same function, so the
         // guard and the charts can never drift apart again.
-        return com.example.tail.data.rollingWindowExpiresAt(
+        return com.example.tail.data.chess.rollingWindowExpiresAt(
             last.timestamp,
             audits
                 .filter { it.timestamp in last.timestamp..gameStartMs }
@@ -156,9 +156,9 @@ object ChessDeferredGameReconciler {
        game: ChessComGameDetail,
        gameEndMs: Long
    ): Long =
-       com.example.tail.data.pgnStartEpochSec(game.pgn)?.times(1000L)
+       com.example.tail.data.chess.pgnStartEpochSec(game.pgn)?.times(1000L)
            ?: (gameEndMs -
-               (com.example.tail.data.estimateGameMinutes(game.timeControl) * 60_000).toLong())
+               (com.example.tail.data.chess.estimateGameMinutes(game.timeControl) * 60_000).toLong())
 
     /**
      * Classifies a FETCHED game and, when it was authorized at play time,

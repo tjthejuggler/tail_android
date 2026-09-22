@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.advice
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider

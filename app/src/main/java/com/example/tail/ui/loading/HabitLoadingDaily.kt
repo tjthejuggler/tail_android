@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.loading
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color

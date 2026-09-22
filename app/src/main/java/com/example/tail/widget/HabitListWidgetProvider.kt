@@ -410,7 +410,7 @@ class HabitListWidgetProvider : AppWidgetProvider() {
                     }
 
                     if (didIncrement) {
-                        com.example.tail.ui.HabitHaptics.confirmIncrement(appCtx)
+                        com.example.tail.ui.common.HabitHaptics.confirmIncrement(appCtx)
                         try {
                             HabitTimestampRepository(appCtx).addTimestamp(habitName)
                         } catch (e: Exception) {

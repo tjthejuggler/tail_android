@@ -10,6 +10,17 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import com.example.tail.data.chess.ChessReadinessEngine
+import com.example.tail.data.chess.ReadinessTestRecord
+import com.example.tail.data.chess.ChessComGame
+import com.example.tail.data.chess.ReadinessGameRecord
+import com.example.tail.data.chess.readinessContextAt
+import com.example.tail.data.chess.gameToRecord
+import com.example.tail.data.chess.computeFreeplayComparison
+import com.example.tail.data.chess.freeplaySessionNetRatingChange
+import com.example.tail.data.chess.freeplaySessionRefundDue
+import com.example.tail.data.chess.freeplaySessionSettleAt
+import com.example.tail.data.chess.FREEPLAY_SETTLE_IDLE_MS
 
 /**
  * Unit tests for the weekly FREEPLAY feature:

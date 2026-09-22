@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts

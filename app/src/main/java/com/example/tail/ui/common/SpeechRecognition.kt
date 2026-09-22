@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import android.content.Context
 import android.content.Intent

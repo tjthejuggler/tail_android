@@ -3,10 +3,10 @@ package com.example.tail.ipc
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import com.example.tail.ui.ACTION_HABIT_INCREMENTED
-import com.example.tail.ui.EXTRA_AMOUNT
-import com.example.tail.ui.EXTRA_HABIT_NAME
-import com.example.tail.ui.EXTRA_SOURCE
+import com.example.tail.ui.viewmodel.ACTION_HABIT_INCREMENTED
+import com.example.tail.ui.viewmodel.EXTRA_AMOUNT
+import com.example.tail.ui.viewmodel.EXTRA_HABIT_NAME
+import com.example.tail.ui.viewmodel.EXTRA_SOURCE
 
 /**
  * Single place that announces "a habit was incremented" to same-keystore

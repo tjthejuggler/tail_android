@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.grid
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column

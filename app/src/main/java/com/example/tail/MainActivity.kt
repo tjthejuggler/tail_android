@@ -28,19 +28,19 @@ import com.example.tail.data.backup.GoogleDriveManager
 import com.example.tail.data.debug.DebugNoteRepository
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.data.parseDate
-import com.example.tail.ui.AdviceViewModel
-import com.example.tail.ui.AdviceViewModelFactory
-import com.example.tail.ui.AppStatsScreen
-import com.example.tail.ui.ChessReadinessStatsScreen
-import com.example.tail.ui.HabitGridScreen
-import com.example.tail.ui.HabitViewModel
-import com.example.tail.ui.navigateToDate
-import com.example.tail.ui.HabitViewModelFactory
-import com.example.tail.ui.MapScreen
-import com.example.tail.ui.MapStatsScreen
-import com.example.tail.ui.SettingsScreen
+import com.example.tail.ui.advice.AdviceViewModel
+import com.example.tail.ui.advice.AdviceViewModelFactory
+import com.example.tail.ui.chess.ChessReadinessStatsScreen
 import com.example.tail.ui.debug.DebugBubbleOverlay
+import com.example.tail.ui.grid.HabitGridScreen
+import com.example.tail.ui.map.MapScreen
+import com.example.tail.ui.viewmodel.navigateToDate
+import com.example.tail.ui.settings.SettingsScreen
+import com.example.tail.ui.stats.AppStatsScreen
+import com.example.tail.ui.stats.MapStatsScreen
 import com.example.tail.ui.theme.TailTheme
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.HabitViewModelFactory
 import kotlinx.coroutines.launch
 
 private const val ROUTE_GRID = "grid"
@@ -389,7 +389,7 @@ private fun TailApp(
                 )
             }
             composable(MainActivity.ROUTE_QUICK_CAPTURE_HISTORY) {
-                com.example.tail.ui.QuickCaptureHistoryScreen(
+                com.example.tail.ui.common.QuickCaptureHistoryScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

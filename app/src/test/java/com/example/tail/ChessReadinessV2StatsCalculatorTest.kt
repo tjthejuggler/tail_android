@@ -8,6 +8,15 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import com.example.tail.data.chess.V2ResultRecord
+import com.example.tail.data.chess.V2PvtRecord
+import com.example.tail.data.chess.computeV2PregameStats
+import com.example.tail.data.chess.V2Tiers
+import com.example.tail.data.chess.Phase2Verdicts
+import com.example.tail.data.chess.Phase2V2GameRecord
+import com.example.tail.data.chess.Phase2AuditRecord
+import com.example.tail.data.chess.computePhase2V2Stats
+import com.example.tail.data.chess.computeV2HourlyReadiness
 
 /**
  * Unit tests for the pure v2 stats calculator feeding the V2 sections of

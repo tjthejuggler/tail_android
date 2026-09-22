@@ -98,8 +98,8 @@ import com.example.tail.data.meal.VisionQueueRepository
 import com.example.tail.data.meal.VisionResult
 import com.example.tail.ipc.SmartVoiceService
 import com.example.tail.data.HabitIncrementBus
-import com.example.tail.ui.VoiceNoteBus
-import com.example.tail.ui.VoiceTranscriptBus
+import com.example.tail.ui.common.VoiceNoteBus
+import com.example.tail.ui.common.VoiceTranscriptBus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -2097,7 +2097,7 @@ private fun MealEditScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 // Shared full editor — same controls as the meal screen's
                 // card editor (time, macros, ratings, tags, transcript…)
-                com.example.tail.ui.MealEditorContent(
+                com.example.tail.ui.meals.MealEditorContent(
                     log = log,
                     note = note,
                     filesDir = context.filesDir,

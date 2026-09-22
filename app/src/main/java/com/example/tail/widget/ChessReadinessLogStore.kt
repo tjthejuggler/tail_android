@@ -1,14 +1,14 @@
 package com.example.tail.widget
 
-import com.example.tail.data.ChessReadinessEngine
+import com.example.tail.data.chess.ChessReadinessEngine
 import android.content.Context
-import com.example.tail.data.ChessComGame
-import com.example.tail.data.PuzzleRushSessionRecord
-import com.example.tail.data.ReadinessBlockedRecord
-import com.example.tail.data.ReadinessGameRecord
-import com.example.tail.data.ReadinessTestRecord
-import com.example.tail.data.gameDedupeKey
-import com.example.tail.data.gameToRecord
+import com.example.tail.data.chess.ChessComGame
+import com.example.tail.data.chess.PuzzleRushSessionRecord
+import com.example.tail.data.chess.ReadinessBlockedRecord
+import com.example.tail.data.chess.ReadinessGameRecord
+import com.example.tail.data.chess.ReadinessTestRecord
+import com.example.tail.data.chess.gameDedupeKey
+import com.example.tail.data.chess.gameToRecord
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
@@ -28,7 +28,7 @@ import org.json.JSONObject
  *  - every standalone Puzzle Rush timer session (score, strikes, review
  *    of wrong puzzles, start/end times) — written by
  *    [ChessPuzzleRushOverlay] when the rush timer stops
- *  - every chess.com game (polled via [com.example.tail.data.ChessComRepository])
+ *  - every chess.com game (polled via [com.example.tail.data.chess.ChessComRepository])
  *    with the readiness context at the moment it ended (latest CCRS/state,
  *    and whether that game was played inside a valid GREEN authorization
  *    window) — deduped so re-fetching a month never double-logs
@@ -37,7 +37,7 @@ import org.json.JSONObject
  * Storage: a single JSON file (`chess_readiness_log.json`) in the app's
  * internal storage, read-modify-written under a lock. The aggregation for
  * the stats screen lives in the pure
- * [com.example.tail.data.computeReadinessStats] calculator.
+ * [com.example.tail.data.chess.computeReadinessStats] calculator.
  */
 object ChessReadinessLogStore {
 
@@ -175,7 +175,7 @@ object ChessReadinessLogStore {
                 val key = gameDedupeKey(game.endTime, opponent, game.timeControl)
                 val startMs0 = game.startTime?.times(1000L)
                     ?: (game.endTime * 1000L -
-                        (com.example.tail.data.estimateGameMinutes(game.timeControl) * 60_000).toLong())
+                        (com.example.tail.data.chess.estimateGameMinutes(game.timeControl) * 60_000).toLong())
                 val record = gameToRecord(
                     game, username, tests,
                     audits = try {
@@ -206,7 +206,7 @@ object ChessReadinessLogStore {
                 // authorization at the moment play BEGAN.
                 val startMs = game.startTime?.times(1000L)
                     ?: (record.endTimeMs -
-                        (com.example.tail.data.estimateGameMinutes(game.timeControl) * 60_000).toLong())
+                        (com.example.tail.data.chess.estimateGameMinutes(game.timeControl) * 60_000).toLong())
                 newEntries.add(LoggedGame(key, startMs, record.endTimeMs, record.rated))
             }
             root.put(KEY_GAMES, gamesArr)

@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.map
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable

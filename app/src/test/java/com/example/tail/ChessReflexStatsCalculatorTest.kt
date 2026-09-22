@@ -1,12 +1,12 @@
 package com.example.tail
 
-import com.example.tail.data.ReadinessGameRecord
-import com.example.tail.data.ReflexRunPoint
-import com.example.tail.data.V2PvtRecord
-import com.example.tail.data.V3ReflexRunRecord
-import com.example.tail.data.buildReflexRuns
-import com.example.tail.data.ReflexStatsConfig
-import com.example.tail.data.computeReflexStats
+import com.example.tail.data.chess.ReadinessGameRecord
+import com.example.tail.data.chess.ReflexRunPoint
+import com.example.tail.data.chess.V2PvtRecord
+import com.example.tail.data.chess.V3ReflexRunRecord
+import com.example.tail.data.chess.buildReflexRuns
+import com.example.tail.data.chess.ReflexStatsConfig
+import com.example.tail.data.chess.computeReflexStats
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull

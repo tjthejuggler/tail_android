@@ -1,0 +1,3 @@
+app/src/main/java/com/example/tail/ui/common:22
+app/src/main/java/com/example/tail/widget:48
+core-data/src/main/java/com/example/tail/data:35

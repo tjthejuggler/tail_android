@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.chess
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -27,9 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.tail.data.PuzzleTimePoint
-import com.example.tail.data.RushScorePoint
-import com.example.tail.data.RushSource
+import com.example.tail.data.chess.PuzzleTimePoint
+import com.example.tail.data.chess.RushScorePoint
+import com.example.tail.data.chess.RushSource
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter

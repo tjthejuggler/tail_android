@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.chess
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -39,9 +39,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.tail.data.CorrelationScatterPoint
-import com.example.tail.data.SURVIVAL_UNLIMITED_CUTOFF_MS
-import com.example.tail.data.V3CorrelationStats
+import com.example.tail.data.chess.CorrelationScatterPoint
+import com.example.tail.data.chess.SURVIVAL_UNLIMITED_CUTOFF_MS
+import com.example.tail.data.chess.V3CorrelationStats
+import com.example.tail.ui.common.rememberSectionExpansion
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -56,7 +57,7 @@ import kotlin.math.roundToInt
  * ════════════════════════════════════════════════════════════════════════
  *
  * Thirteen collapsible scatter subsections, one per correlation computed by
- * [com.example.tail.data.computeV3CorrelationStats] — each with its own
+ * [com.example.tail.data.chess.computeV3CorrelationStats] — each with its own
  * scatter chart (dot = one run), dashed least-squares fit and Pearson r:
  *
  *  Reflex stage (x = 2-min PVT-B mean RT) vs:

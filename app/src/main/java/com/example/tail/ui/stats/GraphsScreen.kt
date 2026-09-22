@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.stats
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -67,9 +67,31 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import androidx.compose.ui.unit.sp
+import com.example.tail.ui.grid.HabitInfoPanel
+import com.example.tail.ui.stats.metricLabel
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.clearGraphZoom
+import com.example.tail.ui.viewmodel.customValueLabel
+import com.example.tail.ui.viewmodel.getAvailableMetrics
+import com.example.tail.ui.viewmodel.getImdbRatingsForDate
+import com.example.tail.ui.viewmodel.getSelectedMetrics
+import com.example.tail.ui.viewmodel.hasImdbRatings
+import com.example.tail.ui.viewmodel.isGithubHabit
+import com.example.tail.ui.viewmodel.isMaxOneHabit
+import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
+import com.example.tail.ui.viewmodel.isSleepHabit
+import com.example.tail.ui.viewmodel.isWeightsHabit
+import com.example.tail.ui.viewmodel.migrateValue1ToMinutesPrimary
+import com.example.tail.ui.viewmodel.navigateToDate
+import com.example.tail.ui.viewmodel.setGraphTimePeriod
+import com.example.tail.ui.viewmodel.setGraphWeightUnit
+import com.example.tail.ui.viewmodel.setGraphZoomRange
+import com.example.tail.ui.viewmodel.setWidgetTimerPrimaryValue
+import com.example.tail.ui.viewmodel.sleepVariantOf
+import com.example.tail.ui.viewmodel.toggleGraphHabitSelection
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -604,9 +626,9 @@ fun GraphsPanel(
                                         viewModel.navigateToDate(point.date)
                                     }
                             )
-                            val garminType = garminHabitLinks[point.habitName]?.let { com.example.tail.data.GarminType.fromKey(it) }
-                            val valueText = if (garminType == com.example.tail.data.GarminType.FITNESS_AGE ||
-                                                garminType == com.example.tail.data.GarminType.FITNESS_AGE_DISTANCE) {
+                            val garminType = garminHabitLinks[point.habitName]?.let { com.example.tail.data.health.GarminType.fromKey(it) }
+                            val valueText = if (garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
+                                                garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE) {
                                 String.format("%.2f", point.value / 100.0)
                             } else if (point.metric == com.example.tail.data.GRAPH_METRIC_IMDB && point.value > 0) {
                                 String.format("%.1f", point.value / 10.0)
@@ -1338,8 +1360,8 @@ private fun isMinutesSeries(series: GraphSeries, garminHabitLinks: Map<String, S
     if (isMinutesMetric(series.metric)) return true
     if (series.metric != com.example.tail.data.GRAPH_METRIC_VALUE1) return false
     val garminType = garminHabitLinks[series.habitName]
-        ?.let { com.example.tail.data.GarminType.fromKey(it) }
-    return garminType == com.example.tail.data.GarminType.SLEEP_DURATION_MINUTES
+        ?.let { com.example.tail.data.health.GarminType.fromKey(it) }
+    return garminType == com.example.tail.data.health.GarminType.SLEEP_DURATION_MINUTES
 }
 
 /**
@@ -1669,9 +1691,9 @@ private fun HabitLineChart(
 
         // Check if any series is a Garmin fitness age metric that needs decimal formatting
         val needsDecimalFormatting = seriesData.any { series ->
-            val garminType = garminHabitLinks[series.habitName]?.let { com.example.tail.data.GarminType.fromKey(it) }
-            garminType == com.example.tail.data.GarminType.FITNESS_AGE ||
-            garminType == com.example.tail.data.GarminType.FITNESS_AGE_DISTANCE
+            val garminType = garminHabitLinks[series.habitName]?.let { com.example.tail.data.health.GarminType.fromKey(it) }
+            garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
+            garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE
         }
 
         if (useMultiScale) {
@@ -1999,9 +2021,9 @@ private fun HabitLineChart(
                 isAntiAlias = true
             }
             // Format fitness age values with 2 decimal places
-            val garminType = garminHabitLinks[sp.habitName]?.let { com.example.tail.data.GarminType.fromKey(it) }
-            val label = if (garminType == com.example.tail.data.GarminType.FITNESS_AGE ||
-                           garminType == com.example.tail.data.GarminType.FITNESS_AGE_DISTANCE) {
+            val garminType = garminHabitLinks[sp.habitName]?.let { com.example.tail.data.health.GarminType.fromKey(it) }
+            val label = if (garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
+                           garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE) {
                 String.format("%.2f", sp.value / 100.0)
             } else {
                 sp.value.toString()

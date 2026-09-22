@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.meals
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,6 +30,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.meal.VisionMemoryEntry
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.deleteVisionMemoryEntry
+import com.example.tail.ui.viewmodel.refreshVisionMemory
+import com.example.tail.ui.viewmodel.updateVisionMemoryEntry
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter

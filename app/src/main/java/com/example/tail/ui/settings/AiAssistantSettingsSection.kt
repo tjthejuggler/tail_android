@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.settings
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +27,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.AppSettings
+import com.example.tail.ui.viewmodel.saveAiAssistantSettings
+import com.example.tail.ui.viewmodel.HabitViewModel
 
 /**
  * Settings section for the AI Assistant (natural-language habit DB editing).

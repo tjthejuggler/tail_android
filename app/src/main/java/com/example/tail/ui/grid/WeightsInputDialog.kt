@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.grid
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -23,6 +23,7 @@ import com.example.tail.data.formatWeightTenths
 import com.example.tail.data.gramsToDisplayTenths
 import com.example.tail.data.kgToGrams
 import com.example.tail.data.lbToGrams
+import com.example.tail.ui.viewmodel.WeightsExerciseStats
 
 /**
  * Input dialog for the "Weights" habit type: the exercise/machine name,

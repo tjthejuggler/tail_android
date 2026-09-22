@@ -1,6 +1,5 @@
-package com.example.tail.ui
+package com.example.tail.ui.chess
 
-import com.example.tail.data.ChessReadinessEngine
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import androidx.compose.foundation.Canvas
@@ -63,42 +62,46 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.tail.data.ComplianceDay
-import com.example.tail.data.GameFilter
-import com.example.tail.data.Phase2AuditRecord
-import com.example.tail.data.Phase2V2GameRecord
-import com.example.tail.data.RatingHistoryPoint
-import com.example.tail.data.RatingHistorySeries
-import com.example.tail.data.RatingPoolStats
-import com.example.tail.data.V3CorrelationRun
-import com.example.tail.data.computeV3CorrelationStats
-import com.example.tail.data.computeFreeplayComparison
-import com.example.tail.data.ReadinessBlockedRecord
-import com.example.tail.data.ReadinessGameRecord
-import com.example.tail.data.ReadinessStats
-import com.example.tail.data.ReadinessTestRecord
-import com.example.tail.data.Phase2Verdicts
-import com.example.tail.data.V2PvtRecord
-import com.example.tail.data.ReflexRunPoint
-import com.example.tail.data.V3ReflexRunRecord
-import com.example.tail.data.buildReflexRuns
-import com.example.tail.data.computeReflexStats
-import com.example.tail.data.PuzzleRushSessionRecord
-import com.example.tail.data.computeBucketWinRates
-import com.example.tail.data.computeComplianceSeries
-import com.example.tail.data.computeDayOfWeekStats
-import com.example.tail.data.computeGameCategoryAggregates
-import com.example.tail.data.computeHourlyReadiness
-import com.example.tail.data.computePhase2V2Stats
-import com.example.tail.data.computePuzzleTimeSeries
-import com.example.tail.data.computeRatingHistory
-import com.example.tail.data.computeRushScoreSeries
-import com.example.tail.data.computeRushSessionPoints
-import com.example.tail.data.mergeRushSeries
-import com.example.tail.data.rushReviewRate
-import com.example.tail.data.computeRatingStats
-import com.example.tail.data.computeReadinessStats
-import com.example.tail.data.computeWinRateByCcrsBand
+import com.example.tail.data.chess.ChessReadinessEngine
+import com.example.tail.data.chess.ComplianceDay
+import com.example.tail.data.chess.GameFilter
+import com.example.tail.data.chess.Phase2AuditRecord
+import com.example.tail.data.chess.Phase2V2GameRecord
+import com.example.tail.data.chess.Phase2Verdicts
+import com.example.tail.data.chess.PuzzleRushSessionRecord
+import com.example.tail.data.chess.RatingHistoryPoint
+import com.example.tail.data.chess.RatingHistorySeries
+import com.example.tail.data.chess.RatingPoolStats
+import com.example.tail.data.chess.ReadinessBlockedRecord
+import com.example.tail.data.chess.ReadinessGameRecord
+import com.example.tail.data.chess.ReadinessStats
+import com.example.tail.data.chess.ReadinessTestRecord
+import com.example.tail.data.chess.ReflexRunPoint
+import com.example.tail.data.chess.V2PvtRecord
+import com.example.tail.data.chess.V3CorrelationRun
+import com.example.tail.data.chess.V3ReflexRunRecord
+import com.example.tail.data.chess.buildReflexRuns
+import com.example.tail.data.chess.computeBucketWinRates
+import com.example.tail.data.chess.computeComplianceSeries
+import com.example.tail.data.chess.computeDayOfWeekStats
+import com.example.tail.data.chess.computeFreeplayComparison
+import com.example.tail.data.chess.computeGameCategoryAggregates
+import com.example.tail.data.chess.computeHourlyReadiness
+import com.example.tail.data.chess.computePhase2V2Stats
+import com.example.tail.data.chess.computePuzzleTimeSeries
+import com.example.tail.data.chess.computeRatingHistory
+import com.example.tail.data.chess.computeRatingStats
+import com.example.tail.data.chess.computeReadinessStats
+import com.example.tail.data.chess.computeReflexStats
+import com.example.tail.data.chess.computeRushScoreSeries
+import com.example.tail.data.chess.computeRushSessionPoints
+import com.example.tail.data.chess.computeV3CorrelationStats
+import com.example.tail.data.chess.computeWinRateByCcrsBand
+import com.example.tail.data.chess.mergeRushSeries
+import com.example.tail.data.chess.rushReviewRate
+import com.example.tail.ui.common.rememberSectionExpansion
+import com.example.tail.ui.loading.HabitLoadingSpinner
+import com.example.tail.ui.loading.LoadingMetrics
 import com.example.tail.widget.ChessFreeplayStore
 import com.example.tail.widget.ChessPhase2Store
 import com.example.tail.widget.ChessPhase2V2Store
@@ -2051,7 +2054,7 @@ private fun RatingDeltaChart(
     }
 }
 
-private fun fmtRatingDelta(c: com.example.tail.data.RatingCategoryStats): String =
+private fun fmtRatingDelta(c: com.example.tail.data.chess.RatingCategoryStats): String =
     if (c.games == 0) {
         "no games"
     } else {

@@ -1,12 +1,12 @@
 package com.example.tail.ui.map
 
-import com.example.tail.data.SecondaryLocation
-import com.example.tail.data.haversineMeters
+import com.example.tail.data.location.SecondaryLocation
+import com.example.tail.data.location.haversineMeters
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 /**
- * Pure computation layer for the Travel Stats screen (see [com.example.tail.ui.MapStatsScreen]).
+ * Pure computation layer for the Travel Stats screen (see [com.example.tail.ui.stats.MapStatsScreen]).
  *
  * All functions here are side-effect free and UI-independent so they can be
  * unit-tested and run on [kotlinx.coroutines.Dispatchers.Default] without

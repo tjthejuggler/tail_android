@@ -1,9 +1,10 @@
-package com.example.tail.data
+package com.example.tail.data.chess
 
-import com.example.tail.data.ChessReadinessEngine
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import com.example.tail.data.chess.ChessReadinessEngine
+import com.example.tail.data.dateString
 
 /**
  * ════════════════════════════════════════════════════════════════════════

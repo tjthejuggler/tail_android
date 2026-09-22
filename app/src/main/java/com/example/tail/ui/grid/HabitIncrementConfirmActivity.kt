@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.grid
 
 import android.app.Activity
 import android.content.Context
@@ -11,6 +11,7 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.example.tail.R
+import com.example.tail.ui.common.HabitHaptics
 
 /**
  * Lightweight activity that shows a habit increment or note confirmation message

@@ -1,10 +1,12 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import com.example.tail.ui.grid.GRID_COLUMNS
+import com.example.tail.ui.grid.GRID_ROWS
 import kotlin.math.ceil
 
 /**

@@ -28,8 +28,10 @@ import tomllib
 from datetime import datetime, timedelta
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-CONFIG_FILE = PROJECT_ROOT / "tail_services.toml"
+# This script lives in <repo>/supervisor/ but manages services whose `dir`
+# entries in tail_services.toml are relative to the REPOSITORY root.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CONFIG_FILE = Path(__file__).resolve().parent / "tail_services.toml"
 LOG_FILE = PROJECT_ROOT / "supervisor.log"
 POLL_INTERVAL = 5  # seconds between management loop iterations
 

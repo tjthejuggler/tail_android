@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.chess
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
@@ -47,7 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.example.tail.data.ComplianceDay
+import com.example.tail.data.chess.ComplianceDay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter

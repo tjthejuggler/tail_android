@@ -1,20 +1,23 @@
-package com.example.tail.ui
+package com.example.tail.ui.map
 
 import android.app.Activity
-import android.widget.Toast
 import android.content.pm.ActivityInfo
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +25,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,18 +35,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -52,14 +56,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -69,42 +65,83 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.ui.unit.Dp
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.offset
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.example.tail.data.DayStats
-import com.example.tail.data.SecondaryLocation
+import com.example.tail.data.location.SecondaryLocation
+import com.example.tail.ui.viewmodel.addIgnoredCountryName
+import com.example.tail.ui.viewmodel.addManualSecondaryLocation
+import com.example.tail.ui.viewmodel.getAllSecondaryLocations
+import com.example.tail.ui.viewmodel.getAllStoredLabels
+import com.example.tail.ui.viewmodel.getAllStoredLocations
+import com.example.tail.ui.viewmodel.getCoordsForDate
+import com.example.tail.ui.viewmodel.getIgnoredCountryNames
+import com.example.tail.ui.viewmodel.getSecondaryLocationsForDate
+import com.example.tail.ui.viewmodel.removeIgnoredCountryName
+import com.example.tail.ui.viewmodel.removeLocationForDate
+import com.example.tail.ui.viewmodel.removeSecondaryLocation
+import com.example.tail.ui.viewmodel.savePreferredAutoCandidateIndex
+import com.example.tail.ui.viewmodel.setCoordsForDate
+import com.example.tail.ui.viewmodel.setLocationForDate
+import com.example.tail.ui.viewmodel.updateSecondaryLocationTime
+import com.example.tail.ui.common.BorderBlue
+import com.example.tail.ui.common.BorderGlass
+import com.example.tail.ui.common.BorderGreen
+import com.example.tail.ui.common.BorderOrange
+import com.example.tail.ui.common.BorderPink
+import com.example.tail.ui.common.BorderRed
+import com.example.tail.ui.common.BorderYellow
+import com.example.tail.ui.common.RepeatIconButton
+import com.example.tail.ui.common.TimeWheelPicker
+import com.example.tail.ui.loading.HabitLoadingSpinner
 import com.example.tail.ui.map.CountryFacts
 import com.example.tail.ui.map.DayClock
 import com.example.tail.ui.map.MapDetailData
 import com.example.tail.ui.map.WorldLandData
-import androidx.compose.ui.graphics.nativeCanvas
+import com.example.tail.ui.settings.MapSettingsDialog
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.buildCountryTimeline
+import com.example.tail.ui.viewmodel.fetchLocationCandidates
+import com.example.tail.ui.viewmodel.getAllStoredCoordsParsed
+import com.example.tail.ui.viewmodel.getAssumedLocationForDate
+import com.example.tail.ui.viewmodel.getDayHabitBreakdown
+import com.example.tail.ui.viewmodel.getDayStats
+import com.example.tail.ui.viewmodel.getDayStatsLight
+import com.example.tail.ui.viewmodel.getLocationLabelForDate
+import com.example.tail.ui.viewmodel.getMonthlyAveragesBulk
+import com.example.tail.ui.viewmodel.navigateToDate
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 
 /** 4-tuple helper for the LaunchedEffect that loads map data in one pass. */
 private data class Result4<A, B, C, D>(
@@ -414,12 +451,12 @@ fun MapScreen(
                     val kept = mutableListOf<SecondaryLocation>()
                     for (sec in curSecondaries) {
                         val tooClosePrimary = curPrimaryCoords != null &&
-                            com.example.tail.data.haversineMeters(
+                            com.example.tail.data.location.haversineMeters(
                                 curPrimaryCoords.first, curPrimaryCoords.second, sec.lat, sec.lon
                             ) < 250.0
                         if (tooClosePrimary) continue
                         val tooCloseKept = kept.any {
-                            com.example.tail.data.haversineMeters(
+                            com.example.tail.data.location.haversineMeters(
                                 it.lat, it.lon, sec.lat, sec.lon
                             ) < 250.0
                         }
@@ -544,10 +581,10 @@ fun MapScreen(
         val kept = mutableListOf<SecondaryLocation>()
         for (sec in daySecondaries) {
             val tooCloseToPrimary = primary != null &&
-                com.example.tail.data.haversineMeters(primary.first, primary.second, sec.lat, sec.lon) < 250.0
+                com.example.tail.data.location.haversineMeters(primary.first, primary.second, sec.lat, sec.lon) < 250.0
             if (tooCloseToPrimary) continue
             val tooCloseToKept = kept.any {
-                com.example.tail.data.haversineMeters(it.lat, it.lon, sec.lat, sec.lon) < 250.0
+                com.example.tail.data.location.haversineMeters(it.lat, it.lon, sec.lat, sec.lon) < 250.0
             }
             if (tooCloseToKept) continue
             kept.add(sec)
@@ -946,13 +983,13 @@ fun MapScreen(
                                         val kept = mutableListOf<SecondaryLocation>()
                                         for (sec in prevSecs) {
                                             val tooClosePrimary = prevPrimary != null &&
-                                                com.example.tail.data.haversineMeters(
+                                                com.example.tail.data.location.haversineMeters(
                                                     prevPrimary.first, prevPrimary.second,
                                                     sec.lat, sec.lon
                                                 ) < 250.0
                                             if (tooClosePrimary) continue
                                             val tooCloseKept = kept.any {
-                                                com.example.tail.data.haversineMeters(
+                                                com.example.tail.data.location.haversineMeters(
                                                     it.lat, it.lon, sec.lat, sec.lon
                                                 ) < 250.0
                                             }

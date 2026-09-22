@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.settings
 
 import android.content.Intent
 import android.net.Uri

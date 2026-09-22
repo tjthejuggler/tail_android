@@ -5,19 +5,20 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import com.example.tail.ui.EXTRA_SOURCE
 import com.example.tail.data.HabitIncrementBus
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
+import com.example.tail.ui.viewmodel.EXTRA_SOURCE
+import com.example.tail.ui.viewmodel.EXTRA_SOURCE
+import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.time.LocalDate
 
 private const val TAG = "HabitIncrementReceiver"
 

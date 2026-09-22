@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.grid
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.ui.common.DurationWheelPicker
 
 /**
  * Shared helpers + UI for overriding a movie habit's watch length.

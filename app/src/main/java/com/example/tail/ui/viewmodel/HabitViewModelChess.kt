@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.viewmodel
 
 // Split out of HabitViewModel.kt (2026-08-29) to keep individual
 // Kotlin source files small enough for IR lowering on this machine.
@@ -19,25 +19,25 @@ import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconGeneratorService
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
-import com.example.tail.data.ChessComRepository
-import com.example.tail.data.BridgeMovie
-import com.example.tail.data.ChessComType
-import com.example.tail.data.GarminRepository
-import com.example.tail.data.GarminType
+import com.example.tail.data.chess.ChessComRepository
+import com.example.tail.data.movie.BridgeMovie
+import com.example.tail.data.chess.ChessComType
+import com.example.tail.data.health.GarminRepository
+import com.example.tail.data.health.GarminType
 import com.example.tail.data.GitHubApiException
 import com.example.tail.data.GitHubMetric
 import com.example.tail.data.GitHubRateLimitException
 import com.example.tail.data.GitHubRepository
-import com.example.tail.data.ImportResult
-import com.example.tail.data.MovieBridgeService
-import com.example.tail.data.MovieCacheStore
+import com.example.tail.data.health.ImportResult
+import com.example.tail.data.movie.MovieBridgeService
+import com.example.tail.data.movie.MovieCacheStore
 import com.example.tail.data.HabitNotification
 import com.example.tail.data.NotificationStore
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.DayStats
 import com.example.tail.data.HabitTimestampRepository
-import com.example.tail.data.LocationRepository
-import com.example.tail.data.SecondaryLocation
+import com.example.tail.data.location.LocationRepository
+import com.example.tail.data.location.SecondaryLocation
 import com.example.tail.data.SubtypeDataRepository
 import com.example.tail.data.SubtypeTimedMigrator
 import com.example.tail.data.TimedDataRepository
@@ -65,7 +65,7 @@ import com.example.tail.data.positiveSyncDayDeltas
 import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.effectiveMinutesEnabled
 import com.example.tail.data.minutesHabitName
-import com.example.tail.data.DailyStatsMap
+import com.example.tail.data.chess.DailyStatsMap
 import com.example.tail.data.GRAPH_METRIC_POINTS
 import com.example.tail.data.GRAPH_METRIC_VALUE1
 import com.example.tail.data.GRAPH_METRIC_VALUE2
@@ -93,11 +93,11 @@ import com.example.tail.data.GRAPH_METRIC_WEIGHTS_MACHINE_REPS
 import com.example.tail.data.GRAPH_METRIC_WEIGHTS_FREE_REPS
 import com.example.tail.data.gramsToDisplayTenths
 import com.example.tail.data.GraphMetricOption
-import com.example.tail.data.OmdbService
+import com.example.tail.data.movie.OmdbService
 import com.example.tail.data.WeightsDayValues
-import com.example.tail.data.OmdbOutcome
-import com.example.tail.data.ImdbRatingCache
-import com.example.tail.data.ParsedTitle
+import com.example.tail.data.movie.OmdbOutcome
+import com.example.tail.data.movie.ImdbRatingCache
+import com.example.tail.data.movie.ParsedTitle
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.BridgeClient
 import com.example.tail.data.SettingsRepository

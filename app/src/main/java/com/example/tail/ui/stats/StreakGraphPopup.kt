@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.stats
 
 import androidx.compose.ui.draw.clip
 

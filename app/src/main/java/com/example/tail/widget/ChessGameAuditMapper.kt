@@ -1,6 +1,6 @@
 package com.example.tail.widget
 
-import com.example.tail.data.ChessComGameDetail
+import com.example.tail.data.chess.ChessComGameDetail
 import kotlin.math.roundToInt
 
 /**
@@ -16,7 +16,7 @@ import kotlin.math.roundToInt
  *
  * The user shares that text to Tail; this mapper extracts the game ID and,
  * once the game has been fetched from the chess.com archive API
- * ([com.example.tail.data.ChessComService.findGameById]), converts the
+ * ([com.example.tail.data.chess.ChessComService.findGameById]), converts the
  * API's [ChessComGameDetail] into a [ChessPhase2Engine.GameInput] so the
  * audit runs with ZERO manual data entry.
  *
@@ -209,19 +209,19 @@ object ChessGameAuditMapper {
     }
 
     /**
-     * The light [com.example.tail.data.ChessComGame] projection of a fetched
-     * [com.example.tail.data.ChessComGameDetail] — what the Chess Readiness
+     * The light [com.example.tail.data.chess.ChessComGame] projection of a fetched
+     * [com.example.tail.data.chess.ChessComGameDetail] — what the Chess Readiness
      * activity log ([ChessReadinessLogStore.logGames]) consumes. Lets a game
      * fetched via the OPPONENT's archive (while the user's own archive lags)
      * still reach the compliance stats immediately.
      */
-    fun toLightGame(game: com.example.tail.data.ChessComGameDetail):
-        com.example.tail.data.ChessComGame =
-        com.example.tail.data.ChessComGame(
+    fun toLightGame(game: com.example.tail.data.chess.ChessComGameDetail):
+        com.example.tail.data.chess.ChessComGame =
+        com.example.tail.data.chess.ChessComGame(
             timeClass = game.timeClass,
             timeControl = game.timeControl,
             endTime = game.endTime,
-            startTime = com.example.tail.data.pgnStartEpochSec(game.pgn),
+            startTime = com.example.tail.data.chess.pgnStartEpochSec(game.pgn),
             whiteUsername = game.whiteUsername,
             blackUsername = game.blackUsername,
             whiteResult = game.whiteResult,

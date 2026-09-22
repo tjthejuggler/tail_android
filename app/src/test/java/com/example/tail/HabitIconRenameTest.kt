@@ -1,14 +1,14 @@
 package com.example.tail
 
-import com.example.tail.ui.HABIT_ICON
-import com.example.tail.ui.ICON_NAME_TO_RES
-import com.example.tail.ui.getHabitIconName
-import com.example.tail.ui.getHabitIconRes
-import com.example.tail.ui.renamedHabitIcons
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.example.tail.ui.common.HABIT_ICON
+import com.example.tail.ui.common.ICON_NAME_TO_RES
+import com.example.tail.ui.common.getHabitIconName
+import com.example.tail.ui.common.getHabitIconRes
+import com.example.tail.ui.common.renamedHabitIcons
 
 /**
  * Unit tests for rename-safe habit icons: [renamedHabitIcons] must guarantee

@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -51,14 +51,15 @@ import com.example.tail.data.meal.VisionHabitExecutor
 import com.example.tail.data.meal.VisionProcessingWorker
 import com.example.tail.data.meal.VisionQueueItem
 import com.example.tail.data.meal.VisionQueueRepository
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.example.tail.ui.meals.MealPhotoThumb
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val REVIEW_TIME_FMT: DateTimeFormatter =
     DateTimeFormatter.ofPattern("MMM d · HH:mm")

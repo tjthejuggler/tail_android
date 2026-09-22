@@ -1,4 +1,4 @@
-package com.example.tail.data
+package com.example.tail.data.chess
 
 import java.time.Instant
 import java.time.ZoneId

@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.loading
 
 import android.content.Context
 import android.graphics.PixelFormat

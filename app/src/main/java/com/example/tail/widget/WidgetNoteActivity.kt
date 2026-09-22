@@ -45,7 +45,7 @@ import java.time.format.DateTimeFormatter
 /**
  * Transparent trampoline activity launched by the lock-screen habit widget's
  * sticky "✎ Add Note" bar. Shows a Compose note composer styled after the
- * in-app [com.example.tail.ui.TextInputDialog]; on confirm the note is
+ * in-app [com.example.tail.ui.common.TextInputDialog]; on confirm the note is
  * prepended to the markdown file configured for voice-note quick capture
  * (Settings → Voice Note dictation, `voiceNoteFileUri`), using the exact
  * same "## yyyy-MM-dd HH:mm:ss" entry format as [handleAsNote] in

@@ -1,6 +1,6 @@
 package com.example.tail
 
-import com.example.tail.ui.HabitViewModel
+import com.example.tail.ui.viewmodel.HabitViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

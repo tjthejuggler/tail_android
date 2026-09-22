@@ -1,6 +1,6 @@
 package com.example.tail.widget
 
-import com.example.tail.data.ChessComGameDetail
+import com.example.tail.data.chess.ChessComGameDetail
 import kotlin.math.roundToLong
 
 /**

@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/AndroidStudioProjects/tail
-ExecStart=/usr/bin/python3 %h/AndroidStudioProjects/tail/tail_supervisor.py
+ExecStart=/usr/bin/python3 %h/AndroidStudioProjects/tail/supervisor/tail_supervisor.py
 Restart=always
 RestartSec=10
 

@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.HabitNotification
+import com.example.tail.ui.grid.MovieMinutesWheelRow
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter

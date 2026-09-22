@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.settings
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +22,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.ui.common.rememberSectionExpansion
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.SnapshotUi
+import com.example.tail.ui.viewmodel.loadSnapshots
+import com.example.tail.ui.viewmodel.restoreSnapshot
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

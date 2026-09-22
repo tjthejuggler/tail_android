@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.settings
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,6 +24,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.QuickCaptureActionType
+import com.example.tail.ui.viewmodel.saveQuickCaptureActionTypes
+import com.example.tail.ui.viewmodel.HabitViewModel
 import java.util.UUID
 
 /**

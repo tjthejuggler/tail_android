@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp

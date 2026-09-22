@@ -1,9 +1,9 @@
-package com.example.tail.ui
+package com.example.tail.ui.grid
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import androidx.compose.animation.animateColorAsState
@@ -50,20 +50,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.R
 import com.example.tail.data.AiIconRepository
-import com.example.tail.data.GarminType
+import com.example.tail.data.health.GarminType
 import com.example.tail.data.Habit
 import com.example.tail.data.appIconMonochromeOf
 import com.example.tail.data.appLinkPackageName
@@ -71,6 +71,16 @@ import com.example.tail.data.appPackageNameOf
 import com.example.tail.data.loadAppIconBitmap
 import com.example.tail.data.renderTextIconBitmap
 import com.example.tail.data.textIconCharOf
+import com.example.tail.ui.common.ColorBlue
+import com.example.tail.ui.common.ColorGlass
+import com.example.tail.ui.common.ColorGreen
+import com.example.tail.ui.common.ColorOrange
+import com.example.tail.ui.common.ColorPink
+import com.example.tail.ui.common.ColorRed
+import com.example.tail.ui.common.ColorYellow
+import com.example.tail.ui.common.getHabitIconRes
+import com.example.tail.ui.common.getHabitStyle
+import com.example.tail.ui.common.getInvertedBinaryStyle
 
 // Shared style that strips the extra font padding Compose adds above/below text glyphs
 private val tightTextStyle = TextStyle(

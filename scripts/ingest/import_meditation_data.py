@@ -28,7 +28,7 @@ from datetime import date, datetime
 HABIT_NAME = "Meditations"
 SECONDARY_KEY = f"secondary_value:{HABIT_NAME}"
 
-DEFAULT_MEDITATION_JSON = os.path.join(os.path.dirname(__file__), "meditation_output.json")
+DEFAULT_MEDITATION_JSON = os.path.join(os.path.dirname(__file__), "..", "..", "archive", "data", "meditation_output.json")
 DEFAULT_HABITSDB = os.path.expanduser("~/habitsdb/habitsdb.txt")
 
 

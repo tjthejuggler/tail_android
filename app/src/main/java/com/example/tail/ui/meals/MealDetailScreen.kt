@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.meals
 
 import android.Manifest
 import android.content.Intent
@@ -38,12 +38,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -67,11 +68,21 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
-import androidx.compose.material3.LocalTextStyle
 import com.example.tail.QuickCaptureActivity
 import com.example.tail.data.meal.MealLog
 import com.example.tail.data.meal.VisionQueueItem
 import com.example.tail.data.meal.VisionQueueStatus
+import com.example.tail.ui.common.rememberSpeechRecognizer
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.addManualMealLog
+import com.example.tail.ui.viewmodel.addMealPhotoFromUri
+import com.example.tail.ui.viewmodel.clearMealVoiceStatus
+import com.example.tail.ui.viewmodel.deleteMealLog
+import com.example.tail.ui.viewmodel.forceReprocessQueueItem
+import com.example.tail.ui.viewmodel.loadMealLogs
+import com.example.tail.ui.viewmodel.processVoiceMeal
+import com.example.tail.ui.viewmodel.refreshMealQueueItems
+import com.example.tail.ui.viewmodel.updateMealLog
 import java.io.File
 import java.text.SimpleDateFormat
 import java.time.Instant

@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.stats
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -41,20 +41,25 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.tail.ui.viewmodel.getAllSecondaryLocations
+import com.example.tail.ui.viewmodel.getIgnoredCountryNames
 import com.example.tail.ui.map.HopStat
 import com.example.tail.ui.map.PeriodStat
 import com.example.tail.ui.map.PlaceDays
+import com.example.tail.ui.map.StatChip
 import com.example.tail.ui.map.StatsBarChart
 import com.example.tail.ui.map.StatsSectionCard
-import com.example.tail.ui.map.StatChip
 import com.example.tail.ui.map.TopPlaceRow
 import com.example.tail.ui.map.TravelStatsData
 import com.example.tail.ui.map.computeTravelStats
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.getAllStoredCoordsParsed
+import com.example.tail.ui.viewmodel.getAllStoredLabelsParsed
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // ── Palette (matches AppStatsScreen) ──────────────────────────────────────────
 

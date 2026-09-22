@@ -1,11 +1,11 @@
-package com.example.tail.ui
+package com.example.tail.ui.viewmodel
 
 import android.util.Log
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.runBlocking
 import com.example.tail.data.MINUTES_PER_DAY
-import com.example.tail.data.SleepDataRepository
-import com.example.tail.data.SleepRecord
+import com.example.tail.data.health.SleepDataRepository
+import com.example.tail.data.health.SleepRecord
 import com.example.tail.data.SLEEP_VARIANT_SLEEP_TIME
 import com.example.tail.data.SLEEP_VARIANT_WAKE_TIME
 import com.example.tail.data.dateString

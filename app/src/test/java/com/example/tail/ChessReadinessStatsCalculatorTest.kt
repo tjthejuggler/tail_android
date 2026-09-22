@@ -1,6 +1,6 @@
 package com.example.tail.data
 
-import com.example.tail.data.ChessReadinessEngine
+import com.example.tail.data.chess.ChessReadinessEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -10,6 +10,28 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import com.example.tail.data.chess.ReadinessTestRecord
+import com.example.tail.data.chess.ChessComGame
+import com.example.tail.data.chess.readinessContextAt
+import com.example.tail.data.chess.gameToRecord
+import com.example.tail.data.chess.gameDedupeKey
+import com.example.tail.data.chess.computeReadinessStats
+import com.example.tail.data.chess.ReadinessBlockedRecord
+import com.example.tail.data.chess.computeComplianceSeries
+import com.example.tail.data.chess.computeGameCategoryAggregates
+import com.example.tail.data.chess.GameCategory
+import com.example.tail.data.chess.computeRatingStats
+import com.example.tail.data.chess.computeRatingHistory
+import com.example.tail.data.chess.ReadinessGameRecord
+import com.example.tail.data.chess.GameFilter
+import com.example.tail.data.chess.computeHourlyReadiness
+import com.example.tail.data.chess.computeHourlyWinRates
+import com.example.tail.data.chess.computeBucketWinRates
+import com.example.tail.data.chess.computeWinRateByCcrsBand
+import com.example.tail.data.chess.computeDayOfWeekStats
+import com.example.tail.data.chess.GameSpeed
+import com.example.tail.data.chess.computePuzzleTimeSeries
+import com.example.tail.data.chess.computeRushScoreSeries
 
 /**
  * Unit tests for the pure Chess Readiness stats computation:
@@ -20,9 +42,9 @@ import java.time.ZonedDateTime
 class ChessReadinessStatsCalculatorTest {
 
     private val zone = ZoneId.of("UTC")
-    private val green = com.example.tail.data.ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name
-    private val yellow = com.example.tail.data.ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name
-    private val red = com.example.tail.data.ChessReadinessEngine.ReadinessState.RED_LIGHT.name
+    private val green = com.example.tail.data.chess.ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name
+    private val yellow = com.example.tail.data.chess.ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name
+    private val red = com.example.tail.data.chess.ChessReadinessEngine.ReadinessState.RED_LIGHT.name
 
     private fun ms(date: String, hour: Int, minute: Int = 0): Long =
         ZonedDateTime.of(LocalDate.parse(date), LocalTime.of(hour, minute), zone)

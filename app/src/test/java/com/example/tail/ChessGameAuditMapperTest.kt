@@ -1,6 +1,6 @@
 package com.example.tail
 
-import com.example.tail.data.ChessComGameDetail
+import com.example.tail.data.chess.ChessComGameDetail
 import com.example.tail.widget.ChessGameAuditMapper
 import com.example.tail.widget.ChessPhase2Engine
 import org.junit.Assert.assertEquals

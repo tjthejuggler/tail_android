@@ -5,7 +5,7 @@ import java.time.temporal.ChronoUnit
 
 /**
  * Bulk 30-day monthly-average computation for the world-map screen's dot
- * colours — the pure core behind [com.example.tail.ui.HabitViewModel.getMonthlyAveragesBulk].
+ * colours — the pure core behind [com.example.tail.ui.viewmodel.HabitViewModel.getMonthlyAveragesBulk].
  *
  * The map needs the rounded 30-day average (identical math to the ViewModel's
  * getDayStatsLight().monthlyAverage) for EVERY dated coordinate. Computing it

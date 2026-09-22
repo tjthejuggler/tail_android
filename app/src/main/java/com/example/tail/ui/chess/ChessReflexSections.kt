@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.chess
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -37,8 +37,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.tail.data.ReflexRunPoint
-import com.example.tail.data.ReflexStats
+import com.example.tail.data.chess.ReflexRunPoint
+import com.example.tail.data.chess.ReflexStats
+import com.example.tail.ui.common.rememberSectionExpansion
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -170,7 +171,7 @@ private fun LegendSwatch(color: Color, label: String) {
 
 /**
  * The cross-version reflex section. [stats] comes from
- * [com.example.tail.data.computeReflexStats]; [series] is the normalized
+ * [com.example.tail.data.chess.computeReflexStats]; [series] is the normalized
  * per-run series powering the charts.
  */
 @Composable

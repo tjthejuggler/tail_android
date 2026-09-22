@@ -1,10 +1,11 @@
-package com.example.tail.data
+package com.example.tail.data.movie
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import com.example.tail.data.BridgeClient
 
 /**
  * A single watching session of a movie/series (start time, end time, duration).

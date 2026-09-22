@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,6 +46,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.ui.grid.MovieMinutesWheelRow
+import com.example.tail.ui.grid.parseMovieMinutesAnnotation
+import com.example.tail.ui.grid.withMovieMinutesAnnotation
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter

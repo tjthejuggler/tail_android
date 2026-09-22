@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,7 +19,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.Habit
-import com.example.tail.data.SleepRecord
+import com.example.tail.data.health.SleepRecord
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.loadSleepConditionsHistory
+import com.example.tail.ui.viewmodel.loadSleepRecord
+import com.example.tail.ui.viewmodel.saveSleepTimeEntry
+import com.example.tail.ui.viewmodel.saveWakeSurveyEntry
+import com.example.tail.ui.viewmodel.sleepVariantOf
 import java.time.LocalTime
 
 /** Current wall-clock time as minutes since midnight — the default position

@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring

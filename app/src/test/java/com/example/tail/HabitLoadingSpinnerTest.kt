@@ -1,16 +1,16 @@
 package com.example.tail
 
-import com.example.tail.ui.GrandeurThresholds
-import com.example.tail.ui.LoadingMetrics
 import com.example.tail.data.habitPointsTier
-import com.example.tail.ui.loadingTiers
-import com.example.tail.ui.orreryBreath
-import com.example.tail.ui.orreryPhase
-import com.example.tail.ui.patronageFrom
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.example.tail.ui.loading.GrandeurThresholds
+import com.example.tail.ui.loading.LoadingMetrics
+import com.example.tail.ui.loading.loadingTiers
+import com.example.tail.ui.loading.orreryBreath
+import com.example.tail.ui.loading.orreryPhase
+import com.example.tail.ui.loading.patronageFrom
 
 /**
  * Unit tests for "The Orrery II" loading animation — the pure logic that

@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.stats
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,9 +23,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -45,29 +45,34 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.platform.LocalContext
 import com.example.tail.data.HabitsDatabase
-import com.example.tail.notify.AppStatsNewsStore
 import com.example.tail.data.applyDivider
-import com.example.tail.data.invertedBinaryPointsForDate
-import com.example.tail.data.isInternalValueKey
 import com.example.tail.data.effectiveEntriesWithFallback
 import com.example.tail.data.effectivePointsWithFallback
-import com.example.tail.data.minutesKey
-import com.example.tail.data.secondaryValueKey
 import com.example.tail.data.expandEntriesToCalendarDaysPublic
+import com.example.tail.data.invertedBinaryPointsForDate
+import com.example.tail.data.isInternalValueKey
+import com.example.tail.data.minutesKey
 import com.example.tail.data.parseDate
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.example.tail.data.secondaryValueKey
+import com.example.tail.notify.AppStatsNewsStore
+import com.example.tail.ui.common.screenProgressionAccent
+import com.example.tail.ui.common.screenProgressionColor
+import com.example.tail.ui.loading.HabitLoadingSpinner
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.getCachedDatabase
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 // The screen is rainbow-themed around the app's own colour progression

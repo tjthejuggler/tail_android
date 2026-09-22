@@ -1,10 +1,22 @@
-package com.example.tail.ui
+package com.example.tail.ui.grid
 
 import androidx.compose.runtime.Composable
-import com.example.tail.data.BridgeMovie
+import com.example.tail.data.movie.BridgeMovie
 import com.example.tail.data.Habit
-import kotlinx.coroutines.launch
+import com.example.tail.ui.viewmodel.incrementHabit
+import com.example.tail.ui.common.TextInputDialog
+import com.example.tail.ui.loading.LoadingMetrics
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.incrementHabitWithRollForward
+import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
+import com.example.tail.ui.viewmodel.loadTextOptions
+import com.example.tail.ui.viewmodel.saveTextEntries
+import com.example.tail.ui.viewmodel.setTextEntriesForDateWithRollForward
+import com.example.tail.ui.viewmodel.setTextEntryForDateWithRollForward
+import com.example.tail.ui.viewmodel.streamMovieSuggestion
+import com.example.tail.ui.viewmodel.updateTextEntryWithRollForward
 import java.time.LocalDate
+import kotlinx.coroutines.launch
 
 /**
  * Roll-forward confirmation request. Formerly a local class inside

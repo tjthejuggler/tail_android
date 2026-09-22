@@ -1,6 +1,6 @@
 package com.example.tail
 
-import com.example.tail.data.ReadinessGameRecord
+import com.example.tail.data.chess.ReadinessGameRecord
 import com.example.tail.widget.ChessPhase2V2Store
 import java.time.ZoneOffset
 import org.junit.Assert.assertEquals

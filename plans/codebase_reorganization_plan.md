@@ -1,5 +1,7 @@
 # Tail Codebase Reorganization Plan
 
+> **STATUS (2026-09-22):** Phases **0, 1a, 1b, and 5 are IMPLEMENTED** (803 unit tests green, `assembleDebug` builds, `scripts/check_file_size.sh` passes with grandfathered baselines). See the README changelog entry `2026-09-22T19:30Z`. **Remaining: Phase 2** (per-feature state holders), **Phase 3** (split the 35 files in `scripts/file_size_baseline.txt` and the 3 packages in `scripts/package_size_baseline.txt`), **Phase 4** (manual-DI `AppContainer`). The guardrail script enforces: no NEW file over 900 lines, no baseline file growing over 50 lines, no package growing over 2 files past its baseline count.
+
 _Created 2026-09-22 — goal: make the codebase tractable for both humans and LLM-assisted editing._
 
 ## Why LLM edits are slow today (diagnosis)

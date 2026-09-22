@@ -1,6 +1,6 @@
 package com.example.tail.widget
 
-import com.example.tail.data.ChessReadinessEngine
+import com.example.tail.data.chess.ChessReadinessEngine
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
@@ -11,7 +11,7 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import com.example.tail.data.HabitsRepository
-import com.example.tail.data.PuzzleRushSessionRecord
+import com.example.tail.data.chess.PuzzleRushSessionRecord
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.HabitIncrementBus
 import kotlinx.coroutines.CoroutineScope
@@ -263,7 +263,7 @@ class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = fal
         // Record check FIRST (against the mode's previous high), then
         // persist the new highs — global feeds the stats chart + v1
         // baseline, per-mode drives the SPECIAL GREEN eligibility.
-        val outcome = com.example.tail.data.evaluateRushRecord(modeAth, rushScore)
+        val outcome = com.example.tail.data.chess.evaluateRushRecord(modeAth, rushScore)
         if (outcome.newAth != modeAth) {
             ChessReadinessStore.saveRushAllTimeHigh(context, rushMinutesMode, outcome.newAth)
         }

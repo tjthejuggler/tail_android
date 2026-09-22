@@ -1,11 +1,11 @@
 package com.example.tail
 
-import com.example.tail.data.Phase2AuditRecord
-import com.example.tail.data.ReadinessGameRecord
-import com.example.tail.data.SURVIVAL_UNLIMITED_CUTOFF_MS
-import com.example.tail.data.V3CorrelationConfig
-import com.example.tail.data.V3CorrelationRun
-import com.example.tail.data.computeV3CorrelationStats
+import com.example.tail.data.chess.Phase2AuditRecord
+import com.example.tail.data.chess.ReadinessGameRecord
+import com.example.tail.data.chess.SURVIVAL_UNLIMITED_CUTOFF_MS
+import com.example.tail.data.chess.V3CorrelationConfig
+import com.example.tail.data.chess.V3CorrelationRun
+import com.example.tail.data.chess.computeV3CorrelationStats
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull

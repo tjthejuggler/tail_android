@@ -1,4 +1,4 @@
-package com.example.tail.data
+package com.example.tail.data.chess
 
 import kotlin.math.abs
 import kotlin.math.sqrt

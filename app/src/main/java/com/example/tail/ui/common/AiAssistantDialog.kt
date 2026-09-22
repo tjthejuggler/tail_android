@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.ai.AiChatMessage
 import com.example.tail.data.ai.AiPlan
+import com.example.tail.ui.viewmodel.HabitViewModel
 
 /**
  * The AI Assistant chat popup — opened via the 🤖 button next to the stats

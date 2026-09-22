@@ -36,9 +36,9 @@ import com.example.tail.R
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.computeTaskerStats
-import com.example.tail.ui.HabitsDataChangedBus
+import com.example.tail.ui.common.HabitsDataChangedBus
 import com.example.tail.data.HabitIncrementBus
-import com.example.tail.ui.PointTierColors
+import com.example.tail.ui.common.PointTierColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -50,7 +50,7 @@ import kotlinx.coroutines.launch
  * Foreground service that shows a small always-on-top stats bar with the
  * daily / weekly / monthly point totals (today / avg7 / avg30 — computed by
  * the shared [computeTaskerStats]), each number tier-coloured by
- * [com.example.tail.ui.PointTierColors].
+ * [com.example.tail.ui.common.PointTierColors].
  *
  * Two modes (Settings → 📊 Stats Overlay → Edit mode):
  *  - EDIT MODE ON: draggable bar with background + ◢ resize handle;

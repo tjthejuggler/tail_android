@@ -1,7 +1,7 @@
 package com.example.tail
 
-import com.example.tail.data.ChessReadinessEngine
-import com.example.tail.data.evaluateRushRecord
+import com.example.tail.data.chess.ChessReadinessEngine
+import com.example.tail.data.chess.evaluateRushRecord
 import com.example.tail.widget.ChessEnforcementPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

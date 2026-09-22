@@ -31,6 +31,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import com.example.tail.data.location.LocationRepository
 
 /** Endpoint configuration for the AI Assistant (OpenAI-compatible chat completions). */
 data class AiAssistantConfig(
@@ -158,7 +159,7 @@ class AiAssistantController(
     /** Read/write access to the per-habit meal log store (meal-type habits). */
     private val mealLogRepo = MealLogRepository(context)
     /** Read-only access to the user's daily travel-location history. */
-    private val locationRepo = com.example.tail.data.LocationRepository(context)
+    private val locationRepo = com.example.tail.data.location.LocationRepository(context)
 
     /**
      * Running LLM conversation (WITHOUT the system prompt) so multi-turn

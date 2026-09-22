@@ -1,4 +1,4 @@
-package com.example.tail.data
+package com.example.tail.data.location
 
 import android.content.Context
 import android.location.Geocoder

@@ -258,7 +258,7 @@
             Auto-dismisses after 3 seconds.
         -->
         <activity
-            android:name=".ui.HabitIncrementConfirmActivity"
+            android:name=".ui.grid.HabitIncrementConfirmActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:noHistory="true"

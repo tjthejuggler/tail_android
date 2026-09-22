@@ -16,7 +16,8 @@ import com.example.tail.data.appPackageNameOf
 import com.example.tail.data.loadAppIconBitmap
 import com.example.tail.data.renderTextIconBitmap
 import com.example.tail.data.textIconCharOf
-import com.example.tail.ui.getHabitIconRes
+import com.example.tail.ui.common.getHabitIconRes
+import com.example.tail.ui.common.getHabitIconRes
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 

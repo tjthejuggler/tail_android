@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.grid
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -12,6 +12,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.Habit
+import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.saveSubtypeIncrement
 
 private val QUICK_AMOUNTS = listOf(1, 5, 10)
 

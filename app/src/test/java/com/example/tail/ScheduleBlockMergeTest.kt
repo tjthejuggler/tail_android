@@ -1,12 +1,12 @@
 package com.example.tail
 
-import com.example.tail.ui.MERGE_GAP_MINUTES
-import com.example.tail.ui.MIN_SPAN_MINUTES
-import com.example.tail.ui.ScheduleEvent
-import com.example.tail.ui.buildScheduleBlocks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import com.example.tail.ui.common.MERGE_GAP_MINUTES
+import com.example.tail.ui.common.MIN_SPAN_MINUTES
+import com.example.tail.ui.common.ScheduleEvent
+import com.example.tail.ui.common.buildScheduleBlocks
 
 /**
  * Tests for the schedule timeline's block merging:

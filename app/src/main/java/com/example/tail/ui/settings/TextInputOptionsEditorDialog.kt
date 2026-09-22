@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable

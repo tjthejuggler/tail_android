@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -59,6 +59,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.tail.data.HabitSearchResult
 import com.example.tail.data.HabitSearchSource
+import com.example.tail.ui.viewmodel.HabitViewModel
 import java.time.format.DateTimeFormatter
 
 private val SEARCH_DATE_FMT = DateTimeFormatter.ofPattern("EEE MMM d yyyy")

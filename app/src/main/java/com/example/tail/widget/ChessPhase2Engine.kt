@@ -1,6 +1,6 @@
 package com.example.tail.widget
 
-import com.example.tail.data.ChessReadinessEngine
+import com.example.tail.data.chess.ChessReadinessEngine
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -203,9 +203,9 @@ object ChessPhase2Engine {
      *
      * Kept as a delegate to the shared core-data constant so existing
      * references (tests, docs) resolve while the rule itself has ONE home
-     * ([com.example.tail.data.RATED_IDLE_CLOSE_MINUTES]). */
+     * ([com.example.tail.data.chess.RATED_IDLE_CLOSE_MINUTES]). */
     const val RATED_IDLE_CLOSE_MINUTES =
-        com.example.tail.data.RATED_IDLE_CLOSE_MINUTES
+        com.example.tail.data.chess.RATED_IDLE_CLOSE_MINUTES
 
     /**
      * ROLLING rated-play window (2026-09-12: idle close tightened from 30
@@ -235,7 +235,7 @@ object ChessPhase2Engine {
         audits: List<Pair<Long, String>>,
         now: Long,
         games: List<Pair<Long, Long>> = emptyList()
-    ): Long? = com.example.tail.data.rollingWindowExpiresAt(
+    ): Long? = com.example.tail.data.chess.rollingWindowExpiresAt(
         greenTestMs, audits, now, games
     )
 

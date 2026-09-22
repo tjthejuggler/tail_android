@@ -1,10 +1,10 @@
 package com.example.tail
 
-import com.example.tail.data.OmdbService
-import com.example.tail.data.OmdbService.Companion.scoreCandidate
-import com.example.tail.data.OmdbService.Companion.typeFits
-import com.example.tail.data.ParsedTitle
-import com.example.tail.data.SuggestionCandidate
+import com.example.tail.data.movie.OmdbService
+import com.example.tail.data.movie.OmdbService.Companion.scoreCandidate
+import com.example.tail.data.movie.OmdbService.Companion.typeFits
+import com.example.tail.data.movie.ParsedTitle
+import com.example.tail.data.movie.SuggestionCandidate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

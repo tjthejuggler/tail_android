@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.grid
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.dateString
+import com.example.tail.ui.common.PointTierColors
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.TextStyle

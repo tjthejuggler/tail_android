@@ -3,12 +3,12 @@ package com.example.tail.notify
 import android.content.Context
 import android.net.Uri
 import android.util.Log
-import com.example.tail.data.BridgeMovie
+import com.example.tail.data.movie.BridgeMovie
 import com.example.tail.data.HabitNotification
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.NotificationStore
-import com.example.tail.data.OmdbService
+import com.example.tail.data.movie.OmdbService
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.HabitIncrementBus
@@ -22,7 +22,7 @@ private const val TAG = "HabitAsks"
 /**
  * Shared logic for the habit-ask notification system, used by both the
  * background receivers (system-notification answers, scheduled alarms) and
- * the in-app catch-up path in [com.example.tail.ui.HabitViewModel].
+ * the in-app catch-up path in [com.example.tail.ui.viewmodel.HabitViewModel].
  */
 object HabitAsks {
 

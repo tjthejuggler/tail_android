@@ -1,4 +1,4 @@
-package com.example.tail.data
+package com.example.tail.data.movie
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers

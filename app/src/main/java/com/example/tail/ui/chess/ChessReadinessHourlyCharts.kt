@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.chess
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
@@ -50,14 +50,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.example.tail.data.GameFilter
-import com.example.tail.data.GameSpeed
-import com.example.tail.data.HourlyReadiness
-import com.example.tail.data.HourlyWinRate
-import com.example.tail.data.ReadinessGameRecord
-import com.example.tail.data.ReadinessTestRecord
-import com.example.tail.data.V2HourlyReadiness
-import com.example.tail.data.computeHourlyWinRates
+import com.example.tail.data.chess.GameFilter
+import com.example.tail.data.chess.GameSpeed
+import com.example.tail.data.chess.HourlyReadiness
+import com.example.tail.data.chess.HourlyWinRate
+import com.example.tail.data.chess.ReadinessGameRecord
+import com.example.tail.data.chess.ReadinessTestRecord
+import com.example.tail.data.chess.V2HourlyReadiness
+import com.example.tail.data.chess.computeHourlyWinRates
 import java.time.ZoneId
 import kotlin.math.roundToInt
 

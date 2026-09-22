@@ -2,7 +2,7 @@ package com.example.tail.widget
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.example.tail.data.ReadinessGameRecord
+import com.example.tail.data.chess.ReadinessGameRecord
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant

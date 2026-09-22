@@ -37,8 +37,8 @@ import com.example.tail.data.applyDivider
 import com.example.tail.data.dateString
 import com.example.tail.data.HabitIncrementBus
 import com.example.tail.data.assist.AssistActionRepository
-import com.example.tail.ui.VoiceNoteBus
-import com.example.tail.ui.VoiceTranscriptBus
+import com.example.tail.ui.common.VoiceNoteBus
+import com.example.tail.ui.common.VoiceTranscriptBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -399,10 +399,10 @@ class SmartVoiceService : Service() {
     /** Full-screen confirmation overlay for a sent PC action. */
     private fun showAssistSentConfirmation(actionText: String) {
         val preview = if (actionText.length > 80) actionText.take(80) + "…" else actionText
-        val intent = Intent(applicationContext, com.example.tail.ui.HabitIncrementConfirmActivity::class.java).apply {
-            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, "💻 Sent to PC assist")
-            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_NOTE_BODY, preview)
-            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_IS_NOTE, true)
+        val intent = Intent(applicationContext, com.example.tail.ui.grid.HabitIncrementConfirmActivity::class.java).apply {
+            putExtra(com.example.tail.ui.grid.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, "💻 Sent to PC assist")
+            putExtra(com.example.tail.ui.grid.HabitIncrementConfirmActivity.EXTRA_NOTE_BODY, preview)
+            putExtra(com.example.tail.ui.grid.HabitIncrementConfirmActivity.EXTRA_IS_NOTE, true)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         applicationContext.startActivity(intent)
@@ -1045,8 +1045,8 @@ class SmartVoiceService : Service() {
 
     /** Launches a full-screen confirmation activity over the lock screen. */
     private fun showHabitIncrementConfirmation(confirmMsg: String) {
-        val intent = Intent(applicationContext, com.example.tail.ui.HabitIncrementConfirmActivity::class.java).apply {
-            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, confirmMsg)
+        val intent = Intent(applicationContext, com.example.tail.ui.grid.HabitIncrementConfirmActivity::class.java).apply {
+            putExtra(com.example.tail.ui.grid.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, confirmMsg)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         applicationContext.startActivity(intent)
@@ -1055,10 +1055,10 @@ class SmartVoiceService : Service() {
     /** Launches a full-screen note confirmation overlay over the lock screen. */
     private fun showNoteConfirmation(noteText: String) {
         val preview = if (noteText.length > 80) noteText.take(80) + "…" else noteText
-        val intent = Intent(applicationContext, com.example.tail.ui.HabitIncrementConfirmActivity::class.java).apply {
-            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, "Note saved")
-            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_NOTE_BODY, preview)
-            putExtra(com.example.tail.ui.HabitIncrementConfirmActivity.EXTRA_IS_NOTE, true)
+        val intent = Intent(applicationContext, com.example.tail.ui.grid.HabitIncrementConfirmActivity::class.java).apply {
+            putExtra(com.example.tail.ui.grid.HabitIncrementConfirmActivity.EXTRA_CONFIRM_MSG, "Note saved")
+            putExtra(com.example.tail.ui.grid.HabitIncrementConfirmActivity.EXTRA_NOTE_BODY, preview)
+            putExtra(com.example.tail.ui.grid.HabitIncrementConfirmActivity.EXTRA_IS_NOTE, true)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         applicationContext.startActivity(intent)

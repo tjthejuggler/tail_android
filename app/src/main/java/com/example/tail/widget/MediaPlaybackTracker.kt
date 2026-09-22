@@ -12,8 +12,8 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentLinkedQueue
 import com.example.tail.data.HabitsRepository
-import com.example.tail.data.ItunesMusicLookup
-import com.example.tail.data.MediaLibraryRepository
+import com.example.tail.data.media.ItunesMusicLookup
+import com.example.tail.data.media.MediaLibraryRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.ipc.MusicNotificationListenerService
@@ -196,7 +196,7 @@ object MediaPlaybackTracker {
             // Capture Spotify track ids via the metadatachanged broadcast so
             // logged plays carry a spotify:track: URI (tap-to-play deep-link).
             if (habitsByPackage.keys.any { it == "com.spotify.music" }) {
-                com.example.tail.data.SpotifyTrackIdCache.ensureRegistered(appContext)
+                com.example.tail.data.media.SpotifyTrackIdCache.ensureRegistered(appContext)
             }
 
             // Playing packages + item metadata from their media sessions.
@@ -411,7 +411,7 @@ object MediaPlaybackTracker {
                 // exposes one, so fall back to the broadcast-captured track id
                 // (title-matched) — this is what makes tap-to-play exact.
                 val trackUri = meta.mediaUri
-                    ?: com.example.tail.data.SpotifyTrackIdCache.matchingTrackUri(meta.title)
+                    ?: com.example.tail.data.media.SpotifyTrackIdCache.matchingTrackUri(meta.title)
                 trackUri?.let { append(" — ").append(it) }
             }
             TextInputRepository().appendTextEntry(

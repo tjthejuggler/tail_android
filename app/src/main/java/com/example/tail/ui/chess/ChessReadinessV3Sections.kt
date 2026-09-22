@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.chess
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable

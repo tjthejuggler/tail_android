@@ -1,6 +1,6 @@
 package com.example.tail
 
-import com.example.tail.data.ChessReadinessEngine
+import com.example.tail.data.chess.ChessReadinessEngine
 import com.example.tail.widget.ChessDeferredGameReconciler
 import com.example.tail.widget.ChessDeferredGameReconciler.AuditStamp
 import com.example.tail.widget.ChessPhase2Engine
@@ -157,19 +157,19 @@ class ChessDeferredGameReconcilerTest {
             "[UTCDate \"2026.08.25\"]\n" +
             "[StartTime \"16:22:01\"]\n" +
             "\n1. e4 e5 1-0"
-        assertEquals(1_787_674_921L, com.example.tail.data.pgnStartEpochSec(pgn))
+        assertEquals(1_787_674_921L, com.example.tail.data.chess.pgnStartEpochSec(pgn))
     }
 
     @Test
     fun `pgn without start headers parses to null`() {
-        assertNull(com.example.tail.data.pgnStartEpochSec("[Event \"Test\"]\n\n1. e4"))
-        assertNull(com.example.tail.data.pgnStartEpochSec(""))
+        assertNull(com.example.tail.data.chess.pgnStartEpochSec("[Event \"Test\"]\n\n1. e4"))
+        assertNull(com.example.tail.data.chess.pgnStartEpochSec(""))
     }
 
     @Test
     fun `gameStartMsOf prefers the pgn start and falls back to the clock estimate`() {
         val endMs = 1_787_676_126_000L // 2026-08-25T16:42:06Z
-        val withPgn = com.example.tail.data.ChessComGameDetail(
+        val withPgn = com.example.tail.data.chess.ChessComGameDetail(
             gameId = 1L, url = "", rated = true, rules = "chess",
             timeClass = "rapid", timeControl = "600", endTime = endMs / 1000,
             whiteUsername = "a", whiteRating = 0, whiteResult = "win",

@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.grid
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn

@@ -28,7 +28,7 @@ import kotlinx.coroutines.flow.first
  *     which backups can restore — see BackupManager.applySettings, which does
  *     not touch this flag).
  *
- * Called from [com.example.tail.ui.HabitViewModel] init and from the voice
+ * Called from [com.example.tail.ui.viewmodel.HabitViewModel] init and from the voice
  * services before their first subtype write, so a voice increment can never
  * land in an unmigrated store.
  */

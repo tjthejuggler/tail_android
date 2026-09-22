@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.settings
 
 import android.app.DatePickerDialog
 import android.content.Context

@@ -1,4 +1,4 @@
-package com.example.tail.data
+package com.example.tail.data.chess
 
 import android.content.Context
 import android.util.Log
@@ -9,6 +9,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import com.example.tail.data.dateString
 
 private const val TAG = "ChessComRepo"
 

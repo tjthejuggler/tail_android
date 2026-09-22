@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import com.example.tail.data.HabitIncrementBus
 import kotlinx.coroutines.flow.MutableSharedFlow

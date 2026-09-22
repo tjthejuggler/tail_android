@@ -34,7 +34,7 @@ private const val AUTO_BACKUP_MIME = "application/json"
  *   - We update [SettingsRepository.saveAutoBackupLastDate] ONLY on confirmed
  *     successful write.
  *   - Old backups are NEVER auto-deleted; the user prunes manually via the
- *     [AutoBackupListing] UI in [com.example.tail.ui.BackupSettingsSection].
+ *     [AutoBackupListing] UI in [com.example.tail.ui.settings.BackupSettingsSection].
  */
 class AutoBackupManager(
     private val context: Context,

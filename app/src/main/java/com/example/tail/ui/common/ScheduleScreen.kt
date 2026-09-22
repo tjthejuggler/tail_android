@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.common
 
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -59,10 +59,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.dateString
-import kotlinx.coroutines.delay
+import com.example.tail.ui.loading.HabitLoadingSpinner
+import com.example.tail.ui.loading.LoadingMetrics
+import com.example.tail.ui.viewmodel.HabitViewModel
 import java.time.LocalDate
 import java.time.LocalTime
 import kotlin.math.ceil
+import kotlinx.coroutines.delay
 
 /**
  * One timed occurrence of a habit on the schedule — a group of increments

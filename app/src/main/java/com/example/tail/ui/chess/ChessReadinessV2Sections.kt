@@ -1,4 +1,4 @@
-package com.example.tail.ui
+package com.example.tail.ui.chess
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -37,11 +37,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.tail.data.Phase2V2GameRecord
-import com.example.tail.data.Phase2V2Point
-import com.example.tail.data.Phase2V2Stats
-import com.example.tail.data.Phase2AuditRecord
-import com.example.tail.data.Phase2Verdicts
+import com.example.tail.data.chess.Phase2AuditRecord
+import com.example.tail.data.chess.Phase2V2GameRecord
+import com.example.tail.data.chess.Phase2V2Point
+import com.example.tail.data.chess.Phase2V2Stats
+import com.example.tail.data.chess.Phase2Verdicts
+import com.example.tail.ui.common.rememberSectionExpansion
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
