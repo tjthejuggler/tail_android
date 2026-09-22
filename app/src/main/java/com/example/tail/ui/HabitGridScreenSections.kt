@@ -1871,6 +1871,8 @@ internal fun EditModeControlBar(
     conditionalLinkedHabits: Map<String, Set<String>>,
     /** Per-link conditional feed-value overrides (source → linked → value key). */
     conditionalLinkValues: Map<String, Map<String, String>> = emptyMap(),
+    /** Per-link conditional feed-amount multipliers (source → linked → amount, absent = 1). */
+    conditionalLinkAmounts: Map<String, Map<String, Int>> = emptyMap(),
     /** Conditional habits whose Points feeds are capped at 1 point per day. */
     conditionalFeedMaxOneHabits: Set<String> = emptySet(),
     /** Called when the user toggles the "feed max1 point/day" conditional sub-setting. */
@@ -2754,8 +2756,10 @@ internal fun EditModeControlBar(
                                     text = if (linkNames.isNullOrEmpty()) "⚠ None selected"
                                            else "✓ ${linkNames.joinToString(", ") { n ->
                                                val vk = effectiveConditionalLinkValueKey(conditionalLinkValues, secondaryValueSettings.habits, chessComHabitLinks, selectedHabitName, n)
-                                               if (vk == GRAPH_METRIC_POINTS) n
-                                               else "$n (${displayLabelForValue(n, vk, valueDisplayLabels)})"
+                                               val amt = conditionalLinkAmounts[selectedHabitName]?.get(n) ?: 1
+                                               val label = if (vk == GRAPH_METRIC_POINTS) n
+                                                           else "$n (${displayLabelForValue(n, vk, valueDisplayLabels)})"
+                                               if (amt != 1) "$label×$amt" else label
                                            }}",
                                     color = if (linkNames.isNullOrEmpty()) Color(0xFFFF8844) else Color(0xFFFF88CC),
                                     fontSize = 10.sp

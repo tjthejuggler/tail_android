@@ -873,10 +873,11 @@ internal fun ConditionalLinksPickerDialog(
     allHabitNames: List<String>,
     currentLinks: Set<String>,
     currentValues: Map<String, String> = emptyMap(),
+    currentAmounts: Map<String, Int> = emptyMap(),
     secondaryValueHabits: Set<String> = emptySet(),
     chessComHabitLinks: Map<String, String> = emptyMap(),
     valueDisplayLabels: Map<String, Map<String, String>> = emptyMap(),
-    onConfirm: (Set<String>, Map<String, String>) -> Unit,
+    onConfirm: (Set<String>, Map<String, String>, Map<String, Int>) -> Unit,
     onDismiss: () -> Unit
 ) {
     // Alphabetically sorted candidate list (case-insensitive).
@@ -894,6 +895,17 @@ internal fun ConditionalLinksPickerDialog(
     var selected by remember(currentLinks) { mutableStateOf(currentLinks.toMutableSet()) }
     // Linked habit name → feed-value key override (absent = Points, the default)
     var valueChoices by remember(currentValues) { mutableStateOf(currentValues.toMutableMap()) }
+    // Linked habit name → feed-amount multiplier (default 1: one tap = +1)
+    var amountChoices by remember(currentAmounts) {
+        mutableStateOf(currentAmounts.filterValues { it != 1 }.toMutableMap())
+    }
+    // Raw text per linked amount field, so clearing/typing ("1" → "" → "15")
+    // isn't fought by the parsed value being written back into the field.
+    var amountDrafts by remember(currentAmounts) {
+        mutableStateOf(
+            currentAmounts.filterValues { it != 1 }.mapValues { (_, v) -> v.toString() }.toMutableMap()
+        )
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -983,6 +995,12 @@ internal fun ConditionalLinksPickerDialog(
                                             val vals = valueChoices.toMutableMap()
                                             vals.remove(name)
                                             valueChoices = vals
+                                            val amts = amountChoices.toMutableMap()
+                                            amts.remove(name)
+                                            amountChoices = amts
+                                            val drafts = amountDrafts.toMutableMap()
+                                            drafts.remove(name)
+                                            amountDrafts = drafts
                                         } else {
                                             next.add(name)
                                         }
@@ -1031,6 +1049,50 @@ internal fun ConditionalLinksPickerDialog(
                                     }
                                 }
                             }
+                            if (isChecked) {
+                                // Per-link feed amount: one tap of the source
+                                // increments this linked habit by this amount.
+                                Row(
+                                    modifier = Modifier.padding(start = 26.dp, top = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "Amount per tap:",
+                                        color = Color(0xFF888888),
+                                        fontSize = 10.sp
+                                    )
+                                    val amountText = amountDrafts[name] ?: "1"
+                                    OutlinedTextField(
+                                        value = amountText,
+                                        onValueChange = { raw ->
+                                            val filtered = raw.filter { it.isDigit() }.take(6)
+                                            val drafts = amountDrafts.toMutableMap()
+                                            drafts[name] = filtered
+                                            amountDrafts = drafts
+                                            val parsed = filtered.toIntOrNull() ?: 1
+                                            val amts = amountChoices.toMutableMap()
+                                            if (parsed <= 1) amts.remove(name) else amts[name] = parsed
+                                            amountChoices = amts
+                                        },
+                                        singleLine = true,
+                                        modifier = Modifier.width(64.dp),
+                                        textStyle = TextStyle(fontSize = 11.sp, color = Color(0xFFFF88CC)),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedTextColor = Color(0xFFFF88CC),
+                                            unfocusedTextColor = Color(0xFFFF88CC),
+                                            focusedBorderColor = Color(0xFFFF88CC),
+                                            unfocusedBorderColor = Color(0xFF663355),
+                                            cursorColor = Color(0xFFFF88CC)
+                                        )
+                                    )
+                                    Text(
+                                        text = "× (1 = default)",
+                                        color = Color(0xFF666666),
+                                        fontSize = 9.sp
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1047,7 +1109,9 @@ internal fun ConditionalLinksPickerDialog(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = { onConfirm(selected.toSet(), valueChoices.toMap()) },
+                    onClick = {
+                        onConfirm(selected.toSet(), valueChoices.toMap(), amountChoices.toMap())
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A0030))
                 ) {
                     Text("Save (${selected.size})", color = Color(0xFFFF88CC))

@@ -423,8 +423,9 @@ class PcEventQueueProcessor(private val context: Context) {
                     if (linkedAtMax) continue
                 }
                 // A PC event carries one unit (tap or session) of the source.
+                val linkAmount = settings.conditionalLinkAmounts[event.habit]?.get(linkedName) ?: 1
                 val baseFeedAmount = conditionalTapFeedAmount(
-                    sourceCountBefore, 1, feedPoints, sourceDivider
+                    sourceCountBefore, 1, feedPoints, sourceDivider, linkAmount
                 )
                 val feedAmount = if (
                     targetKey == linkedName &&

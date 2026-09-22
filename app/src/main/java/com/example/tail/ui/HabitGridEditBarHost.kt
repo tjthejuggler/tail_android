@@ -109,6 +109,7 @@ internal fun EditBarHost(
         conditionalHabits = settings.conditionalHabits,
         conditionalLinkedHabits = settings.conditionalLinkedHabits,
         conditionalLinkValues = settings.conditionalLinkValues,
+        conditionalLinkAmounts = settings.conditionalLinkAmounts,
         conditionalFeedMaxOneHabits = settings.conditionalFeedMaxOneHabits,
         conditionalFeedPointsHabits = settings.conditionalFeedPointsHabits,
         subtypedHabits = settings.subtypedHabits,

@@ -85,6 +85,9 @@ private val KEY_CONDITIONAL_FEED_MAX_ONE_HABITS = stringSetPreferencesKey("condi
 // Conditional habits whose feeds send POINTS (divider-applied delta) instead
 // of the raw increment amount (sub-setting of the conditional type).
 private val KEY_CONDITIONAL_FEED_POINTS_HABITS = stringSetPreferencesKey("conditional_feed_points_habits")
+// Per-link conditional feed-amount multipliers (source habit → linked habit →
+// amount), stored with the nested-map codec; absent link = 1.
+private val KEY_CONDITIONAL_LINK_AMOUNTS = stringPreferencesKey("conditional_link_amounts")
 // Subtyped habit type keys
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
@@ -660,6 +663,14 @@ private fun decodeNestedStringMap(raw: String): Map<String, Map<String, String>>
     }.toMap()
 }
 
+// Decodes a nested map whose leaf values are ints (conditional link feed-amount
+// multipliers); entries that fail to parse are dropped.
+private fun decodeNestedIntMap(raw: String): Map<String, Map<String, Int>> =
+    decodeNestedStringMap(raw).mapNotNull { (habit, inner) ->
+        val ints = inner.mapNotNull { (k, v) -> v.toIntOrNull()?.let { k to it } }.toMap()
+        if (ints.isEmpty()) null else habit to ints
+    }.toMap()
+
 /**
  * Persists app settings (file URIs, custom input habits, custom habit order, habit screens)
  * using DataStore.
@@ -828,6 +839,24 @@ class SettingsRepository(private val context: Context) {
                 if (prunedValues != values) {
                     Log.i("SettingsRepo", "Pruning orphaned conditional link values for: ${values.keys - prunedValues.keys}")
                     prefs[KEY_CONDITIONAL_LINK_VALUES] = encodeNestedStringMap(prunedValues)
+                }
+            }
+
+            // Keep per-link feed-amount multipliers consistent with the link sets:
+            // drop sources that are no longer conditional, and inner entries
+            // whose linked habit is no longer in that source's link set.
+            val amountsRaw = prefs[KEY_CONDITIONAL_LINK_AMOUNTS]
+            if (!amountsRaw.isNullOrBlank()) {
+                val amounts = decodeNestedIntMap(amountsRaw)
+                val prunedAmounts = amounts.mapNotNull { (src, inner) ->
+                    val kept = inner.filterKeys { it in (pruned[src] ?: emptySet()) }
+                    if (kept.isEmpty()) null else src to kept
+                }.toMap()
+                if (prunedAmounts != amounts) {
+                    Log.i("SettingsRepo", "Pruning orphaned conditional link amounts for: ${amounts.keys - prunedAmounts.keys}")
+                    prefs[KEY_CONDITIONAL_LINK_AMOUNTS] = encodeNestedStringMap(
+                        prunedAmounts.mapValues { (_, inner) -> inner.mapValues { (_, v) -> v.toString() } }
+                    )
                 }
             }
 
@@ -1012,6 +1041,7 @@ class SettingsRepository(private val context: Context) {
             conditionalFeedMaxOneHabits = prefs[KEY_CONDITIONAL_FEED_MAX_ONE_HABITS] ?: emptySet(),
             conditionalFeedPointsHabits = prefs[KEY_CONDITIONAL_FEED_POINTS_HABITS] ?: emptySet(),
             conditionalLinkValues = decodeNestedStringMap(prefs[KEY_CONDITIONAL_LINK_VALUES] ?: ""),
+            conditionalLinkAmounts = decodeNestedIntMap(prefs[KEY_CONDITIONAL_LINK_AMOUNTS] ?: ""),
             valueDisplayLabels = decodeNestedStringMap(prefs[KEY_VALUE_DISPLAY_LABELS] ?: ""),
             textInputOptionDescriptions = decodeNestedStringMap(prefs[KEY_TEXT_INPUT_OPTION_DESCRIPTIONS] ?: ""),
             textInputHiddenGroupings = decodeLinkedHabitsMap(prefs[KEY_TEXT_INPUT_HIDDEN_GROUPINGS] ?: ""),
@@ -1424,6 +1454,15 @@ class SettingsRepository(private val context: Context) {
     /** Saves the display-only value/subtype label overrides (habit name → valueKey → label). */
     suspend fun saveValueDisplayLabels(labels: Map<String, Map<String, String>>) {
         context.dataStore.edit { prefs -> prefs[KEY_VALUE_DISPLAY_LABELS] = encodeNestedStringMap(labels) }
+    }
+
+    /** Persists per-link conditional feed-amount multipliers (absent link = 1). */
+    suspend fun saveConditionalLinkAmounts(values: Map<String, Map<String, Int>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CONDITIONAL_LINK_AMOUNTS] = encodeNestedStringMap(
+                values.mapValues { (_, inner) -> inner.mapValues { (_, v) -> v.toString() } }
+            )
+        }
     }
 
     /** Persists per-link conditional feed-target value overrides (absent link = Points). */

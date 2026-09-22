@@ -930,9 +930,13 @@ fun HabitViewModel.incrementHabit(
             habitName, linkedName
         )
         val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
+        // Per-link feed-amount multiplier (default 1): lets one tap feed
+        // different amounts to different linked habits.
+        val linkAmount = _settings.value.conditionalLinkAmounts[habitName]?.get(linkedName) ?: 1
+        val linkBaseFeedAmount = baseFeedAmount * linkAmount.coerceAtLeast(1)
         val feedAmount = if (targetKey == linkedName && feedMaxOne) {
-            conditionalCappedFeedAmount(currentStored, baseFeedAmount)
-        } else baseFeedAmount
+            conditionalCappedFeedAmount(currentStored, linkBaseFeedAmount)
+        } else linkBaseFeedAmount
         if (feedAmount == 0) continue
         if (targetKey != linkedName) {
             // Raw secondary slot: no max-1 cap; skip the instant row update

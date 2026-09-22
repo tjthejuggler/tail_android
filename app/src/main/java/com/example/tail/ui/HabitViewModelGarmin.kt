@@ -729,12 +729,14 @@ internal suspend fun HabitViewModel.applyGarminData(
                     habitName, linkedName
                 )
                 val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
+                // Per-link feed-amount multiplier (default 1)
+                val linkAmount = settings.conditionalLinkAmounts[habitName]?.get(linkedName) ?: 1
                 for ((date, storedBefore, delta) in positiveDayDeltas) {
                     // Points slot: respect the feed-max-1 cap. Raw secondary
                     // slots (Value2/Value3) are never capped, like the manual path.
                     val feedAmount = if (targetKey == linkedName) {
-                        conditionalSyncFeedAmount(storedBefore, delta, feedMaxOne)
-                    } else delta
+                        conditionalSyncFeedAmount(storedBefore, delta, feedMaxOne, linkAmount)
+                    } else delta * linkAmount.coerceAtLeast(1)
                     if (feedAmount == 0) continue
 
                     if (targetKey == linkedName) {

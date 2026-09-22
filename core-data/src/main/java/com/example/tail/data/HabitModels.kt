@@ -537,8 +537,11 @@ fun conditionalCappedFeedAmount(sourceStoredToday: Int, amount: Int): Int = when
  * (HabitViewModel.incrementHabit step 2c): a "feed points" source with a
  * divider > 1 feeds its divider-applied POINTS delta (so a minutes habit
  * feeds its divided point value); every other source feeds the raw
- * increment amount. Apply [conditionalCappedFeedAmount] on top for Points
- * targets when the source has the "feed max1" cap enabled.
+ * increment amount. [linkAmount] is the per-link feed-amount multiplier
+ * (settings.conditionalLinkAmounts, default 1) so one source tap can feed
+ * different amounts to different linked habits. Apply
+ * [conditionalCappedFeedAmount] on top for Points targets when the source
+ * has the "feed max1" cap enabled.
  *
  * All increment-driven conditional paths (manual taps, IPC broadcasts,
  * voice capture, PC widget events) MUST use this so a linked aggregate
@@ -549,11 +552,15 @@ fun conditionalTapFeedAmount(
     sourceStoredBefore: Int,
     amount: Int,
     feedPoints: Boolean,
-    sourceDivider: Int
-): Int = if (feedPoints && sourceDivider > 1) {
-    applyDivider(sourceStoredBefore + amount, sourceDivider) -
-        applyDivider(sourceStoredBefore, sourceDivider)
-} else amount
+    sourceDivider: Int,
+    linkAmount: Int = 1
+): Int {
+    val base = if (feedPoints && sourceDivider > 1) {
+        applyDivider(sourceStoredBefore + amount, sourceDivider) -
+            applyDivider(sourceStoredBefore, sourceDivider)
+    } else amount
+    return base * linkAmount.coerceAtLeast(1)
+}
 
 /**
  * Computes the conditional feed amount for sync-driven writes (e.g. the Garmin
@@ -566,11 +573,21 @@ fun conditionalTapFeedAmount(
  * to true-up after a correction). Positive deltas feed the full amount, or
  * at most 1 point per day when the source has the "feed max1" cap enabled
  * ([feedMaxOne]) — mirroring the manual increment path's semantics.
+ * [linkAmount] is the per-link feed-amount multiplier
+ * (settings.conditionalLinkAmounts, default 1).
  */
-fun conditionalSyncFeedAmount(sourceStoredBefore: Int, delta: Int, feedMaxOne: Boolean): Int = when {
-    delta <= 0 -> 0
-    feedMaxOne -> conditionalCappedFeedAmount(sourceStoredBefore, delta)
-    else -> delta
+fun conditionalSyncFeedAmount(
+    sourceStoredBefore: Int,
+    delta: Int,
+    feedMaxOne: Boolean,
+    linkAmount: Int = 1
+): Int {
+    val multiplied = delta * linkAmount.coerceAtLeast(1)
+    return when {
+        multiplied <= 0 -> 0
+        feedMaxOne -> conditionalCappedFeedAmount(sourceStoredBefore, multiplied)
+        else -> multiplied
+    }
 }
 
 /**
@@ -1073,6 +1090,17 @@ data class AppSettings(
      * (`secondary_value:` / `secondary_value2:` storage keys).
      */
     val conditionalLinkValues: Map<String, Map<String, String>> = emptyMap(),
+
+    /**
+     * Per-link conditional feed-amount multipliers: conditional habit name →
+     * linked habit name → amount applied to that link's feed (absent entry = 1,
+     * the classic behaviour). Lets one tap of the source increment different
+     * linked habits by different amounts — e.g. one link ×5, another ×10 —
+     * consistently across every increment path (manual taps, IPC broadcasts,
+     * voice capture, PC widget events, sync feeds and backfills). Values < 1
+     * are treated as 1.
+     */
+    val conditionalLinkAmounts: Map<String, Map<String, Int>> = emptyMap(),
 
     /**
      * Conditional habits whose Points feeds are capped at 1 point per day

@@ -790,6 +790,7 @@ fun HabitViewModel.toggleConditional(habitName: String) {
         val current = _settings.value.conditionalHabits.toMutableSet()
         val links = _settings.value.conditionalLinkedHabits.toMutableMap()
         val values = _settings.value.conditionalLinkValues.toMutableMap()
+        val amounts = _settings.value.conditionalLinkAmounts.toMutableMap()
         val feedMaxOne = _settings.value.conditionalFeedMaxOneHabits.toMutableSet()
         val feedPoints = _settings.value.conditionalFeedPointsHabits.toMutableSet()
         var linksChanged = false
@@ -797,6 +798,7 @@ fun HabitViewModel.toggleConditional(habitName: String) {
             current.remove(habitName)
             if (links.remove(habitName) != null) linksChanged = true
             if (values.remove(habitName) != null) linksChanged = true
+            if (amounts.remove(habitName) != null) linksChanged = true
             if (feedMaxOne.remove(habitName)) linksChanged = true
             if (feedPoints.remove(habitName)) linksChanged = true
         } else {
@@ -806,12 +808,14 @@ fun HabitViewModel.toggleConditional(habitName: String) {
         if (linksChanged) {
             settingsRepo.saveConditionalLinkedHabits(links)
             settingsRepo.saveConditionalLinkValues(values)
+            settingsRepo.saveConditionalLinkAmounts(amounts)
             settingsRepo.saveConditionalFeedMaxOneHabits(feedMaxOne)
             settingsRepo.saveConditionalFeedPointsHabits(feedPoints)
             _settings.value = _settings.value.copy(
                 conditionalHabits = current,
                 conditionalLinkedHabits = links,
                 conditionalLinkValues = values,
+                conditionalLinkAmounts = amounts,
                 conditionalFeedMaxOneHabits = feedMaxOne,
                 conditionalFeedPointsHabits = feedPoints
             )
@@ -866,9 +870,12 @@ fun HabitViewModel.performConditionalBackfill(habitName: String) {
             var sum = 0
             for (src in slotSources) {
                 val c = cachedPhoneDb[src]?.get(d) ?: 0
+                // Per-link feed-amount multiplier (default 1)
+                val mult = _settings.value.conditionalLinkAmounts[src]?.get(habitName) ?: 1
+                val scaled = c * mult.coerceAtLeast(1)
                 sum += if (slotKey == habitName && src in _settings.value.conditionalFeedMaxOneHabits) {
-                    c.coerceAtMost(1)
-                } else c
+                    scaled.coerceAtMost(1)
+                } else scaled
             }
             val stored = if (capped) sum.coerceAtMost(1) else sum
             if (stored > 0) {

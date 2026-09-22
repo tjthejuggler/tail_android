@@ -258,8 +258,9 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                             settings.chessComHabitLinks, habitName, linkedName
                         )
                         val targetKey = com.example.tail.data.conditionalLinkStorageKey(linkedName, valueKey)
+                        val linkAmount = settings.conditionalLinkAmounts[habitName]?.get(linkedName) ?: 1
                         val baseFeedAmount = com.example.tail.data.conditionalTapFeedAmount(
-                            sourceCountBefore, amount, feedPoints, sourceDivider
+                            sourceCountBefore, amount, feedPoints, sourceDivider, linkAmount
                         )
                         // "Feed max1" cap: skip Points feeds when this source
                         // already fed its 1 point today (primary/Points feeds only)

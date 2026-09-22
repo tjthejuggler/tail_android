@@ -761,6 +761,7 @@ class BackupManager(
             s.conditionalLinkedHabits.mapValues { it.value.toSet() }
         )
         settingsRepo.saveConditionalLinkValues(s.conditionalLinkValues)
+        settingsRepo.saveConditionalLinkAmounts(s.conditionalLinkAmounts)
         settingsRepo.saveConditionalFeedMaxOneHabits(s.conditionalFeedMaxOneHabits.toSet())
         settingsRepo.saveConditionalFeedPointsHabits(s.conditionalFeedPointsHabits.toSet())
 
@@ -1155,6 +1156,7 @@ class BackupManager(
         conditionalHabits = s.conditionalHabits.toList(),
         conditionalLinkedHabits = s.conditionalLinkedHabits.mapValues { it.value.toList() },
         conditionalLinkValues = s.conditionalLinkValues,
+        conditionalLinkAmounts = s.conditionalLinkAmounts,
         conditionalFeedMaxOneHabits = s.conditionalFeedMaxOneHabits.toList(),
         conditionalFeedPointsHabits = s.conditionalFeedPointsHabits.toList(),
         subtypedHabits = s.subtypedHabits.toList(),

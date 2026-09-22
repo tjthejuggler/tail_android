@@ -1114,7 +1114,23 @@ class HabitViewModel(
         _errorMessage.value = null
     }
 
-    fun setConditionalLinks(habitName: String, linkedNames: Set<String>) {
+    /**
+     * Atomically replaces the link set, per-link feed-value overrides and
+     * per-link feed-amount multipliers for [habitName] in ONE coroutine.
+     *
+     * The overrides/multipliers are trimmed to [linkedNames] using the maps
+     * PASSED IN here (not the stored settings): saving links, values and
+     * amounts as three separate coroutines let the later setters read the
+     * not-yet-updated link set, and this function's own trailing stale write
+     * landed last in the DataStore queue — silently resetting every feed
+     * amount back to 1 after the dialog closed.
+     */
+    fun setConditionalLinks(
+        habitName: String,
+        linkedNames: Set<String>,
+        values: Map<String, String> = emptyMap(),
+        amounts: Map<String, Int> = emptyMap()
+    ) {
         viewModelScope.launch {
             val current = _settings.value.conditionalLinkedHabits.toMutableMap()
             if (linkedNames.isEmpty()) {
@@ -1122,15 +1138,23 @@ class HabitViewModel(
             } else {
                 current[habitName] = linkedNames
             }
-            // Keep feed-value overrides limited to the (new) link set
-            val values = _settings.value.conditionalLinkValues.toMutableMap()
-            val trimmed = values[habitName]?.filterKeys { it in linkedNames }
-            if (trimmed.isNullOrEmpty()) values.remove(habitName) else values[habitName] = trimmed
+            // Feed-value overrides limited to the (new) link set (absent = Points)
+            val cleanedValues = values.filterKeys { it in linkedNames && it != GRAPH_METRIC_POINTS }
+            val storedValues = _settings.value.conditionalLinkValues.toMutableMap()
+            if (cleanedValues.isEmpty()) storedValues.remove(habitName) else storedValues[habitName] = cleanedValues
+            // Feed-amount multipliers limited to the (new) link set (absent = 1)
+            val cleanedAmounts = amounts.filterKeys { it in linkedNames }
+                .mapValues { (_, v) -> v.coerceAtLeast(1) }
+                .filterValues { it != 1 }
+            val storedAmounts = _settings.value.conditionalLinkAmounts.toMutableMap()
+            if (cleanedAmounts.isEmpty()) storedAmounts.remove(habitName) else storedAmounts[habitName] = cleanedAmounts
             settingsRepo.saveConditionalLinkedHabits(current)
-            settingsRepo.saveConditionalLinkValues(values)
+            settingsRepo.saveConditionalLinkValues(storedValues)
+            settingsRepo.saveConditionalLinkAmounts(storedAmounts)
             _settings.value = _settings.value.copy(
                 conditionalLinkedHabits = current,
-                conditionalLinkValues = values
+                conditionalLinkValues = storedValues,
+                conditionalLinkAmounts = storedAmounts
             )
         }
     }
@@ -1143,21 +1167,9 @@ class HabitViewModel(
     fun getConditionalLinkValues(habitName: String): Map<String, String> =
         _settings.value.conditionalLinkValues[habitName] ?: emptyMap()
 
-    /**
-     * Sets the per-link feed-value overrides for [habitName] (linked habit name →
-     * value key). Only non-default (non-Points) entries for currently linked
-     * habits are stored; everything else falls back to Points.
-     */
-    fun setConditionalLinkValues(habitName: String, values: Map<String, String>) {
-        viewModelScope.launch {
-            val links = _settings.value.conditionalLinkedHabits[habitName] ?: emptySet()
-            val cleaned = values.filterKeys { it in links && it != GRAPH_METRIC_POINTS }
-            val current = _settings.value.conditionalLinkValues.toMutableMap()
-            if (cleaned.isEmpty()) current.remove(habitName) else current[habitName] = cleaned
-            settingsRepo.saveConditionalLinkValues(current)
-            _settings.value = _settings.value.copy(conditionalLinkValues = current)
-        }
-    }
+    /** Returns the current per-link feed-amount multipliers for a conditional habit (absent = 1). */
+    fun getConditionalLinkAmounts(habitName: String): Map<String, Int> =
+        _settings.value.conditionalLinkAmounts[habitName] ?: emptyMap()
 
     /**
      * Toggles the "feed max1 point/day" sub-setting for a conditional habit.
@@ -1247,7 +1259,10 @@ class HabitViewModel(
                 var sum = 0
                 for (src in slotSources) {
                     val c = cachedPhoneDb[src]?.get(d) ?: 0
-                    sum += if (slotKey == habitName && src in feedMaxOneSources) c.coerceAtMost(1) else c
+                    // Per-link feed-amount multiplier (default 1)
+                    val mult = _settings.value.conditionalLinkAmounts[src]?.get(habitName) ?: 1
+                    val scaled = c * mult.coerceAtLeast(1)
+                    sum += if (slotKey == habitName && src in feedMaxOneSources) scaled.coerceAtMost(1) else scaled
                 }
                 total += if (capped) sum.coerceAtMost(1) else sum
             }
@@ -2877,11 +2892,13 @@ class HabitViewModel(
                             st.chessComHabitLinks, habitName, linkedName
                         )
                         val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
+                        // Per-link feed-amount multiplier (default 1)
+                        val linkAmount = st.conditionalLinkAmounts[habitName]?.get(linkedName) ?: 1
                         for ((date, storedBefore, delta) in positiveDayDeltas) {
-                            val baseFeedAmount = if (feedPoints && sourceDivider > 1) {
+                            val baseFeedAmount = (if (feedPoints && sourceDivider > 1) {
                                 applyDivider(storedBefore + delta, sourceDivider) -
                                     applyDivider(storedBefore, sourceDivider)
-                            } else delta
+                            } else delta) * linkAmount.coerceAtLeast(1)
                             val feedAmount = if (targetKey == linkedName) {
                                 conditionalSyncFeedAmount(
                                     storedBefore, baseFeedAmount,
@@ -3467,12 +3484,14 @@ class HabitViewModel(
                         )
                     )
                     val linkedEntries = (mutableDb[targetKey] ?: emptyMap()).toMutableMap()
+                    // Per-link feed-amount multiplier (default 1)
+                    val linkAmount = s.conditionalLinkAmounts[habitName]?.get(linkedName) ?: 1
                     for ((dateStr, delta) in dateDeltas) {
                         val preCount = preExistingCounts[dateStr] ?: 0
-                        val baseFeedAmount = if (feedPoints && sourceDivider > 1) {
+                        val baseFeedAmount = (if (feedPoints && sourceDivider > 1) {
                             applyDivider(preCount + delta, sourceDivider) -
                                 applyDivider(preCount, sourceDivider)
-                        } else delta
+                        } else delta) * linkAmount.coerceAtLeast(1)
                         // "Feed max1" cap: a feed-max-one source contributes at most
                         // 1 point per day to Points targets (first activity of the
                         // day only); secondary-slot feeds stay uncapped.
@@ -3816,11 +3835,13 @@ class HabitViewModel(
                         habitName, linkedName
                     )
                     val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
+                    // Per-link feed-amount multiplier (default 1)
+                    val linkAmount = s.conditionalLinkAmounts[habitName]?.get(linkedName) ?: 1
                     for ((date, storedBefore, delta) in positiveDayDeltas) {
-                        val baseFeedAmount = if (feedPoints && sourceDivider > 1) {
+                        val baseFeedAmount = (if (feedPoints && sourceDivider > 1) {
                             applyDivider(storedBefore + delta, sourceDivider) -
                                 applyDivider(storedBefore, sourceDivider)
-                        } else delta
+                        } else delta) * linkAmount.coerceAtLeast(1)
                         // Points slot: respect the feed-max-1 cap. Raw secondary
                         // slots (Value2/Value3) are never capped, like the manual path.
                         val feedAmount = if (targetKey == linkedName) {

@@ -1540,11 +1540,19 @@ internal fun HabitViewModel.removeConditionalReferences(deletedName: String) {
             if (kept.isEmpty()) null else src to kept
         }
     }.toMap()
+    val newAmounts = s.conditionalLinkAmounts.mapNotNull { (src, inner) ->
+        if (src == deletedName) null
+        else {
+            val kept = inner - deletedName
+            if (kept.isEmpty()) null else src to kept
+        }
+    }.toMap()
     val newConditional = s.conditionalHabits - deletedName
     val newFeedMaxOne = s.conditionalFeedMaxOneHabits - deletedName
     val newFeedPoints = s.conditionalFeedPointsHabits - deletedName
     if (newLinked == s.conditionalLinkedHabits &&
         newValues == s.conditionalLinkValues &&
+        newAmounts == s.conditionalLinkAmounts &&
         newConditional == s.conditionalHabits &&
         newFeedMaxOne == s.conditionalFeedMaxOneHabits &&
         newFeedPoints == s.conditionalFeedPointsHabits
@@ -1553,6 +1561,7 @@ internal fun HabitViewModel.removeConditionalReferences(deletedName: String) {
         conditionalHabits = newConditional,
         conditionalLinkedHabits = newLinked,
         conditionalLinkValues = newValues,
+        conditionalLinkAmounts = newAmounts,
         conditionalFeedMaxOneHabits = newFeedMaxOne,
         conditionalFeedPointsHabits = newFeedPoints
     )
@@ -1560,6 +1569,7 @@ internal fun HabitViewModel.removeConditionalReferences(deletedName: String) {
         settingsRepo.saveConditionalHabits(newConditional)
         settingsRepo.saveConditionalLinkedHabits(newLinked)
         settingsRepo.saveConditionalLinkValues(newValues)
+        settingsRepo.saveConditionalLinkAmounts(newAmounts)
         settingsRepo.saveConditionalFeedMaxOneHabits(newFeedMaxOne)
         settingsRepo.saveConditionalFeedPointsHabits(newFeedPoints)
     }
@@ -1729,6 +1739,13 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
                 return mapKeys { (k, _) -> if (k == oldName) newName else k }
                     .mapValues { (_, inner) -> inner.mapKeys { (k, _) -> if (k == oldName) newName else k } }
             }
+
+            // Renames a habit as outer key and as inner key of a nested int map —
+            // needed for conditionalLinkAmounts (source → linked → feed amount).
+            fun Map<String, Map<String, Int>>.replaceIntKeysAndInnerKeys(oldName: String, newName: String): Map<String, Map<String, Int>> {
+                return mapKeys { (k, _) -> if (k == oldName) newName else k }
+                    .mapValues { (_, inner) -> inner.mapKeys { (k, _) -> if (k == oldName) newName else k } }
+            }
             
             val newSettings = settings.copy(
                 habitOrder = newHabitOrder,
@@ -1753,6 +1770,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
                 conditionalHabits = settings.conditionalHabits.replaceElement(oldName, newName),
                 conditionalLinkedHabits = settings.conditionalLinkedHabits.replaceKeysAndValues(oldName, newName),
                 conditionalLinkValues = settings.conditionalLinkValues.replaceKeysAndInnerKeys(oldName, newName),
+                conditionalLinkAmounts = settings.conditionalLinkAmounts.replaceIntKeysAndInnerKeys(oldName, newName),
                 conditionalFeedMaxOneHabits = settings.conditionalFeedMaxOneHabits.replaceElement(oldName, newName),
                 conditionalFeedPointsHabits = settings.conditionalFeedPointsHabits.replaceElement(oldName, newName),
                 subtypedHabits = settings.subtypedHabits.replaceElement(oldName, newName),
@@ -1830,6 +1848,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             settingsRepo.saveConditionalHabits(newSettings.conditionalHabits)
             settingsRepo.saveConditionalLinkedHabits(newSettings.conditionalLinkedHabits)
             settingsRepo.saveConditionalLinkValues(newSettings.conditionalLinkValues)
+            settingsRepo.saveConditionalLinkAmounts(newSettings.conditionalLinkAmounts)
             settingsRepo.saveSubtypedHabits(newSettings.subtypedHabits)
             settingsRepo.saveHabitSubtypes(newSettings.habitSubtypes)
             settingsRepo.saveSubtypeDataFileUris(newSettings.subtypeDataFileUris)

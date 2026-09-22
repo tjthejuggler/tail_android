@@ -2531,12 +2531,15 @@ fun HabitGridScreen(
             allHabitNames = viewModel.getAllHabitNames(),
             currentLinks = viewModel.getConditionalLinks(habitName),
             currentValues = viewModel.getConditionalLinkValues(habitName),
+            currentAmounts = viewModel.getConditionalLinkAmounts(habitName),
             secondaryValueHabits = settings.secondaryValueHabits,
             chessComHabitLinks = settings.chessComHabitLinks,
             valueDisplayLabels = settings.valueDisplayLabels,
-            onConfirm = { links, values ->
-                viewModel.setConditionalLinks(habitName, links)
-                viewModel.setConditionalLinkValues(habitName, values)
+            onConfirm = { links, values, amounts ->
+                // Atomic save: links + feed values + amounts in ONE write, so a
+                // first-time setup can't race the in-memory settings update and
+                // drop the amounts.
+                viewModel.setConditionalLinks(habitName, links, values, amounts)
                 conditionalLinksPickerHabit = null
             },
             onDismiss = { conditionalLinksPickerHabit = null }
