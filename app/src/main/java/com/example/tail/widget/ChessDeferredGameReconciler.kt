@@ -115,7 +115,10 @@ object ChessDeferredGameReconciler {
             .filter { it.timestamp <= gameStartMs }
             .maxByOrNull { it.timestamp } ?: return false
         if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return false
-        return ChessPhase2Engine.rollingWindowExpiresAt(
+        // The rolling-window rule lives in core-data (shared with the stats
+        // layer) — ChessPhase2Engine delegates to the same function, so the
+        // guard and the charts can never drift apart again.
+        return com.example.tail.data.rollingWindowExpiresAt(
             last.timestamp,
             audits
                 .filter { it.timestamp in last.timestamp..gameStartMs }

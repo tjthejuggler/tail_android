@@ -2503,6 +2503,39 @@ class FloatingBubbleService : Service() {
                 ).apply {
                     bottomMargin = 6.dp()
                 })
+
+                // Weekly freeplay — offered only when a credit is banked:
+                // spend one to go GREEN without taking the readiness test.
+                // Settlement runs throttled on a background worker — the
+                // synchronous log parse OOM'd the main thread here.
+                val freeplayCredits = try {
+                    ChessFreeplayStore.settleExpiredAsync(this)
+                    ChessFreeplayStore.available(this)
+                } catch (_: Exception) { 0 }
+                if (freeplayCredits > 0) {
+                    val freeplayItem = TextView(this).apply {
+                        text = "🎟 Use Freeplay ($freeplayCredits left)"
+                        textSize = 15f
+                        setTextColor(Color.WHITE)
+                        gravity = Gravity.CENTER
+                        setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+                        background = GradientDrawable().apply {
+                            setColor(0xFF3A2A10.toInt())
+                            cornerRadius = 8f * density
+                            setStroke(1, 0xFFCCAA44.toInt())
+                        }
+                        setOnClickListener {
+                            hideHabitPickerMenu()
+                            openChessFreeplay()
+                        }
+                    }
+                    menu.addView(freeplayItem, LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        bottomMargin = 6.dp()
+                    })
+                }
             }
 
         }
@@ -2725,6 +2758,20 @@ class FloatingBubbleService : Service() {
                 ) {
                     openChessReadiness()
                 }
+                // Weekly freeplay — same gating as the picker menu.
+                // Settlement runs throttled on a background worker.
+                val freeplayCredits = try {
+                    ChessFreeplayStore.settleExpiredAsync(this)
+                    ChessFreeplayStore.available(this)
+                } catch (_: Exception) { 0 }
+                if (freeplayCredits > 0) {
+                    addOption(
+                        "🎟 Use Freeplay ($freeplayCredits left)",
+                        0xFF3A2A10.toInt(), 0xFFCCAA44.toInt()
+                    ) {
+                        openChessFreeplay()
+                    }
+                }
             }
         }
         val trustWindowLive = ChessEnforcementPolicy.hasLiveTrustWindow(this)
@@ -2809,6 +2856,7 @@ class FloatingBubbleService : Service() {
     private var chessReadinessV3Overlay: ChessReadinessV3Overlay? = null
     private var chessStatusOverlay: ChessStatusOverlay? = null
     private var chessPuzzleRushOverlay: ChessPuzzleRushOverlay? = null
+    private var chessFreeplayOverlay: ChessFreeplayOverlay? = null
 
     /**
      * Shows the Phase 1 readiness wizard as a floating overlay dialog.
@@ -2850,14 +2898,28 @@ class FloatingBubbleService : Service() {
         } catch (e: Exception) { /* never crash the bubble */ }
     }
 
+    /** Opens the weekly-freeplay confirm/celebrate overlay dialog. */
+    private fun openChessFreeplay() {
+        try {
+            chessReadinessV3Overlay?.dismiss()
+            chessReadinessV3Overlay = null
+            chessStatusOverlay?.dismiss()
+            chessStatusOverlay = null
+            chessFreeplayOverlay?.dismiss()
+            chessFreeplayOverlay = ChessFreeplayOverlay(this).also { it.show() }
+        } catch (e: Exception) { /* never crash the bubble */ }
+    }
+
     /** Removes any open chess overlay dialog (e.g. when the service dies). */
     private fun dismissChessOverlays() {
         try { chessReadinessV3Overlay?.dismiss() } catch (_: Exception) {}
         try { chessStatusOverlay?.dismiss() } catch (_: Exception) {}
         try { chessPuzzleRushOverlay?.dismiss() } catch (_: Exception) {}
+        try { chessFreeplayOverlay?.dismiss() } catch (_: Exception) {}
         chessReadinessV3Overlay = null
         chessStatusOverlay = null
         chessPuzzleRushOverlay = null
+        chessFreeplayOverlay = null
     }
 
     /** Starts the timer for [habit] and updates the bubble visuals. */

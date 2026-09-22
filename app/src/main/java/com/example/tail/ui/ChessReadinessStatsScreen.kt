@@ -72,6 +72,7 @@ import com.example.tail.data.RatingHistorySeries
 import com.example.tail.data.RatingPoolStats
 import com.example.tail.data.V3CorrelationRun
 import com.example.tail.data.computeV3CorrelationStats
+import com.example.tail.data.computeFreeplayComparison
 import com.example.tail.data.ReadinessBlockedRecord
 import com.example.tail.data.ReadinessGameRecord
 import com.example.tail.data.ReadinessStats
@@ -98,6 +99,7 @@ import com.example.tail.data.rushReviewRate
 import com.example.tail.data.computeRatingStats
 import com.example.tail.data.computeReadinessStats
 import com.example.tail.data.computeWinRateByCcrsBand
+import com.example.tail.widget.ChessFreeplayStore
 import com.example.tail.widget.ChessPhase2Store
 import com.example.tail.widget.ChessPhase2V2Store
 import com.example.tail.widget.ChessReadinessLogStore
@@ -249,6 +251,9 @@ fun ChessReadinessStatsScreen(
             // compliance chart knows when the system was adopted and
             // historical games get an accurate readiness context.
             ChessReadinessLogStore.ensureSeeded(context)
+            // Settle any expired freeplay sessions first so the comparison
+            // and the credits line reflect refund outcomes.
+            try { ChessFreeplayStore.settleExpired(context) } catch (_: Exception) {}
             tests = ChessReadinessLogStore.loadTests(context)
             games = ChessReadinessLogStore.loadGames(context)
             blocked = ChessReadinessLogStore.loadBlocked(context)
@@ -902,6 +907,84 @@ fun ChessReadinessStatsScreen(
                             s.maxGamesInOneGreenSession.toString(),
                             valueColor = GoldValue
                         )
+                    }
+                }
+
+                // ── Freeplay vs readiness-pass comparison ────────────────
+                val freeplayComparison = remember(tests, visibleGames) {
+                    computeFreeplayComparison(tests, visibleGames)
+                }
+                if (freeplayComparison.freeplay.games > 0 || freeplayComparison.pass.games > 0) {
+                    StatsSection(title = "🎟 Freeplay vs Readiness Pass", startExpanded = v1SectionsExpanded) {
+                        Text(
+                            "Performance inside authorization windows, split by " +
+                                "how play was authorized: a PASSED readiness test vs " +
+                                "a weekly FREEPLAY (used without a test). Same GREEN " +
+                                "session, same audit — different provenance.",
+                            color = DimColor,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        StatRow(
+                            "Pass — games",
+                            freeplayComparison.pass.games.toString(),
+                            valueColor = GreenValue
+                        )
+                        StatRow(
+                            "Pass — win rate",
+                            "%.1f%%".format(freeplayComparison.pass.winRate),
+                            valueColor = GreenValue
+                        )
+                        freeplayComparison.pass.avgCcrs?.let {
+                            StatRow("Pass — avg CCRS", "%.0f".format(it), valueColor = GreenValue)
+                        }
+                        StatRow(
+                            "Pass — avg games/session",
+                            "%.1f".format(freeplayComparison.pass.avgGamesPerSession)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        StatRow(
+                            "Freeplay — games",
+                            freeplayComparison.freeplay.games.toString(),
+                            valueColor = GoldValue
+                        )
+                        StatRow(
+                            "Freeplay — win rate",
+                            "%.1f%%".format(freeplayComparison.freeplay.winRate),
+                            valueColor = GoldValue
+                        )
+                        freeplayComparison.freeplay.avgCcrs?.let {
+                            StatRow("Freeplay — avg CCRS", "%.0f".format(it), valueColor = GoldValue)
+                        }
+                        StatRow(
+                            "Freeplay — avg games/session",
+                            "%.1f".format(freeplayComparison.freeplay.avgGamesPerSession)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val delta = freeplayComparison.freeplay.winRate - freeplayComparison.pass.winRate
+                        if (freeplayComparison.freeplay.games > 0 && freeplayComparison.pass.games > 0) {
+                            StatRow(
+                                "Freeplay win-rate delta",
+                                "%+.1f%%".format(delta),
+                                valueColor = when {
+                                    delta > 1.0 -> GreenValue
+                                    delta < -1.0 -> RedValue
+                                    else -> DimColor
+                                }
+                            )
+                        }
+                        if (freeplayComparison.freeplay.games == 0) {
+                            Text(
+                                "No freeplay sessions with games yet — use one from " +
+                                    "the bubble to start the comparison.",
+                                color = DimColor,
+                                fontSize = 11.sp
+                            )
+                        }
                     }
                 }
 

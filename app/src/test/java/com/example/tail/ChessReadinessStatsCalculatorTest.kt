@@ -241,7 +241,7 @@ class ChessReadinessStatsCalculatorTest {
         val gPre = gameToRecord(game(ms("2026-08-05", 10) / 1000), "me", listOf(t0, t1))!!     // before the system existed
         val gAuth = gameToRecord(game(ms("2026-08-10", 9, 20) / 1000), "me", listOf(t0, t1))!! // green, inside window
         val gDenied = gameToRecord(game(ms("2026-08-11", 22, 30) / 1000), "me", listOf(t0, t1))!! // fresh red test said no
-        val gNoTest = gameToRecord(game(ms("2026-08-13", 14) / 1000), "me", listOf(t0, t1))!!  // only stale tests
+        val gNoTest = gameToRecord(game(ms("2026-08-13", 14) / 1000), "me", listOf(t0, t1))!!  // window long closed
 
         val series = computeComplianceSeries(
             listOf(gPre, gAuth, gDenied, gNoTest),
@@ -270,6 +270,21 @@ class ChessReadinessStatsCalculatorTest {
     }
 
     @Test
+    fun `a game begun inside the green window stays authorized even past the flat hour`() {
+        // User rule 2026-08-25: authorization is judged at play START. A
+        // 3-min blitz starting 59 min after the test ends ~62 min later —
+        // the old chart replayed a game-END flat-60 check and falsely
+        // showed "no fresh test"; the stored play-start verdict must win.
+        val t0 = test(ms("2026-08-10", 9), 90, green)
+        val g = gameToRecord(game(ms("2026-08-10", 9, 59) / 1000), "me", listOf(t0))!!
+        assertTrue(g.authorized)
+        val series = computeComplianceSeries(listOf(g), listOf(t0), t0.timestamp, zone)
+        assertEquals(1, series[0].authorized)
+        assertEquals(0, series[0].violationNoTest)
+        assertEquals(0, series[0].violationDenied)
+    }
+
+    @Test
     fun `expired green window counts as no fresh test not denied`() {
         val t0 = test(ms("2026-08-10", 9), 90, green)
         val gLate = gameToRecord(game(ms("2026-08-10", 11) / 1000), "me", listOf(t0))!! // 2 h after the green test
@@ -278,6 +293,20 @@ class ChessReadinessStatsCalculatorTest {
         assertEquals(0, series[0].authorized)
         assertEquals(0, series[0].violationDenied)
         assertEquals(1, series[0].violationNoTest)
+    }
+
+    @Test
+    fun `stale red test is bypass not denial for the effectiveness split`() {
+        val t0 = test(ms("2026-08-10", 9), 90, green)
+        val tRed = test(ms("2026-08-11", 20), 30, red)
+        // Fresh red → DENIED (a live test said no and play happened anyway).
+        val gDenied = gameToRecord(game(ms("2026-08-11", 20, 30) / 1000), "me", listOf(t0, tRed))!!
+        // 3 h after the same red → the system was bypassed, not defied.
+        val gBypassed = gameToRecord(game(ms("2026-08-11", 23) / 1000), "me", listOf(t0, tRed))!!
+        val agg = computeGameCategoryAggregates(listOf(gDenied, gBypassed), listOf(t0, tRed))
+            .associateBy { it.category }
+        assertEquals(1, agg.getValue(GameCategory.DENIED).games)
+        assertEquals(1, agg.getValue(GameCategory.EXPIRED).games)
     }
 
     @Test

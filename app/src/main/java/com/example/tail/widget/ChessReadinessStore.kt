@@ -103,7 +103,9 @@ object ChessReadinessStore {
                     pPuzzle = o.optNullableInt("pPuzzle"),
                     pRush = o.optNullableInt("pRush"),
                     // SPECIAL GREEN provenance — absent on legacy records.
-                    specialGreen = o.optBoolean("specialGreen", false)
+                    specialGreen = o.optBoolean("specialGreen", false),
+                    // WEEKLY FREEPLAY provenance — absent on legacy records.
+                    freeplay = o.optBoolean("freeplay", false)
                 )
             }
         } catch (_: Exception) {
@@ -127,6 +129,7 @@ object ChessReadinessStore {
                 it.pPuzzle?.let { v -> put("pPuzzle", v) }
                 it.pRush?.let { v -> put("pRush", v) }
                 if (it.specialGreen) put("specialGreen", true)
+                if (it.freeplay) put("freeplay", true)
             })
         }
         prefs(context).edit().putString(KEY_HISTORY, arr.toString()).apply()
@@ -196,6 +199,40 @@ object ChessReadinessStore {
         appendTest(context, test)
         return test
     }
+
+    /**
+     * WEEKLY FREEPLAY grant: consumes one freeplay credit from the
+     * [ChessFreeplayStore] ledger and unlocks rated play exactly like a
+     * passed pre-game readiness test. Implemented as a marked GREEN_LIGHT
+     * entry in the v1 test history (same mechanism as [grantSpecialGreen])
+     * so every gate consumer (Chess Guard evaluate(),
+     * [ChessPhase2Store.ratedPlayExpiresAt], the deferred-game reconciler,
+     * the post-game audits) treats it identically: 60-minute validity,
+     * rolling rated-play window, readiness buffer from the pass-grade
+     * CCRS. The [ChessReadinessEngine.ReadinessTest.freeplay] provenance
+     * flag lets stats split freeplay sessions from readiness-pass ones.
+     *
+     * Callers MUST check availability first ([ChessFreeplayStore.available]);
+     * this function still refuses to go negative as a safety net.
+     *
+     * @return the appended authorization entry, or null when no credit
+     *         was available (no entry written, no credit consumed).
+     */
+    fun grantFreeplay(context: Context): ChessReadinessEngine.ReadinessTest? {
+        val now = System.currentTimeMillis()
+        if (!ChessFreeplayStore.consume(context, now)) return null
+        val test = ChessReadinessEngine.ReadinessTest(
+            timestamp = now,
+            ccrs = FREEPLAY_CCRS,
+            state = ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name,
+            freeplay = true
+        )
+        appendTest(context, test)
+        return test
+    }
+
+    /** Pass-grade CCRS recorded on freeplay authorizations (85 = a pass). */
+    const val FREEPLAY_CCRS = 85
 
     // ── Linked habits (puzzle / rush credit) ───────────────────────────────
 

@@ -54,7 +54,13 @@ data class ReadinessTestRecord(
     /** All-time-high rush baseline in effect at test time. */
     val rushAllTimeHigh: Int,
     /** Epoch millis when the step-by-step test session was started. */
-    val sessionStartedAt: Long
+    val sessionStartedAt: Long,
+    /**
+     * True when this GREEN authorization is a weekly FREEPLAY (used from
+     * the bubble widget instead of passing a readiness test). Only
+     * meaningful on GREEN entries; stats use it to split sessions.
+     */
+    val freeplay: Boolean = false
 )
 
 /** One logged chess.com game with the readiness context at play time. */
@@ -85,7 +91,13 @@ data class ReadinessGameRecord(
      * The user's rating AFTER this game in its (variant × speed) pool;
      * null for unrated games or when the API didn't report one.
      */
-    val ratingAfter: Int? = null
+    val ratingAfter: Int? = null,
+    /**
+     * True when this game's authorization came from a weekly FREEPLAY
+     * entry rather than a passed readiness test — the split key for the
+     * freeplay-vs-pass performance comparison.
+     */
+    val freeplayAtPlay: Boolean = false
 )
 
 /** A blocked readiness test attempt (rate limit / cool-down / rest lock). */
@@ -173,22 +185,40 @@ fun gameDedupeKey(endTimeSec: Long, opponent: String, timeControl: String): Stri
 
 /**
  * Finds the readiness context at a point in time: the latest test submitted
- * at/before [timeMs], plus whether that test authorized RATED play at that
- * moment (GREEN state and still inside its validity window).
+ * at/before [timeMs], plus whether RATED play was authorized at that moment
+ * and where that authorization came from.
  *
- * Returns (null, false) when no test precedes the moment.
+ * With NO evidence ([audits]/[games] empty — pure callers, unit tests) the
+ * GREEN validity check is the fallback: latest test GREEN and [timeMs]
+ * inside its SESSION_VALIDITY_MS window.
+ *
+ * With evidence, this is the EXACT rolling-window rule the Chess Guard
+ * penalty detector applies ([rollingWindowExpiresAt]): every clean Phase 2
+ * audit and every rated game actually played re-anchors the 15-minute
+ * real-no-play clock. The logger passes the evidence so the stored
+ * authorized verdict matches the guard's verdict — the two can never
+ * disagree.
+ *
+ * Returns (null, false, false) when no test precedes the moment.
  */
 fun readinessContextAt(
     tests: List<ReadinessTestRecord>,
-    timeMs: Long
-): Pair<ReadinessTestRecord?, Boolean> {
+    timeMs: Long,
+    audits: List<Pair<Long, String>> = emptyList(),
+    games: List<Pair<Long, Long>> = emptyList()
+): Triple<ReadinessTestRecord?, Boolean, Boolean> {
     val latest = tests
         .filter { it.timestamp <= timeMs }
         .maxByOrNull { it.timestamp }
-        if (latest == null) return null to false
-    val authorized = latest.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name &&
-        timeMs - latest.timestamp <= ChessReadinessEngine.SESSION_VALIDITY_MS
-    return latest to authorized
+        if (latest == null) return Triple(null, false, false)
+    val isGreen = latest.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name
+    val authorized = isGreen && when {
+        audits.isEmpty() && games.isEmpty() ->
+            timeMs - latest.timestamp <= ChessReadinessEngine.SESSION_VALIDITY_MS
+        else ->
+            rollingWindowExpiresAt(latest.timestamp, audits, timeMs, games) != null
+    }
+    return Triple(latest, authorized, latest.freeplay)
 }
 
 /**
@@ -200,7 +230,9 @@ fun readinessContextAt(
 fun gameToRecord(
     game: ChessComGame,
     username: String,
-    tests: List<ReadinessTestRecord>
+    tests: List<ReadinessTestRecord>,
+    audits: List<Pair<Long, String>> = emptyList(),
+    gameSpans: List<Pair<Long, Long>> = emptyList()
 ): ReadinessGameRecord? {
     val userLower = username.lowercase()
     val isWhite = game.whiteUsername.lowercase() == userLower
@@ -215,7 +247,9 @@ fun gameToRecord(
     // when available, else end minus the time-control base clock.
     val startMs = game.startTime?.times(1000L)
         ?: (endTimeMs - (estimateGameMinutes(game.timeControl) * 60_000).toLong())
-    val (context, authorized) = readinessContextAt(tests, startMs)
+    val (context, authorized, freeplay) = readinessContextAt(
+        tests, startMs, audits, gameSpans
+    )
     val won = if (isWhite) {
         game.whiteResult == CHESS_COM_RESULT_WIN
     } else {
@@ -234,7 +268,8 @@ fun gameToRecord(
         authorized = authorized,
         variant = game.rules,
         rated = game.rated,
-        ratingAfter = if (game.rated && myRating > 0) myRating else null
+        ratingAfter = if (game.rated && myRating > 0) myRating else null,
+        freeplayAtPlay = authorized && freeplay
     )
 }
 
@@ -318,6 +353,8 @@ fun computeReadinessStats(
     val worstBucket = ratedBuckets.minByOrNull { it.avgCcrs }
 
     // ── Games vs readiness ────────────────────────────────────────────────
+    // Authorization comes from the stored play-start verdict (the guard's
+    // own basis at logging time), not the per-game-end re-derivation.
     val gamesAuthorized = games.count { it.authorized }
     val gamesNoTest = games.count { it.stateAtPlay == null }
     val gamesUnauthorized = games.size - gamesAuthorized - gamesNoTest
@@ -327,12 +364,12 @@ fun computeReadinessStats(
 
     // Authorized sessions: group authorized games by the test that
     // authorized them (identified by ccrsAtPlay + the test timestamp is
-    // implicit — a GREEN test's 60-min window is the "session").
+    // implicit — the window opened by a GREEN test is the "session").
     val sessionCounts = HashMap<Long, Int>()
     for (g in games) {
         if (!g.authorized) continue
         // Re-resolve the authorizing test to key the session by its timestamp.
-        val (ctx, _) = readinessContextAt(sortedTests, g.endTimeMs)
+        val (ctx, _) = readinessContextAt(sortedTests, g.estimatedStartMs())
         if (ctx != null) sessionCounts[ctx.timestamp] = (sessionCounts[ctx.timestamp] ?: 0) + 1
     }
     val greenSessions = sessionCounts.size
@@ -379,6 +416,90 @@ fun computeReadinessStats(
     )
 }
 
+// ── Freeplay vs readiness-pass comparison ───────────────────────────────────
+
+/**
+ * Session performance for one authorization source (readiness PASS vs
+ * weekly FREEPLAY): games played inside that source's 60-minute windows,
+ * win rate, and average games per window.
+ */
+data class FreeplayComparisonEntry(
+    /** Games played inside this source's authorization windows. */
+    val games: Int,
+    /** Wins among those games. */
+    val wins: Int,
+    /** Win rate 0–100. */
+    val winRate: Double,
+    /** Distinct authorization windows that covered at least one game. */
+    val sessions: Int,
+    /** Average games per such window. */
+    val avgGamesPerSession: Double,
+    /** Average CCRS of the authorizing entries (null = no data). */
+    val avgCcrs: Double?
+)
+
+/** The freeplay-vs-pass comparison for the stats screen. */
+data class FreeplayComparison(
+    /** Performance after a PASSED readiness test. */
+    val pass: FreeplayComparisonEntry,
+    /** Performance after a weekly FREEPLAY grant. */
+    val freeplay: FreeplayComparisonEntry
+)
+
+/**
+ * Splits authorized games by their authorizing entry's provenance
+ * (readiness pass vs weekly freeplay) and aggregates per-source
+ * performance. Pure function — consumes the same log records the stats
+ * screen already loads.
+ */
+fun computeFreeplayComparison(
+    tests: List<ReadinessTestRecord>,
+    games: List<ReadinessGameRecord>
+): FreeplayComparison {
+    val sorted = tests.sortedBy { it.timestamp }
+
+    // Per-window game accumulators keyed by authorizing test timestamp.
+    val passWindows = HashMap<Long, IntAcc>()
+    val freeWindows = HashMap<Long, IntAcc>()
+
+    for (g in games) {
+        if (!g.authorized || g.stateAtPlay == null) continue
+        // The stored record already knows the authorization source
+        // (freeplayAtPlay, resolved at play start when the game was
+        // logged); trust it instead of re-deriving the context.
+        val startMs = g.endTimeMs - (g.minutes * 60_000).toLong()
+        val ctx = readinessContextAt(sorted, startMs).first ?: continue
+        val windows = if (g.freeplayAtPlay) freeWindows else passWindows
+        val acc = windows.getOrPut(ctx.timestamp) { IntAcc() }
+        acc.count++
+        if (g.won) acc.wins++
+    }
+
+    fun entry(windows: HashMap<Long, IntAcc>, source: List<ReadinessTestRecord>): FreeplayComparisonEntry {
+        val totalGames = windows.values.sumOf { it.count }
+        val totalWins = windows.values.sumOf { it.wins }
+        val sessions = windows.size
+        // Average CCRS across the authorizing entries actually used.
+        val used = source.filter { it.timestamp in windows.keys }
+        return FreeplayComparisonEntry(
+            games = totalGames,
+            wins = totalWins,
+            winRate = if (totalGames > 0) totalWins * 100.0 / totalGames else 0.0,
+            sessions = sessions,
+            avgGamesPerSession = if (sessions > 0) totalGames.toDouble() / sessions else 0.0,
+            avgCcrs = if (used.isEmpty()) null else used.map { it.ccrs }.average()
+        )
+    }
+
+    return FreeplayComparison(
+        pass = entry(passWindows, sorted),
+        freeplay = entry(freeWindows, sorted)
+    )
+}
+
+/** Mutable game counter for one authorization window. */
+private class IntAcc(var count: Int = 0, var wins: Int = 0)
+
 // ── Compliance over time ────────────────────────────────────────────────────
 
 /** One day of the post-adoption compliance series (one chart bar). */
@@ -420,16 +541,20 @@ fun computeComplianceSeries(
     zone: ZoneId = ZoneId.systemDefault()
 ): List<ComplianceDay> {
     if (systemStartMs <= 0) return emptyList()
+    // The stored authorized verdict (resolved at play START under the rule
+    // in force when the game was logged — the guard's own basis) decides
+    // the bucket; only DENIED vs EXPIRED is re-derived, from the covering
+    // test's freshness.
+    val kinds = authorizationKinds(games, tests)
     val acc = LinkedHashMap<LocalDate, IntArray>()
     for (g in games.sortedBy { it.endTimeMs }) {
         if (g.endTimeMs < systemStartMs) continue // pre-adoption → excluded
-        val (ctx, authorized) = readinessContextAt(tests, g.endTimeMs)
         val day = Instant.ofEpochMilli(g.endTimeMs).atZone(zone).toLocalDate()
         val a = acc.getOrPut(day) { IntArray(3) }
-        when {
-            authorized -> a[0]++
-            ctx != null && g.endTimeMs - ctx.timestamp <= ChessReadinessEngine.SESSION_VALIDITY_MS -> a[1]++
-            else -> a[2]++
+        when (kinds[g.estimatedStartMs()]) {
+            AuthorizationKind.AUTHORIZED -> a[0]++
+            AuthorizationKind.DENIED -> a[1]++
+            else -> a[2]++ // expired window or no test at all → bypassed
         }
     }
     return acc.map { (day, a) -> ComplianceDay(day, a[0], a[1], a[2]) }
@@ -517,6 +642,10 @@ fun computeRatingStats(
         .filter { it.rated && it.ratingAfter != null }
         .groupBy { ratingPoolKey(it.variant, it.type) }
 
+    // The stored authorized verdict (play-start basis) — identical to the
+    // guard's verdict and the compliance chart's bucket.
+    val kinds = authorizationKinds(games, tests)
+
     val result = pools.map { (key, poolGames) ->
         val sorted = poolGames.sortedBy { it.endTimeMs }
         var prevRating: Int? = null
@@ -529,9 +658,8 @@ fun computeRatingStats(
             prevRating = rating
             if (delta == null) continue // first game of the pool → baseline only
             if (systemStartMs > 0 && g.endTimeMs < systemStartMs) continue // pre-adoption
-            // Post-adoption, a game is either authorized or a violation
-            // (fresh GREEN always authorizes, so no third case exists).
-            val (_, authorized) = readinessContextAt(tests, g.endTimeMs)
+            // Post-adoption, a game is either authorized or a violation.
+            val authorized = kinds[g.estimatedStartMs()] == AuthorizationKind.AUTHORIZED
             if (authorized) {
                 authGames++; authDelta += delta; if (g.won) authWins++
             } else {
@@ -779,13 +907,19 @@ fun computeGameCategoryAggregates(
 ): List<GameCategoryAggregate> {
     data class Acc(var games: Int = 0, var wins: Int = 0, var ccrs: Int = 0, var withCcrs: Int = 0)
     val acc = GameCategory.entries.associateWith { Acc() }
+    // The stored authorized verdict (play-start basis) — guard-equivalent.
+    val kinds = authorizationKinds(games, tests)
+    // Context (CCRS provenance) is still resolved per game-end.
+    val contexts = games.associate {
+        it.endTimeMs to readinessContextAt(tests, it.endTimeMs).first
+    }
     for (g in games) {
-        val (ctx, authorized) = readinessContextAt(tests, g.endTimeMs)
-        val cat = when {
-            authorized -> GameCategory.APPROVED
-            ctx == null -> GameCategory.PRE_TEST
-            g.endTimeMs - ctx.timestamp <= ChessReadinessEngine.SESSION_VALIDITY_MS -> GameCategory.DENIED
-            else -> GameCategory.EXPIRED
+        val ctx = contexts[g.endTimeMs]
+        val cat = when (kinds[g.estimatedStartMs()]) {
+            AuthorizationKind.AUTHORIZED -> GameCategory.APPROVED
+            AuthorizationKind.NO_TEST, null -> GameCategory.PRE_TEST
+            AuthorizationKind.DENIED -> GameCategory.DENIED
+            AuthorizationKind.EXPIRED -> GameCategory.EXPIRED
         }
         val a = acc.getValue(cat)
         a.games++

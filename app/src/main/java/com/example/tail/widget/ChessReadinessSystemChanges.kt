@@ -188,6 +188,36 @@ object ChessReadinessSystemChanges {
                 "from the PC every other rule still evaluates and the verdict is marked " +
                 "engine-less. Selectable as 'v3' in Settings → Chess, with v1/v2 history " +
                 "kept intact."
+        ),
+        ReadinessSystemChange(
+            at("2026-09-21T14:00:00Z"),
+            "Weekly freeplay — rated play without a test",
+            "One FREEPLAY credit is earned each week (max 3 banked). Spending one from the " +
+                "floating bubble's chess menu unlocks rated play exactly as if a pre-game " +
+                "readiness test had been passed: a flagged GREEN entry enters the test " +
+                "history (CCRS 85, full 60-minute validity, rolling rated-play window, " +
+                "readiness buffer, and the post-game audit machinery unchanged). The " +
+                "provenance flag lets the Chess Stats screen split authorized sessions by " +
+                "how play was authorized — readiness PASS vs FREEPLAY — with games, win " +
+                "rates, sessions and average CCRS compared side by side. Purpose: an " +
+                "occasional 'want to play regardless of measured readiness' escape valve " +
+                "that stays honest — the failed test is still recorded as failed, and " +
+                "freeplay performance is tracked for comparison."
+        ),
+        ReadinessSystemChange(
+            at("2026-09-21T15:40:00Z"),
+            "Freeplay settlement — net +1 rating refunds the credit",
+            "A freeplay credit is now spent PROVISIONALLY at grant time. Once the session's " +
+                "60-minute window has fully elapsed, the session is settled by its result: " +
+                "the NET rating change across the rated games played in the window (summed " +
+                "per variant × speed pool against each pool's pre-session baseline) decides " +
+                "the outcome. A net gain of +1 or better REFUNDS the credit; anything less " +
+                "keeps it spent. Sessions with no ratable games (no baseline or no rated " +
+                "games) keep the credit spent. Settlement runs opportunistically whenever " +
+                "games are logged, the stats screen opens, or the bubble chess menu renders. " +
+                "The balance also became DERIVED (granted − spent + refunded) from the " +
+                "append-only ledger, eliminating a stored counter that a corrupt prefs write " +
+                "could silently reset (which briefly mis-displayed the balance on 2026-09-21)."
         )
     )
 }

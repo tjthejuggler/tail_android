@@ -160,7 +160,11 @@ object ChessReadinessLogStore {
             for (i in 0 until gamesArr.length()) {
                 keyIndex[gamesArr.getJSONObject(i).optString("key")] = i
             }
-            // Readiness context is resolved from the tests already in the log.
+            // Readiness context is resolved from the tests already in the
+            // log, with the SAME rolling-window evidence the Chess Guard
+            // penalty detector uses (audit chain + rated games actually
+            // played) — the stored authorized flag and the guard's verdict
+            // can then never disagree.
             val tests = loadTestsLocked(root)
             var upgraded = false
             for (game in games) {
@@ -169,7 +173,20 @@ object ChessReadinessLogStore {
                 if (!isWhite && !isBlack) continue
                 val opponent = if (isWhite) game.blackUsername else game.whiteUsername
                 val key = gameDedupeKey(game.endTime, opponent, game.timeControl)
-                val record = gameToRecord(game, username, tests) ?: continue
+                val startMs0 = game.startTime?.times(1000L)
+                    ?: (game.endTime * 1000L -
+                        (com.example.tail.data.estimateGameMinutes(game.timeControl) * 60_000).toLong())
+                val record = gameToRecord(
+                    game, username, tests,
+                    audits = try {
+                        ChessPhase2Store.loadAudits(context).map {
+                            it.timestamp to it.outputState
+                        }
+                    } catch (_: Exception) {
+                        emptyList()
+                    },
+                    gameSpans = gamesArrSpanChain(gamesArr, beforeMs = startMs0)
+                ) ?: continue
                 val existingIdx = keyIndex[key]
                 if (existingIdx != null) {
                     // Upgrade entries logged before ratings/variant were
@@ -202,6 +219,16 @@ object ChessReadinessLogStore {
                 ChessGuardPenalty.evaluateAndApply(context, g.key, g.startMs, g.endMs, g.rated)
             } catch (_: Exception) {
                 // Penalty detection is best-effort on top of logging.
+            }
+        }
+        // Freeplay settlement, same best-effort discipline: newly logged
+        // games complete freeplay sessions whose window has since expired —
+        // settle them so refunds land as soon as the results arrive.
+        if (added > 0) {
+            try {
+                ChessFreeplayStore.settleExpired(context)
+            } catch (_: Exception) {
+                // Settlement is best-effort on top of logging.
             }
         }
         return added
@@ -244,7 +271,8 @@ object ChessReadinessLogStore {
                     stress = 0, focus = 0, energy = 0,
                     puzzleTimesSec = emptyList(),
                     rushScore = 0, rushStrikes = 0, rushAllTimeHigh = 0,
-                    sessionStartedAt = t.timestamp
+                    sessionStartedAt = t.timestamp,
+                    freeplay = t.freeplay
                 )
             ))
             known.add(t.timestamp)
@@ -418,6 +446,27 @@ object ChessReadinessLogStore {
         }
     }
 
+    /**
+     * Rated-game (startMs, endMs) spans from the already-parsed games array,
+     * usable as the rolling-window games chain: start = stored end minus the
+     * base-clock estimate (the log does not persist exact PGN starts — the
+     * same fallback the penalty detector's [ChessDeferredGameReconciler.
+     * ratedGameSpans] uses). Only rated games ENDED at/before [beforeMs] are
+     * returned, so the game being classified can never extend its own window.
+     */
+    private fun gamesArrSpanChain(gamesArr: JSONArray, beforeMs: Long): List<Pair<Long, Long>> {
+        val spans = ArrayList<Pair<Long, Long>>()
+        for (i in 0 until gamesArr.length()) {
+            val o = gamesArr.getJSONObject(i)
+            if (!o.optBoolean("rated", true)) continue
+            val end = o.optLong("endTimeMs", 0L)
+            if (end <= 0L || end > beforeMs) continue
+            val minutes = o.optDouble("minutes", 0.0)
+            spans.add((end - (minutes * 60_000).toLong()) to end)
+        }
+        return spans
+    }
+
     private fun trimOldest(root: JSONObject, key: String, max: Int) {
         val arr = root.optJSONArray(key) ?: return
         if (arr.length() <= max) return
@@ -451,6 +500,7 @@ object ChessReadinessLogStore {
         put("rushStrikes", t.rushStrikes)
         put("rushAllTimeHigh", t.rushAllTimeHigh)
         put("sessionStartedAt", t.sessionStartedAt)
+        if (t.freeplay) put("freeplay", true)
     }
 
     private fun decodeTest(o: JSONObject): ReadinessTestRecord? = try {
@@ -473,7 +523,8 @@ object ChessReadinessLogStore {
             rushScore = o.optInt("rushScore", 0),
             rushStrikes = o.optInt("rushStrikes", 0),
             rushAllTimeHigh = o.optInt("rushAllTimeHigh", 0),
-            sessionStartedAt = o.optLong("sessionStartedAt", o.getLong("timestamp"))
+            sessionStartedAt = o.optLong("sessionStartedAt", o.getLong("timestamp")),
+            freeplay = o.optBoolean("freeplay", false)
         )
     } catch (_: Exception) {
         null
@@ -520,6 +571,7 @@ object ChessReadinessLogStore {
         if (g.ratingAfter != null) put("ratingAfter", g.ratingAfter)
         if (g.ccrsAtPlay != null) put("ccrsAtPlay", g.ccrsAtPlay)
         if (g.stateAtPlay != null) put("stateAtPlay", g.stateAtPlay)
+        if (g.freeplayAtPlay) put("freeplayAtPlay", true)
     }
 
     private fun decodeGame(o: JSONObject): ReadinessGameRecord? = try {
@@ -534,7 +586,8 @@ object ChessReadinessLogStore {
             authorized = o.optBoolean("authorized", false),
             variant = o.optString("variant", "chess"),
             rated = o.optBoolean("rated", true),
-            ratingAfter = if (o.has("ratingAfter") && !o.isNull("ratingAfter")) o.getInt("ratingAfter") else null
+            ratingAfter = if (o.has("ratingAfter") && !o.isNull("ratingAfter")) o.getInt("ratingAfter") else null,
+            freeplayAtPlay = o.optBoolean("freeplayAtPlay", false)
         )
     } catch (_: Exception) {
         null

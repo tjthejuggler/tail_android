@@ -386,7 +386,18 @@ object ChessReadinessEngine {
          * distinguish the provenance; the gate treats the entry
          * identically to a normal GREEN pass.
          */
-        val specialGreen: Boolean = false
+        val specialGreen: Boolean = false,
+        /**
+         * True when this authorization is a WEEKLY FREEPLAY (granted from
+         * the bubble widget, [com.example.tail.widget.ChessFreeplayStore]
+         * ledger): rated play unlocks exactly as if a pre-game readiness
+         * test had been passed — GREEN session, full 60-minute validity,
+         * rolling rated-play window and the post-game audit machinery
+         * (readiness buffer from the pass-grade CCRS) apply unchanged.
+         * The flag exists so stats can split freeplay sessions from
+         * readiness-pass sessions for comparison.
+         */
+        val freeplay: Boolean = false
     )
 
     /** What the adaptive thresholds were derived from. */

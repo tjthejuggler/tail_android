@@ -199,8 +199,13 @@ object ChessPhase2Engine {
      * 10 → 15 minutes, and the gap must be REAL no-play time (last game's
      * end → next game's start) — 10 minutes was tight enough to flag honest
      * back-to-back sessions (the korosh935milad false positive: a real
-     * 10m22s break measured as a 17m37s audit gap). */
-    const val RATED_IDLE_CLOSE_MINUTES = 15L
+     * 10m22s break measured as a 17m37s audit gap).
+     *
+     * Kept as a delegate to the shared core-data constant so existing
+     * references (tests, docs) resolve while the rule itself has ONE home
+     * ([com.example.tail.data.RATED_IDLE_CLOSE_MINUTES]). */
+    const val RATED_IDLE_CLOSE_MINUTES =
+        com.example.tail.data.RATED_IDLE_CLOSE_MINUTES
 
     /**
      * ROLLING rated-play window (2026-09-12: idle close tightened from 30
@@ -230,28 +235,9 @@ object ChessPhase2Engine {
         audits: List<Pair<Long, String>>,
         now: Long,
         games: List<Pair<Long, Long>> = emptyList()
-    ): Long? {
-        val inWindow = audits.filter { it.first in greenTestMs..now }
-        // A Yellow/Red audit since the authorization revokes rated play.
-        if (inWindow.any {
-                it.second != OutputState.CONTINUE_RATED.name
-            }) return null
-        val idleCloseMs = RATED_IDLE_CLOSE_MINUTES * 60_000
-        // Chain of window-extending evidence: every clean audit re-anchors
-        // the idle clock to its instant (unchanged lenient semantics), then
-        // each played game whose start was still inside the live window
-        // extends the anchor to that game's end — continuous play never
-        // counts as idleness.
-        var anchor = greenTestMs
-        inWindow.forEach { anchor = maxOf(anchor, it.first) }
-        games.sortedBy { it.first }
-            .filter { it.first in greenTestMs..now && it.second <= now }
-            .forEach { (start, end) ->
-                if (start < anchor + idleCloseMs) anchor = maxOf(anchor, end)
-            }
-        return if (now - anchor >= idleCloseMs) null
-        else anchor + idleCloseMs
-    }
+    ): Long? = com.example.tail.data.rollingWindowExpiresAt(
+        greenTestMs, audits, now, games
+    )
 
     // ── Result models ──────────────────────────────────────────────────────
 
