@@ -317,7 +317,11 @@ object ChessReadinessLogStore {
 
     /** Deletes the entire readiness log. */
     fun clear(context: Context) {
-        synchronized(lock) { file(context).delete() }
+        synchronized(lock) {
+            file(context).delete()
+            cachedRoot = null
+            cachedRootKey = 0L
+        }
     }
 
     /**
@@ -385,9 +389,33 @@ object ChessReadinessLogStore {
 
     // ── JSON codec ──────────────────────────────────────────────────────────
 
+    /**
+     * Parsed-root cache (OOM fix, 2026-09-23). The log is ~1.6 MB and was
+     * re-read AND re-parsed through org.json on EVERY call — startup alone
+     * hit it several times, each parse materialising the file as a String
+     * plus the full JSONObject tree. The cache holds one tree, keyed by the
+     * file's (length, mtime); any external change misses; our own writes
+     * refresh it. All access is under [lock], so sharing the tree is safe.
+     */
+    private var cachedRoot: JSONObject? = null
+    private var cachedRootKey: Long = 0L
+
+    private fun fileKey(f: File): Long = if (f.exists()) f.length() * 31 + f.lastModified() else -1L
+
     private fun readRoot(context: Context): JSONObject = try {
         val f = file(context)
-        if (f.exists()) JSONObject(f.readText()) else JSONObject()
+        val key = fileKey(f)
+        val hit = cachedRoot
+        if (hit != null && key == cachedRootKey) {
+            hit
+        } else {
+            val root = if (f.exists()) {
+                f.bufferedReader(Charsets.UTF_8).use { JSONObject(org.json.JSONTokener(it.readText())) }
+            } else JSONObject()
+            cachedRoot = root
+            cachedRootKey = key
+            root
+        }
     } catch (e: Throwable) {
         if (isFatal(e)) throw e
         JSONObject() // corrupt file → start fresh rather than crash logging
@@ -439,7 +467,13 @@ object ChessReadinessLogStore {
             trimOldest(root, KEY_TESTS, MAX_EVENTS)
             trimOldest(root, KEY_RUSH_SESSIONS, MAX_EVENTS)
             trimOldest(root, KEY_BLOCKED, MAX_EVENTS / 10)
-            file(context).writeText(root.toString())
+            val f = file(context)
+            // Atomic replace so a killed write never leaves a truncated log.
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(root.toString())
+            if (!tmp.renameTo(f)) { f.writeText(root.toString()); tmp.delete() }
+            cachedRoot = root
+            cachedRootKey = fileKey(f)
         } catch (e: Throwable) {
             if (isFatal(e)) throw e
             // Logging must never take down the readiness flow.

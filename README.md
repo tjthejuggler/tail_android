@@ -1,12 +1,20 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-09-22T19:30Z
+**Last updated:** 2026-09-23T13:15Z
 
 A native Android habit tracking app built with Kotlin + Jetpack Compose. Maintains full data compatibility with the desktop PyQt widget system by sharing the same `habitsdb_phone.txt` JSON file.
 
 > **📖 Desktop infrastructure guide:** See [`DESKTOP_SERVICES.md`](supervisor/DESKTOP_SERVICES.md:1) for the complete documentation of the PC-side supervisor, bridge protocol, movie tracking pipeline, and how to add new PC↔Phone features.
 
 ---
+
+## 2026-09-23T13:15Z — Startup OOM fixed: persistence layer made streaming + cached (scales to much larger DBs)
+- **The crash.** Repeated `OutOfMemoryError` at the 256 MB heapgrowthlimit on cold start. Root cause: the habits DB (~3 MB today, grows forever) was round-tripped through whole-document Strings on every save — `prettyGson.toJson` (~4× file size in StringBuilder churn), the on-disk file re-read as a String for the anti-shrinkage guard, then both copied again to hash/write the pre- and post-save snapshots ≈ **6× file size in transient heap per save**, on top of ~46 independent call sites each parsing their own ~20 MB object graph at startup bursts. `computeTaskerStats` allocated per-habit-per-day; [`ChessReadinessLogStore.readRoot`](app/src/main/java/com/example/tail/widget/ChessReadinessLogStore.kt:422) re-parsed 1.6 MB org.json on the MAIN thread.
+- **Streaming codec.** New [`HabitsDbCodec`](core-data/src/main/java/com/example/tail/data/HabitsDbCodec.kt:1): Gson `JsonReader`/`JsonWriter` streaming read/write with per-parse date-key interning (the same ~1300 date keys repeat across all habits), an O(1)-memory `countEntries`, and output **byte-identical to `setPrettyPrinting()`** (pinned by unit test incl. `isHtmlSafe`) so the Syncthing-shared file and the desktop side see no format change.
+- **Zero-copy save path.** [`HabitsRepository.saveDatabase`](core-data/src/main/java/com/example/tail/data/HabitsRepository.kt:311) no longer builds any String: the anti-shrinkage guard consumes the on-disk file via a tee stream ([`HabitsSnapshotManager.captureAndCount`](core-data/src/main/java/com/example/tail/data/backup/HabitsSnapshotManager.kt:192)) that writes the pre-write snapshot while counting entries; the post-save snapshot tee-copies the bytes being written to the DB. `restoreDatabaseRaw` likewise streams. Fail-closed high-water fallback and all hooks unchanged.
+- **One parse per file version.** Process-wide [`CachedDb`](core-data/src/main/java/com/example/tail/data/HabitsRepository.kt:76) keyed by URI|size|mtime — all 46 load sites share the parsed graph instead of racing ~20 MB parses; invalidated automatically when the file (i.e., Syncthing) changes.
+- **Cheap touches.** [`ensureDaysExist`](core-data/src/main/java/com/example/tail/data/HabitsRepository.kt:524) only rebuilds habits actually missing today; [`computeTaskerStats`](core-data/src/main/java/com/example/tail/data/HabitCalculator.kt:511) is allocation-free (hoisted per-habit resolution + 30-day IntArray); the chess log caches its parsed root keyed by length+mtime and writes atomically (.tmp+rename); the chess backfill check moved off the main thread. `android:largeHeap="true"` added as a safety net, not a fix.
+- **Verified.** Codec unit tests green (byte-identity vs Gson, round-trip, interning, malformed handling) + full suites green; installed on both devices; force-stop cold start: process alive, `logcat -b crash` empty, Java heap peaked ~68 MB then settled ~44 MB with no GC thrash. Memory now scales with the parsed graph, not the file, and per-save transient allocation dropped from ~6× file size to ~O(1) buffers.
 
 ## 2026-09-22T19:30Z — Reorganization: feature sub-packages, repo hygiene, guardrails (Phase 0/1/5 of [`plans/codebase_reorganization_plan.md`](plans/codebase_reorganization_plan.md:1))
 - **Why.** LLM/human edits were slow because 145k lines of Kotlin sat in a flat `ui` package (106 files), a 16-file/14k-line `HabitViewModel` satellite system, and a cluttered repo root. This change is pure structure — zero behavior changes; **803 unit tests green** before and after.

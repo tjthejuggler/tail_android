@@ -3,16 +3,21 @@ package com.example.tail.data.backup
 import android.content.Context
 import android.util.Log
 import com.example.tail.data.HabitsDatabase
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import com.google.gson.stream.JsonReader
+import com.example.tail.data.HabitsDbCodec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.BufferedWriter
 import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.io.OutputStreamWriter
 import java.io.Reader
 import java.io.StringReader
+import java.io.Writer
+import java.security.DigestOutputStream
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
@@ -54,9 +59,6 @@ private const val SNAPSHOT_SUFFIX = ".json"
  */
 class HabitsSnapshotManager(private val context: Context) {
 
-    private val gson = Gson()
-    private val dbType = object : TypeToken<Map<String, Map<String, Int>>>() {}.type
-
     /** Serialises snapshot writes so concurrent saves can't race on retention. */
     private val mutex = Mutex()
 
@@ -87,14 +89,21 @@ class HabitsSnapshotManager(private val context: Context) {
      * @param reason short tag for logs (e.g. "pre-write", "post-save").
      */
     suspend fun snapshot(db: HabitsDatabase, reason: String) {
-        val entryCount = db.values.sumOf { it.size }
+        val entryCount = HabitsDbCodec.countEntries(db)
         if (entryCount < MIN_ENTRIES_TO_SNAPSHOT) {
             // Refuse to snapshot an empty/near-empty DB — it's never a "good" state
             // worth preserving and would just dilute the retained history.
             return
         }
         try {
-            snapshotRaw(gson.toJson(db), reason)
+            val staged = stage()
+            try {
+                staged.writer.use { HabitsDbCodec.write(db, it) }
+            } catch (e: Throwable) {
+                staged.discard()
+                throw e
+            }
+            commit(staged, entryCount, reason)
         } catch (e: Throwable) {
             // Throwable, not Exception: snapshotting must never take the process
             // down (an OutOfMemoryError serializing a multi-MB DB is exactly the
@@ -104,54 +113,137 @@ class HabitsSnapshotManager(private val context: Context) {
     }
 
     /**
-     * Records a snapshot from ALREADY-SERIALIZED json — e.g. the exact bytes just
-     * written to the DB file ("post-save") or the raw on-disk text captured before
-     * an overwrite ("pre-write"). This avoids the old parse→re-serialize round
-     * trip, which transiently doubled the DB's memory footprint on every save and
-     * was a direct contributor to the 2026-09-10 OOM crash loop on rapid habit
-     * increments.
+     * A snapshot being written. Bytes go to a temp file inside the snapshot
+     * directory while a SHA-256 is accumulated on the fly, so the caller can
+     * tee its real output through [stream]/[writer] and finish with
+     * [commit] — the snapshot costs no extra heap beyond the I/O buffer.
      */
-    suspend fun snapshotRaw(json: String, reason: String) = withContext(Dispatchers.IO) {
+    class Staged internal constructor(
+        internal val tmp: File,
+        private val digest: MessageDigest,
+        /** Raw byte sink (UTF-8 text expected). */
+        val stream: OutputStream
+    ) {
+        /** UTF-8 character view over [stream]. Closing it closes the stream. */
+        val writer: Writer by lazy { BufferedWriter(OutputStreamWriter(stream, Charsets.UTF_8)) }
+
+        internal fun hash(): String =
+            digest.digest().take(6).joinToString("") { "%02x".format(it) }
+
+        /** Abandons the staged file (never throws). */
+        fun discard() {
+            try { stream.close() } catch (_: Exception) {}
+            try { tmp.delete() } catch (_: Exception) {}
+        }
+    }
+
+    /** Opens a new staged snapshot. The caller must [commit] or [Staged.discard]. */
+    fun stage(): Staged {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val tmp = File(dir(), "$SNAPSHOT_PREFIX${System.currentTimeMillis()}_${System.nanoTime()}.tmp")
+        val raw = FileOutputStream(tmp)
+        val out: OutputStream = DigestOutputStream(raw.buffered(64 * 1024), digest)
+        return Staged(tmp, digest, out)
+    }
+
+    /**
+     * Finalises a [Staged] snapshot whose [Staged.stream]/[Staged.writer] the
+     * caller has already CLOSED. [entryCount] is the caller-known total (the
+     * count it streamed). Refuses near-empty payloads and dedups against the
+     * newest snapshot's hash. Never throws.
+     */
+    suspend fun commit(staged: Staged, entryCount: Int, reason: String) = withContext(Dispatchers.IO) {
         try {
-            val entryCount = try {
-                countHabitDbEntries(json)
-            } catch (e: Throwable) {
-                -1
-            }
+            try { staged.stream.close() } catch (_: Exception) {}
             if (entryCount < MIN_ENTRIES_TO_SNAPSHOT) {
-                // Refuse to snapshot an unparseable or near-empty payload — it's
-                // never a "good" state worth preserving.
-                Log.w(TAG, "snapshot[$reason]: refused unparseable/near-empty payload ($entryCount entries)")
+                Log.w(TAG, "snapshot[$reason]: refused near-empty payload ($entryCount entries)")
+                staged.discard()
                 return@withContext
             }
-            val hash = shortHash(json)
-
+            val hash = staged.hash()
             mutex.withLock {
-                val existing = listSnapshotFiles()
-                // Dedup: if the newest snapshot already has this exact content, skip.
-                val newest = existing.maxByOrNull { it.timestamp }
+                val newest = listSnapshotFiles().maxByOrNull { it.timestamp }
                 if (newest != null && newest.hash == hash) {
+                    staged.discard()
                     return@withLock
                 }
                 val fileName = "$SNAPSHOT_PREFIX${System.currentTimeMillis()}_$hash$SNAPSHOT_SUFFIX"
                 val out = File(dir(), fileName)
-                // Atomic even here: temp + rename, so a killed snapshot write can't
-                // leave a half-file that later looks like a valid restore point.
-                val tmp = File(dir(), "$fileName.tmp")
-                tmp.writeText(json)
-                if (!tmp.renameTo(out)) {
-                    // Fallback: copy then delete tmp.
-                    out.writeText(json)
-                    tmp.delete()
+                if (!staged.tmp.renameTo(out)) {
+                    staged.tmp.copyTo(out, overwrite = true)
+                    staged.tmp.delete()
                 }
-                Log.i(TAG, "snapshot[$reason]: wrote $fileName ($entryCount entries, ${json.length} bytes)")
+                Log.i(TAG, "snapshot[$reason]: wrote $fileName ($entryCount entries, ${out.length()} bytes)")
                 prune()
             }
         } catch (e: Throwable) {
-            // Throwable, not Exception: snapshotting must never break a
-            // legitimate save (see snapshot() above).
+            staged.discard()
             Log.w(TAG, "snapshot[$reason]: failed (non-fatal): ${e.message}")
         }
+    }
+
+    /**
+     * Captures the habits document available on [open] as a snapshot WHILE
+     * counting its entries in one streaming pass — the pre-write "last known
+     * good" capture. Returns the entry count, or null when the stream could
+     * not be opened, was blank, or was not a well-formed habits DB (in which
+     * case nothing is kept). Memory use is the I/O buffer only.
+     */
+    suspend fun captureAndCount(open: () -> InputStream?, reason: String): Int? =
+        withContext(Dispatchers.IO) {
+            val input = try { open() } catch (e: Exception) { null } ?: return@withContext null
+            val staged = try { stage() } catch (e: Exception) {
+                try { input.close() } catch (_: Exception) {}
+                return@withContext null
+            }
+            var sawContent = false
+            val count: Int = try {
+                input.use { ins ->
+                    val teeIn = TeeInputStream(ins, staged.stream)
+                    val reader = teeIn.bufferedReader(Charsets.UTF_8)
+                    // Blank-file detection without materialising anything.
+                    val pb = java.io.PushbackReader(reader, 1)
+                    while (true) {
+                        val c = pb.read()
+                        if (c == -1) break
+                        if (!c.toChar().isWhitespace()) { pb.unread(c); sawContent = true; break }
+                    }
+                    if (!sawContent) -1 else {
+                        val n = HabitsDbCodec.countEntries(pb)
+                        // Drain any trailing bytes so the snapshot copy is complete.
+                        val sink = CharArray(4096)
+                        while (pb.read(sink) != -1) { /* drain */ }
+                        n
+                    }
+                }
+            } catch (e: Throwable) {
+                staged.discard()
+                return@withContext null
+            }
+            if (count < 0) {
+                staged.discard()
+                return@withContext null
+            }
+            commit(staged, count, reason)
+            count
+        }
+
+    /** Copies every byte read from [source] into [sink]. */
+    private class TeeInputStream(
+        private val source: InputStream,
+        private val sink: OutputStream
+    ) : InputStream() {
+        override fun read(): Int {
+            val b = source.read()
+            if (b != -1) sink.write(b)
+            return b
+        }
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val n = source.read(b, off, len)
+            if (n > 0) sink.write(b, off, n)
+            return n
+        }
+        override fun close() { source.close() }
     }
 
     /** Metadata for one snapshot file. */
@@ -175,9 +267,9 @@ class HabitsSnapshotManager(private val context: Context) {
     suspend fun readSnapshot(file: File): HabitsDatabase? = withContext(Dispatchers.IO) {
         try {
             // Streaming parse: a 3 MB snapshot no longer has to exist as a
-            // full String on the heap before Gson sees it — restoring a
+            // full String on the heap before the parser sees it — restoring a
             // snapshot was itself an OOM risk in the persistent process.
-            gson.fromJson<HabitsDatabase>(file.reader(), dbType)
+            file.bufferedReader(Charsets.UTF_8).use { HabitsDbCodec.read(it) }
         } catch (e: Throwable) {
             // Throwable, not Exception: an OutOfMemoryError mid-parse of a
             // multi-MB snapshot must grey the snapshot out, never kill the process.
@@ -233,12 +325,6 @@ class HabitsSnapshotManager(private val context: Context) {
         } catch (_: Exception) {
             null
         }
-    }
-
-    private fun shortHash(json: String): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        val bytes = md.digest(json.toByteArray())
-        return bytes.take(6).joinToString("") { "%02x".format(it) }
     }
 
     /**
@@ -307,26 +393,9 @@ class HabitsSnapshotManager(private val context: Context) {
  * Counts total habit entries (inner map size summed over habits) in a
  * habits-db JSON document using a streaming token reader — O(1) memory, no
  * object graph. Throws on malformed or foreign JSON; callers decide how to
- * treat that. Shared with [com.example.tail.data.HabitsRepository] for
- * memory-safe save validation.
+ * treat that.
  */
-internal fun countHabitDbEntries(reader: Reader): Int {
-    val json = JsonReader(reader)
-    var total = 0
-    json.beginObject()
-    while (json.hasNext()) {
-        json.nextName() // habit name
-        json.beginObject()
-        while (json.hasNext()) {
-            json.nextName() // date key
-            json.nextInt()  // stored count (also rejects non-int payloads)
-            total++
-        }
-        json.endObject()
-    }
-    json.endObject()
-    return total
-}
+internal fun countHabitDbEntries(reader: Reader): Int = HabitsDbCodec.countEntries(reader)
 
 /** Convenience overload for in-memory JSON text. */
 internal fun countHabitDbEntries(text: String): Int = countHabitDbEntries(StringReader(text))

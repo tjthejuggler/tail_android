@@ -3081,7 +3081,12 @@ class HabitViewModel(
     internal suspend fun backfillChessComHistoryOnce() {
         val s = _settings.value
         if (!s.chessComEnabled || s.chessComUsername.isEmpty()) return
-        if (ChessReadinessLogStore.isHistoryBackfilled(context, s.chessComUsername)) return
+        // The readiness log is a multi-MB JSON file: never parse it on Main
+        // (this exact call was the main-thread OOM of 2026-09-23).
+        val done = withContext(Dispatchers.IO) {
+            ChessReadinessLogStore.isHistoryBackfilled(context, s.chessComUsername)
+        }
+        if (done) return
         try {
             _chessComSyncStatus.value = "Backfilling full chess.com history…"
             val result = chessComRepo.fetchAllArchiveGames(

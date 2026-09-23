@@ -4,25 +4,21 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.example.tail.data.backup.HabitsSnapshotManager
-import com.example.tail.data.backup.countHabitDbEntries
-import com.google.gson.Gson
-import com.google.gson.GsonBuilder
-import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.FilterReader
 import java.io.InputStreamReader
+import java.io.OutputStream
+import java.io.OutputStreamWriter
 import java.io.PushbackReader
+import java.io.Writer
 import java.time.LocalDate
 
 private const val TAG = "HabitsRepository"
-
-private val gson = Gson()
-private val prettyGson = GsonBuilder().setPrettyPrinting().create()
-private val dbType = object : TypeToken<Map<String, Map<String, Int>>>() {}.type
 
 /**
  * Result of attempting to load the habits database file. Distinguishing the
@@ -121,6 +117,61 @@ class HabitsRepository {
         fun highWaterEntryCount(): Int = lastKnownGoodEntryCount
 
         /**
+         * PROCESS-WIDE PARSED-DB CACHE (OOM fix, 2026-09-23).
+         *
+         * Every widget provider, receiver, service and the ViewModel creates
+         * its own [HabitsRepository] and calls [loadDatabase] — 46 call sites,
+         * a dozen of which fire within the first seconds of a cold start. Each
+         * call used to parse the multi-MB file into its OWN ~20 MB object
+         * graph; a burst of concurrent parses plus the save path's transient
+         * Strings exhausted the 256 MB heap.
+         *
+         * The cache holds ONE immutable parsed graph, keyed by the file's
+         * identity (URI + size + mtime as reported by the provider). A load
+         * whose identity matches returns the shared instance without I/O or
+         * parsing; any change on disk (our own save, Syncthing, the desktop)
+         * changes size/mtime and misses. Because [HabitsDatabase] is a
+         * read-only Map type and every mutator in this class copies before
+         * writing, sharing the instance is safe.
+         *
+         * Our own saves publish the just-written graph directly with its new
+         * identity, so the persist-verify re-read costs nothing.
+         */
+        private class CachedDb(val key: String, val db: HabitsDatabase)
+
+        @Volatile
+        private var cachedDb: CachedDb? = null
+
+        /** Drops the shared parsed DB (e.g. after a restore or in tests). */
+        fun invalidateCache() {
+            cachedDb = null
+        }
+
+        /**
+         * Identity of the current on-disk document, or null when the
+         * provider cannot report size/mtime (then we always re-parse).
+         */
+        private fun fileIdentity(uri: Uri, context: Context): String? = try {
+            context.contentResolver.query(
+                uri,
+                arrayOf(
+                    android.provider.OpenableColumns.SIZE,
+                    android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                ),
+                null, null, null
+            )?.use { c ->
+                if (!c.moveToFirst()) return@use null
+                val sizeIdx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                val mtimeIdx = c.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                if (sizeIdx < 0 || mtimeIdx < 0) return@use null
+                if (c.isNull(sizeIdx) || c.isNull(mtimeIdx)) return@use null
+                "$uri|${c.getLong(sizeIdx)}|${c.getLong(mtimeIdx)}"
+            }
+        } catch (e: Exception) {
+            null
+        }
+
+        /**
          * A snapshot (or on-disk DB) must have more than this many entries to be
          * treated as a trustworthy baseline for the anti-shrinkage guard and for
          * AUTO-RESTORE. Keeps a small brand-new install from "restoring" over
@@ -160,6 +211,12 @@ class HabitsRepository {
      */
     suspend fun loadDatabaseResult(uri: Uri, context: Context): HabitsLoadResult =
         withContext(Dispatchers.IO) {
+            // Shared-graph fast path: same file identity ⇒ same parsed DB.
+            val identity = fileIdentity(uri, context)
+            if (identity != null) {
+                cachedDb?.let { if (it.key == identity) return@withContext HabitsLoadResult.Success(it.db) }
+            }
+
             val cr = context.contentResolver
             val stream = try {
                 cr.openInputStream(uri)
@@ -172,19 +229,12 @@ class HabitsRepository {
                 return@withContext HabitsLoadResult.UriNotReadable
             }
 
-            // ── STREAMING PARSE (OOM hardening, 2026-09-11) ───────────────────
-            // The DB file is multi-MB and grows forever, and this process hosts
-            // a persistent notification-listener service that never exits. The
-            // old readText() → fromJson(String) sequence materialised the WHOLE
-            // file as a String (≈2 bytes/char) on top of Gson's object graph on
-            // every load — 18 call sites, several per user increment once the
-            // persist-verify path is counted. In the long-lived process that
-            // ratcheted the heap to its 256 MB growth limit until an allocation
-            // died — the exact crashes of 2026-09-09/09-10. Gson's
-            // fromJson(Reader, Type) streams the document; peak memory is now
-            // the object graph alone.
+            // ── STREAMING PARSE ───────────────────────────────────────────────
+            // The document goes straight from the stream into the object graph
+            // via HabitsDbCodec (JsonReader with interned date keys); no full
+            // String copy ever exists. Peak memory is the graph alone.
             stream.use { s ->
-                val tracking = object : FilterReader(BufferedReader(InputStreamReader(s))) {
+                val tracking = object : FilterReader(BufferedReader(InputStreamReader(s, Charsets.UTF_8), 64 * 1024)) {
                     var charsRead = 0L
                     override fun read(): Int {
                         val r = super.read(); if (r != -1) charsRead++; return r
@@ -214,11 +264,16 @@ class HabitsRepository {
                     }
                 }
                 try {
-                    val parsed: HabitsDatabase? = gson.fromJson(countingReader, dbType)
-                    val db = parsed ?: emptyMap()
+                    val db: HabitsDatabase = HabitsDbCodec.read(countingReader)
                     // Track the largest healthy DB we've ever seen so the anti-shrinkage
                     // guard has a baseline even when a later read fails mid-Syncthing-write.
-                    recordGoodEntryCount(db.values.sumOf { it.size })
+                    recordGoodEntryCount(HabitsDbCodec.countEntries(db))
+                    // Publish for every other loader in the process. Re-check the
+                    // identity AFTER the read: if the file changed underneath us
+                    // (mid-Syncthing write) we must not cache a stale graph.
+                    if (identity != null && fileIdentity(uri, context) == identity) {
+                        cachedDb = CachedDb(identity, db)
+                    }
                     HabitsLoadResult.Success(db)
                 } catch (e: Throwable) {
                     // Throwable, not Exception: an OutOfMemoryError while parsing a
@@ -255,60 +310,29 @@ class HabitsRepository {
      */
     suspend fun saveDatabase(uri: Uri, context: Context, db: HabitsDatabase) =
         withContext(Dispatchers.IO) {
-            val json = prettyGson.toJson(db)
-
-            // ── Streaming round-trip validation (memory-safe) ─────────────────
-            // This used to re-parse the fully serialized DB through Gson into a
-            // SECOND complete object graph just to validate Gson's own output.
-            // On a multi-MB habits DB that graph — plus the anti-shrinkage
-            // re-read and the snapshot serializations below — filled the 256 MB
-            // heap and produced the OOM crash loop of 2026-09-10 whenever
-            // several increments landed in quick succession. A streaming token
-            // scan now proves well-formedness AND total entry-count equality
-            // with O(1) memory.
-            val newEntryCount = db.values.sumOf { it.size }
-            val streamedCount = try {
-                countHabitDbEntries(json)
-            } catch (e: Throwable) {
-                -1
-            }
-            if (streamedCount != newEntryCount) {
-                Log.w(
-                    TAG,
-                    "saveDatabase: round-trip validation failed (expected $newEntryCount " +
-                            "entries, streamed $streamedCount) — ABORTING save"
-                )
-                return@withContext
-            }
-
-            // ── Anti-shrinkage guard (streaming, memory-safe) ──────────────────
-            // Read what is currently on disk and reject the write if we'd be
-            // catastrophically shrinking it. This used to fully parse the
-            // on-disk file into an object graph on EVERY save and then
-            // re-serialize it again for the pre-write snapshot — two more
-            // multi-MB transient allocations per increment. Now: read the raw
-            // text once, stream-count its entries, and (when the write
-            // proceeds) store that raw text directly as the pre-write snapshot.
+            // ── ZERO-COPY SAVE PATH (OOM fix, 2026-09-23) ─────────────────────
+            // Nothing in this function ever holds the document as a String.
+            // The previous implementation serialised the DB to a String
+            // (~4× file size in transient heap through StringBuilder growth),
+            // re-read the on-disk file as a second String for the guard, and
+            // then hashed/copied both again for the two snapshots — ~6× the
+            // file size per save, several saves per startup, on top of every
+            // concurrent reader's parsed graph. That is the 256 MB OOM.
+            //
+            // Now: (1) the on-disk file is tee-copied into a staged snapshot
+            // WHILE being stream-counted for the guard; (2) the new document
+            // is streamed from the graph into the SAF output AND a second
+            // staged snapshot simultaneously. Heap cost: I/O buffers.
+            val newEntryCount = HabitsDbCodec.countEntries(db)
             val mgr = snapshotManager(context)
-            val onDiskText = try {
-                readRawText(uri, context)
-            } catch (e: Exception) {
-                null
-            }
-            // Null = unreadable / blank / unparseable → fail-closed fallback,
-            // exactly like the old load-failure paths.
-            val onDiskState: Pair<String, Int>? = onDiskText
-                ?.takeIf { it.isNotBlank() }
-                ?.let { text ->
-                    try {
-                        text to countHabitDbEntries(text)
-                    } catch (e: Throwable) {
-                        null
-                    }
-                }
 
-            if (onDiskState != null) {
-                val onDiskEntryCount = onDiskState.second
+            // ── Anti-shrinkage guard + pre-write snapshot in one pass ─────────
+            val onDiskEntryCount: Int? = mgr.captureAndCount(
+                open = { context.contentResolver.openInputStream(uri) },
+                reason = "pre-write"
+            )
+
+            if (onDiskEntryCount != null) {
                 // Tuning: only trigger the guard when the on-disk DB is non-trivial
                 // (>50 entries) AND we'd be writing fewer than half as many entries.
                 // This catches the full-wipe scenario (writing 0..76 entries on top
@@ -322,11 +346,7 @@ class HabitsRepository {
                     )
                     return@withContext
                 }
-
-                // Snapshot the healthy pre-write state (raw bytes, no parse or
-                // re-serialize) so we can always roll back to what was on disk
-                // before this overwrite. Never blocks the save.
-                mgr.snapshotRaw(onDiskState.first, reason = "pre-write")
+                recordGoodEntryCount(onDiskEntryCount)
             } else {
                 // ── FAIL-CLOSED FALLBACK (2026-07-19 wipe fix) ────────────────────
                 // The on-disk read did NOT succeed (unreadable / blank file /
@@ -362,13 +382,20 @@ class HabitsRepository {
             // and increments to "disappear"). We still flush explicitly, and if the
             // provider hands us a real FileOutputStream we fsync its descriptor so
             // the bytes reach stable storage before we return.
-            val wrote = writeJsonToUri(uri, context, json)
+            //
+            // The post-save snapshot is written in the SAME pass: the encoder
+            // streams into a tee of the SAF stream and a staged snapshot file.
+            val staged = try { mgr.stage() } catch (e: Exception) { null }
+            val wrote = writeDbToUri(uri, context, db, tee = staged?.stream)
 
-            // Snapshot the newly-written state only after a confirmed write.
             if (wrote) {
-                // The json we just wrote IS the new state — store those bytes
-                // directly instead of re-serializing [db] a third time per save.
-                mgr.snapshotRaw(json, reason = "post-save")
+                // Snapshot the newly-written state only after a confirmed write.
+                if (staged != null) mgr.commit(staged, newEntryCount, reason = "post-save")
+                recordGoodEntryCount(newEntryCount)
+                // Publish the graph we just wrote under the file's new identity
+                // so the ViewModel's persist-verify re-read (and every widget
+                // refresh that follows) reuses it instead of re-parsing.
+                fileIdentity(uri, context)?.let { cachedDb = CachedDb(it, db) }
 
                 // Points-driven wallpaper: recompute after every successful
                 // save so the wallpaper tracks the day's points as they
@@ -397,54 +424,47 @@ class HabitsRepository {
                 } catch (e: Exception) {
                     Log.w(TAG, "companion change notification failed: ${e.message}")
                 }
+            } else {
+                staged?.discard()
             }
         }
 
     /**
-     * Writes [json] to [uri] using SAF "wt" mode. Flushes and, when possible,
-     * fsyncs the underlying file descriptor. Returns true only on a confirmed,
-     * exception-free write. Never throws.
+     * Streams [db] to [uri] using SAF "wt" mode, optionally duplicating every
+     * byte into [tee] (a staged snapshot). Flushes and, when possible, fsyncs
+     * the underlying file descriptor. Returns true only on a confirmed,
+     * exception-free write. Never throws. Closes [tee] on success; the caller
+     * discards it on failure.
      */
-    private fun writeJsonToUri(uri: Uri, context: Context, json: String): Boolean {
+    private fun writeDbToUri(uri: Uri, context: Context, db: HabitsDatabase, tee: OutputStream?): Boolean {
         val cr = context.contentResolver
         return try {
             val stream = cr.openOutputStream(uri, "wt") ?: return false
             stream.use { out ->
-                out.bufferedWriter().use { w ->
-                    w.write(json)
-                    w.flush()
-                }
+                val target: OutputStream = if (tee != null) TeeOutputStream(out, tee) else out
+                val w: Writer = BufferedWriter(OutputStreamWriter(target, Charsets.UTF_8), 64 * 1024)
+                HabitsDbCodec.write(db, w)
+                w.flush()
+                tee?.flush()
                 // Best-effort durability: fsync the fd if this is a plain file stream.
                 if (out is java.io.FileOutputStream) {
                     try { out.fd.sync() } catch (_: Exception) {}
                 }
             }
+            try { tee?.close() } catch (_: Exception) {}
             true
         } catch (e: Exception) {
-            Log.e(TAG, "writeJsonToUri: write failed: ${e.message}", e)
+            Log.e(TAG, "writeDbToUri: write failed: ${e.message}", e)
             false
         }
     }
 
-    /**
-     * Reads the raw text content at [uri] without parsing it. Returns null when
-     * the stream cannot be opened or read (SAF failure, Syncthing mid-write, ...).
-     * Used by the memory-safe anti-shrinkage guard in [saveDatabase].
-     */
-    private fun readRawText(uri: Uri, context: Context): String? {
-        val cr = context.contentResolver
-        val stream = try {
-            cr.openInputStream(uri)
-        } catch (e: Exception) {
-            Log.w(TAG, "readRawText: openInputStream threw ${e.javaClass.simpleName}: ${e.message}")
-            return null
-        } ?: return null
-        return try {
-            stream.use { it.bufferedReader().readText() }
-        } catch (e: Exception) {
-            Log.w(TAG, "readRawText: stream read failed: ${e.message}")
-            null
-        }
+    /** Writes every byte to both [a] and [b]; closes only [a]. */
+    private class TeeOutputStream(private val a: OutputStream, private val b: OutputStream) : OutputStream() {
+        override fun write(byte: Int) { a.write(byte); b.write(byte) }
+        override fun write(buf: ByteArray, off: Int, len: Int) { a.write(buf, off, len); b.write(buf, off, len) }
+        override fun flush() { a.flush(); b.flush() }
+        override fun close() { a.close() }
     }
 
     // Lazily-created, process-wide snapshot store. Uses the application context
@@ -470,17 +490,22 @@ class HabitsRepository {
      */
     suspend fun restoreDatabaseRaw(uri: Uri, context: Context, db: HabitsDatabase): Boolean =
         withContext(Dispatchers.IO) {
-            val json = prettyGson.toJson(db)
-            // Snapshot whatever is currently on disk before we clobber it.
-            try {
-                when (val r = loadDatabaseResult(uri, context)) {
-                    is HabitsLoadResult.Success -> snapshotManager(context).snapshot(r.db, reason = "pre-restore")
-                    else -> {}
-                }
-            } catch (_: Exception) {}
+            val mgr = snapshotManager(context)
+            // Snapshot whatever is currently on disk before we clobber it
+            // (streamed tee-copy; nothing parsed, nothing held in memory).
+            mgr.captureAndCount(
+                open = { context.contentResolver.openInputStream(uri) },
+                reason = "pre-restore"
+            )
 
-            val ok = writeJsonToUri(uri, context, json)
-            if (ok) snapshotManager(context).snapshot(db, reason = "post-restore")
+            val staged = try { mgr.stage() } catch (e: Exception) { null }
+            val ok = writeDbToUri(uri, context, db, tee = staged?.stream)
+            if (ok) {
+                if (staged != null) mgr.commit(staged, HabitsDbCodec.countEntries(db), reason = "post-restore")
+                fileIdentity(uri, context)?.let { cachedDb = CachedDb(it, db) }
+            } else {
+                staged?.discard()
+            }
             ok
         }
 
@@ -511,16 +536,26 @@ class HabitsRepository {
         val todayStr = dateString(today)
         var anyAdded = false
 
-        val allHabitNames = db.keys.toSet() + HABIT_ORDER
+        // Only habits that actually need a fill are copied/re-sorted. The
+        // previous version rebuilt a sorted copy of EVERY habit's map on
+        // every call (~150k entries) — on a cold start this ran several
+        // times back-to-back and fed the heap burst.
+        val allHabitNames = LinkedHashSet<String>(db.keys.size + HABIT_ORDER.size)
+        allHabitNames.addAll(db.keys)
+        allHabitNames.addAll(HABIT_ORDER)
         for (name in allHabitNames) {
-            val entries = db[name]?.toMutableMap() ?: mutableMapOf()
+            val existing = db[name]
+            var latestExisting: String? = null
+            if (existing != null) {
+                for (k in existing.keys) if (latestExisting == null || k > latestExisting) latestExisting = k
+            }
+            if (latestExisting != null && latestExisting >= todayStr) continue
 
-            val latestExisting = entries.keys.maxOrNull()
-
+            val entries = existing?.toMutableMap() ?: mutableMapOf()
             if (latestExisting == null) {
                 entries[todayStr] = 0
                 anyAdded = true
-            } else if (latestExisting < todayStr) {
+            } else {
                 var cursor = parseDate(latestExisting)?.plusDays(1) ?: today
                 while (!cursor.isAfter(today)) {
                     val ds = dateString(cursor)
@@ -531,7 +566,6 @@ class HabitsRepository {
                     cursor = cursor.plusDays(1)
                 }
             }
-
             db[name] = entries.toSortedMap()
         }
 

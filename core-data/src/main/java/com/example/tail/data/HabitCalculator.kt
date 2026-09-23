@@ -136,9 +136,24 @@ fun invertedBinaryPoints(rawCount: Int): Int = if (rawCount > 0) 0 else 1
  * done, 0 when done). A habit with no non-zero entries earns nothing.
  */
 fun invertedBinaryPointsForDate(entries: Map<String, Int>, dateStr: String): Int {
-    val firstData = entries.filterValues { it != 0 }.keys.minOrNull() ?: return 0
+    val firstData = firstNonZeroDateKey(entries) ?: return 0
     if (dateStr < firstData) return 0
     return invertedBinaryPoints(entries[dateStr] ?: 0)
+}
+
+/**
+ * Smallest date key whose value is non-zero, or null. Allocation-free: the
+ * previous `filterValues{}.keys.minOrNull()` copied the habit's entire
+ * multi-year history into a fresh map on EVERY call, and the stats path
+ * called it dozens of times per habit per refresh (the
+ * `LinkedHashMap.newNode` OOM in the 2026-09-23 widget crash).
+ */
+fun firstNonZeroDateKey(entries: Map<String, Int>): String? {
+    var first: String? = null
+    for ((k, v) in entries) {
+        if (v != 0 && (first == null || k < first)) first = k
+    }
+    return first
 }
 
 /**
@@ -504,55 +519,79 @@ fun computeTaskerStats(
     secondaryValueHabits: Set<String> = emptySet(),
     garminLinkedHabits: Set<String> = emptySet()
 ): TaskerStats {
-    fun dayTotal(date: LocalDate): Int {
-        val ds = dateString(date)
-        return db.entries.sumOf { (habitName, entries) ->
-            if (habitName in noPointsHabits) return@sumOf 0
-            if (isInternalValueKey(habitName)) return@sumOf 0
-            // Garmin-linked habits store BAKED points (divider applied at
-            // sync time by applyGarminData) — use the stored value as-is.
-            if (habitName in garminLinkedHabits) return@sumOf entries[ds] ?: 0
-            // Inverted-binary habits contribute 1 point on not-done days
-            if (habitName in invertedBinaryHabits) {
-                return@sumOf invertedBinaryPointsForDate(entries, ds)
-            }
-            if (habitName in timerMinutesPrimaryHabits) {
-                // Minutes (first-class minutes slot) is primary; sessions are the fallback
-                val minutes = db[minutesKey(habitName)]?.get(ds) ?: 0
-                effectivePointsWithFallback(
-                    minutes, dividers[habitName] ?: 1, entries[ds] ?: 0, true
-                )
-            } else {
+    // ── Per-habit resolution, computed ONCE instead of once per day ──────
+    // The previous version re-derived the fallback slot key (two string
+    // concatenations + a map lookup) and re-scanned inverted-binary
+    // histories for every habit on every one of the 38 day evaluations.
+    // Everything date-independent is hoisted here; the per-day loop below
+    // is then pure map lookups with no allocation.
+    class Resolved(
+        val entries: Map<String, Int>,
+        val kind: Int,                  // 0 garmin, 1 inverted, 2 minutes-primary, 3 sessions
+        val divider: Int,
+        val secondary: Map<String, Int>?, // minutes slot or fallback slot entries
+        val useFallback: Boolean,
+        val invertedFirstData: String?
+    )
+    val resolved = ArrayList<Resolved>(db.size)
+    for ((habitName, entries) in db) {
+        if (habitName in noPointsHabits) continue
+        if (isInternalValueKey(habitName)) continue
+        val divider = dividers[habitName] ?: 1
+        when {
+            habitName in garminLinkedHabits ->
+                resolved.add(Resolved(entries, 0, divider, null, false, null))
+            habitName in invertedBinaryHabits ->
+                resolved.add(Resolved(entries, 1, divider, null, false, firstNonZeroDateKey(entries)))
+            habitName in timerMinutesPrimaryHabits ->
+                resolved.add(Resolved(entries, 2, divider, db[minutesKey(habitName)], true, null))
+            else -> {
                 val useFallback = habitName in secondaryValueFallbackHabits
-                // Fallback source: the legacy generic secondary slot when the
-                // habit uses it or has data there (Meditations/Apnea/Resonance
-                // sessions, chess.com games, JugCoach seconds), otherwise the
-                // first-class minutes slot.
-                val fallbackKey = fallbackSlotKey(habitName, secondaryValueHabits, db)
-                val secVal = if (useFallback) {
-                    db[fallbackKey]?.get(ds) ?: 0
-                } else 0
-                effectivePointsWithFallback(
-                    entries[ds] ?: 0, dividers[habitName] ?: 1, secVal, useFallback
-                )
+                val secondary = if (useFallback) db[fallbackSlotKey(habitName, secondaryValueHabits, db)] else null
+                resolved.add(Resolved(entries, 3, divider, secondary, useFallback, null))
             }
         }
     }
 
-    val todayCount = dayTotal(today)
-
-    fun avgOverDays(days: Int): Double {
+    fun dayTotal(ds: String): Int {
         var total = 0
-        for (i in 0 until days) {
-            total += dayTotal(today.minusDays(i.toLong()))
+        for (r in resolved) {
+            total += when (r.kind) {
+                // Garmin-linked habits store BAKED points (divider applied at
+                // sync time by applyGarminData) — use the stored value as-is.
+                0 -> r.entries[ds] ?: 0
+                // Inverted-binary habits contribute 1 point on not-done days
+                1 -> {
+                    val first = r.invertedFirstData
+                    if (first == null || ds < first) 0 else invertedBinaryPoints(r.entries[ds] ?: 0)
+                }
+                // Minutes (first-class minutes slot) is primary; sessions are the fallback
+                2 -> effectivePointsWithFallback(
+                    r.secondary?.get(ds) ?: 0, r.divider, r.entries[ds] ?: 0, true
+                )
+                else -> effectivePointsWithFallback(
+                    r.entries[ds] ?: 0, r.divider, r.secondary?.get(ds) ?: 0, r.useFallback
+                )
+            }
         }
-        return total.toDouble() / days
+        return total
+    }
+
+    // 30 consecutive day totals cover today, avg7 and avg30 in one pass.
+    val dayTotals = IntArray(30)
+    for (i in 0 until 30) dayTotals[i] = dayTotal(dateString(today.minusDays(i.toLong())))
+
+    var sum7 = 0
+    var sum30 = 0
+    for (i in 0 until 30) {
+        sum30 += dayTotals[i]
+        if (i < 7) sum7 += dayTotals[i]
     }
 
     return TaskerStats(
-        today = todayCount,
-        avg7 = avgOverDays(7),
-        avg30 = avgOverDays(30)
+        today = dayTotals[0],
+        avg7 = sum7 / 7.0,
+        avg30 = sum30 / 30.0
     )
 }
 
