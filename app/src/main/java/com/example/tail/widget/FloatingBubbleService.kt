@@ -2509,10 +2509,13 @@ class FloatingBubbleService : Service() {
                 // spend one to go GREEN without taking the readiness test.
                 // Settlement runs throttled on a background worker — the
                 // synchronous log parse OOM'd the main thread here.
+                // Throwable (not Exception): an Error thrown in here must
+                // degrade to "no freeplay item", never take down the menu
+                // (and with it the whole bubble) — 2026-09-22.
                 val freeplayCredits = try {
                     ChessFreeplayStore.settleExpiredAsync(this)
                     ChessFreeplayStore.available(this)
-                } catch (_: Exception) { 0 }
+                } catch (_: Throwable) { 0 }
                 if (freeplayCredits > 0) {
                     val freeplayItem = TextView(this).apply {
                         text = "🎟 Use Freeplay ($freeplayCredits left)"
@@ -2761,10 +2764,13 @@ class FloatingBubbleService : Service() {
                 }
                 // Weekly freeplay — same gating as the picker menu.
                 // Settlement runs throttled on a background worker.
+                // Throwable (not Exception) — same rationale as the picker
+                // menu: an Error here must only drop the freeplay item,
+                // never kill the full-screen overlay (2026-09-22).
                 val freeplayCredits = try {
                     ChessFreeplayStore.settleExpiredAsync(this)
                     ChessFreeplayStore.available(this)
-                } catch (_: Exception) { 0 }
+                } catch (_: Throwable) { 0 }
                 if (freeplayCredits > 0) {
                     addOption(
                         "🎟 Use Freeplay ($freeplayCredits left)",

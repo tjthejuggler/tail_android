@@ -62,6 +62,14 @@ object ChessFreeplayStore {
      */
     private const val SETTLE_ATTEMPT_MIN_INTERVAL_MS = 60_000L
 
+    /**
+     * The largest week gap [accrueLazy] will materialize in one step
+     * (520 weeks ≈ a decade). Real gaps never approach this; anything
+     * larger is corrupt/foreign data and resets the journal instead of
+     * being expanded into an unbounded range.
+     */
+    private const val MAX_MATERIALIZE_WEEKS = 520L
+
     /** Single worker for background settlements (serialized, no pile-up). */
     private val settleExecutor =
         java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -99,13 +107,22 @@ object ChessFreeplayStore {
      * A monotonically increasing index of ISO weeks (Mondays). Epoch day 0
      * (1970-01-01) is a Thursday, so +3 aligns the division to the Monday
      * boundary: 1970-01-05 (Monday) is the start of week index 1.
+     *
+     * The `EpochDay` suffix is LOAD-BEARING: when this lived as a
+     * `weekIndexOf(Long)` overload beside the epoch-millis variant below,
+     * every default-arg call site (`weekIndexOf(nowMs)`) bound to THIS
+     * overload (Kotlin prefers the candidate that needs no default
+     * arguments) and silently fed MILLISECONDS in as DAYS. The resulting
+     * ~2.5e11 week index made [accrueLazy] try to materialize a
+     * hundreds-of-billions-element range — an OutOfMemoryError that killed
+     * the process on every bubble tap over the chess app (2026-09-22).
      */
-    fun weekIndexOf(epochDay: Long): Long =
+    fun weekIndexOfEpochDay(epochDay: Long): Long =
         java.lang.Math.floorDiv(epochDay + 3, 7)
 
-    /** [weekIndexOf] for an epoch-millis instant in [zone]. */
+    /** [weekIndexOfEpochDay] for an epoch-millis instant in [zone]. */
     fun weekIndexOf(nowMs: Long, zone: ZoneId = ZoneId.systemDefault()): Long =
-        weekIndexOf(Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate().toEpochDay())
+        weekIndexOfEpochDay(Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate().toEpochDay())
 
     /** Number of ISO-week boundaries crossed between the two indices. */
     fun weeksElapsed(fromWeekIndex: Long, toWeekIndex: Long): Long =
@@ -200,6 +217,16 @@ object ChessFreeplayStore {
         val current = weekIndexOf(nowMs)
         val lastGranted = existing.lastOrNull() ?: current
         if (current <= lastGranted) return
+        // SANITY VALVE: the journal must only ever hold sane week indexes.
+        // A negative gap (clock rolled back) or a gap longer than a decade
+        // means corrupt data — reset to the current week rather than
+        // materializing an astronomically long range (an overload mix-up
+        // here OOM'd the bubble menu on every tap — 2026-09-22).
+        val gap = current - lastGranted
+        if (gap < 0 || gap > MAX_MATERIALIZE_WEEKS) {
+            p.edit().putString(KEY_GRANT_WEEKS, JSONArray().put(current).toString()).apply()
+            return
+        }
         // Materialize the missing weeks, NEWEST first — the stock cap
         // lives in the DERIVED balance, so only as many missed weeks are
         // granted as fit under the cap given the outstanding entries.

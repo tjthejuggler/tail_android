@@ -86,14 +86,33 @@ class ChessFreeplayTest {
         val thu = LocalDate.of(1970, 1, 1).toEpochDay()
         val mon = LocalDate.of(1970, 1, 5).toEpochDay()
         val sun = LocalDate.of(1970, 1, 4).toEpochDay()
-        assertEquals(0L, ChessFreeplayStore.weekIndexOf(thu))
-        assertEquals(0L, ChessFreeplayStore.weekIndexOf(sun))
-        assertEquals(1L, ChessFreeplayStore.weekIndexOf(mon))
+        assertEquals(0L, ChessFreeplayStore.weekIndexOfEpochDay(thu))
+        assertEquals(0L, ChessFreeplayStore.weekIndexOfEpochDay(sun))
+        assertEquals(1L, ChessFreeplayStore.weekIndexOfEpochDay(mon))
+    }
+
+    @Test
+    fun `millis overload agrees with epoch day overload`() {
+        // REGRESSION (2026-09-22): the pure overload used to be a
+        // `weekIndexOf(Long)` sibling of the millis variant, so every
+        // default-arg call site silently bound to the EPOCH-DAY overload
+        // and fed milliseconds in as days — a ~2.5e11 week index whose
+        // missing-week materialization OOM'd the bubble menu on tap.
+        // The millis overload must produce the SAME index as the day
+        // overload for the same instant.
+        val zone = ZoneId.of("UTC")
+        val at = ZonedDateTime.of(LocalDate.parse("2026-09-22"), LocalTime.NOON, zone)
+        val dayIdx = ChessFreeplayStore.weekIndexOfEpochDay(at.toLocalDate().toEpochDay())
+        assertEquals(dayIdx, ChessFreeplayStore.weekIndexOf(at.toInstant().toEpochMilli(), zone))
+        // Milliseconds must NEVER be mistaken for days (day 1.78e9 vs
+        // week ~2964 for 2026) — the mix-up produced indexes in the
+        // hundreds of billions.
+        assertTrue(ChessFreeplayStore.weekIndexOf(at.toInstant().toEpochMilli(), zone) < 100_000L)
     }
 
     @Test
     fun `same week never re-credits`() {
-        val idx = ChessFreeplayStore.weekIndexOf(1000L)
+        val idx = ChessFreeplayStore.weekIndexOfEpochDay(1000L)
         assertEquals(0L, ChessFreeplayStore.weeksElapsed(idx, idx))
         // Pure accrual: elapsed 0 → granted total unchanged.
         assertEquals(2, ChessFreeplayStore.accrue(2, 0))
