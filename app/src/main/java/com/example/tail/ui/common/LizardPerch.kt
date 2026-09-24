@@ -336,8 +336,10 @@ internal fun randomLizardPerch(
     return null
 }
 
-/** Source pixels per grid cell in the generated pose canvases. */
-internal const val POSE_PX_PER_CELL = 512
+/** Source pixels per grid cell in the generated pose canvases.
+ *  (Poses were regenerated at 256 px/cell by scripts/optimize_lizard_art.py
+ *  — was 512 when the art shipped at full resolution.) */
+internal const val POSE_PX_PER_CELL = 256
 
 /** Metadata for one generated pose bitmap, decoded from the manifest. */
 internal data class PoseAsset(

@@ -51,7 +51,13 @@ def optimize(im: Image.Image, is_strip: bool) -> Image.Image:
     if is_strip:
         scale = STRIP_WIDTH / w
     else:
-        scale = min(1.0, POSE_MAX / max(w, h))
+        # Poses are CELL GRIDS (POSE_PX_PER_CELL src px per grid cell — see
+        # LizardPerch.POSE_PX_PER_CELL). The scale MUST keep every dimension
+        # an exact multiple of the new cell size, otherwise the app computes
+        # the wrong grid shape and draws the lizard at the wrong size (or
+        # skips it). Halving is exact: 512 px/cell → 256 px/cell, 1024×1536
+        # (2×3 cells) → 512×768 (still 2×3).
+        scale = 0.5
     if scale < 1.0:
         im = im.resize((max(1, round(w * scale)), max(1, round(h * scale))),
                        Image.LANCZOS)
