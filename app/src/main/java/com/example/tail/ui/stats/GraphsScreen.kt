@@ -583,6 +583,8 @@ fun GraphsPanel(
                         },
                         onZoomReset = { viewModel.clearGraphZoom() },
                         garminHabitLinks = garminHabitLinks,
+                        environmentHabitMetrics = settings.environmentHabitMetrics,
+                        environmentUseFahrenheit = settings.environmentTemperatureUnit == "F",
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -627,8 +629,14 @@ fun GraphsPanel(
                                     }
                             )
                             val garminType = garminHabitLinks[point.habitName]?.let { com.example.tail.data.health.GarminType.fromKey(it) }
-                            val valueText = if (garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
-                                                garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE) {
+                            val envMetric = settings.environmentHabitMetrics[point.habitName]
+                                ?.let { com.example.tail.data.environment.EnvironmentMetric.fromKey(it) }
+                            val envF = settings.environmentTemperatureUnit == "F"
+                            val valueText: String = if (envMetric != null) {
+                                // Environment metrics store ×10 (215 = 21.5 °C)
+                                envMetric.formatTenths(point.value, envF)
+                            } else if (garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
+                                       garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE) {
                                 String.format("%.2f", point.value / 100.0)
                             } else if (point.metric == com.example.tail.data.GRAPH_METRIC_IMDB && point.value > 0) {
                                 String.format("%.1f", point.value / 10.0)
@@ -1445,6 +1453,8 @@ private fun HabitLineChart(
     onZoom: (LocalDate, LocalDate) -> Unit,
     onZoomReset: () -> Unit,
     garminHabitLinks: Map<String, String> = emptyMap(),  // habitName -> GarminType key
+    environmentHabitMetrics: Map<String, String> = emptyMap(), // habitName -> EnvironmentMetric key
+    environmentUseFahrenheit: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val fullTotalDays = ChronoUnit.DAYS.between(fullStartDate, fullEndDate).toInt() + 1
@@ -2020,10 +2030,14 @@ private fun HabitLineChart(
                 color = 0xCC1A2E1A.toInt()
                 isAntiAlias = true
             }
-            // Format fitness age values with 2 decimal places
+            // Environment metrics store ×10; fitness age ×100
+            val envMetric = environmentHabitMetrics[sp.habitName]
+                ?.let { com.example.tail.data.environment.EnvironmentMetric.fromKey(it) }
             val garminType = garminHabitLinks[sp.habitName]?.let { com.example.tail.data.health.GarminType.fromKey(it) }
-            val label = if (garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
-                           garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE) {
+            val label = if (envMetric != null) {
+                envMetric.formatTenths(sp.value, environmentUseFahrenheit)
+            } else if (garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
+                       garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE) {
                 String.format("%.2f", sp.value / 100.0)
             } else {
                 sp.value.toString()

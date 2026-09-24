@@ -174,6 +174,13 @@ private val KEY_MAP_HIDE_ZERO_DAYS = booleanPreferencesKey("map_hide_zero_days")
 private val KEY_MAP_BEGIN_DATE = stringPreferencesKey("map_begin_date")
 // Chess Readiness feature (Phase 1 diagnostic over the floating bubble)
 private val KEY_CHESS_READINESS_ENABLED = booleanPreferencesKey("chess_readiness_enabled")
+// Environment habit keys (weather / air / pollen / Kp / water hardness)
+private val KEY_ENVIRONMENT_ENABLED = booleanPreferencesKey("environment_enabled")
+private val KEY_ENVIRONMENT_WATER_MEMORY = booleanPreferencesKey("environment_water_memory_enabled")
+// habit name → EnvironmentMetric.key (environment habit-type links)
+private val KEY_ENVIRONMENT_HABIT_METRICS = stringPreferencesKey("environment_habit_metrics")
+// Temperature display/storage unit for environment metrics: "C" or "F"
+private val KEY_ENVIRONMENT_TEMP_UNIT = stringPreferencesKey("environment_temperature_unit")
 private val KEY_CHESS_READINESS_APP = stringPreferencesKey("chess_readiness_app")
 // Which readiness engine the chess flow uses: "v1" (original) or "v2".
 private val KEY_CHESS_READINESS_VERSION = stringPreferencesKey("chess_readiness_version")
@@ -989,6 +996,7 @@ class SettingsRepository(private val context: Context) {
         val customInputAmountsRaw = prefs[KEY_CUSTOM_INPUT_AMOUNTS] ?: ""
         val customInputRecentAmountsRaw = prefs[KEY_CUSTOM_INPUT_RECENT_AMOUNTS] ?: ""
         val garminHabitLinksRaw = prefs[KEY_GARMIN_HABIT_LINKS] ?: ""
+        val environmentHabitMetricsRaw = prefs[KEY_ENVIRONMENT_HABIT_METRICS] ?: ""
         val githubRepoUrlsRaw = prefs[KEY_GITHUB_REPO_URLS] ?: ""
         val githubMetricsRaw = prefs[KEY_GITHUB_METRICS] ?: ""
         val customPointRangesRaw = prefs[KEY_CUSTOM_POINT_RANGES] ?: ""
@@ -1133,8 +1141,34 @@ class SettingsRepository(private val context: Context) {
             wallpaperEnabled = prefs[KEY_WALLPAPER_ENABLED] ?: false,
             wallpaperDirUri = prefs[KEY_WALLPAPER_DIR_URI] ?: "",
             wallpaperTarget = WallpaperTarget.fromName(prefs[KEY_WALLPAPER_TARGET]),
-            wallpaperMetric = WallpaperMetric.fromName(prefs[KEY_WALLPAPER_METRIC])
+            wallpaperMetric = WallpaperMetric.fromName(prefs[KEY_WALLPAPER_METRIC]),
+            environmentEnabled = prefs[KEY_ENVIRONMENT_ENABLED] ?: false,
+            environmentWaterMemoryEnabled = prefs[KEY_ENVIRONMENT_WATER_MEMORY] ?: true,
+            environmentHabitMetrics = decodeFileUriMap(environmentHabitMetricsRaw),
+            environmentTemperatureUnit = prefs[KEY_ENVIRONMENT_TEMP_UNIT] ?: "C"
         )
+    }
+
+    /** Saves the environment temperature unit ("C" or "F"). */
+    suspend fun saveEnvironmentTemperatureUnit(unit: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_ENVIRONMENT_TEMP_UNIT] = unit }
+    }
+
+    /** Saves the environment-habit master switch. */
+    suspend fun saveEnvironmentEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_ENVIRONMENT_ENABLED] = enabled }
+    }
+
+    /** Saves the habit name → EnvironmentMetric key links. */
+    suspend fun saveEnvironmentHabitMetrics(links: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_ENVIRONMENT_HABIT_METRICS] = encodeFileUriMap(links)
+        }
+    }
+
+    /** Saves the water-hardness location-memory toggle. */
+    suspend fun saveEnvironmentWaterMemoryEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_ENVIRONMENT_WATER_MEMORY] = enabled }
     }
 
     /** Saves the per-habit custom increment button amounts. */

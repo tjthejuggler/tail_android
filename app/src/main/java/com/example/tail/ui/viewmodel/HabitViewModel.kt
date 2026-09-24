@@ -226,6 +226,27 @@ class HabitViewModel(
     /** Repository for recording habit increment timestamps (internal storage). */
     val timestampRepo = HabitTimestampRepository(context)
 
+    /** Repository for daily environment snapshots (weather/air/pollen/Kp/water). */
+    val environmentRepo = com.example.tail.data.environment.EnvironmentRepository(context)
+
+    // ── Environment habit state (logic in HabitViewModelEnvironment.kt) ────
+    /** Snapshot for [_selectedDate]; null when none stored (or feature off). */
+    internal val _envSnapshot =
+        MutableStateFlow<com.example.tail.data.environment.EnvironmentSnapshot?>(null)
+    val envSnapshot: StateFlow<com.example.tail.data.environment.EnvironmentSnapshot?> =
+        _envSnapshot.asStateFlow()
+    /** True while a network capture/backfill is running. */
+    internal val _envLoading = MutableStateFlow(false)
+    val envLoading: StateFlow<Boolean> = _envLoading.asStateFlow()
+    /** One-line status for settings UI (backlog progress, result). */
+    internal val _envStatus = MutableStateFlow("")
+    val envStatus: StateFlow<String> = _envStatus.asStateFlow()
+    /** Bumped on every snapshot write so observers can reload cheaply. */
+    internal val _envVersion = MutableStateFlow(0)
+    val envVersion: StateFlow<Int> = _envVersion.asStateFlow()
+    /** True while the full-history backlog worker is running. */
+    internal val _envBacklogRunning = MutableStateFlow(false)
+
     /** Repository for sleep-suite records (internal storage). */
     val sleepDataRepo = SleepDataRepository(context)
 
@@ -938,6 +959,10 @@ class HabitViewModel(
                 }
             }
         }
+
+        // Environment habit: register date/location capture hooks (no-op
+        // until the feature is enabled in Settings → Environment).
+        initEnvironmentCapture()
 
         viewModelScope.launch {
             // One-time migration: rename legacy "Launch … Widget" habit names

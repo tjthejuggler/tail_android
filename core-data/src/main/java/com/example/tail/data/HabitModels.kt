@@ -1802,7 +1802,36 @@ data class AppSettings(
     /** Which wallpaper surface(s) the image is applied to (home/lock/both). */
     val wallpaperTarget: WallpaperTarget = WallpaperTarget.SYSTEM,
     /** Which point statistic picks the image index (today / avg7 / avg30). */
-    val wallpaperMetric: WallpaperMetric = WallpaperMetric.TODAY
+    val wallpaperMetric: WallpaperMetric = WallpaperMetric.TODAY,
+
+    // ── Environment habit settings ──────────────────────────────────────────
+    /**
+     * Master switch for the environment habit. When enabled, the app records
+     * a daily environment snapshot (weather, air quality, pollen, geomagnetic
+     * activity, water hardness) for the day's recorded location. All network
+     * sources are free and keyless; see the Environment settings section.
+     */
+    val environmentEnabled: Boolean = false,
+    /**
+     * Whether water hardness is auto-filled from the per-location memory
+     * (label → ppm entries the user saved previously). Disabling does not
+     * delete remembered values.
+     */
+    val environmentWaterMemoryEnabled: Boolean = true,
+    /**
+     * Maps habit name → [com.example.tail.data.environment.EnvironmentMetric]
+     * key. An environment-linked habit's daily stored value IS the linked
+     * metric at ×10 precision (215 = 21.5 °C), written automatically from
+     * the day's snapshot — the same model as [garminHabitLinks], so graphs
+     * work natively.
+     */
+    val environmentHabitMetrics: Map<String, String> = emptyMap(),
+    /**
+     * Display unit for environment temperature metrics: "C" (default) or
+     * "F". Storage is always in the chosen unit at ×10 precision, so
+     * switching re-syncs history.
+     */
+    val environmentTemperatureUnit: String = "C"
 )
 
 /** Fallback source for minutes-primary habits: no fallback on 0-minute days. */

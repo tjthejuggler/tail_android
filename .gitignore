@@ -73,3 +73,4 @@ tail_bridge/backups/
 
 # Archived one-off data (personal backups, runtime dumps)
 /archive/data/
+/archive/drawable-nodpi_fullres_backup/

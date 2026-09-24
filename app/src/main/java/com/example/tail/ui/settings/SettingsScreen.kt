@@ -415,6 +415,8 @@ fun SettingsScreen(
                     InuitSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     CompanionApiSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    EnvironmentSettingsSection(viewModel = viewModel, settings = settings)
                 }
             }
 
@@ -1313,29 +1315,40 @@ private fun InuitSettingsSection(
                     color = Color(0xFF888888)
                 )
             } else {
+                var showPicker by remember { mutableStateOf(false) }
                 Text("Shared habits", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                eligible.forEach { habit ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { viewModel.toggleInuitTextHabit(habit) },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = habit in settings.inuitTextHabits,
-                            onCheckedChange = { viewModel.toggleInuitTextHabit(habit) }
-                        )
-                        Text(habit, fontSize = 13.sp)
-                    }
+                OutlinedButton(onClick = { showPicker = true }) {
+                    Text(
+                        if (settings.inuitTextHabits.isEmpty()) "Choose habits…"
+                        else "${settings.inuitTextHabits.size} habit(s) shared — edit"
+                    )
                 }
                 val sharedCount = eligible.count { it in settings.inuitTextHabits }
                 if (sharedCount > 0) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "$sharedCount habit(s) shared. Inuit sees only their " +
-                               "most recent entries.",
+                        text = "${settings.inuitTextHabits.size} habit(s) shared. " +
+                               "Inuit sees only their most recent entries.",
                         fontSize = 11.sp,
                         color = Color(0xFF66BB6A)
+                    )
+                }
+                if (showPicker) {
+                    SearchableHabitListDialog(
+                        title = "Share text habits with Inuit",
+                        habits = eligible,
+                        selected = settings.inuitTextHabits,
+                        onApply = { picked ->
+                            picked.forEach { habit ->
+                                if (habit !in settings.inuitTextHabits) {
+                                    viewModel.toggleInuitTextHabit(habit)
+                                }
+                            }
+                            settings.inuitTextHabits.forEach { habit ->
+                                if (habit !in picked) viewModel.toggleInuitTextHabit(habit)
+                            }
+                        },
+                        onDismiss = { showPicker = false }
                     )
                 }
             }
@@ -1427,19 +1440,27 @@ private fun CompanionApiSettingsSection(
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
-            eligible.forEach { habit ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { viewModel.toggleCompanionReadHabit(habit) },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = habit in settings.companionReadHabits,
-                        onCheckedChange = { viewModel.toggleCompanionReadHabit(habit) }
-                    )
-                    Text(habit, fontSize = 14.sp)
-                }
+            var showPicker by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { showPicker = true }) {
+                Text(
+                    if (settings.companionReadHabits.isEmpty()) "Restrict habits…"
+                    else "${settings.companionReadHabits.size} restricted — edit"
+                )
+            }
+            if (showPicker) {
+                SearchableHabitListDialog(
+                    title = "Restrict sharing to selected habits",
+                    habits = eligible,
+                    selected = settings.companionReadHabits,
+                    onApply = { picked ->
+                        (picked + settings.companionReadHabits).forEach { habit ->
+                            val target = habit in picked
+                            val current = habit in settings.companionReadHabits
+                            if (target != current) viewModel.toggleCompanionReadHabit(habit)
+                        }
+                    },
+                    onDismiss = { showPicker = false }
+                )
             }
         }
     }
@@ -3329,33 +3350,46 @@ private fun HabitPickerDialog(
     onPick: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var query by remember { mutableStateOf("") }
+    val filtered = if (query.isBlank()) habits
+        else habits.filter { it.contains(query.trim(), ignoreCase = true) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
-                item {
-                    Text(
-                        "None (no habit)",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onPick("") }
-                            .padding(vertical = 10.dp)
-                    )
-                    HorizontalDivider()
-                }
-                itemsIndexed(habits) { i, name ->
-                    Text(
-                        name,
-                        fontSize = 14.sp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onPick(name) }
-                            .padding(vertical = 10.dp)
-                    )
-                    if (i < habits.lastIndex) HorizontalDivider()
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    placeholder = { Text("Search habits…", fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                    item {
+                        Text(
+                            "None (no habit)",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick("") }
+                                .padding(vertical = 10.dp)
+                        )
+                        HorizontalDivider()
+                    }
+                    itemsIndexed(filtered) { i, name ->
+                        Text(
+                            name,
+                            fontSize = 14.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(name) }
+                                .padding(vertical = 10.dp)
+                        )
+                        if (i < filtered.lastIndex) HorizontalDivider()
+                    }
                 }
             }
         },

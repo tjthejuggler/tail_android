@@ -2002,6 +2002,13 @@ internal fun EditModeControlBar(
     garminHabitLinks: Map<String, String> = emptyMap(),
     onSetGarminLink: (String, String?) -> Unit = { _, _ -> },
     garminDateOfBirth: String = "",
+    // ── Environment habit type ──────────────────────────────────────────────
+    environmentCaptureEnabled: Boolean = false,
+    environmentHabitMetrics: Map<String, String> = emptyMap(),
+    environmentUseFahrenheit: Boolean = false,
+    onSetEnvironmentMetric: (String, String?) -> Unit = { _, _ -> },
+    /** Rounded display form of today's count for environment-linked habits. */
+    envDisplayCount: String? = null,
     // ── GitHub Integration (rendered by caller, like movieBridgeContent) ──
     githubContent: @Composable () -> Unit = {},
     movieBridgeContent: @Composable () -> Unit = {},
@@ -2258,6 +2265,7 @@ internal fun EditModeControlBar(
                     rollForwardHabits = rollForwardHabits,
                     rollForwardManualDates = rollForwardManualDates,
                     selectedDate = selectedDate,
+                    envDisplayCount = envDisplayCount,
                     onSetCount = onSetCount,
                     onSetCountWithRollForward = onSetCountWithRollForward
                 )
@@ -3374,6 +3382,14 @@ internal fun EditModeControlBar(
                                 )
                             }
                         },
+                        environmentContent = {
+                            EnvironmentLinkToggleSection(
+                                selectedHabitName = selHabitName,
+                                links = environmentHabitMetrics,
+                                environmentEnabled = environmentCaptureEnabled,
+                                onSetMetric = onSetEnvironmentMetric
+                            )
+                        },
                         githubContent = githubContent,
                         movieBridgeContent = movieBridgeContent
                     )
@@ -3410,6 +3426,8 @@ internal fun EditModeHabitHeaderRow(
     rollForwardHabits: Set<String>,
     rollForwardManualDates: Map<String, Set<String>>,
     selectedDate: java.time.LocalDate,
+    /** Display form of today's count — environment habits round ×10 storage. */
+    envDisplayCount: String? = null,
     onSetCount: (String, Int) -> Unit,
     onSetCountWithRollForward: (String, Int, java.time.LocalDate) -> Unit
 ) {
@@ -3465,7 +3483,7 @@ internal fun EditModeHabitHeaderRow(
                     Text("−", fontSize = 14.sp, color = if (selectedHabitRawTodayCount > 0) Color(0xFFFFAA00) else Color(0xFF555555))
                 }
                 Text(
-                    text = selectedHabitTodayCount.toString(),
+                    text = envDisplayCount ?: selectedHabitTodayCount.toString(),
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,

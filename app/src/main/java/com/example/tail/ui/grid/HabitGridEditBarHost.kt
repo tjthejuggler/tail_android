@@ -28,6 +28,7 @@ import com.example.tail.ui.viewmodel.moveHabitAppAssociation
 import com.example.tail.ui.viewmodel.openUsageAccessSettings
 import com.example.tail.ui.viewmodel.reapplyGarminHistoryForHabit
 import com.example.tail.ui.viewmodel.removeHabitAppAssociation
+import com.example.tail.ui.viewmodel.setEnvironmentHabitMetric
 import com.example.tail.ui.viewmodel.removeMediaShowFromToday
 import com.example.tail.ui.viewmodel.renameTextOption
 import com.example.tail.ui.viewmodel.screenIndexForHabit
@@ -295,6 +296,15 @@ internal fun EditBarHost(
         garminEnabled = settings.garminEnabled,
         garminHabitLinks = settings.garminHabitLinks,
         onSetGarminLink = { name, type -> viewModel.setGarminHabitLink(name, type) },
+        environmentCaptureEnabled = settings.environmentEnabled,
+        environmentHabitMetrics = settings.environmentHabitMetrics,
+        environmentUseFahrenheit = settings.environmentTemperatureUnit == "F",
+        onSetEnvironmentMetric = { name, metric -> viewModel.setEnvironmentHabitMetric(name, metric) },
+        envDisplayCount = selectedHabitName?.let { name ->
+            settings.environmentHabitMetrics[name]
+                ?.let { com.example.tail.data.environment.EnvironmentMetric.fromKey(it) }
+                ?.rounded(selectedHabitTodayCount)?.toString()
+        },
         garminDateOfBirth = settings.garminDateOfBirth,
         githubContent = {
             if (settings.githubEnabled && selectedHabitName != null) {

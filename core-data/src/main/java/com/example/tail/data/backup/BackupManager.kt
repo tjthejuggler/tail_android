@@ -341,7 +341,10 @@ class BackupManager(
      * correct putX() overload.
      */
     private fun readExtraPrefs(): Map<String, List<PrefEntryBackup>> {
-        val names = listOf("tail_chess_readiness", "tail_chess_phase2")
+        val names = listOf(
+            "tail_chess_readiness", "tail_chess_phase2",
+            "tail_environment_prefs" // environment habit snapshots + water memory
+        )
         val out = mutableMapOf<String, List<PrefEntryBackup>>()
         for (name in names) {
             val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
