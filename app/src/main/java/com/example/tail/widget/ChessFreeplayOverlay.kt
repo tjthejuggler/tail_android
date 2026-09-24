@@ -70,7 +70,11 @@ class ChessFreeplayOverlay(service: android.content.Context) {
                     "(any variant — standard, 960, bullet/blitz/rapid)",
                 0xFF22C55E.toInt()
             )
-            bullet("• 1 credit per week, max 3 banked", 0xFF999999.toInt())
+            bullet(
+                "• 1 ticket per week — granted only while you hold " +
+                    "fewer than 3 (tickets from Puzzle Rush records don't count against this)",
+                0xFF999999.toInt()
+            )
             spacer(4)
             primaryButton("Use 1 freeplay — go GREEN") {
                 val granted = ChessReadinessStore.grantFreeplay(context)
@@ -126,11 +130,13 @@ class ChessFreeplayOverlay(service: android.content.Context) {
 
     /** Defensive: the balance emptied between menu render and tap. */
     private fun renderEmpty() {
-        dialog.setContent("🎟 Weekly Freeplay", "No credits left") {
+        dialog.setContent("🎟 Weekly Freeplay", "No tickets left") {
             body(
-                "Your freeplay credits are used up. One new credit arrives " +
-                    "each week (max 3 banked) — pass a readiness test to " +
-                    "earn GREEN the regular way.",
+                "Your freeplay tickets are used up. A new weekly ticket " +
+                    "arrives each week — but only while you hold fewer " +
+                    "than 3. New all-time Puzzle Rush records always earn " +
+                    "an uncapped bonus ticket, and passing a readiness " +
+                    "test earns GREEN the regular way.",
                 size = 14
             )
             primaryButton("Got it") { dismiss() }

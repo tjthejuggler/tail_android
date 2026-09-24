@@ -277,10 +277,12 @@ class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = fal
             ChessPuzzleRushStore.clearPending(context)
         }
         if (outcome.isRecord) {
-            // NEW ALL-TIME RECORD → SPECIAL GREEN: rated play unlocks
-            // exactly as if a pre-game readiness test had been passed.
-            ChessReadinessStore.grantSpecialGreen(context, rushScore, rushMinutesMode)
-            showSpecialGreenCelebration(rushScore, rushMinutesMode, modeAth)
+            // NEW ALL-TIME RECORD → FREEPLAY TICKET (user rule
+            // 2026-09-24: records now bank a ticket instead of unlocking
+            // rated play directly). Bonus tickets are UNCAPPED — the
+            // 3-ticket limit gates only the weekly distribution.
+            ChessFreeplayStore.grantBonusTicket(context)
+            showTicketCelebration(rushScore, rushMinutesMode, modeAth)
         } else {
             dismiss()
         }
@@ -289,29 +291,34 @@ class ChessPuzzleRushOverlay(service: Context, private val manual: Boolean = fal
     /**
      * The reward screen for a new all-time Puzzle Rush record. Replaces
      * the report card with a celebration that says WHAT was granted: a
-     * SPECIAL GREEN session, identical to a passed readiness test
-     * (60-minute validity, rolling rated-play window).
+     * freeplay TICKET banked for later (use it any time from the bubble's
+     * chess menu — rated play unlocks exactly like a passed readiness
+     * test). Ticket count is uncapped for records.
      */
-    private fun showSpecialGreenCelebration(score: Int, minutesMode: Int, prevAth: Int) {
+    private fun showTicketCelebration(score: Int, minutesMode: Int, prevAth: Int) {
+        val balance = try {
+            ChessFreeplayStore.available(context)
+        } catch (_: Exception) { 0 }
         dialog.setContent(
             "🏆 New All-Time Record!",
             "Puzzle Rush $minutesMode-minute mode"
         ) {
             bigScore("$score", "#22C55E")
-            stateLabel("SPECIAL GREEN GRANTED", "#22C55E")
+            stateLabel("🎟 FREEPLAY TICKET EARNED", "#FFD54F")
             spacer(10)
             body(
                 "Your new $minutesMode-minute all-time best (previous: $prevAth) " +
-                    "has earned you a special green — rated play is unlocked " +
-                    "RIGHT NOW, exactly as if you had passed a pre-game " +
-                    "readiness test.",
+                    "has earned you a FREEPLAY TICKET — a rated-play session " +
+                    "you can spend any time from the bubble's chess menu, no " +
+                    "readiness test needed. Record tickets are unlimited; " +
+                    "only weekly tickets are capped at 3.",
                 size = 14
             )
             spacer(8)
-            bullet("• 60-minute GREEN session starts now", 0xFF22C55E.toInt())
-            bullet("• Rated games authorized (rolling window)", 0xFF22C55E.toInt())
-            bullet("• The next readiness test unlocks when the session ends", 0xFF999999.toInt())
-            primaryButton("Play — enjoy!") { dismiss() }
+            bullet("• Ticket banked — you now hold $balance", 0xFFFFD54F.toInt())
+            bullet("• Spend from the bubble: 🎟 Use Freeplay", 0xFF22C55E.toInt())
+            bullet("• Net rating ≥ +1 in the session refunds the ticket", 0xFF22C55E.toInt())
+            primaryButton("Nice!") { dismiss() }
         }
     }
 

@@ -172,40 +172,12 @@ object ChessReadinessStore {
     }
 
     /**
-     * SPECIAL GREEN grant: a new all-time Puzzle Rush record (3- or
-     * 5-minute mode) unlocks rated play exactly like a passed pre-game
-     * readiness test. Implemented as a marked GREEN_LIGHT entry in the v1
-     * test history — every gate consumer (Chess Guard evaluate(),
-     * [ChessPhase2Store.ratedPlayExpiresAt], the deferred-game reconciler)
-     * already keys off the latest GREEN_LIGHT entry, so the whole
-     * 60-minute session / rolling-window machinery applies unchanged. The
-     * entry carries the new record as its score and the [specialGreen]
-     * provenance flag for the UI.
-     *
-     * @return the appended authorization entry.
-     */
-    fun grantSpecialGreen(
-        context: Context,
-        rushScore: Int,
-        minutesMode: Int
-    ): ChessReadinessEngine.ReadinessTest {
-        val test = ChessReadinessEngine.ReadinessTest(
-            timestamp = System.currentTimeMillis(),
-            ccrs = rushScore.coerceIn(0, 100),
-            state = ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name,
-            rushScore = rushScore,
-            specialGreen = true
-        )
-        appendTest(context, test)
-        return test
-    }
-
-    /**
-     * WEEKLY FREEPLAY grant: consumes one freeplay credit from the
+     * WEEKLY FREEPLAY grant: consumes one freeplay ticket from the
      * [ChessFreeplayStore] ledger and unlocks rated play exactly like a
      * passed pre-game readiness test. Implemented as a marked GREEN_LIGHT
-     * entry in the v1 test history (same mechanism as [grantSpecialGreen])
-     * so every gate consumer (Chess Guard evaluate(),
+     * entry in the v1 test history (the mechanism the former
+     * special-green grant also used) so every gate consumer (Chess Guard
+     * evaluate(),
      * [ChessPhase2Store.ratedPlayExpiresAt], the deferred-game reconciler,
      * the post-game audits) treats it identically: 60-minute validity,
      * rolling rated-play window, readiness buffer from the pass-grade

@@ -114,14 +114,41 @@ class ChessFreeplayTest {
     fun `same week never re-credits`() {
         val idx = ChessFreeplayStore.weekIndexOfEpochDay(1000L)
         assertEquals(0L, ChessFreeplayStore.weeksElapsed(idx, idx))
-        // Pure accrual: elapsed 0 → granted total unchanged.
-        assertEquals(2, ChessFreeplayStore.accrue(2, 0))
+    }
+
+    // ── Weekly ticket cap (user rule 2026-09-24) ─────────────────────────
+
+    @Test
+    fun `weekly grant fits below the cap regardless of origin`() {
+        assertEquals(true, ChessFreeplayStore.weeklyGrantFits(0))
+        assertEquals(true, ChessFreeplayStore.weeklyGrantFits(2))
+        // At 3 or more tickets — weekly OR bonus — no weekly grant.
+        assertEquals(false, ChessFreeplayStore.weeklyGrantFits(3))
+        assertEquals(false, ChessFreeplayStore.weeklyGrantFits(5))
     }
 
     @Test
-    fun `accrual credits one per week`() {
-        assertEquals(1, ChessFreeplayStore.accrue(0, 1))
-        assertEquals(2, ChessFreeplayStore.accrue(1, 1))
+    fun `weekly sweep grants up to the cap then skips`() {
+        // 0 held, 3 missing weeks → grants all 3 (cap = 3 held).
+        assertEquals(3 to 0, ChessFreeplayStore.weeklySweep(0, 0, 0, 3))
+        // A 4th week finds the balance at cap → skipped.
+        assertEquals(0 to 1, ChessFreeplayStore.weeklySweep(3, 0, 0, 1))
+        // Bonus tickets count toward the cap: 2 bonus held → 1 grant.
+        assertEquals(1 to 0, ChessFreeplayStore.weeklySweep(0, 2, 0, 1))
+        // Already at cap → everything is skipped.
+        assertEquals(0 to 2, ChessFreeplayStore.weeklySweep(3, 0, 0, 2))
+        // Outstanding (provisionally spent) tickets free up room.
+        assertEquals(1 to 0, ChessFreeplayStore.weeklySweep(2, 0, 1, 1))
+        // Mixed: 1 held + 1 outstanding → balance 0 → grants 3, skips 1.
+        assertEquals(3 to 1, ChessFreeplayStore.weeklySweep(1, 0, 1, 4))
+    }
+
+    @Test
+    fun `bonus tickets are not capped by the weekly stock`() {
+        // Pure math guard: MAX_STOCK gates only the WEEKLY sweep; nothing
+        // in the ledger model bounds bonus ticket count.
+        assertTrue(ChessFreeplayStore.weeklyGrantFits(ChessFreeplayStore.MAX_STOCK - 1))
+        assertEquals(0 to 1, ChessFreeplayStore.weeklySweep(0, 9, 0, 1))
     }
 
     // ── Freeplay context resolution ──────────────────────────────────────

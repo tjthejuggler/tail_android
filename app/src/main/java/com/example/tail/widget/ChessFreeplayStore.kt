@@ -1,6 +1,7 @@
 package com.example.tail.widget
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import com.example.tail.data.chess.ChessReadinessEngine
 import com.example.tail.data.chess.freeplaySessionLastGameEnd
@@ -14,11 +15,15 @@ import java.time.ZoneId
 
 /**
  * ════════════════════════════════════════════════════════════════════════
- *  Chess Freeplay — weekly freeplay credit ledger (fully derived state)
+ *  Chess Freeplay — freeplay ticket ledger (fully derived state)
  * ════════════════════════════════════════════════════════════════════════
  *
- *  Once a week the user earns ONE freeplay credit (stock capped at
- *  [MAX_STOCK]). Spending one from the bubble widget unlocks rated play
+ *  Once a week the user earns ONE freeplay ticket — granted ONLY while
+ *  the current balance (tickets of ANY origin) is below [MAX_STOCK]
+ *  (user rule 2026-09-24); weeks arriving at/above the cap are recorded
+ *  as skipped and never re-granted. Puzzle Rush all-time records bank
+ *  UNCAPPED bonus tickets ([grantBonusTicket]). Spending one from the
+ *  bubble widget unlocks rated play
  *  exactly as if a pre-game readiness test had been passed — the grant
  *  itself lives in [ChessReadinessStore.grantFreeplay] as a flagged
  *  GREEN_LIGHT entry in the shared test history. THIS store owns only the
@@ -37,8 +42,8 @@ import java.time.ZoneId
  *     rating change decides: ≥ +1 refunds the credit
  *     ([freeplaySessionNetRatingChange]).
  *
- *   balance = |grant weeks| − unsettled-or-kept ledger entries
- *           (refunded entries drop out entirely)
+ *   balance = |grant weeks| + |bonus tickets| − unsettled-or-kept
+ *           ledger entries (refunded entries drop out entirely)
  *
  *  No stored counters exist anywhere, so no partial write or stale
  *  process can desynchronize the balance.
@@ -51,6 +56,17 @@ object ChessFreeplayStore {
 
     private const val PREFS_NAME = "tail_chess_freeplay"
     private const val KEY_GRANT_WEEKS = "grant_weeks"
+
+    /**
+     * Week indexes PROCESSED but not granted because the balance was
+     * already at/above [MAX_STOCK] (user rule 2026-09-24: no weekly
+     * ticket while 3+ of any origin are held). Recorded so a skipped
+     * week can never be re-granted retroactively.
+     */
+    private const val KEY_SKIPPED_WEEKS = "skipped_weeks"
+
+    /** Epoch-ms timestamps of UNCAPPED bonus tickets (Puzzle Rush records). */
+    private const val KEY_BONUS_GRANTS = "bonus_grants"
     private const val KEY_LEDGER = "ledger"
     private const val KEY_LAST_SETTLE_ATTEMPT = "last_settle_attempt_ms"
     private const val TAG = "ChessFreeplayStore"
@@ -77,7 +93,11 @@ object ChessFreeplayStore {
     /** Collapses duplicate background settlements while one is running. */
     private val settleInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    /** Maximum credits that can be banked at once. */
+    /**
+     * Weekly-ticket gate: a WEEKLY ticket is granted only while the
+     * current balance — tickets of ANY origin — is below this (user rule
+     * 2026-09-24). Tickets from Puzzle Rush records are NOT capped.
+     */
     const val MAX_STOCK = 3
 
     /** Credits granted per elapsed week. */
@@ -100,6 +120,16 @@ object ChessFreeplayStore {
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    /** Reads a stored JSON array of longs, or null when absent/corrupt. */
+    private fun readLongs(p: SharedPreferences, key: String): List<Long>? = try {
+        p.getString(key, null)?.let { raw ->
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { arr.getLong(it) }
+        }
+    } catch (_: Exception) {
+        null
+    }
 
     // ── Week math (pure, Monday-aligned) ───────────────────────────────────
 
@@ -129,12 +159,38 @@ object ChessFreeplayStore {
         (toWeekIndex - fromWeekIndex).coerceAtLeast(0)
 
     /**
-     * Pure accrual: the number of granted credits after [weeksElapsed]
-     * whole weeks, at [WEEKLY_GRANT] per week (the stock cap is applied
-     * where the balance is derived, not here).
+     * Pure weekly-grant gate (user rule 2026-09-24): a weekly ticket
+     * fits only while the CURRENT balance — tickets of any origin,
+     * provisionally-spent ones already deducted — is below [MAX_STOCK].
+     * Origin-blind by design: bonus tickets count toward the cap exactly
+     * like weekly ones.
      */
-    fun accrue(grantedWeeks: Int, weeksElapsed: Long): Int =
-        grantedWeeks + (weeksElapsed * WEEKLY_GRANT).toInt()
+    fun weeklyGrantFits(currentBalance: Int): Boolean =
+        currentBalance < MAX_STOCK
+
+    /**
+     * Pure accrual sweep over [missingWeeks] elapsed weeks: grants the
+     * earliest weeks until the balance reaches [MAX_STOCK], skips the
+     * rest. Returns (granted, skipped) counts. [grantedCount] and
+     * [bonusCount] are the journals' current sizes; [outstanding] the
+     * un-refunded spends. Skipped weeks are recorded by [accrueLazy] so
+     * they can never be re-granted retroactively.
+     */
+    fun weeklySweep(
+        grantedCount: Int,
+        bonusCount: Int,
+        outstanding: Int,
+        missingWeeks: Int
+    ): Pair<Int, Int> {
+        var granted = 0
+        var skipped = 0
+        repeat(missingWeeks.coerceAtLeast(0)) {
+            if (weeklyGrantFits(grantedCount + granted + bonusCount - outstanding))
+                granted++
+            else skipped++
+        }
+        return granted to skipped
+    }
 
     // ── Ledger ─────────────────────────────────────────────────────────────
 
@@ -189,24 +245,18 @@ object ChessFreeplayStore {
     }
 
     /**
-     * Lazy weekly accrual: appends the current ISO week index to the
-     * grants journal whenever it is missing — the CURRENT week never
-     * double-credits because the same index is only appended once, and
-     * past weeks cannot be re-granted because indexes are absolute.
-     * Missing intermediate weeks (device off for weeks) are materialized
-     * too, so the count matches elapsed weeks exactly.
+     * Lazy weekly accrual: sweeps every ISO week index missing from the
+     * journals, OLDEST first. Each missing week is processed exactly once
+     * — GRANTED (appended to [KEY_GRANT_WEEKS]) while the current balance
+     * — tickets of ANY origin, provisionally-spent ones already deducted —
+     * is below [MAX_STOCK], otherwise SKIPPED (appended to
+     * [KEY_SKIPPED_WEEKS]) so it can never be re-granted retroactively
+     * (user rule 2026-09-24). The current week never double-processes
+     * because indexes are absolute and recorded in both journals.
      */
     private fun accrueLazy(context: Context, nowMs: Long = System.currentTimeMillis()) {
         val p = prefs(context)
-        val stored = try {
-            p.getString(KEY_GRANT_WEEKS, null)?.let { raw ->
-                val arr = JSONArray(raw)
-                (0 until arr.length()).map { arr.getLong(it) }
-            }
-        } catch (_: Exception) {
-            null
-        }
-        val existing = stored?.distinct()?.sorted()
+        val existing = readLongs(p, KEY_GRANT_WEEKS)?.distinct()?.sorted()
         if (existing == null) {
             // First touch: grant the current week's credit only.
             p.edit()
@@ -215,36 +265,76 @@ object ChessFreeplayStore {
             return
         }
         val current = weekIndexOf(nowMs)
-        val lastGranted = existing.lastOrNull() ?: current
-        if (current <= lastGranted) return
-        // SANITY VALVE: the journal must only ever hold sane week indexes.
-        // A negative gap (clock rolled back) or a gap longer than a decade
-        // means corrupt data — reset to the current week rather than
-        // materializing an astronomically long range (an overload mix-up
-        // here OOM'd the bubble menu on every tap — 2026-09-22).
-        val gap = current - lastGranted
+        // Sweep horizon: the newest week ever processed — granted OR
+        // skipped — so skipped weeks are not re-examined.
+        val lastProcessed = maxOf(
+            existing.lastOrNull() ?: current,
+            readLongs(p, KEY_SKIPPED_WEEKS)?.maxOrNull() ?: current
+        )
+        if (current <= lastProcessed) return
+        // SANITY VALVE: the journals must only ever hold sane week
+        // indexes. A negative gap (clock rolled back) or a gap longer
+        // than a decade means corrupt data — reset to the current week
+        // rather than materializing an astronomically long range (an
+        // overload mix-up here OOM'd the bubble menu on every tap —
+        // 2026-09-22).
+        val gap = current - lastProcessed
         if (gap < 0 || gap > MAX_MATERIALIZE_WEEKS) {
-            p.edit().putString(KEY_GRANT_WEEKS, JSONArray().put(current).toString()).apply()
+            p.edit()
+                .putString(KEY_GRANT_WEEKS, JSONArray().put(current).toString())
+                .putString(KEY_SKIPPED_WEEKS, JSONArray().toString())
+                .apply()
             return
         }
-        // Materialize the missing weeks, NEWEST first — the stock cap
-        // lives in the DERIVED balance, so only as many missed weeks are
-        // granted as fit under the cap given the outstanding entries.
-        val newWeeks = (lastGranted + 1..current).toList()
-        val ledger = usageLedger(context)
-        val outstanding = ledger.count { !it.refunded }
-        val room = (MAX_STOCK + outstanding - existing.size).coerceAtLeast(0)
-        val finalWeeks = (existing + newWeeks.takeLast(room)).distinct().sorted()
-        p.edit().putString(KEY_GRANT_WEEKS, JSONArray(finalWeeks).toString()).apply()
+        val newWeeks = (lastProcessed + 1..current).toList()
+        val outstanding = usageLedger(context).count { !it.refunded }
+        val (grantedN, skippedN) = weeklySweep(
+            grantedCount = existing.size,
+            bonusCount = readLongs(p, KEY_BONUS_GRANTS)?.size ?: 0,
+            outstanding = outstanding,
+            missingWeeks = newWeeks.size
+        )
+        val finalWeeks = (existing + newWeeks.take(grantedN)).distinct().sorted()
+        val finalSkipped = ((readLongs(p, KEY_SKIPPED_WEEKS) ?: emptyList()) +
+            newWeeks.takeLast(skippedN)).distinct().sorted()
+        p.edit()
+            .putString(KEY_GRANT_WEEKS, JSONArray(finalWeeks).toString())
+            .putString(KEY_SKIPPED_WEEKS, JSONArray(finalSkipped).toString())
+            .apply()
+    }
+
+    // ── Bonus tickets (UNCAPPED — Puzzle Rush records) ─────────────────────
+
+    /** Epoch-ms timestamps of all banked bonus tickets (ascending). */
+    fun bonusTickets(context: Context): List<Long> =
+        readLongs(prefs(context), KEY_BONUS_GRANTS) ?: emptyList()
+
+    /**
+     * Banks ONE bonus ticket from a new all-time Puzzle Rush record
+     * (user rule 2026-09-24: records reward a TICKET, not a green
+     * session). Bonus tickets have NO cap — [MAX_STOCK] gates only the
+     * WEEKLY grant — and are indistinguishable from weekly tickets at
+     * spend/settlement time (origin-blind ledger).
+     *
+     * @return the ticket's epoch-ms stamp (its identity in the journal).
+     */
+    fun grantBonusTicket(context: Context): Long {
+        val now = System.currentTimeMillis()
+        val p = prefs(context)
+        val updated = ((readLongs(p, KEY_BONUS_GRANTS) ?: emptyList()) + now).sorted()
+        p.edit().putString(KEY_BONUS_GRANTS, JSONArray(updated).toString()).apply()
+        return now
     }
 
     // ── Derived balance ────────────────────────────────────────────────────
 
     /**
-     * The available credit balance, DERIVED entirely from append-only
-     * facts: granted weeks minus ledger entries not refunded by
-     * settlement, clamped to [0, MAX_STOCK]. No stored counter exists —
-     * a partial write cannot desynchronize it.
+     * The available ticket balance, DERIVED entirely from append-only
+     * facts: granted weeks PLUS uncapped bonus tickets minus ledger
+     * entries not refunded by settlement, never negative. No stored
+     * counter exists — a partial write cannot desynchronize it. The
+     * balance is uncapped upward on purpose: only the WEEKLY grant is
+     * gated by [MAX_STOCK].
      */
     fun available(
         context: Context,
@@ -252,9 +342,11 @@ object ChessFreeplayStore {
         accrueNow: Boolean = true
     ): Int {
         if (accrueNow) accrueLazy(context, nowMs)
-        val granted = grantWeeks(context).size
+        val p = prefs(context)
+        val granted = readLongs(p, KEY_GRANT_WEEKS)?.distinct()?.size ?: 0
+        val bonus = readLongs(p, KEY_BONUS_GRANTS)?.size ?: 0
         val spent = usageLedger(context).count { !it.refunded }
-        return (granted - spent).coerceIn(0, MAX_STOCK)
+        return (granted + bonus - spent).coerceAtLeast(0)
     }
 
     /**
@@ -391,16 +483,21 @@ object ChessFreeplayStore {
     /**
      * Repair-script hook: rewrites the grant journal to a fixed set of
      * week indexes and the ledger to fixed entries. The balance then
-     * always derives as |weeks| − outstanding entries.
+     * always derives as |weeks| + |bonus| − outstanding entries. The
+     * bonus/skipped journals are reset too (parameters let a repair
+     * preserve bonus tickets explicitly).
      */
     fun seedForRepair(
         context: Context,
         grantedWeekIndexes: List<Long>,
         ledger: List<UsageRecord>,
-        zone: ZoneId = ZoneId.systemDefault()
+        bonusTicketStamps: List<Long> = emptyList(),
+        skippedWeekIndexes: List<Long> = emptyList()
     ) {
         prefs(context).edit().apply {
             putString(KEY_GRANT_WEEKS, JSONArray(grantedWeekIndexes).toString())
+            putString(KEY_SKIPPED_WEEKS, JSONArray(skippedWeekIndexes).toString())
+            putString(KEY_BONUS_GRANTS, JSONArray(bonusTicketStamps).toString())
             putString(KEY_LEDGER, JSONArray().apply {
                 ledger.forEach {
                     put(JSONObject().apply {

@@ -232,6 +232,36 @@ object ChessReadinessSystemChanges {
                 "pre-game result by design (user rule, 2026-09-24). The block is " +
                 "momentary: once the test's 60-minute validity lapses, the option " +
                 "returns as usual."
+        ),
+        ReadinessSystemChange(
+            at("2026-09-24T14:45:00Z"),
+            "Puzzle Rush records earn a freeplay TICKET — not a green session",
+            "A new all-time Puzzle Rush record (3- or 5-minute mode) no longer unlocks " +
+                "rated play directly (the old 'special green'). It now banks an UNCAPPED " +
+                "BONUS TICKET in the freeplay ledger, spent later from the bubble's " +
+                "chess menu: rated play then unlocks exactly like before, 60-minute " +
+                "window, provisional spend, net ≥ +1 refunds (user rule, 2026-09-24). " +
+                "Record tickets never expire and have no count limit."
+        ),
+        ReadinessSystemChange(
+            at("2026-09-24T14:46:00Z"),
+            "Weekly ticket capped origin-blind at 3",
+            "The WEEKLY freeplay ticket is now granted only while the current balance — " +
+                "tickets of ANY origin, weekly or record-earned, provisionally-spent " +
+                "ones already deducted — is below 3. Weeks that arrive at/above the cap " +
+                "are recorded as skipped and never re-granted retroactively (user rule, " +
+                "2026-09-24). The balance itself stays uncapped: hold as many " +
+                "record-earned tickets as you like."
+        ),
+        ReadinessSystemChange(
+            at("2026-09-24T14:47:00Z"),
+            "Chess Status shows the session net rating + freeplay provenance",
+            "The ♟ Chess Status overlay now always shows the NET rating change across " +
+                "the rated games of the current session (per-pool baselines, the same " +
+                "math freeplay settlement uses), so a freeplay user can see at a " +
+                "glance whether the +1 refund bar is cleared. When the session was " +
+                "authorized by a FREEPLAY, the overlay also states the ticket balance " +
+                "and whether the spend is still provisional."
         )
     )
 }

@@ -1,6 +1,7 @@
 package com.example.tail.widget
 
 import com.example.tail.data.chess.ChessReadinessEngine
+import com.example.tail.data.chess.freeplaySessionNetRatingChange
 import kotlin.math.roundToInt
 
 /**
@@ -35,6 +36,50 @@ class ChessStatusOverlay(service: android.content.Context) {
 
     fun isShowing(): Boolean = dialog.isShowing()
 
+    /**
+     * The NET rating change across the rated games of the CURRENT
+     * authorization session (anchored at the authorizing GREEN entry —
+     * a passed test or a freeplay, same window math), or null when no
+     * rated game with a usable rating has been played yet. Shown on the
+     * status overlay for EVERY session so a freeplay user always sees
+     * whether the +1 refund bar is being cleared (user rule 2026-09-24).
+     */
+    private fun sessionNetRating(): Int? = try {
+        val anchor = ChessReadinessStore.lastTest(context)?.timestamp ?: return null
+        freeplaySessionNetRatingChange(
+            ChessReadinessLogStore.loadGames(context),
+            anchor,
+            ChessReadinessEngine.SESSION_VALIDITY_MS
+        )
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * Freeplay provenance of the current session + ticket balance lines,
+     * emitted ONLY when the session was authorized by a FREEPLAY (user
+     * rule 2026-09-24: "if i use a freeplay it should make my freeplay
+     * status known"). Must be called inside a setContent scope.
+     */
+    private fun ChessOverlayDialog.OverlayScope.renderFreeplayStatus() {
+        val lastTest = ChessReadinessStore.lastTest(context)
+        if (lastTest?.freeplay != true) return
+        val balance = try {
+            ChessFreeplayStore.available(context)
+        } catch (_: Exception) { 0 }
+        stateLabel(
+            "🎟 FREEPLAY SESSION · $balance TICKET${if (balance == 1) "" else "S"} BANKED",
+            "#FFD54F"
+        )
+        // Provisional spend: the ticket comes back at net ≥ +1.
+        if (try {
+                ChessFreeplayStore.pendingSettlementCount(context)
+            } catch (_: Exception) { 0 } > 0
+        ) {
+            hint("This session's ticket is provisional — net rating ≥ +1 refunds it.")
+        }
+    }
+
     private fun render() {
         val now = System.currentTimeMillis()
         val authorized = ChessPhase2Store.ratedPlayAuthorized(context, now)
@@ -65,6 +110,7 @@ class ChessStatusOverlay(service: android.content.Context) {
             }
 
             stateLabel("RATED PLAY AUTHORIZED", "#22C55E")
+            renderFreeplayStatus()
             spacer(10)
 
             val msLeft = ChessPhase2Store.ratedPlayMsRemaining(context, now)
@@ -92,6 +138,9 @@ class ChessStatusOverlay(service: android.content.Context) {
                 "Capacity used",
                 "${minutesUsed.roundToInt()} / ${ChessPhase2Engine.SESSION_CAP_MINUTES} min"
             )
+            sessionNetRating()?.let { net ->
+                keyValue("Session net rating", "%+d".format(net))
+            }
 
             if (lastAudit != null) {
                 spacer(8)
@@ -156,12 +205,16 @@ class ChessStatusOverlay(service: android.content.Context) {
 
         dialog.setContent("♟ Chess Status", null) {
             stateLabel("RATED PLAY AUTHORIZED · AUDIT v2", "#22C55E")
+            renderFreeplayStatus()
             spacer(10)
 
             val msLeft = ChessPhase2Store.ratedPlayMsRemaining(context, now)
             keyValue("Time left", "${(msLeft / 60000L).coerceAtLeast(0)} min " +
                 "(re-anchored by every clean audit)")
             keyValue("Games audited this session", "${session.size}")
+            sessionNetRating()?.let { net ->
+                keyValue("Session net rating", "%+d".format(net))
+            }
             keyValue(
                 "Fatigue budget",
                 "${minutesUsed.roundToInt()} / " +
