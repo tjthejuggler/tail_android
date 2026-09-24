@@ -753,6 +753,7 @@ class BackupManager(
             s.textInputHiddenGroupings.mapValues { it.value.toSet() }
         )
         settingsRepo.saveHabitIcons(s.habitIcons)
+        settingsRepo.saveHabitIconScales(s.habitIconScales)
 
         settingsRepo.saveDatedEntryHabits(s.datedEntryHabits.toSet())
         settingsRepo.saveDatedEntryFileUris(s.datedEntryFileUris)
@@ -1152,6 +1153,7 @@ class BackupManager(
         textInputOptionDescriptions = s.textInputOptionDescriptions,
         textInputHiddenGroupings = s.textInputHiddenGroupings.mapValues { it.value.toList() },
         habitIcons = s.habitIcons,
+        habitIconScales = s.habitIconScales,
         datedEntryHabits = s.datedEntryHabits.toList(),
         datedEntryFileUris = s.datedEntryFileUris,
         datedEntryFileSizes = s.datedEntryFileSizes,

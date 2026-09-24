@@ -128,6 +128,8 @@ fun HabitButton(
     /** True when move-pending mode is active and this cell is a valid drop target. */
     isMovePendingTarget: Boolean = false,
     customIconOverrides: Map<String, String> = emptyMap(),
+    /** Icon size scale ×100 (100 = the default 20 dp; null/100 = default). */
+    iconScalePercent: Int = 100,
     graphMode: Boolean = false,
     isGraphSelected: Boolean = false,
     /** True when this habit is disabled (red ✕ overlay in top-left corner). */
@@ -209,6 +211,10 @@ fun HabitButton(
     val textIconBitmap: Bitmap? = remember(textIconChar) {
         if (textIconChar != null) renderTextIconBitmap(textIconChar, 96) else null
     }
+    // Per-habit icon size (user-set in the icon picker's size slider):
+    // default 20 dp scaled by the ×100 percent, clamped to sane bounds so
+    // a corrupt entry can never blow the icon past the tile.
+    val iconSize = (20.dp * (iconScalePercent.coerceIn(50, 200) / 100f))
     val streakText = if (habit.currentStreak >= 0) "+${habit.currentStreak}" else "${habit.currentStreak}"
     
     // Format allTimeHighDay for Garmin distance habits (metres → km whole number)
@@ -500,7 +506,7 @@ fun HabitButton(
                 bitmap = appIconBitmap.asImageBitmap(),
                 contentDescription = habit.name,
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(iconSize)
                     .align(Alignment.Center)
             )
         } else if (aiIconBitmap != null) {
@@ -508,7 +514,7 @@ fun HabitButton(
                 bitmap = aiIconBitmap.asImageBitmap(),
                 contentDescription = habit.name,
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(iconSize)
                     .align(Alignment.Center)
             )
         } else if (textIconBitmap != null) {
@@ -516,7 +522,7 @@ fun HabitButton(
                 bitmap = textIconBitmap.asImageBitmap(),
                 contentDescription = habit.name,
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(iconSize)
                     .align(Alignment.Center)
             )
         } else if (iconRes != null) {
@@ -524,7 +530,7 @@ fun HabitButton(
                 painter = painterResource(id = iconRes),
                 contentDescription = habit.name,
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(iconSize)
                     .align(Alignment.Center),
                 colorFilter = ColorFilter.tint(Color.White)
             )

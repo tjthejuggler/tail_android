@@ -218,6 +218,20 @@ object ChessReadinessSystemChanges {
                 "The balance also became DERIVED (granted − spent + refunded) from the " +
                 "append-only ledger, eliminating a stored counter that a corrupt prefs write " +
                 "could silently reset (which briefly mis-displayed the balance on 2026-09-21)."
+        ),
+        ReadinessSystemChange(
+            at("2026-09-24T09:00:00Z"),
+            "Freeplay blocked while a POST-GAME audit says YELLOW",
+            "The weekly freeplay is now UNAVAILABLE while the current session has been " +
+                "downgraded to YELLOW by the post-game audit (a PIVOT_TO_DRILLS verdict " +
+                "filed after the latest readiness test): the option disappears from both " +
+                "bubble menus, the confirm overlay refuses, and the grant function itself " +
+                "declines — spending a credit must never override the audit's fresh " +
+                "'your play was bad' signal. A YELLOW from the PRE-GAME readiness test " +
+                "does NOT block freeplay — the escape valve stays usable from a weak " +
+                "pre-game result by design (user rule, 2026-09-24). The block is " +
+                "momentary: once the test's 60-minute validity lapses, the option " +
+                "returns as usual."
         )
     )
 }

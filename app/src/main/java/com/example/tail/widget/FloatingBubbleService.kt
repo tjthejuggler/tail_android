@@ -2507,18 +2507,33 @@ class FloatingBubbleService : Service() {
 
                 // Weekly freeplay — offered only when a credit is banked:
                 // spend one to go GREEN without taking the readiness test.
-                // Settlement runs throttled on a background worker — the
-                // synchronous log parse OOM'd the main thread here.
-                // Throwable (not Exception): an Error thrown in here must
-                // degrade to "no freeplay item", never take down the menu
-                // (and with it the whole bubble) — 2026-09-22.
+                // User rule (2026-09-24): hidden while a POST-GAME audit has
+                // the session downgraded to YELLOW (PIVOT_TO_DRILLS after
+                // the latest test); a YELLOW from the PRE-GAME test does
+                // NOT hide it. Settlement runs throttled on a background
+                // worker — the synchronous log parse OOM'd the main thread
+                // here. Throwable (not Exception): an Error thrown in here
+                // must degrade to "no freeplay item", never take down the
+                // menu (and with it the whole bubble) — 2026-09-22.
                 val freeplayCredits = try {
                     ChessFreeplayStore.settleExpiredAsync(this)
                     ChessFreeplayStore.available(this)
                 } catch (_: Throwable) { 0 }
-                if (freeplayCredits > 0) {
+                val postGameYellow = try {
+                    ChessEnforcementPolicy.freeplayBlockedByPostGameYellow(this)
+                } catch (_: Throwable) { false }
+                if (freeplayCredits > 0 && !postGameYellow) {
+                    // Show provisional (unsettled) spends so a refunded-later
+                    // credit is never mistaken for a permanently spent one
+                    // (2026-09-24 confusion report).
+                    val pending = try {
+                        ChessFreeplayStore.pendingSettlementCount(this)
+                    } catch (_: Throwable) { 0 }
                     val freeplayItem = TextView(this).apply {
-                        text = "🎟 Use Freeplay ($freeplayCredits left)"
+                        text = if (pending > 0)
+                            "🎟 Use Freeplay ($freeplayCredits left · $pending settling)"
+                        else
+                            "🎟 Use Freeplay ($freeplayCredits left)"
                         textSize = 15f
                         setTextColor(Color.WHITE)
                         gravity = Gravity.CENTER
@@ -2763,17 +2778,30 @@ class FloatingBubbleService : Service() {
                     openChessReadiness()
                 }
                 // Weekly freeplay — same gating as the picker menu.
-                // Settlement runs throttled on a background worker.
-                // Throwable (not Exception) — same rationale as the picker
-                // menu: an Error here must only drop the freeplay item,
-                // never kill the full-screen overlay (2026-09-22).
+                // User rule (2026-09-24): hidden while a POST-GAME audit has
+                // the session downgraded to YELLOW (PIVOT_TO_DRILLS after
+                // the latest test); a YELLOW from the PRE-GAME test does
+                // NOT hide it. Settlement runs throttled on a background
+                // worker. Throwable (not Exception) — same rationale as the
+                // picker menu: an Error here must only drop the freeplay
+                // item, never kill the full-screen overlay (2026-09-22).
                 val freeplayCredits = try {
                     ChessFreeplayStore.settleExpiredAsync(this)
                     ChessFreeplayStore.available(this)
                 } catch (_: Throwable) { 0 }
-                if (freeplayCredits > 0) {
+                val postGameYellow = try {
+                    ChessEnforcementPolicy.freeplayBlockedByPostGameYellow(this)
+                } catch (_: Throwable) { false }
+                if (freeplayCredits > 0 && !postGameYellow) {
+                    val pending = try {
+                        ChessFreeplayStore.pendingSettlementCount(this)
+                    } catch (_: Throwable) { 0 }
+                    val label = if (pending > 0)
+                        "🎟 Use Freeplay ($freeplayCredits left · $pending settling)"
+                    else
+                        "🎟 Use Freeplay ($freeplayCredits left)"
                     addOption(
-                        "🎟 Use Freeplay ($freeplayCredits left)",
+                        label,
                         0xFF3A2A10.toInt(), 0xFFCCAA44.toInt()
                     ) {
                         openChessFreeplay()

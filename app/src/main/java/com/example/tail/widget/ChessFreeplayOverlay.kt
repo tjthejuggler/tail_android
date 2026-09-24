@@ -25,7 +25,11 @@ class ChessFreeplayOverlay(service: android.content.Context) {
 
     fun show() {
         dialog.show()
-        renderConfirm()
+        if (ChessEnforcementPolicy.freeplayBlockedByPostGameYellow(context)) {
+            renderBlocked()
+        } else {
+            renderConfirm()
+        }
     }
 
     fun dismiss() {
@@ -36,9 +40,20 @@ class ChessFreeplayOverlay(service: android.content.Context) {
 
     private fun renderConfirm() {
         val balance = ChessFreeplayStore.available(context)
+        // Provisional spends still awaiting settlement (net rating not yet
+        // decided). Surfacing them avoids the 2026-09-24 confusion where a
+        // refunded session still LOOKED charged until the next menu render.
+        val pending = ChessFreeplayStore.pendingSettlementCount(context)
         dialog.setContent("🎟 Weekly Freeplay", "Rated play without a test") {
             bigScore("$balance", "#FFD54F")
             stateLabel("FREEPLAY CREDIT${if (balance == 1) "" else "S"} AVAILABLE", "#FFD54F")
+            if (pending > 0) {
+                spacer(6)
+                stateLabel(
+                    "$pending PROVISIONAL — SETTLING AFTER PLAY",
+                    "#EAB308"
+                )
+            }
             spacer(10)
             body(
                 "A freeplay unlocks rated play RIGHT NOW, exactly as if you " +
@@ -51,7 +66,8 @@ class ChessFreeplayOverlay(service: android.content.Context) {
             bullet("• Rated games authorized (rolling window)", 0xFF22C55E.toInt())
             bullet("• Post-game audit applies — play well", 0xFF999999.toInt())
             bullet(
-                "• NET rating gain ≥ +1 in the session REFUNDS the credit",
+                "• NET rating gain ≥ +1 in the session REFUNDS the credit " +
+                    "(any variant — standard, 960, bullet/blitz/rapid)",
                 0xFF22C55E.toInt()
             )
             bullet("• 1 credit per week, max 3 banked", 0xFF999999.toInt())
@@ -83,6 +99,28 @@ class ChessFreeplayOverlay(service: android.content.Context) {
             bullet("• Net +1 or better → credit refunded", 0xFF22C55E.toInt())
             bullet("• Credits left: $left", 0xFF999999.toInt())
             primaryButton("Play — enjoy!") { dismiss() }
+        }
+    }
+
+    /**
+     * Defensive: the menu can't see a post-game PIVOT downgrade that
+     * landed after it rendered — spending a credit here would override
+     * exactly the audit signal that just demoted the session to casual
+     * play (user rule 2026-09-24). No credit is consumed.
+     */
+    private fun renderBlocked() {
+        dialog.setContent("🎟 Weekly Freeplay", "Blocked by last audit") {
+            stateLabel("POST-GAME AUDIT SAYS YELLOW", "#EAB308")
+            spacer(10)
+            body(
+                "Your last game's post-game audit moved this session to " +
+                    "YELLOW (casual play only), so freeplay is unavailable " +
+                    "right now. Take the next readiness test once it opens " +
+                    "— pass it and rated play returns the regular way. " +
+                    "The credit stays banked.",
+                size = 14
+            )
+            primaryButton("Got it") { dismiss() }
         }
     }
 

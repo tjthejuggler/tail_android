@@ -318,4 +318,31 @@ class ChessFreeplayTest {
         assertEquals(8, net)
         assertTrue(freeplaySessionRefundDue(net))
     }
+
+    @Test
+    fun `standard chess session with net gain refunds`() {
+        // REGRESSION (2026-09-24, live device data): the user spent a
+        // freeplay and played two STANDARD blitz games (+6 then −3, from
+        // an 853 baseline → net +3), then saw the ticket still spent and
+        // suspected the settlement only watched the chess960 pool. It did
+        // not — the ledger settled the STANDARD pool at +3 and refunded.
+        // This test pins the standard (variant="chess") pool through the
+        // exact arithmetic of that session so any future regression in
+        // pool handling fails here.
+        val freeTs = ms("2026-09-24", 8)
+        // Earlier STANDARD blitz game today → baseline 853.
+        val pre = record(freeTs - 2 * 60 * 60_000, won = true, ratingAfter = 853,
+            freeplay = false, type = "BLITZ", variant = "chess")
+        // Session: +6 (→ 859), then −3 (→ 856).
+        val g1 = record(freeTs + 9 * 60_000, won = true, ratingAfter = 859,
+            freeplay = true, type = "BLITZ", variant = "chess")
+        val g2 = record(freeTs + 19 * 60_000, won = false, ratingAfter = 856,
+            freeplay = true, type = "BLITZ", variant = "chess")
+        val net = freeplaySessionNetRatingChange(listOf(pre, g1, g2), freeTs)
+        assertEquals(3, net)
+        assertTrue(freeplaySessionRefundDue(net))
+        // And the session is settle-eligible 15 min after the last game.
+        val settleAt = freeplaySessionSettleAt(freeTs, g2.endTimeMs)
+        assertTrue(settleAt <= freeTs + 34 * 60_000)
+    }
 }

@@ -104,6 +104,7 @@ data class SettingsSection(
     val textInputOptionDescriptions: Map<String, Map<String, String>> = emptyMap(),
     val textInputHiddenGroupings: Map<String, List<String>> = emptyMap(),
     val habitIcons: Map<String, String> = emptyMap(),
+    val habitIconScales: Map<String, Int> = emptyMap(),
     val datedEntryHabits: List<String> = emptyList(),
     val datedEntryFileUris: Map<String, String> = emptyMap(),
     val datedEntryFileSizes: Map<String, Long> = emptyMap(),

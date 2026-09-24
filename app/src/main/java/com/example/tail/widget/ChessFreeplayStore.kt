@@ -327,6 +327,20 @@ object ChessFreeplayStore {
      * ready (15 minutes after its grant — the earliest an idle-close can
      * occur). Reads only the tiny ledger — never the activity log.
      */
+    /**
+     * Number of provisionally-spent credits whose session has not settled
+     * yet (no netRatingChange recorded). Shown in the bubble menus so a
+     * provisional spend is never mistaken for a permanent one — the
+     * 2026-09-24 report ("it still charged me") was exactly that: the
+     * session HAD refunded (+3 standard blitz) but nothing displayed it
+     * until the next menu render.
+     */
+    fun pendingSettlementCount(context: Context): Int = try {
+        usageLedger(context).count { it.netRatingChange == null }
+    } catch (_: Exception) {
+        0
+    }
+
     fun hasPendingSettlement(
         context: Context,
         nowMs: Long = System.currentTimeMillis()

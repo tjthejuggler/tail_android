@@ -294,6 +294,51 @@ object ChessEnforcementPolicy {
     }
 
     /**
+     * True when the user is currently YELLOW because of a POST-GAME
+     * assessment: a Phase 2 audit verdict of PIVOT_TO_DRILLS was filed
+     * AFTER the latest Phase 1 test (mirrors the downgrade branch in
+     * [evaluate]). A YELLOW from the PRE-GAME test itself — or from the
+     * idle-window degradation of an aging GREEN session — does NOT trip
+     * this: the user rule (2026-09-24) is that only a post-game audit
+     * revokes the freeplay escape valve.
+     *
+     * Gate for the weekly freeplay: while the last audit says "play was
+     * bad enough to pivot", spending a credit to go GREEN would override
+     * exactly the signal the audit just gave, so the option is hidden.
+     * Pure inputs are parameters so this is unit-testable; the Android
+     * wrapper below loads them from the stores.
+     */
+    fun freeplayBlockedByPostGameYellow(
+        history: List<ChessReadinessEngine.ReadinessTest>,
+        audits: List<ChessPhase2Store.Phase2Audit>,
+        now: Long
+    ): Boolean {
+        val last = history.maxByOrNull { it.timestamp } ?: return false
+        // The downgrade is momentary — once the test's validity lapses the
+        // whole session is over and freeplay is offered again as usual.
+        if (now - last.timestamp >= ChessReadinessEngine.SESSION_VALIDITY_MS) return false
+        // A TERMINATE audit blocks everything anyway (including the menu);
+        // only the PIVOT downgrade is this gate's business.
+        return audits.any {
+            it.timestamp > last.timestamp &&
+                it.outputState == ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS.name
+        }
+    }
+
+    /** Android wrapper for [freeplayBlockedByPostGameYellow] at "now". */
+    fun freeplayBlockedByPostGameYellow(context: android.content.Context): Boolean {
+        return try {
+            freeplayBlockedByPostGameYellow(
+                history = ChessReadinessStore.loadHistory(context),
+                audits = ChessPhase2Store.loadAudits(context),
+                now = System.currentTimeMillis()
+            )
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * True while a YELLOW or GREEN trust window is live — the latest test
      * is still inside its [ChessReadinessEngine.SESSION_VALIDITY_MS]
      * window. Enforcement OFF counts as "unrestricted" (true) so the gate

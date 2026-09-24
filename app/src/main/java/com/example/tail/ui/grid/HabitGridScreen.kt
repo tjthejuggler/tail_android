@@ -250,6 +250,7 @@ import com.example.tail.ui.viewmodel.scheduleInstancePoints
 import com.example.tail.ui.viewmodel.selectEditHabit
 import com.example.tail.ui.viewmodel.setHabitCount
 import com.example.tail.ui.viewmodel.setHabitIcon
+import com.example.tail.ui.viewmodel.setHabitIconScale
 import com.example.tail.ui.viewmodel.setHabitLongPressUrlApp
 import com.example.tail.ui.viewmodel.setHabitMinutesCount
 import com.example.tail.ui.viewmodel.setMediaApp
@@ -1493,6 +1494,7 @@ fun HabitGridScreen(
                         selectedEditIndex = selectedEditIndex,
                         movePendingSourceIndex = movePendingSourceIndex,
                         customIconOverrides = settings.habitIcons,
+                        habitIconScales = settings.habitIconScales,
                         disabledHabits = settings.disabledHabits,
                         aiIconRepo = if (settings.aiIconsEnabled) viewModel.getAiIconRepo() else null,
                         aiIconPendingHabits = aiIconPendingHabits,
@@ -2587,6 +2589,10 @@ fun HabitGridScreen(
         IconPickerDialog(
             habitName = habitName,
             currentIconName = settings.habitIcons[habitName],
+            currentIconScalePercent = settings.habitIconScales[habitName] ?: 100,
+            onIconScaleChanged = { scale ->
+                viewModel.setHabitIconScale(habitName, scale)
+            },
             onIconSelected = { iconName ->
                 viewModel.setHabitIcon(habitName, iconName)
                 iconPickerHabitName = null
@@ -3499,6 +3505,8 @@ internal fun HabitGrid(
     /** Reports the lazy grid's origin in window coordinates (drag hit-testing). */
     onGridLayout: ((Offset) -> Unit)? = null,
     customIconOverrides: Map<String, String> = emptyMap(),
+    /** Map of habit name → icon size scale (×100; 100 = default 20 dp). */
+    habitIconScales: Map<String, Int> = emptyMap(),
     disabledHabits: Set<String> = emptySet(),
     aiIconRepo: AiIconRepository? = null,
     /** Habits with an AI icon generation in flight (tile shows a spinner). */
@@ -3642,6 +3650,7 @@ internal fun HabitGrid(
                         isMovePendingSource = isMovePendingSource,
                         isMovePendingTarget = isMovePending && !isMovePendingSource && editMode,
                         customIconOverrides = customIconOverrides,
+                        iconScalePercent = habitIconScales[habit.name] ?: 100,
                         graphMode = graphMode,
                         isGraphSelected = isGraphSelected,
                         isDisabled = habit.name in disabledHabits,

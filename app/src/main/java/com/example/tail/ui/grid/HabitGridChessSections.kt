@@ -62,6 +62,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import kotlin.math.roundToInt
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -93,6 +94,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
@@ -741,6 +743,10 @@ internal fun HabitRestoreConfirmDialog(
 internal fun IconPickerDialog(
     habitName: String,
     currentIconName: String?,
+    /** Current icon size scale ×100 (100 = the default 20 dp). */
+    currentIconScalePercent: Int = 100,
+    /** Fired on slider release; null = back to the default size. */
+    onIconScaleChanged: (Int?) -> Unit = {},
     onIconSelected: (String?) -> Unit,
     onDismiss: () -> Unit,
     viewModel: HabitViewModel
@@ -797,6 +803,60 @@ internal fun IconPickerDialog(
                     text = "✕  No icon",
                     color = if (currentIconName == null) Color(0xFF88FFFF) else Color(0xFF888888),
                     fontSize = 12.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // ── Icon size slider ─────────────────────────────────────────
+            // Applies to whichever icon source is selected (built-in, app,
+            // text/emoji or AI): the grid tile renders that icon at the
+            // chosen scale. Drag to resize; snap back to 100 % via the
+            // "Default" button.
+            var sizeSliderValue by remember(currentIconScalePercent) {
+                mutableStateOf(currentIconScalePercent.toFloat())
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Size",
+                    color = Color(0xFF888888),
+                    fontSize = 11.sp
+                )
+                Slider(
+                    value = sizeSliderValue,
+                    onValueChange = { sizeSliderValue = it },
+                    valueRange = 50f..200f,
+                    steps = 14,
+                    onValueChangeFinished = {
+                        val pct = sizeSliderValue.roundToInt()
+                        onIconScaleChanged(if (pct == 100) null else pct)
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 6.dp)
+                )
+                Text(
+                    text = "${sizeSliderValue.roundToInt()}%",
+                    color = Color(0xFF88FFFF),
+                    fontSize = 11.sp,
+                    modifier = Modifier.width(38.dp)
+                )
+                Text(
+                    text = "↺",
+                    color = Color(0xFF66BBFF),
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {
+                            sizeSliderValue = 100f
+                            onIconScaleChanged(null)
+                        }
+                        .padding(4.dp)
                 )
             }
 

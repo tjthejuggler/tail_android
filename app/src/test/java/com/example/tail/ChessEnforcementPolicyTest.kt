@@ -464,4 +464,87 @@ class ChessEnforcementPolicyTest {
             (decision as ChessEnforcementPolicy.Decision.Block).reason
         )
     }
+
+    // ── Freeplay post-game-YELLOW gate (user rule 2026-09-24) ───────────
+
+    private fun gate(
+        history: List<ChessReadinessEngine.ReadinessTest>,
+        audits: List<ChessPhase2Store.Phase2Audit> = emptyList()
+    ): Boolean = ChessEnforcementPolicy.freeplayBlockedByPostGameYellow(
+        history = history,
+        audits = audits,
+        now = now
+    )
+
+    @Test
+    fun `freeplay blocked by a pivot audit inside the session`() {
+        // GREEN pass, then a bad audited game → PIVOT downgrade. Freeplay
+        // must be refused: spending a credit would override exactly the
+        // audit's "your play was bad" signal.
+        assertTrue(
+            gate(
+                history = listOf(test(20, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+                audits = listOf(audit(10, ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS))
+            )
+        )
+    }
+
+    @Test
+    fun `freeplay allowed from a pre-game yellow`() {
+        // The PRE-GAME test itself returned YELLOW: no PIVOT audit exists,
+        // so the escape valve stays usable (user rule 2026-09-24).
+        assertEquals(
+            false,
+            gate(
+                history = listOf(test(10, 55, ChessReadinessEngine.ReadinessState.YELLOW_LIGHT))
+            )
+        )
+    }
+
+    @Test
+    fun `freeplay allowed after the pivot session expires`() {
+        // The downgrade is momentary: once the test's validity lapses the
+        // whole session is over and freeplay is offered again.
+        assertEquals(
+            false,
+            gate(
+                history = listOf(test(65, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+                audits = listOf(audit(61, ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS))
+            )
+        )
+    }
+
+    @Test
+    fun `freeplay allowed with clean continue audits`() {
+        // CONTINUE_RATED verdicts keep the window green — no downgrade, no
+        // block.
+        assertEquals(
+            false,
+            gate(
+                history = listOf(test(20, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)),
+                audits = listOf(audit(10, ChessPhase2Engine.OutputState.CONTINUE_RATED))
+            )
+        )
+    }
+
+    @Test
+    fun `freeplay allowed with no test history`() {
+        assertEquals(false, gate(history = emptyList()))
+    }
+
+    @Test
+    fun `stale pivot audit from before the latest test does not block`() {
+        // An old pivot from a PREVIOUS session (before the current pass)
+        // must not carry into the new authorization window.
+        assertEquals(
+            false,
+            gate(
+                history = listOf(
+                    test(30, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT),
+                    test(10, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT)
+                ),
+                audits = listOf(audit(25, ChessPhase2Engine.OutputState.PIVOT_TO_DRILLS))
+            )
+        )
+    }
 }

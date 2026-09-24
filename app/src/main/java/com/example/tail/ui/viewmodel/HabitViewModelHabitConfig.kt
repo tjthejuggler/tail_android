@@ -2091,6 +2091,36 @@ fun HabitViewModel.setHabitIcon(habitName: String, iconName: String?) {
 }
 
 /**
+ * Sets or clears the icon SIZE override for [habitName]. [scalePercent]
+ * is stored ×100 (100 = the default 20 dp icon, 150 = 1.5×, 60 = 0.6×);
+ * null (or 100) clears the entry so the habit falls back to the default.
+ * Applies to whichever icon source the habit uses — built-in drawable,
+ * AI icon, installed-app icon, or text/emoji.
+ */
+fun HabitViewModel.setHabitIconScale(habitName: String, scalePercent: Int?) {
+    viewModelScope.launch {
+        val current = _settings.value.habitIconScales.toMutableMap()
+        val normalized = scalePercent?.coerceIn(50, 200)
+        if (normalized == null || normalized == 100) {
+            current.remove(habitName)
+        } else {
+            current[habitName] = normalized
+        }
+        settingsRepo.saveHabitIconScales(current)
+        _settings.value = _settings.value.copy(habitIconScales = current)
+        // Keep the PC-widget relay in sync — it embeds icon overrides and
+        // now also their sizes.
+        val relayUri = _settings.value.screensRelayFileUri
+        if (relayUri.isNotEmpty()) {
+            writeScreensRelayFile(_habitScreens.value, _activeScreenIndex.value, relayUri)
+        }
+        if (habitName in _settings.value.pcWidgetHabits) {
+            pushPcWidgetConfig()
+        }
+    }
+}
+
+/**
  * Sets or clears the note for [habitName].
  * [note] is the note text, or empty string to clear the note.
  */

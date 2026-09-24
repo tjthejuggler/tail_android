@@ -1035,6 +1035,15 @@ data class AppSettings(
     val habitIcons: Map<String, String> = emptyMap(),
 
     /**
+     * Maps habit name → icon size scale, stored ×100 (100 = default size,
+     * 150 = 1.5×, 60 = 0.6×). Applies to whichever icon source the habit
+     * uses (built-in drawable, AI icon, installed-app icon, text/emoji).
+     * Missing entry (or 100) = the default 20 dp icon size. Set from the
+     * icon picker's size slider.
+     */
+    val habitIconScales: Map<String, Int> = emptyMap(),
+
+    /**
      * Habits that have the "Dated Entry" feature enabled.
      * When a habit is in this set, its count for each day is automatically derived
      * by parsing a linked plain-text file that contains date headers and paragraph blocks.

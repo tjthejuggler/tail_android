@@ -220,6 +220,12 @@ object ChessReadinessStore {
      */
     fun grantFreeplay(context: Context): ChessReadinessEngine.ReadinessTest? {
         val now = System.currentTimeMillis()
+        // Post-game-audit gate (user rule 2026-09-24): a YELLOW issued by
+        // the audit (PIVOT_TO_DRILLS downgrade inside the live session)
+        // blocks the spend — the UI menu hides the option, but the grant
+        // must never override the audit's "play was bad" signal if reached
+        // anyway. A YELLOW from the PRE-GAME test itself does NOT block.
+        if (ChessEnforcementPolicy.freeplayBlockedByPostGameYellow(context)) return null
         if (!ChessFreeplayStore.consume(context, now)) return null
         val test = ChessReadinessEngine.ReadinessTest(
             timestamp = now,

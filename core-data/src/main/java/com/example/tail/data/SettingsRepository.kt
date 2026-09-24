@@ -61,6 +61,8 @@ private val KEY_COMPANION_READ_HABITS = stringSetPreferencesKey("companion_read_
 private val KEY_TEXT_INPUT_FILE_URIS = stringPreferencesKey("text_input_file_uris")
 // Stored as "habitName\x00iconName|||habitName\x00iconName" pairs
 private val KEY_HABIT_ICONS = stringPreferencesKey("habit_icons")
+// Stored as "habitName\x00scale|||habitName\x00scale" pairs (scale ×100 as decimal)
+private val KEY_HABIT_ICON_SCALES = stringPreferencesKey("habit_icon_scales")
 // 1-max feature key
 private val KEY_MAX_ONE_HABITS = stringSetPreferencesKey("max_one_habits")
 // Inverted-binary feature key (e.g. coffee: point + streak on NOT-done days)
@@ -984,6 +986,7 @@ class SettingsRepository(private val context: Context) {
         val activeScreenIndex = prefs[KEY_ACTIVE_SCREEN_INDEX] ?: 0
         val textInputFileUrisRaw = prefs[KEY_TEXT_INPUT_FILE_URIS] ?: ""
         val habitIconsRaw = prefs[KEY_HABIT_ICONS] ?: ""
+        val habitIconScalesRaw = prefs[KEY_HABIT_ICON_SCALES] ?: ""
         val datedEntryFileUrisRaw = prefs[KEY_DATED_ENTRY_FILE_URIS] ?: ""
         val datedEntryFileSizesRaw = prefs[KEY_DATED_ENTRY_FILE_SIZES] ?: ""
         val habitDividersRaw = prefs[KEY_HABIT_DIVIDERS] ?: ""
@@ -1027,6 +1030,7 @@ class SettingsRepository(private val context: Context) {
             companionReadHabits = prefs[KEY_COMPANION_READ_HABITS] ?: emptySet(),
             textInputFileUris = decodeFileUriMap(textInputFileUrisRaw),
             habitIcons = decodeFileUriMap(habitIconsRaw),
+            habitIconScales = decodeIntMap(habitIconScalesRaw),
             datedEntryHabits = prefs[KEY_DATED_ENTRY_HABITS] ?: emptySet(),
             datedEntryFileUris = decodeFileUriMap(datedEntryFileUrisRaw),
             datedEntryFileSizes = decodeLongMap(datedEntryFileSizesRaw),
@@ -1369,6 +1373,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveHabitIcons(icons: Map<String, String>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_HABIT_ICONS] = encodeFileUriMap(icons)
+        }
+    }
+
+    /** Saves the map of habit name → icon size scale (×100; 100 = default). */
+    suspend fun saveHabitIconScales(scales: Map<String, Int>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_HABIT_ICON_SCALES] = encodeIntMap(scales)
         }
     }
 

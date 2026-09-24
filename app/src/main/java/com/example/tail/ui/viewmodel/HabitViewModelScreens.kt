@@ -1765,6 +1765,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
                 // explicit override under the new name — otherwise a renamed habit
                 // whose icon came from the defaults loses its icon entirely.
                 habitIcons = renamedHabitIcons(oldName, newName, settings.habitIcons),
+                habitIconScales = settings.habitIconScales.replaceKey(oldName, newName),
                 datedEntryHabits = settings.datedEntryHabits.replaceElement(oldName, newName),
                 datedEntryFileUris = settings.datedEntryFileUris.replaceKey(oldName, newName),
                 datedEntryFileSizes = settings.datedEntryFileSizes.replaceKey(oldName, newName),
@@ -1843,6 +1844,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             settingsRepo.saveTextInputOptionDescriptions(newSettings.textInputOptionDescriptions)
             settingsRepo.saveTextInputHiddenGroupings(newSettings.textInputHiddenGroupings)
             settingsRepo.saveHabitIcons(newSettings.habitIcons)
+            settingsRepo.saveHabitIconScales(newSettings.habitIconScales)
             settingsRepo.saveDatedEntryHabits(newSettings.datedEntryHabits)
             settingsRepo.saveDatedEntryFileUris(newSettings.datedEntryFileUris)
             settingsRepo.saveDatedEntryFileSizes(newSettings.datedEntryFileSizes)
