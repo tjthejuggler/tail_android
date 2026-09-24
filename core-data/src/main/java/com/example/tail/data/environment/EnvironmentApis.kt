@@ -52,6 +52,74 @@ object EnvironmentApis {
         }
     }.onFailure { Log.w(TAG, "GET failed: ${it.message}") }.getOrNull()
 
+    /**
+     * Fetches daily weather for a WHOLE date RANGE in one call (Open-Meteo
+     * supports start_date…end_date). Returns a map of date → per-day values.
+     * This is what makes the backlog cheap: one request per ~month instead
+     * of per day (2063 days → ~70 requests).
+     */
+    suspend fun fetchWeatherRange(
+        lat: Double,
+        lon: Double,
+        from: LocalDate,
+        to: LocalDate
+    ): Map<LocalDate, WeatherResult> = withContext(Dispatchers.IO) {
+        val params = "latitude=${lat}&longitude=${lon}" +
+            "&start_date=${from}&end_date=${to}" +
+            "&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean," +
+            "relative_humidity_2m_mean,precipitation_sum,uv_index_max," +
+            "surface_pressure_mean,wind_speed_10m_max" +
+            "&timezone=auto"
+        // Forecast API first; archive fallback covers the older part of the range.
+        val primary = httpGet("https://api.open-meteo.com/v1/forecast?$params")
+        val parsed = parseWeatherRange(primary, from, to)
+        if (parsed.isNotEmpty()) parsed else {
+            parseWeatherRange(
+                httpGet("https://archive-api.open-meteo.com/v1/archive?$params"),
+                from, to
+            )
+        }
+    }
+
+    private fun parseWeatherRange(
+        body: String?,
+        from: LocalDate,
+        to: LocalDate
+    ): Map<LocalDate, WeatherResult> {
+        if (body == null) return emptyMap()
+        return runCatching {
+            val daily = JSONObject(body).getJSONObject("daily")
+            val dates = daily.optJSONArray("time") ?: return emptyMap()
+            val keys = listOf(
+                "temperature_2m_max" to "tMax", "temperature_2m_min" to "tMin",
+                "temperature_2m_mean" to "tMean",
+                "relative_humidity_2m_mean" to "rh",
+                "precipitation_sum" to "prcp", "uv_index_max" to "uv",
+                "surface_pressure_mean" to "pres", "wind_speed_10m_max" to "wind"
+            )
+            val out = mutableMapOf<LocalDate, WeatherResult>()
+            for (i in 0 until dates.length()) {
+                val d = runCatching { LocalDate.parse(dates.getString(i)) }.getOrNull() ?: continue
+                if (d.isBefore(from) || d.isAfter(to)) continue
+                fun v(key: String): Double? =
+                    daily.optJSONArray(key)?.takeIf { i < it.length() && !it.isNull(i) }?.getDouble(i)
+                val res = WeatherResult(
+                    tempMaxC = v("temperature_2m_max"),
+                    tempMinC = v("temperature_2m_min"),
+                    tempMeanC = v("temperature_2m_mean"),
+                    humidityMean = v("relative_humidity_2m_mean"),
+                    precipitationMm = v("precipitation_sum"),
+                    uvIndexMax = v("uv_index_max"),
+                    pressureMeanHpa = v("surface_pressure_mean"),
+                    windMaxKmh = v("wind_speed_10m_max")
+                )
+                if (res.hasAnyData) out[d] = res
+            }
+            out
+        }.onFailure { Log.w(TAG, "weather-range parse failed: ${it.message}") }
+            .getOrDefault(emptyMap())
+    }
+
     // ── Weather (Open-Meteo) ────────────────────────────────────────────────
 
     /**
@@ -188,6 +256,70 @@ object EnvironmentApis {
             pollenRagweedMax = agg(series("ragweed_pollen"), max = true)
         )
     }.onFailure { Log.w(TAG, "air parse failed: ${it.message}") }.getOrNull()
+
+    /** Air-quality hourly series keys, in row order used by range parsing. */
+    private val AIR_KEYS = listOf(
+        "european_aqi", "pm2_5", "pm10", "ozone", "nitrogen_dioxide",
+        "grass_pollen", "birch_pollen", "alder_pollen",
+        "mugwort_pollen", "olive_pollen", "ragweed_pollen"
+    )
+
+    /**
+     * Air quality for a WHOLE date range in one call (same hourly series,
+     * aggregated per calendar day: AQI max, means elsewhere, pollen max).
+     * Backlog fast path — one request per ~month.
+     */
+    suspend fun fetchAirQualityRange(
+        lat: Double,
+        lon: Double,
+        from: LocalDate,
+        to: LocalDate
+    ): Map<LocalDate, AirResult> = withContext(Dispatchers.IO) {
+        val url = "https://air-quality-api.open-meteo.com/v1/air-quality" +
+            "?latitude=${lat}&longitude=${lon}" +
+            "&start_date=${from}&end_date=${to}&timezone=auto" +
+            "&hourly=" + AIR_KEYS.joinToString(",")
+        val body = httpGet(url) ?: return@withContext emptyMap()
+        runCatching {
+            val hourly = JSONObject(body).getJSONObject("hourly")
+            val times = hourly.optJSONArray("time") ?: return@runCatching emptyMap()
+            // date → per-key list of hourly values (index = position in AIR_KEYS)
+            val perDay = mutableMapOf<LocalDate, Array<MutableList<Double?>>>()
+            for (k in 0 until times.length()) {
+                val d = runCatching {
+                    LocalDate.parse(times.getString(k).take(10))
+                }.getOrNull() ?: continue
+                if (d.isBefore(from) || d.isAfter(to)) continue
+                val cols = perDay.getOrPut(d) {
+                    Array(AIR_KEYS.size) { mutableListOf<Double?>() }
+                }
+                for ((ci, key) in AIR_KEYS.withIndex()) {
+                    val arr = hourly.optJSONArray(key)
+                    cols[ci].add(
+                        if (arr != null && k < arr.length() && !arr.isNull(k)) arr.getDouble(k)
+                        else null
+                    )
+                }
+            }
+            // Aggregate hourly → daily: AQI/pollen = daily MAX, gases = MEAN.
+            perDay.mapValues { (_, cols) ->
+                fun agg(i: Int, max: Boolean): Double? {
+                    val nums = cols[i].filterNotNull()
+                    if (nums.isEmpty()) return null
+                    return if (max) nums.max() else nums.sum() / nums.size
+                }
+                AirResult(
+                    aqiEuropeanMax = agg(0, max = true)?.toInt(),
+                    pm25Mean = agg(1, max = false), pm10Mean = agg(2, max = false),
+                    ozoneMean = agg(3, max = false), no2Mean = agg(4, max = false),
+                    pollenGrassMax = agg(5, max = true), pollenBirchMax = agg(6, max = true),
+                    pollenAlderMax = agg(7, max = true), pollenMugwortMax = agg(8, max = true),
+                    pollenOliveMax = agg(9, max = true), pollenRagweedMax = agg(10, max = true)
+                )
+            }
+        }.onFailure { Log.w(TAG, "air-range parse failed: ${it.message}") }
+            .getOrDefault(emptyMap())
+    }
 
     // ── Geomagnetic activity (NOAA SWPC) ───────────────────────────────────
 

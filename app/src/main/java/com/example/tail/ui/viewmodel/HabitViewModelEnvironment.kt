@@ -3,10 +3,12 @@ package com.example.tail.ui.viewmodel
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.viewModelScope
+import com.example.tail.data.AppSettings
 import com.example.tail.data.environment.EnvironmentMetric
 import com.example.tail.data.environment.EnvironmentSnapshot
 import com.example.tail.data.environment.WaterHardnessLlm
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -70,9 +72,24 @@ internal suspend fun HabitViewModel.awaitDbLoaded(timeoutMs: Long = 60_000): Boo
 }
 
 /**
+ * Waits until the settings DataStore has emitted at least once. The init
+ * resync used to race the settings load: `syncEnvironmentHabits` reads
+ * `_settings.value`, which is still the DEFAULT AppSettings (empty links)
+ * until the main collect fires — so the resync silently did nothing.
+ */
+internal suspend fun HabitViewModel.awaitSettingsLoaded() {
+    if (_settings.value.fileUri.isNotEmpty() ||
+        _settings.value.environmentHabitMetrics.isNotEmpty()
+    ) return
+    val s = settingsRepo.settingsFlow.first()
+    // Publish if the main collect hasn't beaten us to it.
+    if (_settings.value == AppSettings()) _settings.value = s
+}
+
+/**
  * Re-derives ALL environment-linked squares from the stored snapshots
- * (no network). Called once after DB load at init and from the Settings
- * "Repair squares" button.
+ * (no network). Called once after DB + settings load at init and from the
+ * Settings "Repair squares" button.
  */
 fun HabitViewModel.resyncEnvironmentHabits() {
     viewModelScope.launch {
@@ -80,6 +97,7 @@ fun HabitViewModel.resyncEnvironmentHabits() {
             Log.w(TAG, "resync: DB still not loaded after timeout, aborting")
             return@launch
         }
+        awaitSettingsLoaded()
         val snaps = environmentRepo.getAllSnapshots()
         if (snaps.isEmpty()) return@launch
         syncEnvironmentHabits(snaps)
@@ -250,13 +268,23 @@ internal val HabitViewModel.envBacklogRunning: Boolean get() = _envBacklogRunnin
  *
  * Progress is streamed into [_envStatus] for the settings UI.
  */
-fun HabitViewModel.fetchEnvironmentFullBacklog() {
+/**
+ * Runs the full-history capture.
+ *
+ * @param repair false = RESUME: skip days already carrying a fresh capture
+ *        (only missing/incomplete days are fetched) — use to continue after
+ *        an interruption. true = FULL REDO: re-fetch every day from scratch,
+ *        overwriting existing snapshots (clears them first so partial data
+ *        can't linger) — use after logic/API changes or to force refresh.
+ */
+fun HabitViewModel.fetchEnvironmentFullBacklog(repair: Boolean = false) {
     if (_envBacklogRunning.value) return
     if (!_settings.value.environmentEnabled) return
     viewModelScope.launch {
         _envBacklogRunning.value = true
-        _envStatus.value = "Preparing…"
+        _envStatus.value = if (repair) "Full redo: preparing…" else "Resume: preparing…"
         try {
+            awaitSettingsLoaded()
             val allCoords = locationRepo.getAllStoredCoords()
             val labels = locationRepo.getAllStoredLabels()
             if (allCoords.isEmpty()) {
@@ -270,14 +298,20 @@ fun HabitViewModel.fetchEnvironmentFullBacklog() {
                 .filter { !it.isAfter(today) }
                 .sorted()
 
-            // Resumable: days without a capture AND days whose capture is
+            if (repair) {
+                // FULL REDO: drop every stored snapshot so the run starts
+                // from a genuinely clean state.
+                environmentRepo.clearAllSnapshots()
+            }
+
+            // Resume mode: days without a capture AND days whose capture is
             // incomplete for any currently-linked metric (e.g. a past run
             // hit the weather API's rate limit mid-backlog: the snapshot
             // stored air-quality data but null temperatures — those days
-            // must be re-fetched, not skipped).
+            // must be re-fetched, not skipped). Repair mode: everything.
             val linkedMetrics = _settings.value.environmentHabitMetrics.values
                 .mapNotNull { EnvironmentMetric.fromKey(it) }
-            val todo = dates.filter { d ->
+            val todo = if (repair) dates else dates.filter { d ->
                 val snap = environmentRepo.getSnapshot(d)
                 snap == null || snap.fetchedAt.isBlank() ||
                     linkedMetrics.any { it.extract(snap) == null }
@@ -287,39 +321,40 @@ fun HabitViewModel.fetchEnvironmentFullBacklog() {
                 return@launch
             }
 
-            var done = 0
-            var stored = 0
-            var failed = 0
-            for (batch in todo.chunked(BACKLOG_BATCH_DAYS)) {
-                val batchSnapshots = mutableMapOf<String, EnvironmentSnapshot>()
-                for (date in batch) {
-                    val coords = allCoords[date.toString()] ?: continue
-                    val label = labels[date.toString()] ?: ""
-                    try {
-                        val snap = environmentRepo.captureForDate(
-                            date, coords.first, coords.second, label
-                        )
-                        if (snap != null) {
-                            batchSnapshots[snap.date] = snap
-                            stored++
-                        }
-                    } catch (e: Exception) {
-                        failed++
-                        Log.w(TAG, "backlog $date failed: ${e.message}")
-                    }
-                    done++
-                    _envStatus.value = "Backlog $done/${todo.size} · +$stored" +
-                        (if (failed > 0) " · $failed failed" else "")
-                }
-                // Flush the batch into linked habit squares as we go.
-                if (batchSnapshots.isNotEmpty()) syncEnvironmentHabits(batchSnapshots)
-                _envVersion.value++
-                // Politeness pause between batches (not after the last one).
-                if (done < todo.size) {
-                    withContext(Dispatchers.IO) { Thread.sleep(BACKLOG_BATCH_PAUSE_MS) }
-                }
+            val alreadyComplete = dates.size - todo.size
+
+            // Group remaining days by location (consecutive runs at one place
+            // become one range fetch — ~35 days per network window).
+            data class Loc(val lat: Double, val lon: Double, val label: String)
+            val byLocation = linkedMapOf<Loc, MutableList<LocalDate>>()
+            for (d in todo) {
+                val c = allCoords[d.toString()] ?: continue
+                val l = labels[d.toString()] ?: ""
+                byLocation.getOrPut(Loc(c.first, c.second, l)) { mutableListOf() }.add(d)
             }
-            _envStatus.value = "Done — $stored captured, $failed failed of ${todo.size}"
+
+            var windowsDone = 0
+            var stored = 0
+            val approxWindows = byLocation.values.sumOf { days ->
+                if (days.isEmpty()) 0 else (days.size + 34) / 35
+            }
+            for ((loc, days) in byLocation) {
+                environmentRepo.captureRange(days, Pair(loc.lat, loc.lon), loc.label) { wDone, wTotal ->
+                    windowsDone++
+                    _envStatus.value =
+                        "Capturing ${loc.label.ifEmpty { "unknown place" }}: window $wDone/$wTotal" +
+                        " · +$stored stored · $alreadyComplete already complete" +
+                        " · overall $windowsDone/~$approxWindows windows"
+                    _envVersion.value++
+                }.also { stored += it }
+                // Sync linked squares after each location's range.
+                val snaps = days.mapNotNull { environmentRepo.getSnapshot(it) }
+                    .associateBy { it.date }
+                if (snaps.isNotEmpty()) syncEnvironmentHabits(snaps)
+                _envVersion.value++
+            }
+            _envStatus.value = "Done — +$stored stored of ${todo.size} remaining" +
+                " ($alreadyComplete were already complete)"
             _envSnapshot.value = environmentRepo.getSnapshot(_selectedDate.value)
             _envVersion.value++
         } finally {

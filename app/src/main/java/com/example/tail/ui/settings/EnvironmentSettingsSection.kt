@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -51,7 +52,8 @@ import com.example.tail.ui.viewmodel.saveEnvironmentWaterMemoryEnabled
 @Composable
 fun EnvironmentSettingsSection(
     viewModel: HabitViewModel,
-    settings: com.example.tail.data.AppSettings
+    settings: com.example.tail.data.AppSettings,
+    context: android.content.Context = androidx.compose.ui.platform.LocalContext.current
 ) {
     val envVersion by viewModel.envVersion.collectAsState()
     val envStatus by viewModel.envStatus.collectAsState()
@@ -113,35 +115,92 @@ fun EnvironmentSettingsSection(
             color = Color(0xFF81C784)
         )
 
-        // ── Full-history backlog ─────────────────────────────────────────
+        // ── History backlog: ONE status card + 4 actions ────────────────────
+        val bgPrefs = remember {
+            context.getSharedPreferences("tail_env_backlog", android.content.Context.MODE_PRIVATE)
+        }
+        // Poll prefs every 2 s so the background worker's progress is live.
+        var bgTick by remember { mutableStateOf(0) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                kotlinx.coroutines.delay(2000)
+                bgTick++
+            }
+        }
+        val bgRunning = remember(bgTick) { bgPrefs.getBoolean("running", false) }
+        val bgMessage = remember(bgTick) { bgPrefs.getString("lastMessage", "") ?: "" }
+
         Spacer(modifier = Modifier.height(8.dp))
-        Button(
-            onClick = { viewModel.fetchEnvironmentFullBacklog() },
-            enabled = settings.environmentEnabled && !loading,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
-        ) {
+        // One status card: shows the in-app run OR the background run — never both.
+        val inAppActive = loading && envStatus.isNotEmpty()
+        val statusText = when {
+            inAppActive -> envStatus
+            bgRunning -> "● Background run: " + bgMessage
+            bgMessage.isNotEmpty() -> "Last background run: " + bgMessage
+            else -> ""
+        }
+        if (statusText.isNotEmpty()) {
             Text(
-                text = if (loading) "Working…" else "Fetch full environment history",
-                fontSize = 12.sp
+                text = statusText,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = when {
+                    inAppActive || bgRunning -> Color(0xFF81C784)
+                    else -> Color(0xFFAAAAAA)
+                }
             )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // Row 1: in-app (watch it live)
+        Row {
+            Button(
+                onClick = { viewModel.fetchEnvironmentFullBacklog(repair = false) },
+                enabled = settings.environmentEnabled && !loading,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
+            ) {
+                Text(if (loading) "Working…" else "Resume history", fontSize = 12.sp)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            OutlinedButton(
+                onClick = { viewModel.fetchEnvironmentFullBacklog(repair = true) },
+                enabled = settings.environmentEnabled && !loading
+            ) {
+                Text("Full redo", fontSize = 12.sp)
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        // Row 2: background (survives app close)
+        Row {
+            OutlinedButton(
+                onClick = {
+                    com.example.tail.notify.EnvironmentBacklogWorker.schedule(context, false)
+                },
+                enabled = settings.environmentEnabled
+            ) { Text("▶ Resume in background", fontSize = 11.sp) }
+            Spacer(modifier = Modifier.width(6.dp))
+            OutlinedButton(
+                onClick = {
+                    com.example.tail.notify.EnvironmentBacklogWorker.schedule(context, true)
+                },
+                enabled = settings.environmentEnabled
+            ) { Text("↻ Redo in background", fontSize = 11.sp) }
         }
         Text(
-            text = "Captures every past day that has recorded location " +
-                   "coordinates. Runs politely: 7 days per batch with pauses " +
-                   "between batches, so free-API rate limits are never hit — " +
-                   "long histories take a few minutes. Resumable: already-" +
-                   "captured days are skipped, so re-run it any time to " +
-                   "continue where it stopped. Open-Meteo covers ~92 days " +
-                   "back; NOAA Kp ~30.",
+            text = "One range request per ~month per place instead of per day — " +
+                   "a multi-year history takes a couple of minutes, not hours. " +
+                   "Resume continues where an interrupted run stopped; Full redo " +
+                   "wipes and re-fetches everything. Background runs continue " +
+                   "with the app closed (WorkManager; no battery cost at idle). " +
+                   "Open-Meteo covers ~92 days back; NOAA Kp ~30.",
             fontSize = 9.sp,
             color = Color(0xFF666666)
         )
-        if (envStatus.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(4.dp))
+        if (envStatus.isNotEmpty() && !inAppActive && !bgRunning) {
             Text(
-                text = envStatus,
-                fontSize = 10.sp,
-                color = Color(0xFFAAAAAA)
+                text = "Last in-app run: " + envStatus,
+                fontSize = 9.sp,
+                color = Color(0xFF555555)
             )
         }
 

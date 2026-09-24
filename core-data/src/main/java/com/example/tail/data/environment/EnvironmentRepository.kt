@@ -59,6 +59,16 @@ class EnvironmentRepository(private val context: Context) {
         }.toMap()
     }
 
+    /**
+     * Deletes every stored snapshot (full-redo mode). Water-hardness
+     * location memory is intentionally KEPT — it's user-curated data.
+     */
+    fun clearAllSnapshots() {
+        prefs.edit().remove(KEY_SNAPSHOTS).apply()
+        cachedSnapshotMap = emptyMap()
+        Log.i(TAG, "clearAllSnapshots: all snapshots removed")
+    }
+
     // ── Water-hardness memory ───────────────────────────────────────────────
 
     /** Remembered water hardness (ppm) for [label], or null. */
@@ -191,33 +201,112 @@ class EnvironmentRepository(private val context: Context) {
     }
 
     /**
-     * Backfills multiple dates sequentially (used by the settings-screen
-     * backlog action). [coordsFor] resolves the day's position; dates without
-     * coords are skipped. Calls [onProgress] after each date.
-     * Returns the number of snapshots stored/updated.
+     * Captures a RANGE of days at ONE location with as few network calls as
+     * possible: the range is split into ~35-day windows and each window is
+     * fetched with a handful of range requests (weather + air quality) —
+     * turning a 2 000-day backlog into ~150 requests instead of ~6 000.
+     *
+     * Only days present in [dates] are stored (resumable). Water hardness is
+     * auto-filled from location memory when known; manual values preserved.
+     * Kp is not fetched here (NOAA only serves ~30 days; the single-day
+     * capture path covers recent days).
+     *
+     * @param onWindow called after each window (done, total)
+     * @return number of snapshots stored/updated
      */
-    suspend fun backfill(
+    suspend fun captureRange(
         dates: List<LocalDate>,
-        coordsFor: (LocalDate) -> Pair<Double, Double>?,
-        labelFor: (LocalDate) -> String,
-        onProgress: (Int, Int) -> Unit = { _, _ -> }
+        coords: Pair<Double, Double>,
+        label: String,
+        onWindow: (Int, Int) -> Unit = { _, _ -> }
     ): Int {
+        if (dates.isEmpty()) return 0
+        val sorted = dates.sorted()
+        val start = sorted.first()
+        val end = sorted.last()
+        val windows = mutableListOf<Pair<LocalDate, LocalDate>>()
+        var cursor = start
+        while (!cursor.isAfter(end)) {
+            val wEnd = minOf(cursor.plusDays(34), end)
+            windows.add(cursor to wEnd)
+            cursor = wEnd.plusDays(1)
+        }
+
+        val wanted = sorted.toHashSet()
         var stored = 0
-        for ((index, date) in dates.withIndex()) {
-            val coords = coordsFor(date)
-            if (coords != null) {
-                try {
-                    if (captureForDate(date, coords.first, coords.second, labelFor(date)) != null) {
-                        stored++
+        var done = 0
+        for ((wStart, wEnd) in windows) {
+            val weather = runCatching {
+                EnvironmentApis.fetchWeatherRange(coords.first, coords.second, wStart, wEnd)
+            }.onFailure { Log.w(TAG, "range $wStart..$wEnd failed: ${it.message}") }
+                .getOrDefault(emptyMap())
+            val air = runCatching {
+                EnvironmentApis.fetchAirQualityRange(coords.first, coords.second, wStart, wEnd)
+            }.onFailure { Log.w(TAG, "air range $wStart..$wEnd failed: ${it.message}") }
+                .getOrDefault(emptyMap())
+
+            var d = wStart
+            while (!d.isAfter(wEnd)) {
+                if (d in wanted) {
+                    val existing = getSnapshot(d)
+                    val daySnap = snapFromWeather(d, weather[d])?.let { wSnap ->
+                        air[d]?.let { mergeAir(wSnap, it) } ?: wSnap
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "backfill $date failed: ${e.message}")
+                    if (daySnap != null || existing != null) {
+                        var merged = merge(existing, daySnap, d, coords.first, coords.second, label)
+                        // Water auto-fill from location memory when unset.
+                        if (merged.waterHardnessPpm == null) {
+                            getWaterHardnessForLocation(label)?.let { ppm ->
+                                merged = merged.copy(
+                                    waterHardnessPpm = ppm,
+                                    waterHardnessSource = "location-memory"
+                                )
+                            }
+                        }
+                        if (merged.hasAnyData) {
+                            save(merged)
+                            stored++
+                        }
+                    }
+                }
+                d = d.plusDays(1)
+            }
+            done++
+            onWindow(done, windows.size)
+            if (done < windows.size) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    Thread.sleep(1_500)
                 }
             }
-            onProgress(index + 1, dates.size)
         }
         return stored
     }
+
+    private fun snapFromWeather(date: LocalDate, w: EnvironmentApis.WeatherResult?): EnvironmentSnapshot? {
+        if (w == null) return null
+        return EnvironmentSnapshot(
+            date = date.toString(), lat = 0.0, lon = 0.0,
+            tempMinC = w.tempMinC, tempMaxC = w.tempMaxC, tempMeanC = w.tempMeanC,
+            humidityMean = w.humidityMean, precipitationMm = w.precipitationMm,
+            uvIndexMax = w.uvIndexMax, pressureMeanHpa = w.pressureMeanHpa,
+            windMaxKmh = w.windMaxKmh
+        )
+    }
+
+    private fun mergeAir(base: EnvironmentSnapshot, a: EnvironmentApis.AirResult): EnvironmentSnapshot =
+        base.copy(
+            aqiEuropeanMax = a.aqiEuropeanMax ?: base.aqiEuropeanMax,
+            pm25Mean = a.pm25Mean ?: base.pm25Mean,
+            pm10Mean = a.pm10Mean ?: base.pm10Mean,
+            ozoneMean = a.ozoneMean ?: base.ozoneMean,
+            no2Mean = a.no2Mean ?: base.no2Mean,
+            pollenGrassMax = a.pollenGrassMax ?: base.pollenGrassMax,
+            pollenBirchMax = a.pollenBirchMax ?: base.pollenBirchMax,
+            pollenAlderMax = a.pollenAlderMax ?: base.pollenAlderMax,
+            pollenMugwortMax = a.pollenMugwortMax ?: base.pollenMugwortMax,
+            pollenOliveMax = a.pollenOliveMax ?: base.pollenOliveMax,
+            pollenRagweedMax = a.pollenRagweedMax ?: base.pollenRagweedMax
+        )
 
     // ── Persistence ─────────────────────────────────────────────────────────
 
