@@ -60,10 +60,102 @@ object WidgetTimerStore {
      * to 1 (>= 30 s).
      */
     fun stopTimerAndComputeMinutes(context: Context, habitName: String): Int {
+        val start = timerStartMillis(context, habitName)
         val elapsed = elapsedMillis(context, habitName)
         prefs(context).edit().remove(key(habitName)).apply()
+        journalDrillSpan(context, habitName, start, start + elapsed)
         if (elapsed <= 0L) return 0
         return Math.round(elapsed / 60000.0).toInt().coerceAtLeast(0)
+    }
+
+    // ── Drill-span journal (chess session keep-alive, 2026-09-25) ─────────
+    //
+    // Every START of a session-preserving habit's timer (puzzles, unrated
+    // games, …) is (start → end) activity evidence for the rolling GREEN
+    // window: the 15-minute idle clock re-anchors on it like on a played
+    // game. Completed spans are journaled here on every stop/switch path;
+    // RUNNING spans are derived on demand (start → now) by [drillSpans].
+
+    private const val DRILL_JOURNAL = "drill_journal"
+    private const val MAX_DRILL_SPANS = 120
+
+    /** One completed drill span: habit name + (startMs, endMs). */
+    private data class JournalSpan(val habit: String, val start: Long, val end: Long)
+
+    /** Completed drill spans with their habit, oldest first (bounded). */
+    private fun drillJournal(context: Context): List<JournalSpan> {
+        val raw = prefs(context).getString(DRILL_JOURNAL, null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.getJSONObject(i)
+                val s = o.optLong("s", 0L)
+                val e = o.optLong("e", 0L)
+                val h = o.optString("h", "")
+                if (s > 0L && e > s && h.isNotEmpty()) JournalSpan(h, s, e) else null
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Appends one completed span (bounded; runs must not crash the timer). */
+    private fun journalDrillSpan(context: Context, habit: String, start: Long, end: Long) {
+        if (habit.isBlank() || start <= 0L || end <= start) return
+        try {
+            val arr = org.json.JSONArray()
+            val spans = (drillJournal(context) + JournalSpan(habit, start, end))
+                .takeLast(MAX_DRILL_SPANS)
+            spans.forEach { sp ->
+                arr.put(org.json.JSONObject().put("h", sp.habit).put("s", sp.start).put("e", sp.end))
+            }
+            prefs(context).edit().putString(DRILL_JOURNAL, arr.toString()).apply()
+        } catch (_: Exception) {
+            // The journal is advisory evidence — never break the timer stop.
+        }
+    }
+
+    /**
+     * (startMs, endMs) spans of the given [habits]' drill activity finished
+     * at/before [beforeMs], oldest first — journaled completed spans PLUS
+     * any currently-running timer of those habits as a live (start → now)
+     * span that began at/before [beforeMs]. Callers pass their own
+     * evaluation instant; the rolling-window chain filters window
+     * membership itself. Multi-group switch/stop paths journal their banks
+     * separately — same evidence discipline as the games chain.
+     */
+    fun drillSpans(
+        context: Context,
+        habits: Set<String>,
+        beforeMs: Long,
+        nowMs: Long
+    ): List<Pair<Long, Long>> {
+        if (habits.isEmpty()) return emptyList()
+        val spans = ArrayList<Pair<Long, Long>>()
+        drillJournal(context)
+            .filter { it.habit in habits && it.end <= beforeMs }
+            .forEach { spans.add(it.start to it.end) }
+        habits.forEach { habit ->
+            val start = timerStartMillis(context, habit)
+            if (start <= 0L || start > beforeMs) return@forEach
+            val end = minOf(nowMs, System.currentTimeMillis())
+            if (end > start) spans.add(start to end)
+        }
+        return spans.sortedBy { it.first }
+    }
+
+    /** Drops journal entries ending before [cutoffMs] (housekeeping on stop). */
+    fun pruneDrillJournal(context: Context, cutoffMs: Long) {
+        try {
+            val kept = drillJournal(context).filter { it.end >= cutoffMs }
+            val arr = org.json.JSONArray()
+            kept.forEach { sp ->
+                arr.put(org.json.JSONObject().put("h", sp.habit).put("s", sp.start).put("e", sp.end))
+            }
+            prefs(context).edit().putString(DRILL_JOURNAL, arr.toString()).apply()
+        } catch (_: Exception) {
+            // Advisory evidence — pruning must never crash.
+        }
     }
 
     // ── Multi-timer group support ─────────────────────────────────────────
@@ -116,7 +208,11 @@ object WidgetTimerStore {
         val editor = prefs(context).edit()
         val fromStart = timerStartMillis(context, from)
         if (fromStart > 0L) {
-            val banked = bankMillis(context, from) + (System.currentTimeMillis() - fromStart)
+            val now = System.currentTimeMillis()
+            // The banked stretch is real drill activity: journal it so a
+            // chess session stays alive across multi-group member switches.
+            journalDrillSpan(context, from, fromStart, now)
+            val banked = bankMillis(context, from) + (now - fromStart)
             editor.putLong(BANK_PREFIX + from, banked).remove(key(from))
         }
         editor.putLong(key(to), System.currentTimeMillis())
@@ -135,6 +231,10 @@ object WidgetTimerStore {
         val editor = prefs(context).edit()
         members.forEach { habit ->
             result[habit] = roundMillisToMinutes(totalMillis(context, habit))
+            // Journal the member's final running stretch (banked stretches
+            // were already journaled at switch time).
+            val start = timerStartMillis(context, habit)
+            if (start > 0L) journalDrillSpan(context, habit, start, System.currentTimeMillis())
             editor.remove(key(habit)).remove(BANK_PREFIX + habit).remove(MULTI_PREFIX + habit)
         }
         editor.apply()

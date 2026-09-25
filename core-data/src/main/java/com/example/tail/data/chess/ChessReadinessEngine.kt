@@ -75,6 +75,10 @@ import kotlin.math.abs
  *  - Max 8 tests per CALENDAR DAY — the counter resets at local midnight
  *    (a rolling 24 h window made yesterday's evening burst eat into
  *    today's allowance, which felt like a bug).
+ *  - WEEKLY FREEPLAY grants ([ReadinessTest.freeplay]) are NOT tests —
+ *    they never count toward the daily cap and never start a cool-down
+ *    or rest period (user rule 2026-09-24: spending a banked freeplay
+ *    ticket must not eat the test allowance).
  *  - Last test Green/Yellow → blocked until the authorization itself
  *    expires ([SESSION_VALIDITY_MS] — re-test unlocks exactly when the
  *    previous pass runs out).
@@ -571,6 +575,11 @@ object ChessReadinessEngine {
      * Validates the test attempt against the CALENDAR-DAY cap and the
      * cool-down / rest-period rules. Pure function of [history] and [now].
      *
+     * WEEKLY FREEPLAY grants ([ReadinessTest.freeplay]) are invisible to
+     * this gate: they are authorizations, not readiness tests, so they
+     * neither count toward the daily cap nor start a cool-down / rest
+     * period (user rule 2026-09-24). Only real test submissions gate.
+     *
      * Re-test rule (both post-pass and post-fail): once the previous test's
      * lock/authorization window has fully expired, a NEW test is allowed —
      * no hidden second lock. For a passed test that window is the
@@ -583,8 +592,13 @@ object ChessReadinessEngine {
      * legacy ≥ 70 heuristic.
      */
     fun checkGate(history: List<ReadinessTest>, now: Long): GateStatus {
+        // WEEKLY FREEPLAY grants are authorizations, not readiness tests —
+        // they never count toward the daily cap and never start a
+        // cool-down / rest period (user rule 2026-09-24). Filter them out
+        // before any rate-limiting consideration.
+        val realTests = history.filterNot { it.freeplay }
         val dayStart = startOfDay(now)
-        val testsToday = history.filter { it.timestamp in dayStart..now }
+        val testsToday = realTests.filter { it.timestamp in dayStart..now }
         if (testsToday.size >= MAX_DAILY_TESTS) {
             // The cap lifts at local midnight, when the calendar day resets.
             val retryAt = startOfDay(now) + 24L * 60 * 60 * 1000
@@ -597,7 +611,8 @@ object ChessReadinessEngine {
             )
         }
 
-        val lastTest = history.maxByOrNull { it.timestamp } ?: return GateStatus.Allowed(0)
+        val lastTest = realTests.maxByOrNull { it.timestamp }
+            ?: return GateStatus.Allowed(testsToday.size)
         val timeSinceLast = now - lastTest.timestamp
         val lastPassed = when (lastTest.state) {
             ReadinessState.GREEN_LIGHT.name,

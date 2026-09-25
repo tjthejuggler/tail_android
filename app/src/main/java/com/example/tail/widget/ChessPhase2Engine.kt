@@ -234,9 +234,10 @@ object ChessPhase2Engine {
         greenTestMs: Long,
         audits: List<Pair<Long, String>>,
         now: Long,
-        games: List<Pair<Long, Long>> = emptyList()
+        games: List<Pair<Long, Long>> = emptyList(),
+        drills: List<Pair<Long, Long>> = emptyList()
     ): Long? = com.example.tail.data.chess.rollingWindowExpiresAt(
-        greenTestMs, audits, now, games
+        greenTestMs, audits, now, games, drills
     )
 
     // ── Result models ──────────────────────────────────────────────────────

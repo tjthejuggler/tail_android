@@ -119,6 +119,73 @@ class ChessRollingWindowTest {
         assertNull(expiry(listOf(late to cont), late - 1))
     }
 
+    // ── Drill keep-alive (user rule 2026-09-25) ──────────────────────────
+
+    private fun expiryWithDrills(
+        audits: List<Pair<Long, String>>,
+        now: Long,
+        games: List<Pair<Long, Long>> = emptyList(),
+        drills: List<Pair<Long, Long>> = emptyList()
+    ): Long? = ChessPhase2Engine.rollingWindowExpiresAt(green, audits, now, games, drills)
+
+    @Test
+    fun `a drill session extends the window like a played game`() {
+        // Puzzle timer ran 8–12 min after GREEN, evaluated 14 min in — the
+        // game-only clock would call it idle-closed at 15; with the drill
+        // anchor at 12 min it stays live until 27.
+        val drill = (green + 8 * min) to (green + 12 * min)
+        assertEquals(
+            drill.second + validity,
+            expiryWithDrills(emptyList(), green + 14 * min, drills = listOf(drill))
+        )
+        // 15 idle minutes after the drill's end: closed.
+        assertNull(expiryWithDrills(emptyList(), drill.second + validity, drills = listOf(drill)))
+    }
+
+    @Test
+    fun `games and drills interleave in one chain`() {
+        // Game 2–6 min, drill 10–14 min, evaluated 18 min in: the anchor
+        // walks game-end (6) → drill-end (14) → live until 29.
+        val game = (green + 2 * min) to (green + 6 * min)
+        val drill = (green + 10 * min) to (green + 14 * min)
+        assertEquals(
+            drill.second + validity,
+            expiryWithDrills(emptyList(), green + 18 * min, listOf(game), listOf(drill))
+        )
+        // 15 real no-play minutes after 14 min → closed at 29.
+        assertNull(
+            expiryWithDrills(emptyList(), drill.second + validity, listOf(game), listOf(drill))
+        )
+    }
+
+    @Test
+    fun `drills never authorize on their own`() {
+        // A drill 40 min after GREEN (window already idle-closed at 15):
+        // starting a puzzle cannot revive it.
+        val lateDrill = (green + 40 * min) to (green + 44 * min)
+        assertNull(expiryWithDrills(emptyList(), green + 46 * min, drills = listOf(lateDrill)))
+        // A drill cannot bridge over a revoking audit either.
+        val pivotAt = green + 5 * min
+        val drill = (green + 8 * min) to (green + 12 * min)
+        assertNull(
+            expiryWithDrills(
+                listOf(pivotAt to pivot), green + 14 * min, drills = listOf(drill)
+            )
+        )
+    }
+
+    @Test
+    fun `a live drill inside the window keeps it open at evaluation time`() {
+        // Drill started 10 min in and still running at evaluation (end = now
+        // clamp): the running span re-anchors the clock mid-drill.
+        val now = green + 20 * min
+        val runningDrill = (green + 10 * min) to now
+        assertEquals(
+            now + validity,
+            expiryWithDrills(emptyList(), now, drills = listOf(runningDrill))
+        )
+    }
+
     // ── Historical mirror used to classify games at their START ──────────
 
     @Test

@@ -104,12 +104,16 @@ object ChessDeferredGameReconciler {
      *        authorizing test and finished at/before [gameStartMs], any
      *        order — built by the callers from the activity log so an audit
      *        landing late cannot make continuous play look idle
+     * @param drills (startMs, endMs) spans of session-preserving-habit
+     *        timer activity, same semantics — puzzle/drill sessions also
+     *        re-anchor the idle clock (user rule 2026-09-25)
      */
     fun authorizedAtPlay(
         tests: List<ChessReadinessEngine.ReadinessTest>,
         audits: List<AuditStamp>,
         gameStartMs: Long,
-        games: List<Pair<Long, Long>> = emptyList()
+        games: List<Pair<Long, Long>> = emptyList(),
+        drills: List<Pair<Long, Long>> = emptyList()
     ): Boolean {
         val last = tests
             .filter { it.timestamp <= gameStartMs }
@@ -124,7 +128,8 @@ object ChessDeferredGameReconciler {
                 .filter { it.timestamp in last.timestamp..gameStartMs }
                 .map { it.timestamp to it.outputState },
             gameStartMs,
-            games
+            games,
+            drills
         ) != null
     }
 
@@ -144,6 +149,28 @@ object ChessDeferredGameReconciler {
         ChessReadinessLogStore.loadGames(context)
             .filter { it.rated && it.endTimeMs <= atMs }
             .map { it.endTimeMs - (it.minutes * 60_000).toLong() to it.endTimeMs }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    /**
+     * Drill (startMs, endMs) spans of the user's SESSION-PRESERVING habits
+     * ([ChessReadinessStore.sessionKeepAliveHabits]) finished at/before
+     * [atMs] — started/running timer sessions of those habits journal
+     * keep-alive evidence so puzzles/unrated play re-anchor the 15-minute
+     * idle clock like played games (user rule 2026-09-25). Best-effort:
+     * any store failure yields no evidence, never a crash.
+     */
+    fun drillSpans(
+        context: Context,
+        atMs: Long
+    ): List<Pair<Long, Long>> = try {
+        WidgetTimerStore.drillSpans(
+            context,
+            ChessReadinessStore.sessionKeepAliveHabits(context),
+            beforeMs = atMs,
+            nowMs = System.currentTimeMillis()
+        )
     } catch (_: Exception) {
         emptyList()
     }
@@ -215,7 +242,8 @@ object ChessDeferredGameReconciler {
                 AuditStamp(it.timestamp, it.outputState)
             },
             gameStartMs = gameStartMs,
-            games = ratedGameSpans(context, gameStartMs)
+            games = ratedGameSpans(context, gameStartMs),
+            drills = drillSpans(context, gameStartMs)
         )
 
         val mapping = ChessGameAuditMapper.buildInput(
@@ -318,7 +346,8 @@ object ChessDeferredGameReconciler {
                 AuditStamp(it.timestamp, it.outputState)
             },
             gameStartMs = gameStartMs,
-            games = ratedGameSpans(context, gameStartMs)
+            games = ratedGameSpans(context, gameStartMs),
+            drills = drillSpans(context, gameStartMs)
         )
         if (!authorized) {
             val stateAtPlay = tests
@@ -446,7 +475,8 @@ object ChessDeferredGameReconciler {
                 AuditStamp(it.timestamp, it.outputState)
             },
             gameStartMs = gameStartMs,
-            games = ratedGameSpans(context, gameStartMs)
+            games = ratedGameSpans(context, gameStartMs),
+            drills = drillSpans(context, gameStartMs)
         )
         if (!authorized) {
             val stateAtPlay = tests

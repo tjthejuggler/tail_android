@@ -2784,6 +2784,7 @@ private fun ChessReadinessSettingsSection(
     var showAppPicker by remember { mutableStateOf(false) }
     var showPuzzleHabitPicker by remember { mutableStateOf(false) }
     var showRushHabitPicker by remember { mutableStateOf(false) }
+    var showKeepAlivePicker by remember { mutableStateOf(false) }
     var showSurvivalHabitPicker by remember { mutableStateOf(false) }
     var rushHighText by remember {
         mutableStateOf(
@@ -3262,6 +3263,38 @@ private fun ChessReadinessSettingsSection(
                     onPick = { showSurvivalHabitPicker = true }
                 )
             }
+            Spacer(modifier = Modifier.height(10.dp))
+            Text("Session-Preserving Habits", fontSize = 14.sp)
+            Text(
+                "Habits whose TIMER keeps a live GREEN session open: starting " +
+                    "one re-anchors the 15-minute idle gap like a played game, " +
+                    "so puzzles / unrated games between rated games count as " +
+                    "the same session. Default: your linked puzzle habits. " +
+                    "Drills never authorize rated play by themselves.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            val keepAlive = ChessReadinessStore.sessionKeepAliveHabits(context)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    if (keepAlive.isEmpty()) "None (games-only idle clock)"
+                    else keepAlive.sorted().joinToString(", "),
+                    fontSize = 12.sp,
+                    color = if (keepAlive.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 8.dp)
+                )
+                Button(onClick = { showKeepAlivePicker = true }) {
+                    Text("Edit", fontSize = 12.sp)
+                }
+            }
         }
     }
 
@@ -3297,6 +3330,18 @@ private fun ChessReadinessSettingsSection(
                 showRushHabitPicker = false
             },
             onDismiss = { showRushHabitPicker = false }
+        )
+    }
+
+    if (showKeepAlivePicker) {
+        KeepAliveHabitsDialog(
+            habits = viewModel.getAllHabitNames(),
+            selected = ChessReadinessStore.sessionKeepAliveHabits(context),
+            onSave = {
+                ChessReadinessStore.saveSessionKeepAliveHabits(context, it)
+                showKeepAlivePicker = false
+            },
+            onDismiss = { showKeepAlivePicker = false }
         )
     }
 
@@ -3340,9 +3385,76 @@ private fun HabitLinkRow(label: String, habit: String, onPick: () -> Unit) {
 }
 
 /**
- * Dialog listing EVERY habit (from [com.example.tail.ui.viewmodel.HabitViewModel.getAllHabitNames])
- * plus a "None" option; tapping one selects it immediately.
+ * Multi-select picker for the chess SESSION-PRESERVING habits: checked
+ * habits' timer activity keeps a live GREEN rolling window open (drill
+ * keep-alive, user rule 2026-09-25). Save persists the whole set; "None"
+ * clears it (games-only idle clock).
  */
+@Composable
+private fun KeepAliveHabitsDialog(
+    habits: List<String>,
+    selected: Set<String>,
+    onSave: (Set<String>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var picked by remember { mutableStateOf(selected) }
+    val filtered = if (query.isBlank()) habits
+        else habits.filter { it.contains(query.trim(), ignoreCase = true) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Session-preserving habits") },
+        text = {
+            Column {
+                Text(
+                    "A started timer on any checked habit keeps the GREEN " +
+                        "session alive (15-minute gap re-anchored).",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    placeholder = { Text("Search habits…", fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                    itemsIndexed(filtered) { i, name ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    picked = if (name in picked) picked - name
+                                    else picked + name
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = name in picked,
+                                onCheckedChange = { checked ->
+                                    picked = if (checked) picked + name else picked - name
+                                }
+                            )
+                            Text(name, fontSize = 14.sp)
+                        }
+                        if (i < filtered.lastIndex) HorizontalDivider()
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(picked) }) { Text("Save") }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
 @Composable
 private fun HabitPickerDialog(
     title: String,

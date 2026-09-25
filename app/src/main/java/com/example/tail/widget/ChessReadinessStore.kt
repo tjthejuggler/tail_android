@@ -226,6 +226,37 @@ object ChessReadinessStore {
         prefs(context).edit().putString(KEY_PUZZLE_HABIT, name.trim()).apply()
     }
 
+    // ── Session-preserving habits (drill keep-alive, 2026-09-25) ───────────
+
+    private const val KEY_KEEP_ALIVE_HABITS = "session_keep_alive_habits"
+
+    /**
+     * Habits whose TIMER activity keeps a live GREEN rolling window open —
+     * a started/running timer on any of them (puzzles, unrated games, …)
+     * re-anchors the 15-minute idle clock like a played game (user rule
+     * 2026-09-25). Chosen in Settings → ♟ Chess Readiness.
+     */
+    fun sessionKeepAliveHabits(context: Context): Set<String> {
+        val stored = prefs(context).getString(KEY_KEEP_ALIVE_HABITS, null)
+        if (stored != null) {
+            return stored.split("\u0001").filter { it.isNotBlank() }.toSet()
+        }
+        // Default (before the user picks anything): the puzzle habits the
+        // test already links — the original keep-alive intent.
+        val fallback = setOfNotNull(
+            linkedPuzzleHabit(context).trim().takeIf { it.isNotEmpty() },
+            linkedRushHabit(context).trim().takeIf { it.isNotEmpty() }
+        )
+        return fallback
+    }
+
+    /** Persists the keep-alive set (empty = none — games-only clock). */
+    fun saveSessionKeepAliveHabits(context: Context, habits: Set<String>) {
+        prefs(context).edit()
+            .putString(KEY_KEEP_ALIVE_HABITS, habits.joinToString("\u0001"))
+            .apply()
+    }
+
     /**
      * Habit credited the 3 rush minutes (plus +1 session) when the Puzzle
      * Rush run is reported during the Phase 1 test ("" = no habit linked).

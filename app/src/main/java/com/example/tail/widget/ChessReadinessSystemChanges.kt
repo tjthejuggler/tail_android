@@ -262,6 +262,15 @@ object ChessReadinessSystemChanges {
                 "glance whether the +1 refund bar is cleared. When the session was " +
                 "authorized by a FREEPLAY, the overlay also states the ticket balance " +
                 "and whether the spend is still provisional."
+        ),
+        ReadinessSystemChange(
+            at("2026-09-24T19:45:00Z"),
+            "Freeplay grants no longer count toward the daily test cap",
+            "Weekly-freeplay (and record-ticket) grants were silently eating the " +
+                "8-per-day readiness-test allowance — spending freeplays on top of " +
+                "real tests could hit the daily cap. Freeplay authorizations are NOT " +
+                "tests: they now never count toward the cap and never trigger the " +
+                "re-test cool-down or a RED rest period (user rule, 2026-09-24)."
         )
     )
 }

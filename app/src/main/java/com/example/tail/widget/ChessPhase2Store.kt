@@ -278,7 +278,8 @@ object ChessPhase2Store {
                 .filter { it.timestamp >= last.timestamp && it.timestamp <= now }
                 .map { it.timestamp to it.outputState },
             now,
-            ChessDeferredGameReconciler.ratedGameSpans(context, now)
+            ChessDeferredGameReconciler.ratedGameSpans(context, now),
+            ChessDeferredGameReconciler.drillSpans(context, now)
         )
     }
 

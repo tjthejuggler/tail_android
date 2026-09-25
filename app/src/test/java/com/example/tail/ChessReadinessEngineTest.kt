@@ -557,6 +557,86 @@ class ChessReadinessEngineTest {
     }
 
     @Test
+    fun `freeplay grants do not count toward the daily cap`() {
+        // 4 real tests TODAY + 4 freeplay grants TODAY — the freeplays are
+        // authorizations, not tests (user rule 2026-09-24), so the gate
+        // counts 4 of 8 and a fresh test is still allowed.
+        val real = (1..4).map {
+            test(NOW - it * 60L * 60 * 1000, 90, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
+        }
+        val freeplays = (1..4).map {
+            ChessReadinessEngine.ReadinessTest(
+                NOW - it * 30L * 60 * 1000, 85,
+                ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name, freeplay = true
+            )
+        }
+        val status = ChessReadinessEngine.checkGate(real + freeplays, NOW)
+        assertTrue(status is ChessReadinessEngine.GateStatus.Allowed)
+        assertEquals(4, (status as ChessReadinessEngine.GateStatus.Allowed).testsToday)
+        // And 4 freeplays alone obviously never block either.
+        assertTrue(
+            ChessReadinessEngine.checkGate(freeplays, NOW)
+                is ChessReadinessEngine.GateStatus.Allowed
+        )
+    }
+
+    @Test
+    fun `freeplay grants do not start the re-test cooldown or rest period`() {
+        // A freeplay 30 min ago (inside the 60-min validity) must not gate
+        // the tester — the last REAL test is what counts.
+        val freeplayNow = listOf(
+            ChessReadinessEngine.ReadinessTest(
+                NOW - 30L * 60 * 1000, 85,
+                ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name, freeplay = true
+            )
+        )
+        assertTrue(
+            ChessReadinessEngine.checkGate(freeplayNow, NOW)
+                is ChessReadinessEngine.GateStatus.Allowed
+        )
+        // Even a RED-looking freeplay (impossible in practice, provenance is
+        // what matters) must not trigger the rest-period path.
+        val redFreeplay = listOf(
+            ChessReadinessEngine.ReadinessTest(
+                NOW - 20L * 60 * 1000, 10,
+                ChessReadinessEngine.ReadinessState.RED_LIGHT.name, freeplay = true
+            )
+        )
+        assertTrue(
+            ChessReadinessEngine.checkGate(redFreeplay, NOW)
+                is ChessReadinessEngine.GateStatus.Allowed
+        )
+        // But a real GREEN 30 min ago still cools down as before.
+        val realPass = listOf(
+            test(NOW - 30L * 60 * 1000, 85, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
+        )
+        assertTrue(
+            ChessReadinessEngine.checkGate(realPass, NOW)
+                is ChessReadinessEngine.GateStatus.Blocked
+        )
+    }
+
+    @Test
+    fun `eight real tests today still block even among freeplays`() {
+        // 8 REAL tests today (cap reached on tests alone) + freeplay noise —
+        // the cap must still hold.
+        val history = (1..8).map {
+            test(NOW - it * 60L * 60 * 1000, 90, ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name)
+        } + listOf(
+            ChessReadinessEngine.ReadinessTest(
+                NOW - 10L * 60 * 1000, 85,
+                ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name, freeplay = true
+            )
+        )
+        val status = ChessReadinessEngine.checkGate(history, NOW)
+        assertTrue(status is ChessReadinessEngine.GateStatus.Blocked)
+        assertTrue(
+            (status as ChessReadinessEngine.GateStatus.Blocked).error
+                is ChessReadinessEngine.GateError.MaxDailyTests
+        )
+    }
+
+    @Test
     fun `tests from yesterday do not count toward today's cap`() {
         // 8 tests YESTERDAY (yesterday's evening burst) + 1 old — the
         // calendar-day reset means today's allowance is untouched.

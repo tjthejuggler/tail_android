@@ -147,7 +147,8 @@ object ChessEnforcementPolicy {
         session: ReadinessSession?,
         penalties: List<Penalty>,
         now: Long,
-        audits: List<ChessPhase2Store.Phase2Audit> = emptyList()
+        audits: List<ChessPhase2Store.Phase2Audit> = emptyList(),
+        drills: List<Pair<Long, Long>> = emptyList()
     ): Decision {
         if (enforcementEnabledAt <= 0L) {
             return Decision.Allow(Reason.FEATURE_OFF)
@@ -220,7 +221,8 @@ object ChessEnforcementPolicy {
             val windowLive = ChessPhase2Engine.rollingWindowExpiresAt(
                 last.timestamp,
                 auditsAfterTest.map { it.timestamp to it.outputState },
-                now
+                now,
+                drills = drills
             ) != null
             return Decision.Allow(
                 if (windowLive) Reason.GREEN_SESSION else Reason.YELLOW_SESSION
@@ -373,7 +375,10 @@ object ChessEnforcementPolicy {
         session = ChessReadinessStore.loadSession(context),
         penalties = ChessReadinessStore.loadPenalties(context),
         now = System.currentTimeMillis(),
-        audits = ChessPhase2Store.loadAudits(context)
+        audits = ChessPhase2Store.loadAudits(context),
+        drills = ChessDeferredGameReconciler.drillSpans(
+            context, System.currentTimeMillis()
+        )
     )
 }
 

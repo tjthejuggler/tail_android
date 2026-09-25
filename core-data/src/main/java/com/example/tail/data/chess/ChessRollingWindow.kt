@@ -20,6 +20,14 @@ package com.example.tail.data.chess
  *    inside the window — the gap is REAL no-play time (game end → next
  *    game start), so continuous play keeps the window open indefinitely
  *    and a late-arriving audit can never make it look idle.
+ *  - 2026-09-25: the idle clock also re-anchors on DRILL activity — a
+ *    started/running session of a user-chosen "session-preserving habit"
+ *    (puzzles, unrated games, …) produces (start, end) spans that chain
+ *    exactly like played games (user rule: solving puzzles between rated
+ *    games is still "in session"; the game-only clock wrongly killed
+ *    GREEN mid-puzzle-set). Drills only EXTEND an already-live window —
+ *    they never authorize by themselves and never revive a closed one,
+ *    and a Yellow/Red audit still revokes instantly.
  *
  * The stats charts used the RETIRED flat-60-minute rule evaluated at game
  * END, which labeled games of legitimate continuous sessions (and games
@@ -47,6 +55,13 @@ const val AUDIT_CONTINUE_RATED = "CONTINUE_RATED"
  *                    test and finished at/before [now], any order — a game
  *                    that BEGAN while the window was still live extends it
  *                    to that game's end
+ * @param drills      (startMs, endMs) spans of drill/puzzle sessions of the
+ *                    user's session-preserving habits, same semantics as
+ *                    [games] — a drill that BEGAN while the window was live
+ *                    extends it to its end (2026-09-25 rule: puzzles keep
+ *                    the session alive). Drills never AUTHORIZE: with no
+ *                    live window they are inert, and a revoking audit
+ *                    ignores them entirely (checked before any chaining).
  * @param idleCloseMs real no-play time that closes the window
  * @return the epoch-ms expiry of the window, or null when revoked or
  *         already expired
@@ -56,18 +71,22 @@ fun rollingWindowExpiresAt(
     audits: List<Pair<Long, String>>,
     now: Long,
     games: List<Pair<Long, Long>> = emptyList(),
+    drills: List<Pair<Long, Long>> = emptyList(),
     idleCloseMs: Long = RATED_IDLE_CLOSE_MINUTES * 60_000
 ): Long? {
     val inWindow = audits.filter { it.first in greenTestMs..now }
     // A Yellow/Red audit since the authorization revokes rated play.
     if (inWindow.any { it.second != AUDIT_CONTINUE_RATED }) return null
     // Chain of window-extending evidence: every clean audit re-anchors
-    // the idle clock to its instant, then each played game whose start was
-    // still inside the live window extends the anchor to that game's end —
-    // continuous play never counts as idleness.
+    // the idle clock to its instant, then each played game / drill session
+    // whose start was still inside the live window extends the anchor to
+    // its end — continuous play (rated games OR puzzles) never counts as
+    // idleness. Games and drills interleave freely: sorted by start, each
+    // span checks against the anchor left by the previous one.
     var anchor = greenTestMs
     inWindow.forEach { anchor = maxOf(anchor, it.first) }
-    games.sortedBy { it.first }
+    (games + drills)
+        .sortedBy { it.first }
         .filter { it.first in greenTestMs..now && it.second <= now }
         .forEach { (start, end) ->
             if (start < anchor + idleCloseMs) anchor = maxOf(anchor, end)

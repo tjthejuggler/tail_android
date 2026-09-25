@@ -72,7 +72,8 @@ object ChessGuardPenalty {
                         ChessDeferredGameReconciler.AuditStamp(it.timestamp, it.outputState)
                     },
                     gameStartMs = gameStartMs,
-                    games = ChessDeferredGameReconciler.ratedGameSpans(context, gameStartMs)
+                    games = ChessDeferredGameReconciler.ratedGameSpans(context, gameStartMs),
+                    drills = ChessDeferredGameReconciler.drillSpans(context, gameStartMs)
                 )
                 if (!authorized) return append(context, gameId, rated = true)
                 return false
@@ -92,6 +93,7 @@ object ChessGuardPenalty {
                 history = tests,
                 session = null,
                 penalties = priorPenalties,
+                drills = ChessDeferredGameReconciler.drillSpans(context, gameStartMs),
                 now = gameStartMs,
                 // Audit chain as of the game's start instant — later
                 // verdicts must not retroactively judge this game.
