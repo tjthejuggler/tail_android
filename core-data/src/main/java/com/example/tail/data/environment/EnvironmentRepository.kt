@@ -9,8 +9,10 @@ import java.time.LocalDate
 
 private const val TAG = "EnvironmentRepo"
 private const val PREFS_NAME = "tail_environment_prefs"
-/** Map of date-string ("YYYY-MM-DD") → snapshot JSON. */
-private const val KEY_SNAPSHOTS = "environment_snapshots"
+/** Legacy storage: ONE giant date→JSON map. Migrated to per-day keys on first read. */
+private const val KEY_SNAPSHOTS_LEGACY = "environment_snapshots"
+/** Per-day snapshot storage: "snap:<YYYY-MM-DD>" → snapshot JSON (one small key per day). */
+private const val KEY_PREFIX_SNAP = "snap:"
 /** Map of location label → water hardness ppm ("hardness:<label>" keys). */
 private const val KEY_PREFIX_WATER = "hardness:"
 
@@ -43,29 +45,50 @@ class EnvironmentRepository(private val context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
-    @Volatile private var cachedSnapshotMap: Map<String, String>? = null
+    init {
+        migrateLegacyBlobOnce()
+    }
 
     // ── Reads ───────────────────────────────────────────────────────────────
 
     /** Returns the snapshot for [date], or null if none stored. */
     fun getSnapshot(date: LocalDate): EnvironmentSnapshot? {
-        return loadMap()[date.toString()]?.let { EnvironmentSnapshot.fromJson(it) }
+        return prefs.getString(KEY_PREFIX_SNAP + date, null)?.let { EnvironmentSnapshot.fromJson(it) }
     }
 
-    /** Returns all stored snapshots keyed by date string (one JSON parse pass). */
+    /** Returns all stored snapshots keyed by date string. */
     fun getAllSnapshots(): Map<String, EnvironmentSnapshot> {
-        return loadMap().mapNotNull { (date, json) ->
-            EnvironmentSnapshot.fromJson(json)?.let { date to it }
-        }.toMap()
+        val out = mutableMapOf<String, EnvironmentSnapshot>()
+        for ((key, value) in prefs.all) {
+            if (key.startsWith(KEY_PREFIX_SNAP) && value is String) {
+                EnvironmentSnapshot.fromJson(value)?.let { out[it.date] = it }
+            }
+        }
+        return out
     }
 
     /**
-     * Deletes every stored snapshot (full-redo mode). Water-hardness
-     * location memory is intentionally KEPT — it's user-curated data.
+     * THE resume rule, shared by the in-app backlog and the background
+     * worker: a day is done once a network fetch succeeded for it
+     * ([EnvironmentSnapshot.fetchedAt] is set). Metrics that are legitimately
+     * unavailable for that day (Kp older than ~30 days, pollen outside
+     * Europe, unknown water hardness…) do NOT make the day incomplete —
+     * re-fetching can never conjure data the APIs don't have.
+     */
+    fun needsFetch(date: LocalDate): Boolean =
+        getSnapshot(date)?.fetchedAt.isNullOrBlank()
+
+    /**
+     * Deletes every stored snapshot (clean wipe / full-redo mode).
+     * Water-hardness location memory is intentionally KEPT — it's
+     * user-curated data.
      */
     fun clearAllSnapshots() {
-        prefs.edit().remove(KEY_SNAPSHOTS).apply()
-        cachedSnapshotMap = emptyMap()
+        val e = prefs.edit()
+        for (key in prefs.all.keys) {
+            if (key.startsWith(KEY_PREFIX_SNAP)) e.remove(key)
+        }
+        e.apply()
         Log.i(TAG, "clearAllSnapshots: all snapshots removed")
     }
 
@@ -236,23 +259,30 @@ class EnvironmentRepository(private val context: Context) {
         var stored = 0
         var done = 0
         for ((wStart, wEnd) in windows) {
+            // null = the request THREW (network/rate limit) → days stay pending
+            // for a later retry. A successful response — even one with no data
+            // for a given day — is authoritative: the API has nothing for that
+            // day, so it is marked fetched and never re-requested.
             val weather = runCatching {
                 EnvironmentApis.fetchWeatherRange(coords.first, coords.second, wStart, wEnd)
             }.onFailure { Log.w(TAG, "range $wStart..$wEnd failed: ${it.message}") }
-                .getOrDefault(emptyMap())
+                .getOrNull()
             val air = runCatching {
                 EnvironmentApis.fetchAirQualityRange(coords.first, coords.second, wStart, wEnd)
             }.onFailure { Log.w(TAG, "air range $wStart..$wEnd failed: ${it.message}") }
-                .getOrDefault(emptyMap())
+                .getOrNull()
+            val authoritative = weather != null || air != null
+            val now = java.time.Instant.now().toString()
 
+            val batch = mutableMapOf<String, EnvironmentSnapshot>()
             var d = wStart
             while (!d.isAfter(wEnd)) {
                 if (d in wanted) {
                     val existing = getSnapshot(d)
-                    val daySnap = snapFromWeather(d, weather[d])?.let { wSnap ->
-                        air[d]?.let { mergeAir(wSnap, it) } ?: wSnap
+                    val daySnap = snapFromWeather(d, weather?.get(d))?.let { wSnap ->
+                        air?.get(d)?.let { mergeAir(wSnap, it) } ?: wSnap
                     }
-                    if (daySnap != null || existing != null) {
+                    if (daySnap != null || existing != null || authoritative) {
                         var merged = merge(existing, daySnap, d, coords.first, coords.second, label)
                         // Water auto-fill from location memory when unset.
                         if (merged.waterHardnessPpm == null) {
@@ -263,13 +293,17 @@ class EnvironmentRepository(private val context: Context) {
                                 )
                             }
                         }
-                        if (merged.hasAnyData) {
-                            save(merged)
-                            stored++
+                        if (merged.hasAnyData || authoritative) {
+                            if (merged.fetchedAt.isBlank()) merged = merged.copy(fetchedAt = now)
+                            batch[merged.date] = merged
                         }
                     }
                 }
                 d = d.plusDays(1)
+            }
+            if (batch.isNotEmpty()) {
+                saveAll(batch.values)
+                stored += batch.size
             }
             done++
             onWindow(done, windows.size)
@@ -310,24 +344,38 @@ class EnvironmentRepository(private val context: Context) {
 
     // ── Persistence ─────────────────────────────────────────────────────────
 
+    /** Saves one snapshot as its own tiny prefs key (no blob rewrite, no cross-instance cache). */
     private fun save(snapshot: EnvironmentSnapshot) {
-        val map = loadMap().toMutableMap()
-        map[snapshot.date] = snapshot.toJson()
-        prefs.edit().putString(KEY_SNAPSHOTS, JSONObject(map).toString()).apply()
-        cachedSnapshotMap = map
+        prefs.edit().putString(KEY_PREFIX_SNAP + snapshot.date, snapshot.toJson()).apply()
     }
 
-    /** Parses the stored JSON map once and caches it for the process lifetime. */
-    private fun loadMap(): Map<String, String> {
-        cachedSnapshotMap?.let { return it }
-        val raw = prefs.getString(KEY_SNAPSHOTS, null) ?: return emptyMap()
-        val parsed = runCatching {
-            val o = JSONObject(raw)
-            val out = mutableMapOf<String, String>()
-            for (key in o.keys()) out[key] = o.getString(key)
-            out.toMap()
-        }.getOrDefault(emptyMap())
-        cachedSnapshotMap = parsed
-        return parsed
+    /** Saves a batch of snapshots in one atomic prefs commit (used per range window). */
+    private fun saveAll(snapshots: Collection<EnvironmentSnapshot>) {
+        val e = prefs.edit()
+        for (s in snapshots) e.putString(KEY_PREFIX_SNAP + s.date, s.toJson())
+        e.apply()
+    }
+
+    /**
+     * One-time migration from the legacy single-JSON-blob storage to per-day
+     * keys. Existing history is preserved verbatim; the legacy key is removed
+     * afterwards so this never runs twice.
+     */
+    private fun migrateLegacyBlobOnce() {
+        if (!prefs.contains(KEY_SNAPSHOTS_LEGACY)) return
+        val raw = prefs.getString(KEY_SNAPSHOTS_LEGACY, null)
+        val e = prefs.edit()
+        if (raw != null) {
+            runCatching {
+                val o = JSONObject(raw)
+                val keys = o.keys()
+                while (keys.hasNext()) {
+                    val date = keys.next()
+                    e.putString(KEY_PREFIX_SNAP + date, o.getString(date))
+                }
+            }.onFailure { Log.w(TAG, "legacy snapshot migration failed: ${it.message}") }
+        }
+        e.remove(KEY_SNAPSHOTS_LEGACY).apply()
+        Log.i(TAG, "migrated legacy snapshot blob to per-day keys")
     }
 }

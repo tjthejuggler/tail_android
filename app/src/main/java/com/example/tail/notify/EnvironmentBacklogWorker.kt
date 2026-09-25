@@ -36,10 +36,10 @@ import java.util.concurrent.TimeUnit
  * normal duty cycle, so the whole run costs a few minutes of idle-ish
  * networking spread over however long the history is.
  *
- * The worker appends to the same snapshot store the in-app flow uses and
- * reuses the resume rule (skip days whose capture is complete for all
- * linked metrics), so app and worker never fight: whichever runs next
- * simply skips whatever the other already finished.
+ * The worker appends to the same per-day snapshot store the in-app flow
+ * uses and reuses the shared resume rule (EnvironmentRepository.needsFetch:
+ * a day is done once a fetch succeeded for it), so app and worker never
+ * fight: whichever runs next simply skips whatever the other finished.
  */
 class EnvironmentBacklogWorker(appContext: Context, params: WorkerParameters) :
     CoroutineWorker(appContext, params) {
@@ -71,13 +71,7 @@ class EnvironmentBacklogWorker(appContext: Context, params: WorkerParameters) :
             runCatching { LocalDate.parse(it, DateTimeFormatter.ISO_LOCAL_DATE) }.getOrNull()
         }.filter { !it.isAfter(today) }.sorted()
 
-        val linkedMetrics = settings.environmentHabitMetrics.values
-            .mapNotNull { EnvironmentMetric.fromKey(it) }
-        val todo = if (repair) dates else dates.filter { d ->
-            val snap = envRepo.getSnapshot(d)
-            snap == null || snap.fetchedAt.isBlank() ||
-                linkedMetrics.any { it.extract(snap) == null }
-        }
+        val todo = if (repair) dates else dates.filter { envRepo.needsFetch(it) }
         if (todo.isEmpty()) return Result.success()
 
         // Group remaining days by location: consecutive days at one place are

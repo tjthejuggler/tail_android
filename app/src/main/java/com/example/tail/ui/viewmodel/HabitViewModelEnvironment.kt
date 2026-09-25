@@ -304,18 +304,12 @@ fun HabitViewModel.fetchEnvironmentFullBacklog(repair: Boolean = false) {
                 environmentRepo.clearAllSnapshots()
             }
 
-            // Resume mode: days without a capture AND days whose capture is
-            // incomplete for any currently-linked metric (e.g. a past run
-            // hit the weather API's rate limit mid-backlog: the snapshot
-            // stored air-quality data but null temperatures — those days
-            // must be re-fetched, not skipped). Repair mode: everything.
-            val linkedMetrics = _settings.value.environmentHabitMetrics.values
-                .mapNotNull { EnvironmentMetric.fromKey(it) }
-            val todo = if (repair) dates else dates.filter { d ->
-                val snap = environmentRepo.getSnapshot(d)
-                snap == null || snap.fetchedAt.isBlank() ||
-                    linkedMetrics.any { it.extract(snap) == null }
-            }
+            // Resume mode: only days whose fetch never succeeded (no snapshot
+            // or fetchedAt blank — e.g. the run died mid-window). Days a
+            // fetch already answered are never re-requested, even if some
+            // metrics are legitimately unavailable for them (Kp >30 days old,
+            // pollen outside Europe…). Repair mode: everything.
+            val todo = if (repair) dates else dates.filter { environmentRepo.needsFetch(it) }
             if (todo.isEmpty()) {
                 _envStatus.value = "History already complete (${dates.size} days)"
                 return@launch
