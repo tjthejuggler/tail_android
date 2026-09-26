@@ -203,6 +203,21 @@ const val EXTRA_AMOUNT = "EXTRA_AMOUNT"
 const val EXTRA_SOURCE = "EXTRA_SOURCE"
 
 /**
+ * A conditional feed into a SUBTYPED habit, deferred until the user picks
+ * which subtype receives the whole amount. Enqueued by incrementHabit's
+ * step-2c conditional feed (tap path) and drained by the
+ * [confirmPendingSubtypeFeed] / [skipPendingSubtypeFeed] popup.
+ */
+data class PendingSubtypeFeed(
+    /** The subtyped linked habit that would receive the feed. */
+    val habitName: String,
+    /** The whole feed amount; it goes entirely to the chosen subtype. */
+    val amount: Int,
+    /** The date the source increment applied to. */
+    val date: java.time.LocalDate
+)
+
+/**
  * Main ViewModel: owns habits list + settings state, delegates I/O to repositories.
  * Supports day navigation: selectedDate can be moved backward/forward relative to today.
  * Supports multiple named screens of habits.
@@ -222,6 +237,15 @@ class HabitViewModel(
     // Cache for text entries used in graph filtering
     internal val _textEntriesCache = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
     val textEntriesCache: StateFlow<Map<String, Map<String, String>>> = _textEntriesCache.asStateFlow()
+
+    // ── Deferred conditional feeds into subtyped habits ────────────────────
+    /**
+     * Conditional feeds waiting for the user to pick a subtype, oldest first.
+     * The UI shows one popup per entry ([confirmPendingSubtypeFeed] drains it);
+     * [skipPendingSubtypeFeed] drops the entry without applying it.
+     */
+    internal val _pendingSubtypeFeeds = MutableStateFlow<List<PendingSubtypeFeed>>(emptyList())
+    val pendingSubtypeFeeds: StateFlow<List<PendingSubtypeFeed>> = _pendingSubtypeFeeds.asStateFlow()
 
     /** Repository for recording habit increment timestamps (internal storage). */
     val timestampRepo = HabitTimestampRepository(context)

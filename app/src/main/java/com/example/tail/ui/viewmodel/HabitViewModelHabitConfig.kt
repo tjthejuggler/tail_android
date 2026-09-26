@@ -982,6 +982,45 @@ fun HabitViewModel.saveSubtypeIncrement(habitName: String, increments: Map<Strin
     }
 }
 
+/**
+ * Resolves the oldest pending conditional feed into [habitName]: the whole
+ * feed amount goes to the subtype the user picked. Mirrors
+ * [saveSubtypeIncrement] but honours the feed's original date.
+ */
+fun HabitViewModel.confirmPendingSubtypeFeed(habitName: String, subtype: String) {
+    val queue = _pendingSubtypeFeeds.value
+    val index = queue.indexOfFirst { it.habitName == habitName }
+    if (index < 0) return
+    val feed = queue[index]
+    _pendingSubtypeFeeds.value = queue.filterIndexed { i, _ -> i != index }
+
+    // Increment the main habit count on the feed's original date
+    incrementHabit(habitName, feed.amount, date = feed.date)
+
+    // Save subtype breakdown (internal store)
+    viewModelScope.launch {
+        val dateStr = com.example.tail.data.dateString(feed.date)
+        subtypeDataRepo.addToDate(habitName, dateStr, mapOf(subtype to feed.amount))
+    }
+
+    // If this is a timed habit, also record a timestamped session entry
+    if (habitName in _settings.value.timedHabits) {
+        viewModelScope.launch {
+            timedDataRepo.appendEntries(
+                habitName, mapOf<String?, Int>(subtype to feed.amount)
+            )
+        }
+    }
+}
+
+/**
+ * Drops the oldest pending conditional feed without applying it — the
+ * "Skip" button of the subtype-choice popup.
+ */
+fun HabitViewModel.skipPendingSubtypeFeed() {
+    _pendingSubtypeFeeds.value = _pendingSubtypeFeeds.value.drop(1)
+}
+
 // ── Weights habit type (machine / free weight + reps logging) ─────────
 
 /** Records an exercise/machine name for quick re-entry (most recent first, capped at 10). */

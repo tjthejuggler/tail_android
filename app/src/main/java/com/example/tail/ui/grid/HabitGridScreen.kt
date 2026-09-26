@@ -229,8 +229,10 @@ import com.example.tail.ui.viewmodel.getDeleteDataDayCount
 import com.example.tail.ui.viewmodel.getEarliestLocationDate
 import com.example.tail.ui.viewmodel.getMinutesTodayCount
 import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
+import com.example.tail.ui.viewmodel.confirmPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.isMovieBridgeHabit
 import com.example.tail.ui.viewmodel.loadSubtypeBreakdown
+import com.example.tail.ui.viewmodel.skipPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.moveHabitDayInstances
 import com.example.tail.ui.viewmodel.moveMovieEntryTime
 import com.example.tail.ui.viewmodel.navigateDay
@@ -2366,6 +2368,23 @@ fun HabitGridScreen(
             lizardShimmerGen = lizardShimmerGen,
             onDismiss = { subtypeDialogHabit = null }
         )
+    }
+
+    // Conditional feed into a subtyped habit: one popup per pending feed so
+    // the user can route the whole amount to the subtype of their choice.
+    val pendingSubtypeFeeds by viewModel.pendingSubtypeFeeds.collectAsState()
+    pendingSubtypeFeeds.firstOrNull()?.let { feed ->
+        val feedSubtypes = settings.habitSubtypes[feed.habitName] ?: emptyList()
+        if (feedSubtypes.isNotEmpty()) {
+            ConditionalSubtypeFeedDialog(
+                habitName = feed.habitName,
+                amount = feed.amount,
+                subtypes = feedSubtypes,
+                displayLabels = settings.valueDisplayLabels[feed.habitName] ?: emptyMap(),
+                onPick = { subtype -> viewModel.confirmPendingSubtypeFeed(feed.habitName, subtype) },
+                onSkip = { viewModel.skipPendingSubtypeFeed() }
+            )
+        }
     }
 
     // Weights input dialog (weights-type habits)

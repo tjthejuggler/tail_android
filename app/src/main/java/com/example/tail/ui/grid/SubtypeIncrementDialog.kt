@@ -139,6 +139,51 @@ internal fun SubtypeDialogHost(
     )
 }
 
+/**
+ * Popup shown when a conditional habit's feed lands on a SUBTYPED linked
+ * habit: one button per subtype, the entire feed amount goes to the tapped
+ * subtype. Shown one entry at a time from the pending queue — confirming or
+ * skipping reveals the next pending feed (if any).
+ */
+@Composable
+internal fun ConditionalSubtypeFeedDialog(
+    habitName: String,
+    amount: Int,
+    subtypes: List<String>,
+    displayLabels: Map<String, String>,
+    onPick: (String) -> Unit,
+    onSkip: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onSkip,
+        title = { Text(text = habitName, fontSize = 16.sp) },
+        text = {
+            Column {
+                Text(
+                    text = "Conditional feed +$amount — pick the subtype:",
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                subtypes.forEach { subtype ->
+                    val label = displayLabels[subtype]?.takeIf { it.isNotBlank() } ?: subtype
+                    Button(
+                        onClick = { onPick(subtype) },
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text("$label  +$amount", fontSize = 13.sp)
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onSkip) { Text("Skip") }
+        }
+    )
+}
+
 @Composable
 private fun SubtypeRow(
     subtypeName: String,

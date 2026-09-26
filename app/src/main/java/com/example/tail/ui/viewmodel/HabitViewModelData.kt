@@ -940,6 +940,16 @@ fun HabitViewModel.incrementHabit(
             conditionalCappedFeedAmount(currentStored, linkBaseFeedAmount)
         } else linkBaseFeedAmount
         if (feedAmount == 0) continue
+        // Subtyped linked habit fed on its Points/count slot: defer the
+        // whole feed to a subtype-choice popup instead of applying it here.
+        // The user picks which subtype gets the amount; the resolution
+        // (confirmPendingSubtypeFeed) re-enters incrementHabit for the
+        // linked habit, so timestamps/broadcasts fire at resolve time.
+        if (targetKey == linkedName && linkedName in _settings.value.subtypedHabits) {
+            _pendingSubtypeFeeds.value = _pendingSubtypeFeeds.value +
+                PendingSubtypeFeed(linkedName, feedAmount, targetDate)
+            continue
+        }
         if (targetKey != linkedName) {
             // Raw secondary slot: no max-1 cap; skip the instant row update
             // (the full rebuild below refreshes secondary displays from the DB).
