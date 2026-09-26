@@ -208,6 +208,7 @@ import com.example.tail.ui.common.TimestampEditorDialog
 import com.example.tail.ui.common.ghostGlassSquares
 import com.example.tail.ui.common.openSleepDialog
 import com.example.tail.ui.loading.HabitLoadingSpinner
+import com.example.tail.ui.map.LocationEditDialog
 import com.example.tail.ui.stats.GraphsPanel
 import com.example.tail.ui.viewmodel.HabitViewModel
 import com.example.tail.ui.viewmodel.addAppLink
@@ -244,6 +245,12 @@ import com.example.tail.ui.viewmodel.previewMaxOneAffectedDays
 import com.example.tail.ui.viewmodel.previewMaxOneRestorableDays
 import com.example.tail.ui.viewmodel.recordMealTap
 import com.example.tail.ui.viewmodel.recordRecentIncrementAmount
+import com.example.tail.ui.viewmodel.fetchLocationCandidates
+import com.example.tail.ui.viewmodel.getAllStoredLocations
+import com.example.tail.ui.viewmodel.getAssumedLocationForDate
+import com.example.tail.ui.viewmodel.removeLocationForDate
+import com.example.tail.ui.viewmodel.savePreferredAutoCandidateIndex
+import com.example.tail.ui.viewmodel.setLocationForDate
 import com.example.tail.ui.viewmodel.refreshTodayLocation
 import com.example.tail.ui.viewmodel.renameScreen
 import com.example.tail.ui.viewmodel.reorderScreen
@@ -857,6 +864,12 @@ fun HabitGridScreen(
     // In-app notification center dialog state
     var showNotificationsDialog by remember { mutableStateOf(false) }
 
+    // Location label strip — shown in the thin gap between the top bar and
+    // the screen tabs/grid. Tapping it opens the same LocationEditDialog
+    // that the map screen's location label opens.
+    var showLocationEditDialog by remember { mutableStateOf(false) }
+    val selectedDateLocation by viewModel.selectedDateLocation.collectAsState()
+
     // Deep links from the tier-bar widget: open the habit grid straight
     // into the notifications popup, and/or switch to a touch-zone's tab.
     // The hand-off object is Compose state, so this reacts both on cold
@@ -1292,8 +1305,70 @@ fun HabitGridScreen(
                 .padding(paddingValues)
                 .imePadding()
         ) {
-            // (Location row removed — the location label and its edit popup
-            // now live on the map screen.)
+            // ── Location strip — fills the thin gap between the top bar and
+            // the tab row/grid below. Purely additive: nothing above or below
+            // moves. Falls back to the assumed location (suffix "*") when the
+            // selected day has no stored label, mirroring the map top bar.
+            val storedLocation = selectedDateLocation
+            val locationLabelStrip = storedLocation
+                ?: viewModel.getAssumedLocationForDate(selectedDate)
+            val locationAssumed = storedLocation == null && locationLabelStrip != null
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(16.dp)
+                    // ghostGlassSquares keeps the background lattice visible
+                    // through the strip (matches the top bar / tab row panels)
+                    // instead of showing the Scaffold's plain black container.
+                    .ghostGlassSquares(
+                        shimmerSweep = { shimmerSweep.value },
+                        shimmerDirection = { shimmerDirection.value }
+                    )
+            ) {
+                Text(
+                    text = if (locationAssumed) "$locationLabelStrip *" else (locationLabelStrip ?: " "),
+                    color = Color(0xFFCCCCCC),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        // Nudge the text itself up into the gap so it clears
+                        // the tab row below.
+                        .offset(y = (-2).dp)
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { showLocationEditDialog = true }
+                        .padding(horizontal = 4.dp)
+                )
+            }
+
+            if (showLocationEditDialog) {
+                LocationEditDialog(
+                    currentLocation = selectedDateLocation
+                        ?: viewModel.getAssumedLocationForDate(selectedDate),
+                    suggestions = viewModel.getAllStoredLocations(),
+                    onConfirm = { label ->
+                        if (label == null) {
+                            viewModel.removeLocationForDate(selectedDate)
+                        } else {
+                            viewModel.setLocationForDate(selectedDate, label)
+                        }
+                        showLocationEditDialog = false
+                    },
+                    onDismiss = { showLocationEditDialog = false },
+                    onOpenMap = {
+                        showLocationEditDialog = false
+                        onNavigateToMap()
+                    },
+                    onFetchCandidates = { onResult ->
+                        viewModel.fetchLocationCandidates(selectedDate, onResult)
+                    },
+                    onSavePreferredCandidateIndex = { index ->
+                        viewModel.savePreferredAutoCandidateIndex(index)
+                    }
+                )
+            }
 
             // Screen tabs — shown when multiple screens exist (hidden in
             // landscape and in schedule mode, which aggregates all screens)
