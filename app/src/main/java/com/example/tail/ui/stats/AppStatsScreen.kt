@@ -1790,8 +1790,10 @@ private fun computeAppStats(
     }
 
     // ── Overview ──────────────────────────────────────────────────────────
-    val totalHabits = db.keys.count { !isInternalValueKey(it) }
-    val allHabitsList = db.keys.filter { !isInternalValueKey(it) }.sorted().map { name ->
+    // Habits flagged "don't affect points" are excluded from stats entirely —
+    // the All-Habits list too, not just the ranked top-10 lists.
+    val totalHabits = db.keys.count { !isInternalValueKey(it) && it !in noPointsHabits }
+    val allHabitsList = db.keys.filter { !isInternalValueKey(it) && it !in noPointsHabits }.sorted().map { name ->
         val total = db[name]?.entries?.sumOf { (dateStr, raw) ->
             effPts(name, raw, dateStr).toLong()
         } ?: 0L
@@ -2004,7 +2006,7 @@ private fun computeAppStats(
         val singleDayHighDate: String
     )
 
-    val habitStats = db.filterKeys { !isInternalValueKey(it) }.map { (habitName, entries) ->
+    val habitStats = db.filterKeys { !isInternalValueKey(it) && it !in noPointsHabits }.map { (habitName, entries) ->
         val divider = dividers[habitName] ?: 1
         val minutesPrimary = habitName in timerMinutesPrimaryHabits
         val useFallback = minutesPrimary || habitName in secondaryValueFallbackHabits

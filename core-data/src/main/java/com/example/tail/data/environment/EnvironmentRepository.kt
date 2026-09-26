@@ -70,13 +70,19 @@ class EnvironmentRepository(private val context: Context) {
     /**
      * THE resume rule, shared by the in-app backlog and the background
      * worker: a day is done once a network fetch succeeded for it
-     * ([EnvironmentSnapshot.fetchedAt] is set). Metrics that are legitimately
-     * unavailable for that day (Kp older than ~30 days, pollen outside
-     * Europe, unknown water hardness…) do NOT make the day incomplete —
-     * re-fetching can never conjure data the APIs don't have.
+     * ([EnvironmentSnapshot.fetchedAt] is set) AND the day actually carries
+     * weather. Weather is globally available (Open-Meteo archive reaches back
+     * to 1940), so a "fetched" day with no temperatures at all is a failed or
+     * zero-padded capture that must be retried — otherwise phantom 0 °C days
+     * would be skipped forever. Other metrics that are legitimately
+     * unavailable (Kp older than ~30 days, pollen outside Europe, unknown
+     * water hardness…) still do NOT make the day incomplete.
      */
-    fun needsFetch(date: LocalDate): Boolean =
-        getSnapshot(date)?.fetchedAt.isNullOrBlank()
+    fun needsFetch(date: LocalDate): Boolean {
+        val snap = getSnapshot(date) ?: return true
+        if (snap.fetchedAt.isBlank()) return true
+        return snap.tempMinC == null && snap.tempMaxC == null && snap.tempMeanC == null
+    }
 
     /**
      * Deletes every stored snapshot (clean wipe / full-redo mode).
@@ -294,7 +300,14 @@ class EnvironmentRepository(private val context: Context) {
                             }
                         }
                         if (merged.hasAnyData || authoritative) {
-                            if (merged.fetchedAt.isBlank()) merged = merged.copy(fetchedAt = now)
+                            // Only stamp a day as fetched when it actually
+                            // carries weather — weatherless days stay pending
+                            // so a later Resume re-fetches real values.
+                            val hasWeather = merged.tempMinC != null ||
+                                merged.tempMaxC != null || merged.tempMeanC != null
+                            if (merged.fetchedAt.isBlank() && hasWeather) {
+                                merged = merged.copy(fetchedAt = now)
+                            }
                             batch[merged.date] = merged
                         }
                     }

@@ -304,12 +304,9 @@ internal fun EditBarHost(
             settings.environmentHabitMetrics[name]
                 ?.let { com.example.tail.data.environment.EnvironmentMetric.fromKey(it) }
                 ?.let { metric ->
-                    // Decimals are meaningful for environment metrics — show
-                    // them ("21.5"), not the rounded points value.
-                    metric.formatTenths(
-                        selectedHabitTodayCount,
-                        settings.environmentTemperatureUnit == "F"
-                    )
+                    // Plain whole number in the unit the squares store — no
+                    // decimals, no "°C"/"°F" suffix in the count/points setter.
+                    metric.rounded(selectedHabitTodayCount).toString()
                 }
         },
         garminDateOfBirth = settings.garminDateOfBirth,

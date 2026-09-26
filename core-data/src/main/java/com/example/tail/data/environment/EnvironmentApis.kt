@@ -70,7 +70,17 @@ object EnvironmentApis {
             "relative_humidity_2m_mean,precipitation_sum,uv_index_max," +
             "surface_pressure_mean,wind_speed_10m_max" +
             "&timezone=auto"
-        // Forecast API first; archive fallback covers the older part of the range.
+        // For windows older than the Forecast API's ~92-day retention, go to
+        // the Archive API FIRST. The Forecast API pads unavailable old dates
+        // with literal 0.0 values (impossible min=max=mean=0 °C days), which
+        // used to be accepted as real data and stored as phantom zeros.
+        if (from.isBefore(LocalDate.now().minusDays(90))) {
+            val archive = parseWeatherRange(
+                httpGet("https://archive-api.open-meteo.com/v1/archive?$params"),
+                from, to
+            )
+            if (archive.isNotEmpty()) return@withContext archive
+        }
         val primary = httpGet("https://api.open-meteo.com/v1/forecast?$params")
         val parsed = parseWeatherRange(primary, from, to)
         if (parsed.isNotEmpty()) parsed else {
@@ -113,7 +123,7 @@ object EnvironmentApis {
                     pressureMeanHpa = v("surface_pressure_mean"),
                     windMaxKmh = v("wind_speed_10m_max")
                 )
-                if (res.hasAnyData) out[d] = res
+                if (res.hasAnyData && !res.isImplausibleZeroFill) out[d] = res
             }
             out
         }.onFailure { Log.w(TAG, "weather-range parse failed: ${it.message}") }
@@ -141,9 +151,10 @@ object EnvironmentApis {
         val forecast = httpGet("https://api.open-meteo.com/v1/forecast?$params")
         val parsed = parseWeather(forecast)
         // The Forecast API only serves ~92 days back — older dates get an
-        // error body / null values. Treat an ALL-NULL result as a miss so
-        // the Archive API always gets its chance.
-        if (parsed != null && parsed.hasAnyData) parsed else {
+        // error body / null values — and sometimes zero-padded garbage.
+        // Treat an ALL-NULL or all-zero result as a miss so the Archive API
+        // always gets its chance.
+        if (parsed != null && parsed.hasAnyData && !parsed.isImplausibleZeroFill) parsed else {
             val archive = httpGet(
                 "https://archive-api.open-meteo.com/v1/archive?$params"
             )
@@ -167,6 +178,16 @@ object EnvironmentApis {
             get() = tempMinC != null || tempMaxC != null || tempMeanC != null ||
                 humidityMean != null || precipitationMm != null || uvIndexMax != null ||
                 pressureMeanHpa != null || windMaxKmh != null
+
+        /**
+         * Physically impossible zero-padded payload: min = max = mean = 0 °C
+         * exactly AND 0 % humidity or 0 hPa surface pressure (neither of which
+         * ever occurs on Earth). The Forecast API emits these for dates it
+         * cannot serve; they must be treated as "no data", never stored.
+         */
+        val isImplausibleZeroFill: Boolean
+            get() = tempMinC == 0.0 && tempMaxC == 0.0 && tempMeanC == 0.0 &&
+                (humidityMean == 0.0 || pressureMeanHpa == 0.0)
     }
 
     private fun parseWeather(body: String?): WeatherResult? {

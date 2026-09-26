@@ -195,10 +195,18 @@ internal suspend fun HabitViewModel.syncEnvironmentHabits(
 
     var mutableDb = cachedPhoneDb.toMutableMap()
     var dbChanged = false
+    val staleLinks = mutableSetOf<String>()
 
     for ((habitName, metricKey) in links) {
         val metric = EnvironmentMetric.fromKey(metricKey) ?: continue
-        if (habitName !in mutableDb) mutableDb[habitName] = mutableMapOf()
+        // NEVER (re)create habits here. A link whose habit is absent from the
+        // DB is a leftover from a deleted habit (or a rename that pre-dates
+        // link re-keying) — writing it would resurrect a phantom habit that
+        // keeps refilling itself. Prune the stale link instead.
+        if (habitName !in mutableDb) {
+            staleLinks.add(habitName)
+            continue
+        }
         val habitData = mutableDb[habitName]!!.toMutableMap()
 
         for ((dateStr, snap) in snapshotsByDate) {
@@ -221,6 +229,15 @@ internal suspend fun HabitViewModel.syncEnvironmentHabits(
             habitsRepo.persistDatabase(Uri.parse(s.fileUri), context, mutableDb)
         }
         Log.d(TAG, "Environment sync: wrote ${snapshotsByDate.size} day(s) × ${links.size} habit(s)")
+    }
+
+    // Drop links pointing at habits that no longer exist so they can never
+    // resurrect a deleted habit on a future sync.
+    if (staleLinks.isNotEmpty()) {
+        val pruned = links.filterKeys { it !in staleLinks }
+        settingsRepo.saveEnvironmentHabitMetrics(pruned)
+        _settings.value = _settings.value.copy(environmentHabitMetrics = pruned)
+        Log.i(TAG, "Environment sync: pruned ${staleLinks.size} stale link(s): $staleLinks")
     }
 }
 
@@ -285,7 +302,11 @@ fun HabitViewModel.fetchEnvironmentFullBacklog(repair: Boolean = false) {
         _envStatus.value = if (repair) "Full redo: preparing…" else "Resume: preparing…"
         try {
             awaitSettingsLoaded()
-            val allCoords = locationRepo.getAllStoredCoords()
+            // Gap-filled coords: every day between the first and last recorded
+            // location inherits the nearest recorded day's position, so the
+            // backlog captures weather for coord-less days too instead of
+            // leaving holes in the history.
+            val allCoords = locationRepo.getAllStoredCoordsFilled()
             val labels = locationRepo.getAllStoredLabels()
             if (allCoords.isEmpty()) {
                 _envStatus.value = "No recorded locations with coordinates yet"
@@ -294,9 +315,12 @@ fun HabitViewModel.fetchEnvironmentFullBacklog(repair: Boolean = false) {
 
             val today = LocalDate.now()
             val fmt = DateTimeFormatter.ISO_LOCAL_DATE
-            val dates = allCoords.keys.mapNotNull { runCatching { LocalDate.parse(it, fmt) }.getOrNull() }
-                .filter { !it.isAfter(today) }
+            val recordedDays = allCoords.keys.mapNotNull { runCatching { LocalDate.parse(it, fmt) }.getOrNull() }
                 .sorted()
+            val spanEnd = if (today.isBefore(recordedDays.last())) today else recordedDays.last()
+            val dates = generateSequence(recordedDays.first()) { it.plusDays(1) }
+                .takeWhile { !it.isAfter(spanEnd) }
+                .toList()
 
             if (repair) {
                 // FULL REDO: drop every stored snapshot so the run starts

@@ -1798,6 +1798,9 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
                 mapStatsShowTextHabits = settings.mapStatsShowTextHabits.replaceElement(oldName, newName),
                 garminHabitLinks = settings.garminHabitLinks.replaceKey(oldName, newName),
                 chessComHabitLinks = settings.chessComHabitLinks.replaceKey(oldName, newName),
+                // Environment links must follow the rename too, otherwise the
+                // stale old-name link resurrects a phantom habit on every sync.
+                environmentHabitMetrics = settings.environmentHabitMetrics.replaceKey(oldName, newName),
                 githubRepoUrls = settings.githubRepoUrls.replaceKey(oldName, newName),
                 githubMetrics = settings.githubMetrics.replaceKey(oldName, newName),
                 mediaHabits = settings.mediaHabits.replaceElement(oldName, newName),
@@ -1873,6 +1876,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             settingsRepo.saveMapStatsShowTextHabits(newSettings.mapStatsShowTextHabits)
             settingsRepo.saveGarminHabitLinks(newSettings.garminHabitLinks)
             settingsRepo.saveChessComHabitLinks(newSettings.chessComHabitLinks)
+            settingsRepo.saveEnvironmentHabitMetrics(newSettings.environmentHabitMetrics)
             settingsRepo.saveGithubRepoUrls(newSettings.githubRepoUrls)
             settingsRepo.saveGithubMetrics(newSettings.githubMetrics)
             settingsRepo.saveMediaHabits(newSettings.mediaHabits)

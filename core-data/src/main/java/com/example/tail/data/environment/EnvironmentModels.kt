@@ -126,7 +126,7 @@ data class EnvironmentSnapshot(
         fun fromJson(text: String): EnvironmentSnapshot? = runCatching {
             val o = JSONObject(text)
             val d = optD(o)
-            EnvironmentSnapshot(
+            val s = EnvironmentSnapshot(
                 date = o.getString("date"),
                 lat = o.getDouble("lat"),
                 lon = o.getDouble("lon"),
@@ -144,6 +144,17 @@ data class EnvironmentSnapshot(
                 waterHardnessSource = o.optString("waterSrc", ""),
                 fetchedAt = o.optString("fetchedAt", "")
             )
+            // Strip physically impossible zero-padded weather (min = max =
+            // mean = 0 °C with 0 % humidity or 0 hPa pressure) that older
+            // captures stored from the Forecast API. Nulled weather makes the
+            // day "incomplete" so the backlog re-fetches the real values.
+            if (s.tempMinC == 0.0 && s.tempMaxC == 0.0 && s.tempMeanC == 0.0 &&
+                (s.humidityMean == 0.0 || s.pressureMeanHpa == 0.0)
+            ) s.copy(
+                tempMinC = null, tempMaxC = null, tempMeanC = null,
+                humidityMean = null, precipitationMm = null, uvIndexMax = null,
+                pressureMeanHpa = null, windMaxKmh = null
+            ) else s
         }.getOrNull()
 
         private fun optD(o: JSONObject) = { key: String ->

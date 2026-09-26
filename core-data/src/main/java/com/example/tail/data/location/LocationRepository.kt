@@ -194,6 +194,67 @@ class LocationRepository(private val context: Context) {
     }
 
     /**
+     * Returns daily coords with GAPS FILLED: every calendar day between the
+     * earliest and latest recorded coord date inherits the coords of the
+     * NEAREST recorded day (ties → the earlier day). Weather archives serve
+     * any point on Earth back to 1940, so a missing location record should
+     * not leave the environment history blank — on a gap day you were almost
+     * certainly where you were on the closest recorded day. Days OUTSIDE the
+     * recorded span are never invented.
+     */
+    fun getAllStoredCoordsFilled(): Map<String, Pair<Double, Double>> {
+        val recorded = getAllStoredCoords()
+        if (recorded.isEmpty()) return recorded
+        val sortedDays = recorded.keys.mapNotNull {
+            runCatching { java.time.LocalDate.parse(it) }.getOrNull()
+        }.sorted()
+        if (sortedDays.isEmpty()) return recorded
+
+        // Nearest recorded day for EVERY day in the span, in two linear
+        // passes: previous-known (forward) vs next-known (backward).
+        val prevKnown = HashMap<String, String>()   // day → nearest earlier recorded day
+        val nextKnown = HashMap<String, String>()   // day → nearest later recorded day
+        var lastSeen: String? = null
+        var cursor = sortedDays.first()
+        while (!cursor.isAfter(sortedDays.last())) {
+            val ds = cursor.toString()
+            if (ds in recorded) lastSeen = ds else lastSeen?.let { prevKnown[ds] = it }
+            cursor = cursor.plusDays(1)
+        }
+        var nextSeen: String? = null
+        cursor = sortedDays.last()
+        while (!cursor.isBefore(sortedDays.first())) {
+            val ds = cursor.toString()
+            if (ds in recorded) nextSeen = ds else nextSeen?.let { nextKnown[ds] = it }
+            cursor = cursor.minusDays(1)
+        }
+
+        val out = recorded.toMutableMap()
+        val fmt = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
+        cursor = sortedDays.first()
+        while (!cursor.isAfter(sortedDays.last())) {
+            val ds = cursor.toString()
+            if (ds !in out) {
+                val p = prevKnown[ds]
+                val n = nextKnown[ds]
+                val pick = when {
+                    p == null -> n
+                    n == null -> p
+                    else -> {
+                        val pd = java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(p, fmt), cursor)
+                        val nd = java.time.temporal.ChronoUnit.DAYS.between(cursor, java.time.LocalDate.parse(n, fmt))
+                        if (nd < pd) n else p // tie → earlier day
+                    }
+                }
+                val coords = pick?.let { recorded[it] }
+                if (coords != null) out[ds] = coords
+            }
+            cursor = cursor.plusDays(1)
+        }
+        return out
+    }
+
+    /**
      * Returns the entire date-string → label map in ONE SharedPrefs read +
      * ONE JSON parse pass. Used by the world-map screen to build its country
      * cache without re-parsing per-date (which would freeze the UI thread).

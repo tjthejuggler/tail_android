@@ -62,14 +62,21 @@ class EnvironmentBacklogWorker(appContext: Context, params: WorkerParameters) :
 
         if (repair) envRepo.clearAllSnapshots()
 
-        val allCoords = locationRepo.getAllStoredCoords()
+        // Gap-filled coords: every day between the first and last recorded
+        // location inherits the nearest recorded day's position, so the
+        // background backlog captures coord-less days too.
+        val allCoords = locationRepo.getAllStoredCoordsFilled()
         val labels = locationRepo.getAllStoredLabels()
         if (allCoords.isEmpty()) return Result.success()
 
         val today = LocalDate.now()
-        val dates = allCoords.keys.mapNotNull {
+        val recordedDays = allCoords.keys.mapNotNull {
             runCatching { LocalDate.parse(it, DateTimeFormatter.ISO_LOCAL_DATE) }.getOrNull()
-        }.filter { !it.isAfter(today) }.sorted()
+        }.sorted()
+        val spanEnd = if (today.isBefore(recordedDays.last())) today else recordedDays.last()
+        val dates = generateSequence(recordedDays.first()) { it.plusDays(1) }
+            .takeWhile { !it.isAfter(spanEnd) }
+            .toList()
 
         val todo = if (repair) dates else dates.filter { envRepo.needsFetch(it) }
         if (todo.isEmpty()) return Result.success()
@@ -131,6 +138,10 @@ class EnvironmentBacklogWorker(appContext: Context, params: WorkerParameters) :
                     for ((_, snap) in snaps) {
                         for ((habit, metricKey) in settings.environmentHabitMetrics) {
                             val metric = EnvironmentMetric.fromKey(metricKey) ?: continue
+                            // Never resurrect deleted habits — a link whose
+                            // habit is gone from the DB is stale and is pruned
+                            // by the in-app sync on next launch.
+                            if (habit !in db) continue
                             val v = metric.scaledValue(snap, useFahrenheit) ?: continue
                             val entries = (db[habit] ?: mutableMapOf()).toMutableMap()
                             if (entries[snap.date] != v) {

@@ -1585,6 +1585,11 @@ class HabitViewModel(
         // Check if this is a Garmin-linked habit
         val garminTypeStr = _settings.value.garminHabitLinks[habitName]
         val garminType = garminTypeStr?.let { GarminType.fromKey(it) }
+
+        // Environment-linked habit: days without a stored value are UNKNOWN
+        // (no snapshot / no location that day), not zero. Emitting 0 would
+        // plot a physically impossible 0 °C / 0 mm flatline across every gap.
+        val envLinked = _settings.value.environmentHabitMetrics.containsKey(habitName)
         
         // Check if this is a text-input habit
         val isTextInput = isTextInputHabit(habitName)
@@ -1624,6 +1629,11 @@ class HabitViewModel(
         var cursor = startDate
         while (!cursor.isAfter(endDate)) {
             val ds = dateString(cursor)
+            if (envLinked && !entries.containsKey(ds)) {
+                // Leave a real gap in the line instead of a fake zero.
+                cursor = cursor.plusDays(1)
+                continue
+            }
             val raw = entries[ds] ?: 0
             
             // For text-input habits with active filter, convert non-zero values to 0 if text doesn't match
