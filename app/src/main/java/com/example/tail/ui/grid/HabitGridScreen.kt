@@ -130,6 +130,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
@@ -1332,9 +1333,29 @@ fun HabitGridScreen(
                     maxLines = 1,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        // Nudge the text itself up into the gap so it clears
-                        // the tab row below.
-                        .offset(y = (-8).dp)
+                        // The 16dp strip is SHORTER than the text's natural line
+                        // box, so a plain Text here gets measured with
+                        // maxHeight = 16dp and clips glyph bottoms (descenders
+                        // chopped, slivers missing off every letter). Measure the
+                        // text at its UNBOUNDED natural height, but report the
+                        // strip's 16dp size so the surrounding layout is unchanged.
+                        // The strip Box doesn't clip, so the glyphs simply paint
+                        // beyond the 16dp band.
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(
+                                Constraints(
+                                    minWidth = constraints.minWidth,
+                                    maxWidth = constraints.maxWidth
+                                    // height: unbounded — no clipping
+                                )
+                            )
+                            layout(placeable.width, placeable.height) {
+                                placeable.placeRelative(0, 0)
+                            }
+                        }
+                        // Nudge the glyphs up into the gap so the visual text
+                        // clears the tab row below.
+                        .offset(y = (-10).dp)
                         .clickable(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() }
