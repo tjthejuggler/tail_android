@@ -626,16 +626,18 @@ internal fun Modifier.ghostGlassSquares(
                     // Expand the column range past the real grid until the
                     // projected tiles clear the panel on BOTH sides — extra
                     // tiles "come in from the sides" to feed the compression.
+                    // Visibility-EXACT and mirror-symmetric cutoffs: a left
+                    // virtual column is drawn while its RIGHT edge is still
+                    // on-screen; a right virtual column while its LEFT edge
+                    // is still on-screen. (The old -side / width+side
+                    // thresholds were not mirror images at the surface — the
+                    // right kept a sliver-width tile that the left discarded
+                    // by a fraction of a pixel, so the flat top rows showed
+                    // off-screen slivers ONLY on the right edge.)
                     var cFirst = 0
-                    while (true) {
-                        if (colLineX(cFirst - 1, depth) < -side) break
-                        cFirst--
-                    }
+                    while (colLineX(cFirst, depth) > 0f) cFirst--
                     var cLast = GRID_COLUMNS - 1
-                    while (true) {
-                        if (colLineX(cLast + 1, depth) > size.width + side) break
-                        cLast++
-                    }
+                    while (colLineX(cLast + 1, depth) < size.width) cLast++
                     // Shimmer u comes STRAIGHT from the direction's formula
                     // with the raw (possibly negative / ≥ GRID_COLUMNS)
                     // column index — the formulas extrapolate linearly (or

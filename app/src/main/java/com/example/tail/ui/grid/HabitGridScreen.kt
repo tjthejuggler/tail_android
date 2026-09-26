@@ -1328,13 +1328,13 @@ fun HabitGridScreen(
                 Text(
                     text = if (locationAssumed) "$locationLabelStrip *" else (locationLabelStrip ?: " "),
                     color = Color(0xFFCCCCCC),
-                    fontSize = 11.sp,
+                    fontSize = 13.sp,
                     maxLines = 1,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         // Nudge the text itself up into the gap so it clears
                         // the tab row below.
-                        .offset(y = (-2).dp)
+                        .offset(y = (-8).dp)
                         .clickable(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() }
