@@ -246,8 +246,24 @@ class GarminSource(BridgeSource):
         except OSError:
             cache_size_kb = None
 
+        # Staleness guardrail (2026-09-26): a cache whose newest day is more
+        # than ~36 h old means the fetch pipeline (supervisor periodic runs or
+        # Garmin-side failures) has stopped updating it. The dashboard shows
+        # this state in red instead of a reassuring "ok".
+        stale_days = None
+        if dates:
+            try:
+                from datetime import date as _date
+                age = (_date.fromisoformat(today) - _date.fromisoformat(latest_date)).days
+                if age > 1:
+                    stale_days = age
+            except ValueError:
+                pass
+
         return {
-            "status": "ok" if dates else "no_data",
+            "status": ("stale" if stale_days is not None
+                       else "ok" if dates else "no_data"),
+            "stale_days": stale_days,
             "total_days": len(dates),
             "latest_date": latest_date,
             "latest_is_today": latest_date == today,

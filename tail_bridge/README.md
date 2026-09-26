@@ -258,3 +258,19 @@ enable the bridge toggle in Settings and it connects automatically.
 | `GARMIN_CACHE_FILE` | `../garmin_proxy/garmin_cache.json` | Garmin metrics cache path |
 | `STOCKFISH_PATH` | `/usr/games/stockfish` | Stockfish binary for chess analysis |
 | `CHESS_ANALYSIS_NOTIFY` | `1` | Desktop notification (notify-send) after each live Stockfish analysis; `0` disables |
+
+## 2026-09-26 — Garmin sync outage: root cause & fix
+
+Symptom: everything synced except Garmin. Root cause was **phone-side**: the
+app only fetched Garmin metrics while the main UI was open (foreground hook +
+a viewModelScope polling loop that was only started when settings were saved
+and died with the Activity). Movies / PC-widget sync used WorkManager workers
+that run regardless — hence the split behaviour. The PC bridge and Garmin
+proxy were healthy throughout.
+
+Fix: new `GarminSyncWorker` (2 h periodic, network-constrained) keeps the
+phone-local Garmin cache fresh even when the app is closed; scheduled from
+`MainActivity` next to `MovieSyncWorker`. Guardrails: skip-reasons in the app
+are now logged (never silent), and the bridge's `/api/v1/garmin/health` now
+reports `status: "stale"` + `stale_days` when the cache's newest day is >1 day
+old, so the dashboard flags a dead fetch pipeline in red instead of "ok".

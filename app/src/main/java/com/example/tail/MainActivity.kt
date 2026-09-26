@@ -131,6 +131,13 @@ class MainActivity : ComponentActivity() {
         // network-constrained; KEEP policy means re-launches never reset it.
         com.example.tail.notify.MovieSyncWorker.schedule(applicationContext)
 
+        // Keep the phone-local Garmin cache warm even when the app is closed.
+        // Previously Garmin only synced while the main UI was open (foreground
+        // hook + a viewModelScope polling loop that died with the Activity and
+        // was only started when settings were saved) — so Garmin data silently
+        // went stale while movie/PC-widget sync kept working. 2026-09-26.
+        com.example.tail.notify.GarminSyncWorker.schedule(applicationContext)
+
         val debugPrefs = DebugPreferences(applicationContext)
         val debugNoteRepo = DebugNoteRepository(applicationContext, debugPrefs)
 

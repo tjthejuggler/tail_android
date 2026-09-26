@@ -158,9 +158,22 @@ internal fun HabitViewModel.stopGarminPolling() {
  */
 internal suspend fun HabitViewModel.syncGarminCurrentMonth() {
     val s = _settings.value
-    if (!s.garminEnabled || s.garminProxyUrl.isEmpty() || s.garminAppToken.isEmpty()) return
-    if (s.garminHabitLinks.isEmpty()) return
-    if (s.fileUri.isEmpty()) return
+    // Early returns must NOT be silent — a quiet return here was invisible to
+    // the user and made "Garmin not syncing" undiagnosable (2026-09-26).
+    if (!s.garminEnabled || s.garminProxyUrl.isEmpty() || s.garminAppToken.isEmpty()) {
+        Log.w(TAG, "Garmin sync skipped: disabled or unconfigured " +
+            "(enabled=${s.garminEnabled}, urlSet=${s.garminProxyUrl.isNotEmpty()}, " +
+            "tokenSet=${s.garminAppToken.isNotEmpty()})")
+        return
+    }
+    if (s.garminHabitLinks.isEmpty()) {
+        Log.w(TAG, "Garmin sync skipped: no habits linked to Garmin metrics")
+        return
+    }
+    if (s.fileUri.isEmpty()) {
+        Log.w(TAG, "Garmin sync skipped: no habit database file set")
+        return
+    }
 
     try {
         _garminSyncStatus.value = "Syncing Garmin data…"
