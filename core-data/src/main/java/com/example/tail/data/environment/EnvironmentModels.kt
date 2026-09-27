@@ -213,8 +213,8 @@ fun kpIndexClass(kp: Double): String = when {
  * value IS the metric value at ×10 precision (215 = 21.5 °C) — the same
  * storage trick as FITNESS_AGE (×100) and IMDb ratings (×10). Full
  * decimal precision is preserved in the habits DB, so graphs plot the
- * real value once display sites divide by [scale]. Edit-mode/points
- * displays round to the nearest whole number.
+ * real value. Point/count displays show the stored value as-is — scale it
+ * for display with the habit's divider.
  */
 enum class EnvironmentMetric(
     val key: String,
@@ -262,9 +262,6 @@ enum class EnvironmentMetric(
         val unitLabel = if (isTemperature) (if (useFahrenheit) "°F" else "°C") else unit
         return "%.1f $unitLabel".format(scaled / 10.0)
     }
-
-    /** Rounds a stored ×10 Int to the nearest whole number (edit/points). */
-    fun rounded(scaled: Int): Int = Math.round(scaled / 10.0).toInt()
 
     companion object {
         fun fromKey(key: String?): EnvironmentMetric? =

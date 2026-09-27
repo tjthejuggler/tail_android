@@ -2007,8 +2007,6 @@ internal fun EditModeControlBar(
     environmentHabitMetrics: Map<String, String> = emptyMap(),
     environmentUseFahrenheit: Boolean = false,
     onSetEnvironmentMetric: (String, String?) -> Unit = { _, _ -> },
-    /** Rounded display form of today's count for environment-linked habits. */
-    envDisplayCount: String? = null,
     // ── GitHub Integration (rendered by caller, like movieBridgeContent) ──
     githubContent: @Composable () -> Unit = {},
     movieBridgeContent: @Composable () -> Unit = {},
@@ -2265,7 +2263,6 @@ internal fun EditModeControlBar(
                     rollForwardHabits = rollForwardHabits,
                     rollForwardManualDates = rollForwardManualDates,
                     selectedDate = selectedDate,
-                    envDisplayCount = envDisplayCount,
                     onSetCount = onSetCount,
                     onSetCountWithRollForward = onSetCountWithRollForward
                 )
@@ -3426,8 +3423,6 @@ internal fun EditModeHabitHeaderRow(
     rollForwardHabits: Set<String>,
     rollForwardManualDates: Map<String, Set<String>>,
     selectedDate: java.time.LocalDate,
-    /** Display form of today's count — environment habits round ×10 storage. */
-    envDisplayCount: String? = null,
     onSetCount: (String, Int) -> Unit,
     onSetCountWithRollForward: (String, Int, java.time.LocalDate) -> Unit
 ) {
@@ -3483,7 +3478,7 @@ internal fun EditModeHabitHeaderRow(
                     Text("−", fontSize = 14.sp, color = if (selectedHabitRawTodayCount > 0) Color(0xFFFFAA00) else Color(0xFF555555))
                 }
                 Text(
-                    text = envDisplayCount ?: selectedHabitTodayCount.toString(),
+                    text = selectedHabitTodayCount.toString(),
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,

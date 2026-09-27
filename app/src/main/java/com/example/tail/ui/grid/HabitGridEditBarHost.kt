@@ -300,15 +300,6 @@ internal fun EditBarHost(
         environmentHabitMetrics = settings.environmentHabitMetrics,
         environmentUseFahrenheit = settings.environmentTemperatureUnit == "F",
         onSetEnvironmentMetric = { name, metric -> viewModel.setEnvironmentHabitMetric(name, metric) },
-        envDisplayCount = selectedHabitName?.let { name ->
-            settings.environmentHabitMetrics[name]
-                ?.let { com.example.tail.data.environment.EnvironmentMetric.fromKey(it) }
-                ?.let { metric ->
-                    // Plain whole number in the unit the squares store — no
-                    // decimals, no "°C"/"°F" suffix in the count/points setter.
-                    metric.rounded(selectedHabitTodayCount).toString()
-                }
-        },
         garminDateOfBirth = settings.garminDateOfBirth,
         githubContent = {
             if (settings.githubEnabled && selectedHabitName != null) {

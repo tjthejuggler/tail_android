@@ -104,11 +104,12 @@ import kotlin.math.roundToInt
 
 enum class GraphTimePeriod(val label: String, val days: Int?) {
     WEEK("1W", 7),
-    TWO_WEEKS("2W", 14),
     MONTH("1M", 30),
     THREE_MONTHS("3M", 90),
     SIX_MONTHS("6M", 180),
     YEAR("1Y", 365),
+    FIVE_YEARS("5Y", 1826),
+    TEN_YEARS("10Y", 3652),
     MAX("Max", null)
 }
 

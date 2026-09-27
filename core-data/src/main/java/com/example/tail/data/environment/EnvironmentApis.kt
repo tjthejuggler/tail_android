@@ -345,12 +345,15 @@ object EnvironmentApis {
     // ── Geomagnetic activity (NOAA SWPC) ───────────────────────────────────
 
     /**
-     * Fetches the NOAA 1-minute planetary K-index feed and returns the max Kp
-     * observed on [date], or null if the date is outside the feed (~30 days)
-     * or the fetch failed.
+     * Fetches the NOAA planetary K-index feed and returns the max Kp
+     * observed on [date], or null if the date is outside the feed window
+     * (currently ~7 days of 3-hourly values) or the fetch failed.
      *
-     * Feed format: header row ["time_tag","Kp","observed","noaa_scale"] then
-     * one row per minute with values like "3.33" or "-1.0" (no data).
+     * Feed format (changed 2026, verified live): an array of JSON objects
+     * {"time_tag":"2026-09-19T00:00:00","Kp":2.33,...} with 3-hourly slots.
+     * The legacy format (header row ["time_tag","Kp",...] then one array per
+     * minute with values like "3.33" or "-1.0" = no data) is still parsed as
+     * a fallback in case NOAA serves the old product again.
      */
     suspend fun fetchKpMax(date: LocalDate): Double? = withContext(Dispatchers.IO) {
         val body = httpGet(
@@ -360,13 +363,25 @@ object EnvironmentApis {
             val arr = JSONArray(body)
             val prefix = date.toString()
             var max: Double? = null
-            for (i in 1 until arr.length()) { // skip header row
-                val row = arr.getJSONArray(i)
-                val time = row.getString(0)
-                if (!time.startsWith(prefix)) continue
-                val kp = row.optString(1, "").toDoubleOrNull() ?: continue
-                if (kp < 0) continue // "-1.0" = estimated/missing slot
-                if (max == null || kp > max) max = kp
+            if (arr.length() > 0 && arr.get(0) is JSONObject) {
+                // New format: array of {"time_tag", "Kp", ...} objects.
+                for (i in 0 until arr.length()) {
+                    val row = arr.getJSONObject(i)
+                    if (!row.optString("time_tag").startsWith(prefix)) continue
+                    val kp = row.optDouble("Kp", Double.NaN)
+                    if (kp.isNaN() || kp < 0) continue
+                    if (max == null || kp > max) max = kp
+                }
+            } else {
+                // Legacy format: header row + one array per slot.
+                for (i in 1 until arr.length()) { // skip header row
+                    val row = arr.getJSONArray(i)
+                    val time = row.getString(0)
+                    if (!time.startsWith(prefix)) continue
+                    val kp = row.optString(1, "").toDoubleOrNull() ?: continue
+                    if (kp < 0) continue // "-1.0" = estimated/missing slot
+                    if (max == null || kp > max) max = kp
+                }
             }
             max
         }.onFailure { Log.w(TAG, "kp parse failed: ${it.message}") }.getOrNull()

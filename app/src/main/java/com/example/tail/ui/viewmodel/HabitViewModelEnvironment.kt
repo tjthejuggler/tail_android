@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.example.tail.data.AppSettings
+import com.example.tail.data.HabitScreen
 import com.example.tail.data.environment.EnvironmentMetric
 import com.example.tail.data.environment.EnvironmentSnapshot
 import com.example.tail.data.environment.WaterHardnessLlm
@@ -59,6 +60,9 @@ fun HabitViewModel.initEnvironmentCapture() {
         // case where an init-time capture was skipped by the anti-wipe gate
         // because the DB was still loading.
         launch { resyncEnvironmentHabits() }
+        // Backfill: one habit square per environment metric option on the
+        // env screen (only for metrics the user hasn't already made).
+        launch { ensureAllEnvironmentMetricHabits() }
     }
 }
 
@@ -243,10 +247,132 @@ internal suspend fun HabitViewModel.syncEnvironmentHabits(
 
 // ── Habit-link management ───────────────────────────────────────────────────
 
+/** The dedicated screen environment-linked habit squares are placed on. */
+const val ENVIRONMENT_SCREEN_NAME = "environment"
+
 /**
- * Links/unlinks a habit to an environment metric. On link, all stored
- * snapshots are synced into the habit immediately so its graph is complete
- * without waiting for new days.
+ * Ensures a square for [habitName] exists on the "environment" screen,
+ * creating that screen first when it doesn't exist yet. Existing squares
+ * (on any screen) are left untouched — this only fills the gap.
+ *
+ * Returns the updated screens list, or null when nothing changed.
+ */
+fun HabitViewModel.ensureEnvironmentScreenSquare(habitName: String): List<HabitScreen>? {
+    val screens = _habitScreens.value.toMutableList()
+    if (screens.isEmpty()) return null // flat (no-screens) mode: nothing to do
+
+    // Already placed somewhere? Don't duplicate or move it.
+    if (screens.any { habitName in it.habitNames }) return null
+
+    val envIdx = screens.indexOfFirst { it.name.contains("env", ignoreCase = true) }
+    if (envIdx >= 0) {
+        screens[envIdx] = screens[envIdx].copy(
+            habitNames = screens[envIdx].habitNames + habitName
+        )
+    } else {
+        screens.add(
+            HabitScreen(
+                id = java.util.UUID.randomUUID().toString(),
+                name = ENVIRONMENT_SCREEN_NAME,
+                habitNames = listOf(habitName)
+            )
+        )
+    }
+    _habitScreens.value = screens
+    screenHabitCache.clear() // stale (screen index, date) → list mappings
+    viewModelScope.launch { rebuildHabitList() }
+    persistScreens(screens)
+    return screens
+}
+
+/**
+ * Backfills the environment feature: EVERY [EnvironmentMetric] option gets
+ * a habit (named after the metric's label) linked to it, flagged "don't
+ * affect points", and placed as a square on the env screen. Metrics the
+ * user has already linked a habit to are left completely untouched.
+ * Runs at every init; idempotent.
+ */
+fun HabitViewModel.ensureAllEnvironmentMetricHabits() {
+    viewModelScope.launch {
+        if (!awaitDbLoaded()) return@launch
+        awaitSettingsLoaded()
+        val s = _settings.value
+        if (s.fileUri.isEmpty()) return@launch
+
+        val linkedMetricKeys = s.environmentHabitMetrics.values.toSet()
+        val missing = EnvironmentMetric.entries.filter { it.key !in linkedMetricKeys }
+        if (missing.isEmpty()) return@launch
+
+        val uri = Uri.parse(s.fileUri)
+        val links = s.environmentHabitMetrics.toMutableMap()
+        val noPoints = s.noPointsHabits.toMutableSet()
+        try {
+            for (metric in missing) {
+                val name = metric.label
+                if (name !in cachedPhoneDb) {
+                    habitsRepo.addHabitToFiles(listOf(uri), context, name)
+                }
+                links[name] = metric.key
+                noPoints.add(name)
+            }
+            // Reload DB so the new habits (and their synced values) exist.
+            cachedPhoneDb = habitsRepo.ensureDaysExist(uri, context)
+        } catch (e: Exception) {
+            Log.w(TAG, "Environment metric backfill failed: ${e.message}")
+            return@launch
+        }
+
+        settingsRepo.saveEnvironmentHabitMetrics(links)
+        settingsRepo.saveNoPointsHabits(noPoints)
+        _settings.value = _settings.value.copy(
+            environmentHabitMetrics = links,
+            noPointsHabits = noPoints
+        )
+
+        // One batched screen update: every metric option without a square
+        // gets one on the env screen (created when absent). Habits already
+        // placed on any screen are not duplicated or moved.
+        val screens = _habitScreens.value.toMutableList()
+        if (screens.isNotEmpty()) {
+            var envIdx = screens.indexOfFirst { it.name.contains("env", ignoreCase = true) }
+            if (envIdx < 0) {
+                screens.add(
+                    HabitScreen(
+                        id = java.util.UUID.randomUUID().toString(),
+                        name = ENVIRONMENT_SCREEN_NAME,
+                        habitNames = emptyList()
+                    )
+                )
+                envIdx = screens.size - 1
+            }
+            val placed = screens.flatMap { it.habitNames }.toSet()
+            val toPlace = missing.map { it.label }.filter { it !in placed }
+            if (toPlace.isNotEmpty()) {
+                screens[envIdx] = screens[envIdx].copy(
+                    habitNames = screens[envIdx].habitNames + toPlace
+                )
+                _habitScreens.value = screens
+                screenHabitCache.clear()
+                persistScreens(screens)
+            }
+        }
+
+        // Fill the new habits' history from the stored snapshots, then
+        // refresh the grid so the new squares carry their values.
+        syncEnvironmentHabits(environmentRepo.getAllSnapshots().mapValues { it.value })
+        rebuildHabitList()
+        Log.i(TAG, "Environment backfill: added ${missing.size} metric habit(s): ${missing.map { it.label }}")
+    }
+}
+
+/**
+ * Links/unlinks a habit to an environment metric. On link:
+ *  · the "Don't affect points" flag is enabled automatically (environment
+ *    metrics are observations, not achievements — the user can turn it off
+ *    afterwards, but linking never silently re-enables it),
+ *  · a square is placed on the "environment" screen when the habit has none,
+ *  · all stored snapshots are synced into the habit immediately so its graph
+ *    is complete without waiting for new days.
  */
 fun HabitViewModel.setEnvironmentHabitMetric(habitName: String, metricKey: String?) {
     viewModelScope.launch {
@@ -255,8 +381,19 @@ fun HabitViewModel.setEnvironmentHabitMetric(habitName: String, metricKey: Strin
         settingsRepo.saveEnvironmentHabitMetrics(links)
         _settings.value = _settings.value.copy(environmentHabitMetrics = links)
 
-        // Sync the full stored history into the (un)linked habit's squares.
         if (metricKey != null) {
+            // Default the freshly-linked environment habit to "don't affect
+            // points" so huge metric values never distort daily totals.
+            if (habitName !in _settings.value.noPointsHabits) {
+                val noPoints = _settings.value.noPointsHabits + habitName
+                _settings.value = _settings.value.copy(noPointsHabits = noPoints)
+                settingsRepo.saveNoPointsHabits(noPoints)
+            }
+            // Auto-place a square on the environment screen (no-op when the
+            // habit already has one elsewhere or screens aren't in use).
+            ensureEnvironmentScreenSquare(habitName)
+
+            // Sync the full stored history into the linked habit's squares.
             syncEnvironmentHabits(
                 environmentRepo.getAllSnapshots().mapValues { it.value }
             )
