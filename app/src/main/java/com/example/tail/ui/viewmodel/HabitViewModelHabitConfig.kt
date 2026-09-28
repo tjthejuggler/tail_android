@@ -950,6 +950,31 @@ fun HabitViewModel.loadSubtypeBreakdown(habitName: String, onLoaded: (Map<String
 }
 
 /**
+ * Loads everything the GRAPH selected-point tooltip needs for a subtyped
+ * habit on an arbitrary date: the per-SESSION subtype labels
+ * ("HH:mm:ss" → "chinups ×5 · wide ×5") and the day-level subtype totals
+ * (subtype → count). Non-subtyped habits call back with empty maps.
+ */
+fun HabitViewModel.loadSubtypeSessionInfoForGraph(
+    habitName: String,
+    date: java.time.LocalDate,
+    onLoaded: (sessions: List<Pair<String, String>>, dayTotals: Map<String, Int>) -> Unit
+) {
+    if (habitName !in _settings.value.subtypedHabits) {
+        onLoaded(emptyList(), emptyMap())
+        return
+    }
+    viewModelScope.launch {
+        val dateStr = com.example.tail.data.dateString(date)
+        val dayTotals = subtypeDataRepo.getBreakdownForDate(habitName, dateStr)
+        val timestamps = timestampRepo.getTimestampsForDay(habitName, date)
+        loadSubtypeTimestampLabels(habitName, date, timestamps) { labels ->
+            onLoaded(labels.entries.sortedBy { it.key }.map { it.key to it.value }, dayTotals)
+        }
+    }
+}
+
+/**
  * Builds the per-timestamp SUBTYPE labels shown in the timestamp editor for a
  * subtyped habit (e.g. Pullups): "HH:mm:ss" → "chinups ×5 · wide ×3".
  *
@@ -1053,8 +1078,14 @@ fun HabitViewModel.saveSubtypeIncrement(habitName: String, increments: Map<Strin
         subtypeDataRepo.addToDate(habitName, dateStr, increments)
     }
 
-    // If this is a timed habit, also record timestamped session entries
-    if (habitName in _settings.value.timedHabits) {
+    // If this is a timed habit OR a subtyped habit, also record timestamped
+    // session entries. SUBTYPED habits need this even when they are not in
+    // `timedHabits`: the per-timestamp subtype attribution (editor badges,
+    // graph session breakdowns) lives in the timed store — gating on
+    // timedHabits alone silently starved it (regression, 2026-09-28).
+    if (habitName in _settings.value.timedHabits ||
+        habitName in _settings.value.subtypedHabits
+    ) {
         viewModelScope.launch {
             // Each subtype increment becomes a separate timed entry
             // (key type widened to String? since plain timed entries have no subtype)
@@ -1084,8 +1115,11 @@ fun HabitViewModel.confirmPendingSubtypeFeed(habitName: String, subtype: String)
         subtypeDataRepo.addToDate(habitName, dateStr, mapOf(subtype to feed.amount))
     }
 
-    // If this is a timed habit, also record a timestamped session entry
-    if (habitName in _settings.value.timedHabits) {
+    // If this is a timed habit OR subtyped habit, also record a timestamped
+    // session entry (same widened gate as saveSubtypeIncrement).
+    if (habitName in _settings.value.timedHabits ||
+        habitName in _settings.value.subtypedHabits
+    ) {
         viewModelScope.launch {
             timedDataRepo.appendEntries(
                 habitName, mapOf<String?, Int>(subtype to feed.amount)

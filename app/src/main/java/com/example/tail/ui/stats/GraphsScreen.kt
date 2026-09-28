@@ -83,6 +83,7 @@ import com.example.tail.ui.viewmodel.isGithubHabit
 import com.example.tail.ui.viewmodel.isMaxOneHabit
 import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
 import com.example.tail.ui.viewmodel.isSleepHabit
+import com.example.tail.ui.viewmodel.loadSubtypeSessionInfoForGraph
 import com.example.tail.ui.viewmodel.isWeightsHabit
 import com.example.tail.ui.viewmodel.migrateValue1ToMinutesPrimary
 import com.example.tail.ui.viewmodel.navigateToDate
@@ -187,6 +188,10 @@ fun GraphsPanel(
     var datedEntriesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
     var imdbRatingsForPoint by remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
     var commitMessagesForPoint by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Subtyped habits: per-session subtype labels + day totals for the
+    // selected graph point (loads asynchronously, like the text entries).
+    var subtypeSessionsForPoint by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var subtypeDayTotalsForPoint by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     
     // Text filter state
     var showFilterDialog by remember { mutableStateOf(false) }
@@ -218,6 +223,8 @@ fun GraphsPanel(
         datedEntriesForPoint = emptyList()
         imdbRatingsForPoint = emptyMap()
         commitMessagesForPoint = emptyList()
+        subtypeSessionsForPoint = emptyList()
+        subtypeDayTotalsForPoint = emptyMap()
         
         // Load text entries for text-input habits into the cache
         graphSelectedHabits.forEach { habitName ->
@@ -260,11 +267,18 @@ fun GraphsPanel(
             } else {
                 commitMessagesForPoint = emptyList()
             }
+            // Subtyped habits: per-session subtype labels + day totals
+            viewModel.loadSubtypeSessionInfoForGraph(point.habitName, point.date) { sessions, totals ->
+                subtypeSessionsForPoint = sessions
+                subtypeDayTotalsForPoint = totals
+            }
         } else {
             textEntriesForPoint = emptyList()
             datedEntriesForPoint = emptyList()
             imdbRatingsForPoint = emptyMap()
             commitMessagesForPoint = emptyList()
+            subtypeSessionsForPoint = emptyList()
+            subtypeDayTotalsForPoint = emptyMap()
         }
     }
 
@@ -703,6 +717,38 @@ fun GraphsPanel(
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold
                                     )
+                                }
+                            }
+                        }
+
+                        // Subtype breakdown — day totals plus per-session
+                        // attribution for subtyped habits (e.g. Pullups).
+                        if (subtypeDayTotalsForPoint.isNotEmpty() || subtypeSessionsForPoint.isNotEmpty()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
+                            ) {
+                                HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                if (subtypeDayTotalsForPoint.isNotEmpty()) {
+                                    Text(
+                                        text = "Subtypes: " + subtypeDayTotalsForPoint.entries
+                                            .joinToString("  ·  ") { "${it.key} ×${it.value}" },
+                                        color = Color(0xFFCC99FF),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                if (subtypeSessionsForPoint.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    subtypeSessionsForPoint.forEach { (time, label) ->
+                                        Text(
+                                            text = "$time — $label",
+                                            color = Color(0xFF889988),
+                                            fontSize = 10.sp
+                                        )
+                                    }
                                 }
                             }
                         }
