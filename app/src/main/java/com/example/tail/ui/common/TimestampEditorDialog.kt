@@ -102,6 +102,10 @@ fun TimestampEditorDialog(
      *  without an entry fall back to the group's unit count (manual +N
      *  increments store one unit per minute). */
     minutesByTime: Map<String, Int> = emptyMap(),
+    /** Subtype label per timestamp (`"HH:mm:ss" -> "chinups ×5"`) for
+     *  subtyped habits — makes it obvious WHICH pullup variant each logged
+     *  time was. Empty for non-subtyped habits. */
+    subtypeLabelsByTime: Map<String, String> = emptyMap(),
     /** Re-time every increment at [oldTime] to [newTime]. */
     onUpdateTimeGroup: (oldTime: String, newTime: String) -> Unit,
     /** Delete every increment at [time]. */
@@ -202,16 +206,30 @@ fun TimestampEditorDialog(
                 // timestamps AND no text entries. Text-only days (e.g. a
                 // past movie logged by the bridge) still render their cards.
                 if (groups.isEmpty() && editingTime != addNewSentinel) {
-                    Text(
-                        text = "No timestamps recorded for today.",
-                        fontSize = 12.sp,
-                        color = Color(0xFF666666)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF101014), RoundedCornerShape(10.dp))
+                            .border(1.dp, Color(0xFF2A2A34), RoundedCornerShape(10.dp))
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = "No timestamps recorded for today.",
+                            fontSize = 12.sp,
+                            color = Color(0xFF666666)
+                        )
+                    }
                 } else {
+                    // Recessed, slightly darker well for the scrollable cards —
+                    // visually separated from the action bar below (which sits
+                    // on an elevated translucent panel).
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 380.dp)
+                            .background(Color(0xFF101014), RoundedCornerShape(10.dp))
+                            .border(1.dp, Color(0xFF2A2A34), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 4.dp, vertical = 6.dp)
                     ) {
                         itemsIndexed(groups, key = { _, g -> g.time }) { index, group ->
                             if (editingTime == group.time) {
@@ -249,6 +267,7 @@ fun TimestampEditorDialog(
                                     group = group,
                                     index = index,
                                     text = textEntries[group.time].orEmpty(),
+                                    subtypeLabel = subtypeLabelsByTime[group.time].orEmpty(),
                                     isEditing = editingCard == group.time,
                                     isMealHabit = isMealHabit,
                                     isMovieHabit = isMovieHabit,
@@ -341,8 +360,27 @@ fun TimestampEditorDialog(
                     }
                 }
 
+                // Hairline separator between the scroll well and the actions.
+                Spacer(modifier = Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(Color(0xFF2E2E3A))
+                )
                 Spacer(modifier = Modifier.height(8.dp))
 
+                // ── Action bar: elevated translucent panel ──────────────────
+                // Slightly lighter than the scroll well above + hairline
+                // border, so the persistent controls read as a distinct
+                // foreground layer.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF20242E), RoundedCornerShape(10.dp))
+                        .border(1.dp, Color(0xFF3A4250), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 8.dp, vertical = 8.dp)
+                ) {
                 // "Add Time" button — only when nothing is being edited
                 if (editingTime == null && editingCard == null && movingTime == null) {
                     Row {
@@ -396,6 +434,7 @@ fun TimestampEditorDialog(
                         onCancel = { movingTime = null }
                     )
                 }
+                } // end of action-bar panel
             }
         },
         confirmButton = {
@@ -426,6 +465,7 @@ private fun TimestampCard(
     group: TimeGroup,
     index: Int,
     text: String,
+    subtypeLabel: String,
     isEditing: Boolean,
     isMealHabit: Boolean,
     isMovieHabit: Boolean,
@@ -537,6 +577,20 @@ private fun TimestampCard(
                     modifier = Modifier.size(16.dp)
                 )
             }
+        }
+
+        // ── Subtype badge (subtyped habits, e.g. pullup variants) ──
+        if (subtypeLabel.isNotBlank()) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtypeLabel,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFCCAAFF),
+                modifier = Modifier
+                    .background(Color(0xFF2A1A3A), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            )
         }
 
         // ── Text preview (abbreviated, expandable; songs tap-to-play) ──

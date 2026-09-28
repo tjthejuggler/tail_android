@@ -234,6 +234,7 @@ import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
 import com.example.tail.ui.viewmodel.confirmPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.isMovieBridgeHabit
 import com.example.tail.ui.viewmodel.loadSubtypeBreakdown
+import com.example.tail.ui.viewmodel.loadSubtypeTimestampLabels
 import com.example.tail.ui.viewmodel.skipPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.moveHabitDayInstances
 import com.example.tail.ui.viewmodel.moveMovieEntryTime
@@ -954,6 +955,9 @@ fun HabitGridScreen(
     // Per-timestamp minutes (`"HH:mm:ss" -> minutes`) for the open editor —
     // loaded only for minutes-primary habits (see TimestampEditorDialog).
     var timestampEditorMinutes by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    // Subtype label per time-of-day ("HH:mm:ss" → "chinups ×5") for subtyped
+    // habits — shown as a badge on each timestamp card (see TimestampEditorDialog).
+    var timestampEditorSubtypes by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     // Text entries for the currently selected edit-mode habit (for view/edit in edit bar)
     var editModeTextEntries by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     // Schedule block details popup: the tapped block + its instance texts
@@ -1927,7 +1931,8 @@ fun HabitGridScreen(
                         setEditModeTextEntries = { editModeTextEntries = it },
                         setTimestampHabit = { timestampEditorHabitName = it },
                         setTimestampList = { timestampEditorList = it },
-                        setTimestampMinutes = { timestampEditorMinutes = it }
+                        setTimestampMinutes = { timestampEditorMinutes = it },
+                        setTimestampSubtypes = { timestampEditorSubtypes = it }
                     )
                 }
             }
@@ -2161,6 +2166,7 @@ fun HabitGridScreen(
                             viewModel.timestampRepo.getMinutesForDay(habitName, selectedDate)
                         } else emptyMap()
                     timestampEditorHabitName = habitName
+                    timestampEditorSubtypes = emptyMap()
                     // Clear stale text entries first so the editor never
                     // briefly shows another habit's log (e.g. movie
                     // titles), then load this habit's — discarding
@@ -2171,6 +2177,15 @@ fun HabitGridScreen(
                             if (timestampEditorHabitName == habitName) {
                                 editModeTextEntries = entries
                             }
+                        }
+                    }
+                    // Subtyped habits: badge each card with the subtype(s)
+                    // logged at that time.
+                    viewModel.loadSubtypeTimestampLabels(
+                        habitName, selectedDate, timestampEditorList
+                    ) { labels ->
+                        if (timestampEditorHabitName == habitName) {
+                            timestampEditorSubtypes = labels
                         }
                     }
                 }
@@ -2192,6 +2207,7 @@ fun HabitGridScreen(
             canEditText = habitName in settings.textInputHabits,
             isMinutesPrimary = viewModel.isMinutesPrimaryHabit(habitName),
             minutesByTime = timestampEditorMinutes,
+            subtypeLabelsByTime = timestampEditorSubtypes,
             viewedDate = selectedDate,
             onMoveTimeGroupToDay = { time, toDate ->
                 timestampScope.launch {

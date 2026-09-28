@@ -950,6 +950,87 @@ fun HabitViewModel.loadSubtypeBreakdown(habitName: String, onLoaded: (Map<String
 }
 
 /**
+ * Builds the per-timestamp SUBTYPE labels shown in the timestamp editor for a
+ * subtyped habit (e.g. Pullups): "HH:mm:ss" → "chinups ×5 · wide ×3".
+ *
+ * Source of truth is the timed-session store ([TimedDataRepository]) — every
+ * subtyped increment records one entry per subtype there, stamped at its own
+ * moment (same-second entries get a ".N" key suffix that is folded back into
+ * the base time-of-day). The timed stamp can lag the increment's own timestamp
+ * by a second or two (two separate "now" reads), so each entry is matched to
+ * the day's increment timestamp list: exact second first, else the nearest
+ * within 60s. Non-subtyped habits and days without timed data get an empty
+ * map (no labels shown).
+ */
+fun HabitViewModel.loadSubtypeTimestampLabels(
+    habitName: String,
+    date: java.time.LocalDate,
+    timestamps: List<String>,
+    onLoaded: (Map<String, String>) -> Unit
+) {
+    if (habitName !in _settings.value.subtypedHabits) {
+        onLoaded(emptyMap())
+        return
+    }
+    viewModelScope.launch {
+        val dateStr = com.example.tail.data.dateString(date)
+        val prefix = "$dateStr "
+        // Base time-of-day ("HH:mm:ss", ".N" suffix stripped) → subtype entries.
+        val byTimeOfDay: Map<String, List<com.example.tail.data.TimedEntry>> =
+            timedDataRepo.loadTimedData(habitName)
+                .filterKeys { it.startsWith(prefix) }
+                .entries
+                .groupBy(
+                    { (key, _) -> key.removePrefix(prefix).substringBefore('.') },
+                    { (_, entry) -> entry }
+                )
+                .filterValues { entries -> entries.any { it.subtype != null } }
+
+        if (byTimeOfDay.isEmpty()) {
+            onLoaded(emptyMap())
+            return@launch
+        }
+
+        fun toSeconds(t: String): Int? = runCatching {
+            val p = t.split(':')
+            if (p.size < 2) return@runCatching null
+            p[0].toInt() * 3600 + p[1].toInt() * 60 +
+                (p.getOrNull(2)?.toIntOrNull() ?: 0)
+        }.getOrNull()
+
+        val result = mutableMapOf<String, String>()
+        for ((timeOfDay, entries) in byTimeOfDay) {
+            val perSubtypeTotals: Map<String, Int> = entries
+                .filter { it.subtype != null }
+                .groupBy { key -> key.subtype!! }
+                .mapValues { (_, list) -> list.sumOf { it.count } }
+            val label: String = perSubtypeTotals.entries
+                .joinToString(separator = " · ") { (subtype, n) ->
+                    if (n > 1) "$subtype ×$n" else subtype
+                }
+            if (label.isEmpty()) continue
+            if (timestamps.contains(timeOfDay)) {
+                result[timeOfDay] = label
+            } else {
+                // Timed stamp drifted from the increment stamp: attach to the
+                // nearest increment timestamp of the day (within 60 seconds).
+                val target = toSeconds(timeOfDay) ?: continue
+                val nearest = timestamps.distinct()
+                    .mapNotNull { t -> toSeconds(t)?.let { t to it } }
+                    .filter { (_, s) -> kotlin.math.abs(s - target) <= 60 }
+                    .minByOrNull { (_, s) -> kotlin.math.abs(s - target) }
+                    ?.first
+                if (nearest != null) {
+                    // Merge if that timestamp already carries a label.
+                    result[nearest] = result[nearest]?.let { "$it · $label" } ?: label
+                }
+            }
+        }
+        onLoaded(result)
+    }
+}
+
+/**
  * Saves a subtype increment: adds [increments] to the internal subtype store for today,
  * and increments the main habit count by the total.
  */

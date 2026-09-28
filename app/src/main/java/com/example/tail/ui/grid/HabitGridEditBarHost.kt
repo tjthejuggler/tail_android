@@ -135,7 +135,8 @@ internal fun EditBarHost(
     setEditModeTextEntries: (List<Pair<String, String>>) -> Unit,
     setTimestampHabit: (String?) -> Unit,
     setTimestampList: (List<String>) -> Unit,
-    setTimestampMinutes: (Map<String, Int>) -> Unit
+    setTimestampMinutes: (Map<String, Int>) -> Unit,
+    setTimestampSubtypes: (Map<String, String>) -> Unit
 ) {
     val garminMonthlyData by viewModel.garminMonthlyData.collectAsState()
     val githubSyncStatus by viewModel.githubSyncStatus.collectAsState()
@@ -366,6 +367,7 @@ internal fun EditBarHost(
                 scope = timestampScope,
                 setList = setTimestampList,
                 setMinutes = setTimestampMinutes,
+                setSubtypes = setTimestampSubtypes,
                 setHabitName = setTimestampHabit,
                 setTextEntries = setEditModeTextEntries
             )

@@ -9,6 +9,7 @@ import com.example.tail.ui.loading.LoadingMetrics
 import com.example.tail.ui.viewmodel.HabitViewModel
 import com.example.tail.ui.viewmodel.incrementHabitWithRollForward
 import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
+import com.example.tail.ui.viewmodel.loadSubtypeTimestampLabels
 import com.example.tail.ui.viewmodel.loadTextOptions
 import com.example.tail.ui.viewmodel.saveTextEntries
 import com.example.tail.ui.viewmodel.setTextEntriesForDateWithRollForward
@@ -157,11 +158,19 @@ internal fun showTimestampsForHabit(
     scope: kotlinx.coroutines.CoroutineScope,
     setList: (List<String>) -> Unit,
     setMinutes: (Map<String, Int>) -> Unit,
+    setSubtypes: (Map<String, String>) -> Unit,
     setHabitName: (String?) -> Unit,
     setTextEntries: (List<Pair<String, String>>) -> Unit
 ) {
     scope.launch {
-        setList(viewModel.timestampRepo.getTimestampsForDay(name, selectedDate))
+        val dayTimestamps = viewModel.timestampRepo.getTimestampsForDay(name, selectedDate)
+        setList(dayTimestamps)
+        // Subtyped habits: badge each card with the subtype(s) logged at
+        // that time (e.g. "chinups ×5") so the variant is obvious.
+        setSubtypes(emptyMap())
+        viewModel.loadSubtypeTimestampLabels(name, selectedDate, dayTimestamps) { labels ->
+            setSubtypes(labels)
+        }
         setMinutes(
             if (viewModel.isMinutesPrimaryHabit(name)) {
                 viewModel.timestampRepo.getMinutesForDay(name, selectedDate)
