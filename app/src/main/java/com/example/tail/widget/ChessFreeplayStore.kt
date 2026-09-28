@@ -231,6 +231,25 @@ object ChessFreeplayStore {
 
     // ── Grants journal (append-only week indexes) ──────────────────────────
 
+    /**
+     * EAGER weekly accrual for the Monday-midnight alarm
+     * ([ChessFreeplayAlarmReceiver]): settles every expired provisional
+     * spend, sweeps the grants journal for the newly-started week, and
+     * returns the resulting balance. Purely a driver around the exact
+     * same lazy logic every reader already runs — idempotent, safe to
+     * call at any time.
+     */
+    fun accrueWeekly(context: Context): Int {
+        return try {
+            settleExpired(context)
+            accrueLazy(context)
+            available(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "eager weekly accrual failed", e)
+            available(context)
+        }
+    }
+
     /** Distinct ISO week indexes ever granted (ascending order). */
     fun grantWeeks(context: Context): List<Long> {
         accrueLazy(context)
@@ -266,10 +285,15 @@ object ChessFreeplayStore {
         }
         val current = weekIndexOf(nowMs)
         // Sweep horizon: the newest week ever processed — granted OR
-        // skipped — so skipped weeks are not re-examined.
+        // skipped — so skipped weeks are not re-examined. NOTE: an absent
+        // or EMPTY skipped journal must NOT default to `current` — that
+        // made lastProcessed == current on fresh installs (no skips yet),
+        // so the sweep always returned early and weekly tickets were
+        // never granted by accrual (user report 2026-09-28). Default to
+        // the granted journal's max / nothing instead.
         val lastProcessed = maxOf(
-            existing.lastOrNull() ?: current,
-            readLongs(p, KEY_SKIPPED_WEEKS)?.maxOrNull() ?: current
+            existing.lastOrNull() ?: Long.MIN_VALUE,
+            (readLongs(p, KEY_SKIPPED_WEEKS) ?: emptyList()).maxOrNull() ?: Long.MIN_VALUE
         )
         if (current <= lastProcessed) return
         // SANITY VALVE: the journals must only ever hold sane week

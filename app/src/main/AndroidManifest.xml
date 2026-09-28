@@ -624,6 +624,22 @@
         </receiver>
 
         <!--
+            ChessFreeplayAlarmReceiver: weekly EAGER accrual of the chess
+            freeplay ticket — fires just after midnight at the start of
+            each ISO week (Monday 00:05) so the ticket is banked the
+            moment the week begins, instead of waiting for the next lazy
+            store read. Re-schedules after a reboot; missed alarms are
+            still covered by the lazy accrual every reader runs.
+        -->
+        <receiver
+            android:name=".widget.ChessFreeplayAlarmReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
             AppStatsAlarmReceiver: fires the daily evening check for the
             app-stats record notifications ("close to a new record" /
             "new all-time record" notices — see AppStatsRecordEngine) and
