@@ -2527,18 +2527,50 @@ class FloatingBubbleService : Service() {
                 val postGameYellow = try {
                     ChessEnforcementPolicy.freeplayBlockedByPostGameYellow(this)
                 } catch (_: Throwable) { false }
-                if (freeplayCredits > 0 && !postGameYellow) {
+                // Pending settlements exist even when the derived balance is
+                // 0 — the async settle above has not landed yet. Showing
+                // NOTHING in that state made a pending refund look like a
+                // stolen ticket ("won but my freeplay is gone", 2026-09-28);
+                // the settle actually landed seconds after the menu rendered.
+                val freeplayPending = try {
+                    ChessFreeplayStore.pendingSettlementCount(this)
+                } catch (_: Throwable) { 0 }
+                if (freeplayCredits == 0 && freeplayPending > 0) {
+                    val settlingItem = TextView(this).apply {
+                        text = "🎟 Freeplay settling… ($freeplayPending refund pending)"
+                        textSize = 14f
+                        setTextColor(Color.WHITE)
+                        gravity = Gravity.CENTER
+                        setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+                        background = GradientDrawable().apply {
+                            setColor(0xFF3A2A10.toInt())
+                            cornerRadius = 8f * density
+                            setStroke(1, 0xFFCCAA44.toInt())
+                        }
+                    }
+                    menu.addView(settlingItem, LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        bottomMargin = 6.dp()
+                    })
+                }
+                if (freeplayCredits > 0) {
                     // Show provisional (unsettled) spends so a refunded-later
                     // credit is never mistaken for a permanently spent one
-                    // (2026-09-24 confusion report).
-                    val pending = try {
-                        ChessFreeplayStore.pendingSettlementCount(this)
-                    } catch (_: Throwable) { 0 }
+                    // (2026-09-24 confusion report). A POST-GAME Yellow no
+                    // longer HIDES the item — the spend stays blocked (user
+                    // rule 2026-09-24) but a banked ticket must stay visible,
+                    // otherwise it reads as stolen (2026-09-28 report).
+                    val pending = freeplayPending
                     val freeplayItem = TextView(this).apply {
-                        text = if (pending > 0)
-                            "🎟 Use Freeplay ($freeplayCredits left · $pending settling)"
-                        else
-                            "🎟 Use Freeplay ($freeplayCredits left)"
+                        text = when {
+                            postGameYellow -> "🎟 Freeplay ($freeplayCredits · blocked)"
+                            pending > 0 ->
+                                "🎟 Use Freeplay ($freeplayCredits left · $pending settling)"
+                            else ->
+                                "🎟 Use Freeplay ($freeplayCredits left)"
+                        }
                         textSize = 15f
                         setTextColor(Color.WHITE)
                         gravity = Gravity.CENTER
@@ -2797,14 +2829,30 @@ class FloatingBubbleService : Service() {
                 val postGameYellow = try {
                     ChessEnforcementPolicy.freeplayBlockedByPostGameYellow(this)
                 } catch (_: Throwable) { false }
-                if (freeplayCredits > 0 && !postGameYellow) {
-                    val pending = try {
-                        ChessFreeplayStore.pendingSettlementCount(this)
-                    } catch (_: Throwable) { 0 }
-                    val label = if (pending > 0)
-                        "🎟 Use Freeplay ($freeplayCredits left · $pending settling)"
-                    else
-                        "🎟 Use Freeplay ($freeplayCredits left)"
+                // Same zero-balance visibility fix as the picker menu
+                // (2026-09-28): a pending settlement must never render as
+                // "no tickets" — the refund is still landing in the back.
+                val freeplayPending = try {
+                    ChessFreeplayStore.pendingSettlementCount(this)
+                } catch (_: Throwable) { 0 }
+                if (freeplayCredits == 0 && freeplayPending > 0) {
+                    addOption(
+                        "🎟 Freeplay settling… ($freeplayPending refund pending)",
+                        0xFF3A2A10.toInt(), 0xFFCCAA44.toInt()
+                    ) { /* informational — settlement lands in the background */ }
+                }
+                if (freeplayCredits > 0) {
+                    // Same as the picker menu: a banked ticket stays VISIBLE
+                    // even under a post-game-YELLOW block — the overlay
+                    // explains the block; the spend itself stays refused.
+                    val pending = freeplayPending
+                    val label = when {
+                        postGameYellow -> "🎟 Freeplay ($freeplayCredits · blocked)"
+                        pending > 0 ->
+                            "🎟 Use Freeplay ($freeplayCredits left · $pending settling)"
+                        else ->
+                            "🎟 Use Freeplay ($freeplayCredits left)"
+                    }
                     addOption(
                         label,
                         0xFF3A2A10.toInt(), 0xFFCCAA44.toInt()

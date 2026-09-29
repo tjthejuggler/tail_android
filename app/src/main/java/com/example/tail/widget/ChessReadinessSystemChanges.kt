@@ -271,6 +271,20 @@ object ChessReadinessSystemChanges {
                 "real tests could hit the daily cap. Freeplay authorizations are NOT " +
                 "tests: they now never count toward the cap and never trigger the " +
                 "re-test cool-down or a RED rest period (user rule, 2026-09-24)."
+        ),
+        ReadinessSystemChange(
+            at("2026-09-28T13:45:00Z"),
+            "Pending freeplay settlements are never shown as zero tickets",
+            "The bubble menus hid the freeplay item ENTIRELY while the derived " +
+                "balance was 0 — even when a settlement (and likely refund) was " +
+                "still landing on the background worker. Opening the menu right " +
+                "after a won freeplay session therefore showed 'no ticket' for the " +
+                "few seconds before the refund write committed, reading exactly " +
+                "like a stolen ticket (user report 2026-09-28: 'won a game, ended " +
+                "up rating points, but my freeplay ticket is gone' — the ledger " +
+                "already held refunded=true +5 by the time it was inspected). Both " +
+                "menus now render an informational '🎟 Freeplay settling… (N " +
+                "refund pending)' row in that state instead of nothing."
         )
     )
 }
