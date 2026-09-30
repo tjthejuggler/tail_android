@@ -524,6 +524,12 @@ fun HabitViewModel.isMovieBridgeHabit(habitName: String): Boolean {
  * the store's stamp drifted from its text key (SAF write latency), the
  * nearest entry within ±2 minutes moves instead (same tolerance as the
  * whole-day move in HabitViewModelData).
+ *
+ * Also used for ordinary (non-movie) text-input habits: their text entry
+ * is keyed by the same timestamp, so re-timing only the store left the text
+ * behind at the OLD time and the editor showed both ("edit made a duplicate
+ * timestamp"). For those only an exact-key match moves (no ±2 min fuzzy
+ * match) and the movie-only timestamp/minutes re-sync is skipped.
  */
 suspend fun HabitViewModel.moveMovieEntryTime(
     habitName: String,
@@ -544,7 +550,8 @@ suspend fun HabitViewModel.moveMovieEntryTime(
     }
     val dayKeys = log.keys.filter { it.startsWith("$dateStr ") }.sorted()
     var keys = dayKeys.filter { it == "$dateStr $oldTime" }
-    if (keys.isEmpty()) {
+    val isMovie = isMovieBridgeHabit(habitName)
+    if (keys.isEmpty() && isMovie) {
         val nearest = dayKeys.minByOrNull { kotlin.math.abs(secsOf(it) - target) }
         if (nearest != null && kotlin.math.abs(secsOf(nearest) - target) <= 120) {
             keys = listOf(nearest)
@@ -558,7 +565,7 @@ suspend fun HabitViewModel.moveMovieEntryTime(
             )
         ) moved = true
     }
-    if (moved) {
+    if (moved && isMovie) {
         syncMovieTimestamps(habitName)
         syncMovieMinutesSlot(habitName)
     }

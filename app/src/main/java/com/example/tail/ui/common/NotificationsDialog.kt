@@ -16,10 +16,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,11 +33,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import com.example.tail.data.HabitNotification
+import com.example.tail.data.tailcue.TailCue
+import com.example.tail.notify.TailCueFeedback
 import com.example.tail.ui.grid.MovieMinutesWheelRow
 import java.time.Instant
 import java.time.ZoneId
+import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
 
 private val ASK_TIME_FMT = DateTimeFormatter.ofPattern("MMM d · HH:mm")
@@ -95,11 +103,15 @@ fun NotificationsDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     notifications.forEach { ask ->
-                        NotificationAskRow(
-                            ask = ask,
-                            onAnswer = onAnswer,
-                            onOpenAppStats = onOpenAppStats
-                        )
+                        if (ask.id.startsWith(TailCue.ASK_PREFIX)) {
+                            CueWarningRow(ask = ask)
+                        } else {
+                            NotificationAskRow(
+                                ask = ask,
+                                onAnswer = onAnswer,
+                                onOpenAppStats = onOpenAppStats
+                            )
+                        }
                     }
                 }
             }
@@ -232,6 +244,123 @@ private fun NotificationAskRow(
                     fontSize = 10.sp
                 )
             }
+        }
+    }
+}
+
+
+/**
+ * A TailCue predictive warning: what's coming, why, and what to do about it.
+ *
+ * 👍 / 👎 (optionally with a note explaining WHY — that note is what steers
+ * future warnings and research in TailCue) or a plain ✓ dismiss. Feedback is
+ * sent to the PC via the bridge; the full history with ratings lives in the
+ * TailCue webapp.
+ */
+@Composable
+private fun CueWarningRow(ask: HabitNotification) {
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var noteFor by remember { mutableStateOf<Int?>(null) }   // 1 | -1 | null
+    var noteText by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    val advice = TailCue.parseAdvice(ask.payload)
+    val timeLabel = try {
+        ASK_TIME_FMT.format(Instant.ofEpochMilli(ask.createdAtMillis).atZone(ZoneId.systemDefault()))
+    } catch (e: Exception) {
+        ""
+    }
+
+    // Pending note dialog: explain WHY you like/dislike this warning.
+    noteFor?.let { rating ->
+        AlertDialog(
+            onDismissRequest = { noteFor = null },
+            title = { androidx.compose.material3.Text(
+                if (rating == 1) "👍 Why is this warning useful?" else "👎 Why is this warning off?"
+            ) },
+            text = {
+                OutlinedTextField(
+                    value = noteText,
+                    onValueChange = { noteText = it },
+                    placeholder = { androidx.compose.material3.Text("Optional note — steers future warnings") },
+                    modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    busy = true
+                    val r = rating
+                    val txt = noteText.trim()
+                    scope.launch {
+                        TailCueFeedback.sendAndDismiss(context, ask, r, txt.ifBlank { null })
+                        busy = false
+                        noteFor = null
+                    }
+                }) { androidx.compose.material3.Text("Send") }
+            },
+            dismissButton = {
+                TextButton(onClick = { noteFor = null }) { androidx.compose.material3.Text("Cancel") }
+            }
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF2A2438), RoundedCornerShape(10.dp))
+            .border(1.dp, Color(0xFF5A4A80), RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "🔔 ${ask.title}",
+                color = Color(0xFFD8B4FE),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f)
+            )
+            Text(text = timeLabel, color = Color(0xFF777777), fontSize = 10.sp)
+        }
+        Text(text = ask.question, color = Color(0xFFAAAAAA), fontSize = 12.sp)
+        if (advice.isNotBlank() && !ask.question.contains(advice)) {
+            Text(
+                text = "💡 $advice",
+                color = Color(0xFF9CDCB0),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF1B5E20), RoundedCornerShape(6.dp))
+                    .clickable(enabled = !busy) { noteFor = 1; noteText = "" }
+                    .padding(horizontal = 14.dp, vertical = 4.dp)
+            ) { Text("👍", color = Color.White, fontSize = 12.sp) }
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF5A1A1A), RoundedCornerShape(6.dp))
+                    .clickable(enabled = !busy) { noteFor = -1; noteText = "" }
+                    .padding(horizontal = 14.dp, vertical = 4.dp)
+            ) { Text("👎", color = Color.White, fontSize = 12.sp) }
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF333338), RoundedCornerShape(6.dp))
+                    .clickable(enabled = !busy) {
+                        busy = true
+                        scope.launch {
+                            TailCueFeedback.sendAndDismiss(context, ask, 0, null)
+                            busy = false
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 4.dp)
+            ) { Text("✓", color = Color(0xFFBBBBBB), fontSize = 12.sp) }
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(text = "TailCue · feedback improves future warnings", color = Color(0xFF666666), fontSize = 9.sp)
         }
     }
 }

@@ -131,6 +131,10 @@ class MainActivity : ComponentActivity() {
         // network-constrained; KEEP policy means re-launches never reset it.
         com.example.tail.notify.MovieSyncWorker.schedule(applicationContext)
 
+        // Pull TailCue predictive warnings (cues) from the bridge into the
+        // notification system, with 👍/👎/note feedback routed back to TailCue.
+        com.example.tail.notify.TailCueSyncWorker.schedule(applicationContext)
+
         // Keep the phone-local Garmin cache warm even when the app is closed.
         // Previously Garmin only synced while the main UI was open (foreground
         // hook + a viewModelScope polling loop that died with the Activity and

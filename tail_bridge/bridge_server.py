@@ -803,3 +803,53 @@ if __name__ == "__main__":
     # port and forwards tailnet traffic to 127.0.0.1. Binding 0.0.0.0 dies
     # with EADDRINUSE against the root tailscaled process.
     uvicorn.run(app, host="127.0.0.1", port=port)
+
+
+# ── TailCue cues (predictive warnings) ───────────────────────────────────────
+
+from sources import tailcue as _tailcue  # noqa: E402
+
+
+@app.post("/api/v1/tailcue/cues", tags=["tailcue"])
+def tailcue_enqueue(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """TailCue (PC) enqueues cues for the phone. Deduped by cue id."""
+    cues = payload.get("cues")
+    if not isinstance(cues, list):
+        raise HTTPException(status_code=400, detail="'cues' list required")
+    added = _tailcue.enqueue_cues(cues)
+    return {"ok": True, "added": added}
+
+
+@app.get("/api/v1/tailcue/cues/pending", tags=["tailcue"])
+def tailcue_pending(limit: int = 20, api_key: str = Security(verify_key)):
+    """Phone: cues not yet acknowledged, oldest first."""
+    return {"cues": _tailcue.pending_cues(limit)}
+
+
+@app.post("/api/v1/tailcue/cues/{cid}/ack", tags=["tailcue"])
+def tailcue_ack(cid: str, api_key: str = Security(verify_key)):
+    ok = _tailcue.ack_cue(cid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="unknown or already-acked cue")
+    return {"ok": True}
+
+
+@app.post("/api/v1/tailcue/cues/{cid}/feedback", tags=["tailcue"])
+async def tailcue_feedback(cid: str, request: Request, api_key: str = Security(verify_key)):
+    """Phone: 👍/👎 (rating ±1) with optional note for a cue."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    rating = int(body.get("rating", 0))
+    comment = str(body.get("comment", "") or "")
+    ok = _tailcue.add_feedback(cid, rating, comment)
+    if not ok:
+        raise HTTPException(status_code=404, detail="unknown cue")
+    return {"ok": True}
+
+
+@app.get("/api/v1/tailcue/cues/feedback", tags=["tailcue"])
+def tailcue_take_feedback(take: int = 50, api_key: str = Security(verify_key)):
+    """TailCue: consume unconsumed feedback items (marks them consumed)."""
+    return {"feedback": _tailcue.take_feedback(take)}

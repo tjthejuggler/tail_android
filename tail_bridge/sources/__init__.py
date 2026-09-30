@@ -13,6 +13,7 @@ from typing import List
 from .base import BridgeSource
 from .movies import MovieSource
 from .garmin import GarminSource
+from .tailcue import TailCueSource
 
 
 def get_all_sources() -> List[BridgeSource]:
@@ -20,6 +21,7 @@ def get_all_sources() -> List[BridgeSource]:
     sources: List[BridgeSource] = [
         MovieSource(),
         GarminSource(),
+        TailCueSource(),
         # ── Future sources go here ──────────────────────────────────────────
         # MusicSource(),
         # BookSource(),

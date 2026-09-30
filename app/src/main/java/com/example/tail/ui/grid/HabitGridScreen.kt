@@ -2262,8 +2262,11 @@ fun HabitGridScreen(
                     // Move the text key(s) too — editing only the timestamp
                     // store was reverted by the next movie sync (the "can't
                     // edit a watched movie's time" bug).
-                    if (viewModel.isMovieBridgeHabit(habitName)) {
-                        viewModel.moveMovieEntryTime(habitName, selectedDate, oldTime, newTime)
+                    // Ordinary text-input habits: the text entry shares the
+                    // timestamp key, so it must move with it or the editor
+                    // shows the old time as a leftover text-only card.
+                    val textMoved = viewModel.moveMovieEntryTime(habitName, selectedDate, oldTime, newTime)
+                    if (textMoved || viewModel.isMovieBridgeHabit(habitName)) {
                         timestampEditorList = viewModel.timestampRepo
                             .getTimestampsForDay(habitName, selectedDate)
                         selectedHabitTimestampCount = timestampEditorList.size
@@ -2830,11 +2833,11 @@ fun HabitGridScreen(
                         )
                         // Movie-bridge habits: move the text-log key(s) too —
                         // the next movie sync reverts store-only re-times.
-                        if (viewModel.isMovieBridgeHabit(habitName)) {
-                            viewModel.moveMovieEntryTime(
-                                habitName, selectedDate, quickEditOriginalTime, newTime
-                            )
-                        }
+                        // Text-input habits (movie or ordinary): move the text
+                        // key too; no-op when the habit has no text log.
+                        viewModel.moveMovieEntryTime(
+                            habitName, selectedDate, quickEditOriginalTime, newTime
+                        )
                     }
                 }
                 quickEditHabitName = null
