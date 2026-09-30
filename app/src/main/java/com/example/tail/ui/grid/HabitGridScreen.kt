@@ -2249,6 +2249,12 @@ fun HabitGridScreen(
             },
             onUpdateTimeGroup = { oldTime, newTime ->
                 timestampScope.launch {
+                    // Drop the stale pre-edit text entries FIRST: the editor
+                    // builds its card list from timestamps AND text entries,
+                    // so keeping the old full timestamp around one frame too
+                    // long rendered it as a text-only card at the OLD time —
+                    // the "edit made a duplicate timestamp" bug.
+                    editModeTextEntries = emptyList()
                     timestampEditorList = viewModel.timestampRepo.updateTimestampsAtTime(
                         habitName, selectedDate, oldTime, newTime
                     )
@@ -2270,9 +2276,12 @@ fun HabitGridScreen(
                         timestampEditorList = viewModel.timestampRepo
                             .getTimestampsForDay(habitName, selectedDate)
                         selectedHabitTimestampCount = timestampEditorList.size
-                        viewModel.loadTextEntriesWithTimestamps(habitName, selectedDate) { entries ->
-                            editModeTextEntries = entries
-                        }
+                    }
+                    // ALWAYS reload the text entries from current state — they
+                    // are derived from the store's timestamps, so the old time
+                    // can never linger as a phantom card after a re-time.
+                    viewModel.loadTextEntriesWithTimestamps(habitName, selectedDate) { entries ->
+                        editModeTextEntries = entries
                     }
                     // Group size unchanged — no habit count adjustment needed.
                 }
