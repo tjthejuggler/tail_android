@@ -95,6 +95,13 @@ ASSIST_EVENTS_FILE = os.environ.get(
     "MOVIE_ASSIST_EVENTS",
     str(SCRIPT_DIR / "movie_watcher_assist.jsonl")
 )
+# Live-playback detection: videos opened INSIDE an already-running VLC
+# instance (drag & drop, Media->Open, playlist advance) produce NO KDE
+# Activity event and NO assist line — the watcher was blind to them.
+# Each poll we scan /proc/<vlc-pid>/fd for open video files; a file that
+# newly appears is a viewing start, and when the fd disappears the viewing
+# ends. This catches every playback method.
+VLC_FD_ENABLED = os.environ.get("MOVIE_VLC_FD", "1") == "1"
 # Two events for the same file within this window are considered the SAME
 # viewing (launch-vs-KDE-write jitter).
 ASSIST_DEDUP_WINDOW_SEC = int(os.environ.get("MOVIE_ASSIST_DEDUP_WINDOW", "180"))
@@ -270,6 +277,86 @@ def _kde_has_event(filepath: str, start: int) -> bool:
         return False
     finally:
         conn.close()
+
+
+# ── Live VLC playback detection (/proc fd scan) ──────────────────────────────
+
+# path -> first-seen unix ts for files currently open by a VLC process
+_vlc_active: Dict[str, int] = {}
+
+
+def _vlc_pids() -> List[int]:
+    """PIDs of running VLC processes."""
+    pids = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as f:
+                cmdline = f.read().replace(b"\0", b" ").decode(
+                    "utf-8", "replace"
+                )
+        except (OSError, PermissionError):
+            continue
+        argv0 = cmdline.split()[:1]
+        if argv0 and os.path.basename(argv0[0]) == "vlc":
+            pids.append(int(entry))
+    return pids
+
+
+def _vlc_open_videos() -> set:
+    """Set of video file paths currently open by any VLC process."""
+    open_files = set()
+    for pid in _vlc_pids():
+        fd_dir = f"/proc/{pid}/fd"
+        try:
+            fds = os.listdir(fd_dir)
+        except (OSError, PermissionError):
+            continue
+        for fd in fds:
+            try:
+                target = os.path.realpath(os.path.join(fd_dir, fd))
+            except OSError:
+                continue
+            if _is_video_path(target) and os.path.exists(target):
+                open_files.add(target)
+    return open_files
+
+
+def collect_vlc_rows() -> List[Tuple[int, int, str]]:
+    """
+    Detect live VLC playback via open file descriptors.
+
+    A video fd that newly appeared since the last poll marks a viewing
+    start; when it disappears, the viewing ends. Returns completed
+    (start, end, path) rows. Files still playing stay pending until the
+    fd closes (their real start time is remembered in _vlc_active).
+    """
+    if not VLC_FD_ENABLED:
+        return []
+    now = int(time.time())
+    try:
+        current = _vlc_open_videos()
+    except Exception as e:
+        logger.debug(f"VLC fd scan failed: {e}")
+        return []
+
+    # Register newly-opened files
+    for path in current:
+        if path not in _vlc_active:
+            _vlc_active[path] = now
+
+    rows: List[Tuple[int, int, str]] = []
+    for path in list(_vlc_active):
+        if path in current:
+            continue  # still playing
+        start = _vlc_active.pop(path)
+        end = now
+        # Ignore sub-minute blips (fd opened and closed between polls of a
+        # file that was skipped/errored, or VLC probing metadata).
+        if end - start >= 60:
+            rows.append((start, end, path))
+    return rows
 
 
 def load_assist_events() -> List[Tuple[int, int, str]]:
@@ -543,13 +630,33 @@ def poll_once() -> int:
             logger.info(f"Drained {len(assist_rows)} assist event(s) "
                         f"from {ASSIST_EVENTS_FILE}")
 
-    if not rows and not assist_rows:
+    # Live VLC playback (drag-dropped / opened inside a running instance —
+    # invisible to both the KDE DB and the assist launcher).
+    vlc_raw = collect_vlc_rows()
+    vlc_rows: List[Tuple[int, int, str]] = []
+    if vlc_raw:
+        cache_probe = load_cache()
+        batch_keys = {(s, p) for s, _e, p in assist_rows}
+        for start, end, path in vlc_raw:
+            if (start, path) in batch_keys:
+                continue
+            if _kde_has_event(path, start):
+                logger.info(f"VLC playback already in KDE DB — skipped: {path}")
+                continue
+            if _session_seen(cache_probe, path, start):
+                logger.info(f"VLC playback already cached — skipped: {path}")
+                continue
+            vlc_rows.append((start, end, path))
+        if vlc_rows:
+            logger.info(f"Detected {len(vlc_rows)} live VLC playback event(s)")
+
+    if not rows and not assist_rows and not vlc_rows:
         return 0
 
     if rows:
         logger.info(f"Found {len(rows)} new video event(s) since start={last_seen}")
 
-    all_rows = rows + assist_rows
+    all_rows = rows + assist_rows + vlc_rows
     new_entries = process_rows(all_rows)
     # The high-water mark tracks KDE DB rows ONLY: assist rows never come
     # from the KDE DB, so advancing the mark with them could mask a KDE row
