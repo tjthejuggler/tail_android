@@ -1002,6 +1002,23 @@ fun HabitGridScreen(
     // filter, edit-screen name readout) — loaded once on screen entry.
     LaunchedEffect(Unit) { viewModel.loadWeightsExerciseNames() }
 
+    // All-time PR flash state — shows when a weights log breaks an
+    // exercise's all-time weight/reps record. Auto-dismisses after a
+    // delay; a newer flash resets the timer via the version counter.
+    val weightsPrCheck by viewModel.weightsPrFlash.collectAsState()
+    val weightsPrMeta by viewModel.weightsPrFlashMeta.collectAsState()
+    var weightsPrFlashVersion by remember { mutableIntStateOf(0) }
+    LaunchedEffect(weightsPrCheck) {
+        if (weightsPrCheck != null) {
+            weightsPrFlashVersion++
+            val currentVersion = weightsPrFlashVersion
+            delay(WEIGHTS_PR_FLASH_SECONDS * 1000L)
+            if (weightsPrFlashVersion == currentVersion) {
+                viewModel.dismissWeightsPrFlash()
+            }
+        }
+    }
+
     // Increment toast state — shows briefly after tapping a habit
     var incrementToastHabit by remember { mutableStateOf<String?>(null) }
     var incrementToastOriginalTime by remember { mutableStateOf("") }
@@ -1976,6 +1993,25 @@ fun HabitGridScreen(
                     showQuickCaptureHistory = false
                     refreshQuickCaptureReviewCount()
                 }
+            )
+        }
+    }
+
+    // All-time PR flash overlay at bottom of screen (above the increment toast)
+    val prCheck = weightsPrCheck
+    val prMeta = weightsPrMeta
+    if (prCheck != null && prMeta != null) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 140.dp)
+        ) {
+            WeightsPrFlash(
+                prCheck = prCheck,
+                exerciseName = prMeta.first,
+                unit = settings.graphWeightUnit,
+                visible = true,
+                onDismiss = { viewModel.dismissWeightsPrFlash() }
             )
         }
     }

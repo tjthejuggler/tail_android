@@ -277,6 +277,25 @@ class HabitViewModel(
     /** Repository for per-day exercise/machine names of weights habits (internal storage). */
     val weightsExerciseRepo = com.example.tail.data.WeightsExerciseRepository(context)
 
+    /** Repository for all-time per-exercise PB records of weights habits (internal storage). */
+    val weightsRecordsRepo = com.example.tail.data.WeightsRecordsRepository(context)
+
+    /** Most recent all-time-PR event from a weights log (null = nothing to flash). */
+    internal val _weightsPrFlash = MutableStateFlow<com.example.tail.data.WeightsRecordsRepository.PrCheck?>(null)
+    val weightsPrFlash: StateFlow<com.example.tail.data.WeightsRecordsRepository.PrCheck?> =
+        _weightsPrFlash.asStateFlow()
+
+    /** Exercise name + machine/free type of the current PR flash (for the headline). */
+    internal val _weightsPrFlashMeta = MutableStateFlow<Pair<String, Boolean>?>(null)
+    val weightsPrFlashMeta: StateFlow<Pair<String, Boolean>?> =
+        _weightsPrFlashMeta.asStateFlow()
+
+    /** Dismisses the current PR flash (or shows nothing when already dismissed). */
+    fun dismissWeightsPrFlash() {
+        _weightsPrFlash.value = null
+        _weightsPrFlashMeta.value = null
+    }
+
     /** Full per-day exercise-name DB for weights habits (habit → date → type → name). */
     internal val _weightsExerciseNames =
         MutableStateFlow<Map<String, Map<String, Map<String, String>>>>(emptyMap())

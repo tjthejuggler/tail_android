@@ -1,6 +1,13 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-10-02T09:05Z
+**Last updated:** 2026-10-02T14:30Z
+
+## 2026-10-02T14:30Z — Weights habits: all-time PR flash (weight/reps records with old-record date + location)
+- **The feature.** Logging a set on a weights habit with an exercise name now checks the set against that exercise's ALL-TIME personal bests. When the set is heavier than ever before, or more reps than ever before, a celebratory 🏆 flash appears telling you which record fell — WEIGHT, REPS, or BOTH — the new value, and the story of the old record: the date AND location where it stood ([`WeightsPrFlash`](app/src/main/java/com/example/tail/ui/grid/WeightsPrFlash.kt:67), auto-dismisses after 7 s, tap to dismiss).
+- **New records sidecar** [`WeightsRecordsRepository`](core-data/src/main/java/com/example/tail/data/WeightsRecordsRepository.kt:39) (`files/weights_records.json`): per habit + machine/free + exercise name (case-insensitive), it stores the heaviest single-set weight (with its reps, date, location) and the best single-set reps (with their weight, date, location). Needed because the habits DB keeps only aggregated day slots — reps ACCUMULATE per day and weight max-merges, so single-set history is not recoverable from the DB.
+- **Pre-sidecar history honored.** The PR gate compares against BOTH the sidecar record and the existing DB-derived heaviest-day PB ([`getWeightsExerciseStats`](app/src/main/java/com/example/tail/ui/viewmodel/HabitViewModelHabitConfig.kt:1276)); a new set must beat the higher of the two, and when the DB record falls the flash shows its date from the DB join.
+- **Wiring.** PR evaluation runs in [`saveWeightsEntry`](app/src/main/java/com/example/tail/ui/viewmodel/HabitViewModelHabitConfig.kt:1179) BEFORE the slot write (standing record captured pre-write), resolves the old record's location via the date→label lookup used elsewhere, and emits the flash through ViewModel state collected in [`HabitGridScreen`](app/src/main/java/com/example/tail/ui/grid/HabitGridScreen.kt:1005). Habit renames migrate records via the sidecar's `renameHabit` (called from the habit-rename path in [`HabitViewModelScreens`](app/src/main/java/com/example/tail/ui/viewmodel/HabitViewModelScreens.kt:1922)). Records survive day deletions (they are all-time achievements).
+- **Verified.** `:core-data:compileDebugKotlin` + `:app:compileDebugKotlin` clean; installed via `installDebug`.
 
 ## 2026-10-02T09:05Z — Garmin sync button now updates the phone immediately (garmin_refresh PC event)
 - **Root cause of "runs not appearing in Tail after the dashboard Sync click".** The button only refreshed the PC-side `garmin_cache.json` — the phone re-pulled on its own schedule (2-hourly `GarminSyncWorker`, app foreground) so a run recorded after the phone's last sync could take hours to show up. The pipeline itself (fetch → cache → proxy :8000 → phone) was healthy; only the notification step was missing.

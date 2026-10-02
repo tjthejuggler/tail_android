@@ -1187,13 +1187,23 @@ fun HabitViewModel.saveWeightsEntry(
     val uriString = _settings.value.fileUri
     if (uriString.isNullOrEmpty()) return
 
+    // All-time PR check BEFORE the slot write: the DB-derived PB below is
+    // the day-max JOINED to the exercise BEFORE this set lands, i.e. the
+    // standing historical record this set is judged against.
+    val logDate = _selectedDate.value
+    val trimmedExercise = exerciseName.trim()
+    val prMeta = if (trimmedExercise.isNotBlank()) {
+        val stats = getWeightsExerciseStats(habitName, trimmedExercise, machine)
+        Triple(stats.pbWeightGrams, stats.pbDate, trimmedExercise)
+    } else null
+
     // Slot writes FIRST: the increment path below snapshots
     // cachedPhoneDb (applyIncrementToDb) and persists that snapshot,
     // so the slots must already be in it.
-    val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+    val dateStr = com.example.tail.data.dateString(logDate)
     val countBefore = cachedPhoneDb[habitName]?.get(dateStr) ?: 0
     cachedPhoneDb = habitsRepo.applyWeightsSlotsToDb(
-        cachedPhoneDb, habitName, weightGrams, reps, machine, _selectedDate.value
+        cachedPhoneDb, habitName, weightGrams, reps, machine, logDate
     )
 
     // One logged entry → +1 on the habit's own count (instant UI update,
@@ -1218,14 +1228,43 @@ fun HabitViewModel.saveWeightsEntry(
     }
 
     // Remember the exercise/machine name for quick re-entry (most recent first)
-    recordRecentExercise(habitName, exerciseName.trim())
+    recordRecentExercise(habitName, trimmedExercise)
 
     // Record WHICH exercise this day's slot belongs to (powers the PB display,
     // the graph's exercise filter and the edit-screen name readout)
-    if (exerciseName.isNotBlank()) {
+    if (trimmedExercise.isNotBlank()) {
         viewModelScope.launch {
-            weightsExerciseRepo.setExerciseName(habitName, _selectedDate.value, machine, exerciseName)
+            weightsExerciseRepo.setExerciseName(habitName, logDate, machine, trimmedExercise)
             loadWeightsExerciseNames()
+        }
+    }
+
+    // All-time PR evaluation: compare the set against the standing records
+    // (sidecar + pre-sidecar DB day-max) and update the sidecar on a beat.
+    // The flash fires only when a record was actually broken.
+    if (trimmedExercise.isNotBlank()) {
+        viewModelScope.launch {
+            val dayPbGrams = prMeta?.first ?: 0
+            val locationLabel = try {
+                locationRepo.getLocationForDate(logDate)
+            } catch (_: Exception) {
+                null
+            }
+            val check = weightsRecordsRepo.evaluateAndRecord(
+                habitName, machine, trimmedExercise, weightGrams, reps,
+                logDate, locationLabel, dayPbGrams
+            )
+            if (check.isPr) {
+                // When the beaten WEIGHT record came from the DB join (logged
+                // before the records sidecar existed), the sidecar has no date
+                // for it — enrich the flash with the DB record's date.
+                val dbPbDate = prMeta?.second
+                val enriched = if (check.weightPr && check.old.bestWeightDate == null && dbPbDate != null) {
+                    check.copy(old = check.old.copy(bestWeightDate = dbPbDate.toString()))
+                } else check
+                _weightsPrFlashMeta.value = trimmedExercise to machine
+                _weightsPrFlash.value = enriched
+            }
         }
     }
 }

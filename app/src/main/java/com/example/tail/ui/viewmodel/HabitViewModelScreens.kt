@@ -1924,10 +1924,9 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             weightsExerciseRepo.renameHabit(oldName, newName)
             _weightsExerciseNames.value = weightsExerciseRepo.loadAll()
 
-            // Rename in the weights exercise-name sidecar so per-day exercise
-            // attribution (PB display, graph filter, edit screen) survives too
-            weightsExerciseRepo.renameHabit(oldName, newName)
-            _weightsExerciseNames.value = weightsExerciseRepo.loadAll()
+            // Rename in the all-time records sidecar so the PR history
+            // (weight/reps records + their dates/locations) survives too
+            weightsRecordsRepo.renameHabit(oldName, newName)
             
             _settings.value = newSettings
             _habitOrder.value = newHabitOrder
