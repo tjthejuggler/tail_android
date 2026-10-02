@@ -436,6 +436,14 @@ def pc_widget_set_config(payload: Dict[str, Any], api_key: str = Security(verify
         # habit-picker source (empty on older app versions)
         "all_habits": all_habits,
     }
+    # Capability handshake: which event kinds this phone understands.
+    # The garmin_refresh gate below reads this — a phone that never
+    # advertises the kind (older app) keeps the old pull-only Garmin sync.
+    kinds_raw = payload.get("event_kinds")
+    event_kinds = ([k for k in kinds_raw if isinstance(k, str) and k.strip()]
+                   if isinstance(kinds_raw, list) else [])
+    if event_kinds:
+        body["event_kinds"] = event_kinds
     _pc_widget_write(PC_WIDGET_CONFIG_PATH, body)
     logger.info(f"pc_widget config updated: {len(clean)} habits")
     dashboard.note("phone", "config_push",
@@ -536,6 +544,69 @@ def _pc_widget_delete_pending(event_id: str) -> bool:
         "events": remaining,
     })
     return True
+
+
+def _phone_supports_event_kind(kind: str) -> bool:
+    """True when the phone's last config push advertised [kind].
+
+    The capability list arrives in POST /pc_widget/config ("event_kinds")
+    and is persisted alongside the widget config. An older phone that
+    never sent it keeps pull-only Garmin sync (it would otherwise
+    misinterpret the control event as a tap on a bogus habit).
+    """
+    cfg = _pc_widget_read(PC_WIDGET_CONFIG_PATH)
+    kinds = cfg.get("event_kinds") if isinstance(cfg, dict) else None
+    return isinstance(kinds, list) and kind in kinds
+
+
+def _queue_garmin_refresh_event() -> None:
+    """Queue a garmin_refresh PC event after a successful dashboard fetch.
+
+    2026-10-02 fix for "sync button doesn't update the phone": the fetch
+    only refreshed the PC-side garmin_cache.json — the phone re-pulled on
+    its own 2-hourly worker (or next app foreground), so a run recorded
+    after the phone's last sync could take hours to appear in the app.
+    This event rides the existing pc_widget event channel (long-polled by
+    the phone's bubble service), so the phone re-pulls within seconds.
+
+    Not routed through _pc_widget_queue_event: garmin_refresh is a control
+    signal, not a habit increment, so it must NOT land in the PC widget
+    history dialog. Gated on the phone advertising the kind via the
+    event_kinds capability handshake. Deduped: an un-acked garmin_refresh
+    already in the queue is left alone (the phone will apply it soon).
+    """
+    if not _phone_supports_event_kind("garmin_refresh"):
+        return
+    events = _pc_widget_pending_events()
+    if any(e.get("kind") == "garmin_refresh" for e in events):
+        return
+    now = datetime.now()
+    events.append({
+        "id": "pc-{}-{}".format(int(time.time() * 1000), uuid.uuid4().hex[:6]),
+        "habit": "__garmin__",
+        "kind": "garmin_refresh",
+        "date": now.strftime("%Y-%m-%d"),
+        "start": now.strftime("%H:%M:%S"),
+        "end": now.strftime("%H:%M:%S"),
+        "minutes": 0,
+    })
+    if len(events) > PC_WIDGET_MAX_EVENTS:
+        events = events[-PC_WIDGET_MAX_EVENTS:]
+    _pc_widget_write(PC_WIDGET_EVENTS_PATH, {
+        "version": 1,
+        "updated_at": now.isoformat(timespec="seconds"),
+        "events": events,
+    })
+    PC_WIDGET_EVENT_SIGNAL.set()
+    dashboard.note("dashboard", "garmin_refresh_queued",
+                   "Queued garmin_refresh event — phone will re-pull Garmin data now")
+
+
+# Wire the Garmin source's fetch-completed hook to the refresh event so a
+# dashboard-triggered fetch notifies the phone immediately.
+_garmin_source = _sources.get("garmin")
+if _garmin_source is not None:
+    _garmin_source.on_fetch_complete = _queue_garmin_refresh_event
 
 
 # ── Quick Capture Assist (phone → PC fast-path actions) ─────────────────────

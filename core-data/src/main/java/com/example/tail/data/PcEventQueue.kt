@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.example.tail.data.HabitIncrementBus
+import com.example.tail.data.health.GarminRepository
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.flow.first
@@ -339,7 +340,7 @@ class PcEventQueueProcessor(private val context: Context) {
             // corrections to taps and double-count)
             root.put("event_kinds", org.json.JSONArray(
                 listOf("session", "tap", "toggle_pc_widget_habit",
-                       "session_edit", "session_delete")))
+                       "session_edit", "session_delete", "garmin_refresh")))
             BridgeClient().post(bridge.first, bridge.second, "pc_widget/config", root)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to push PC widget config after toggle: ${e.message}")
@@ -370,6 +371,25 @@ class PcEventQueueProcessor(private val context: Context) {
             // settings-screen habit picker: no increment — flip the app's
             // "PC widget" toggle and push the updated config back
             applyPcWidgetToggle(event, settings)
+            return@withContext true
+        }
+        if (event.kind == "garmin_refresh") {
+            // Control signal queued after a PC-side Garmin fetch (the
+            // dashboard sync button): re-pull + re-apply Garmin metrics NOW
+            // instead of waiting for the 2-hourly worker. No increment.
+            try {
+                val repo = GarminRepository(context)
+                val fresh = repo.fetchCurrentMonthData(
+                    settings.garminProxyUrl, settings.garminAppToken,
+                    settings.garminDateOfBirth)
+                if (fresh.isNotEmpty()) {
+                    repo.mergeAndCacheDailyData(fresh)
+                    AppHooks.onGarminDataRefreshed?.invoke(context, fresh)
+                }
+                Log.i(TAG, "garmin_refresh event: re-pulled ${fresh.size} metric type(s) from proxy")
+            } catch (e: Exception) {
+                Log.w(TAG, "garmin_refresh event sync failed: ${e.message}")
+            }
             return@withContext true
         }
         if (event.kind == "session_edit" || event.kind == "session_delete") {

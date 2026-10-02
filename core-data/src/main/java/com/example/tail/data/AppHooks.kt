@@ -28,4 +28,15 @@ object AppHooks {
      */
     @Volatile
     var refreshBackupAfterSave: (suspend (Context) -> Unit)? = null
+
+    /**
+     * Fires after a garmin_refresh PC event re-pulled fresh Garmin metrics
+     * from the proxy. Installed by the app module so the data layer can
+     * ask the ViewModel layer to apply the data to linked habits (the
+     * applyGarminData write path lives in HabitViewModelGarmin, which the
+     * core-data module must not depend on). Payload is the freshly-pulled
+     * type → date → value map.
+     */
+    @Volatile
+    var onGarminDataRefreshed: (suspend (Context, Map<com.example.tail.data.health.GarminType, Map<String, Int>>) -> Unit)? = null
 }

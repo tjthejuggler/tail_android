@@ -65,6 +65,11 @@ class GarminSource(BridgeSource):
 
     def __init__(self) -> None:
         self._fetch_lock = threading.Lock()
+        # Set by bridge_server at startup. Called after a SUCCESSFUL fetch
+        # triggered here (the dashboard sync button) so the bridge can tell
+        # the phone to re-pull immediately — otherwise the phone only sees
+        # the refreshed cache on its 2-hourly worker or next app foreground.
+        self.on_fetch_complete = None
 
     @property
     def name(self) -> str:
@@ -170,6 +175,16 @@ class GarminSource(BridgeSource):
                         encoding="utf-8")
                 except OSError:
                     pass
+                if state == "ok" and self.on_fetch_complete is not None:
+                    # 2026-10-02 fix: the dashboard sync button used to only
+                    # refresh the PC cache — the phone didn't learn about the
+                    # new data until its 2-hourly worker or next app
+                    # foreground. The callback (bridge_server) queues a
+                    # garmin_refresh PC event so the phone re-pulls NOW.
+                    try:
+                        self.on_fetch_complete()
+                    except Exception as cb_err:
+                        logger.warning(f"on_fetch_complete callback failed: {cb_err}")
             except subprocess.TimeoutExpired:
                 self._write_fetch_status({
                     "state": "error",

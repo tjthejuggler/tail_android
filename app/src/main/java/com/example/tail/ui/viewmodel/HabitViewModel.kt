@@ -957,6 +957,27 @@ class HabitViewModel(
             }
         }
 
+        // garmin_refresh PC events (queued by the bridge after a dashboard
+        // sync-button fetch): apply the freshly-pulled metrics to linked
+        // habits and refresh the UI immediately, instead of waiting for the
+        // 2-hourly GarminSyncWorker or the next app foreground.
+        viewModelScope.launch {
+            com.example.tail.data.AppHooks.onGarminDataRefreshed = { _, fresh ->
+                val s = _settings.value
+                if (s.garminEnabled && s.garminHabitLinks.isNotEmpty() &&
+                    s.fileUri.isNotEmpty() && fresh.isNotEmpty() && dbLoaded
+                ) {
+                    try {
+                        mergeIntoGarminMonthlyData(fresh)
+                        applyGarminData(fresh, s)
+                        Log.i(TAG, "Garmin refresh event applied: ${fresh.size} metric type(s)")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Garmin refresh apply failed: ${e.message}")
+                    }
+                }
+            }
+        }
+
         // Fetch today's location in the background (no-op if already stored for today),
         // then seed the selectedDateLocation for today.
         viewModelScope.launch {

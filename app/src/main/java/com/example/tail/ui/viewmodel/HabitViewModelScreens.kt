@@ -828,7 +828,7 @@ internal suspend fun HabitViewModel.pushPcWidgetConfig() {
         // local-only edit mode)
         root.put("event_kinds", JSONArray(
             listOf("session", "tap", "toggle_pc_widget_habit",
-                   "session_edit", "session_delete")))
+                   "session_edit", "session_delete", "garmin_refresh")))
 
         val resp = BridgeClient().post(bridge.first, bridge.second, "pc_widget/config", root)
         if (resp != null) {
