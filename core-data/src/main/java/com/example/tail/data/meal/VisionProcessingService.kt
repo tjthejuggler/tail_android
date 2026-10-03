@@ -168,43 +168,10 @@ class VisionProcessingService {
                 Log.w(TAG, "Failed to encode attached meal photo — analysing text only")
             }
 
-            val systemPrompt = buildString {
-                append("You are a nutritional analysis assistant. The user briefly described ")
-                append("a meal they ate, in their own words. Extract structured nutrition data ")
-                append("with your BEST-GUESS estimates for portion sizes. Honour any dietary ")
-                append("rules the user mentions.\n")
-                if (config.userSystemPrompt.isNotBlank()) {
-                    append("\nUSER DIETARY RULES (apply strictly):\n")
-                    append(config.userSystemPrompt.trim())
-                    append("\n")
-                }
-                if (base64Image != null) {
-                    append("A photo of the meal is attached: combine what you SEE in the photo ")
-                    append("with what the user SAID — the spoken description takes priority for ")
-                    append("quantities and ingredients they name explicitly.\n")
-                }
-                append("\n")
-                append("The description may name SEVERAL foods eaten together (e.g. \"vegan ")
-                append("burger and fries and salad\"). Treat them as ONE meal and return ONE ")
-                append("SINGLE JSON object for the whole meal: a combined title, SUMMED ")
-                append("calories and macros, and every food listed in ingredients_detected. ")
-                append("NEVER return an array, multiple JSON objects, or one object per food.\n")
-                append("Keep summary and health_notes to 1-2 short sentences.\n")
-                append("\n")
-                append("Respond ONLY with raw JSON (no markdown fences, no conversational text):\n")
-                append("{\n")
-                append("  \"title\": \"Short meal name\",\n")
-                append("  \"summary\": \"1-2 sentence description\",\n")
-                append("  \"is_vegan_verified\": boolean,\n")
-                append("  \"estimated_calories\": number,\n")
-                append("  \"macronutrients\": { \"protein_grams\": number, \"carbs_grams\": number, \"fat_grams\": number },\n")
-                append("  \"ingredients_detected\": [\"ingredient tag\", ...],\n")
-                append("  \"health_notes\": \"String or null\",\n")
-                append("  \"macro_ratings\": { \"protein\": 1-3, \"carbs\": 1-3, \"fat\": 1-3 }\n")
-                append("}\n\n")
-                append("macro_ratings: 1 = low, 2 = moderate, 3 = high, relative to the meal's size.\n")
-                append("ingredients_detected: individual searchable TAGS (lowercase, singular where natural).")
-            }
+            val systemPrompt = buildMealTextSystemPrompt(
+                userRules = config.userSystemPrompt,
+                hasPhoto = base64Image != null
+            )
 
             val userContent: Any = if (base64Image != null) {
                 JSONArray().apply {
@@ -223,7 +190,13 @@ class VisionProcessingService {
                 "Meal description: \"$transcript\""
             }
 
-            val requestBody = JSONObject().apply {
+            // z.ai endpoints expose a server-side `web_search` tool ("Web Search
+            // in Chat") so the model can look up OFFICIAL nutrition data for
+            // standardized/branded meals instead of guessing. Guarded by host
+            // because other OpenAI-compatible endpoints reject unknown request
+            // parameters with a 400.
+            val withWebSearch = supportsServerSideWebSearch(config.baseUrl)
+            fun buildBody(search: Boolean): JSONObject = JSONObject().apply {
                 put("model", config.model)
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply {
@@ -240,9 +213,18 @@ class VisionProcessingService {
                 // responses mid-object and made parsing fail.
                 put("max_tokens", 4096)
                 applyGlmThinkingOverride(config.model)
+                if (search) put("tools", buildWebSearchTool())
             }
 
-            when (val outcome = chatCompletion(fullUrl, requestBody, config)) {
+            var outcome = chatCompletion(fullUrl, buildBody(withWebSearch), config)
+            if (withWebSearch && outcome is ChatOutcome.ErrorNote) {
+                // Endpoint rejected the web_search tool (4xx) — retry once
+                // without it so the parse still succeeds from model knowledge.
+                Log.w(TAG, "web_search tool rejected, retrying without it: ${outcome.note.take(120)}")
+                outcome = chatCompletion(fullUrl, buildBody(false), config)
+            }
+
+            when (outcome) {
                 is ChatOutcome.Content -> parseFoodDataResponse(outcome.text)
                 is ChatOutcome.ErrorNote -> {
                     Log.w(TAG, "Meal text analysis failed: ${outcome.note}")
@@ -577,6 +559,96 @@ class VisionProcessingService {
         }
     }
 
+    // ── Standardized-food web lookup (meal text pipeline) ────────────────
+
+    /**
+     * True when the configured endpoint is z.ai / zhipu — those endpoints
+     * support the server-side `web_search` tool ("Web Search in Chat").
+     * Other OpenAI-compatible endpoints reject unknown request parameters
+     * with a 400, so the tool is only injected for known-supported hosts;
+     * [processMealText] additionally retries without the tool on any 4xx.
+     */
+    private fun supportsServerSideWebSearch(baseUrl: String): Boolean =
+        baseUrl.contains("z.ai", ignoreCase = true) ||
+            baseUrl.contains("zhipu", ignoreCase = true) ||
+            baseUrl.contains("bigmodel", ignoreCase = true)
+
+    /**
+     * Builds the z.ai server-side web_search tool block ("Web Search in
+     * Chat"): the model retrieves live web results before answering, which
+     * is how a specific pizza place's specific pizza gets its official
+     * macros instead of a fresh guess per log entry.
+     */
+    private fun buildWebSearchTool(): JSONArray = JSONArray().apply {
+        put(JSONObject().apply {
+            put("type", "web_search")
+            put("web_search", JSONObject().apply {
+                put("enable", true)
+                put("search_engine", "search-prime")
+                put("search_result", true)
+                put("count", 5)
+                put("content_size", "high")
+            })
+        })
+    }
+
+    /**
+     * System prompt for the text-only meal description pipeline. Key policy:
+     * standardized/branded foods are LOOKED UP (web search when available,
+     * official published values otherwise) rather than re-estimated, so the
+     * same meal logged twice gets identical calories and macros.
+     */
+    private fun buildMealTextSystemPrompt(userRules: String, hasPhoto: Boolean): String = buildString {
+        append("You are a nutritional analysis assistant. The user briefly described ")
+        append("a meal they ate, in their own words. Extract structured nutrition data. ")
+        append("Honour any dietary rules the user mentions.\n")
+        if (userRules.isNotBlank()) {
+            append("\nUSER DIETARY RULES (apply strictly):\n")
+            append(userRules.trim())
+            append("\n")
+        }
+        if (hasPhoto) {
+            append("\nA photo of the meal is attached: combine what you SEE in the photo ")
+            append("with what the user SAID — the spoken description takes priority for ")
+            append("quantities and ingredients they name explicitly.\n")
+        }
+        append("\nNUTRITION DATA POLICY — STANDARDIZED / BRANDED FOODS:\n")
+        append("- If the description names a SPECIFIC product from a restaurant or brand ")
+        append("(e.g. \"Papa Johns large vegan thin crust pizza\", \"McDonald's Big Mac\", ")
+        append("\"Tesco Plant Chef burrito\"), do NOT invent a fresh estimate. Use web search ")
+        append("to find the OFFICIAL published nutrition values for that exact product, size ")
+        append("and crust/variant, and use those values for estimated_calories and ")
+        append("macronutrients (whole numbers).\n")
+        append("- Count named sides/dips at their official per-pot/per-serving values, ")
+        append("multiplied by the quantity the user gives (e.g. 2 garlic sauce pots = 2 pots).\n")
+        append("- CONSISTENCY: the same description must always yield the SAME numbers. ")
+        append("Two identical meals logged on the same day must get identical calories/macros.\n")
+        append("- Only fall back to best-guess estimation for generic or home-cooked foods, ")
+        append("or when search yields no usable official data — and prefix health_notes with ")
+        append("\"Estimated: \" in that case.\n")
+        append("\n")
+        append("The description may name SEVERAL foods eaten together (e.g. \"vegan ")
+        append("burger and fries and salad\"). Treat them as ONE meal and return ONE ")
+        append("SINGLE JSON object for the whole meal: a combined title, SUMMED ")
+        append("calories and macros, and every food listed in ingredients_detected. ")
+        append("NEVER return an array, multiple JSON objects, or one object per food.\n")
+        append("Keep summary and health_notes to 1-2 short sentences.\n")
+        append("\n")
+        append("Respond ONLY with raw JSON (no markdown fences, no conversational text):\n")
+        append("{\n")
+        append("  \"title\": \"Short meal name\",\n")
+        append("  \"summary\": \"1-2 sentence description\",\n")
+        append("  \"is_vegan_verified\": boolean,\n")
+        append("  \"estimated_calories\": number,\n")
+        append("  \"macronutrients\": { \"protein_grams\": number, \"carbs_grams\": number, \"fat_grams\": number },\n")
+        append("  \"ingredients_detected\": [\"ingredient tag\", ...],\n")
+        append("  \"health_notes\": \"String or null\",\n")
+        append("  \"macro_ratings\": { \"protein\": 1-3, \"carbs\": 1-3, \"fat\": 1-3 }\n")
+        append("}\n\n")
+        append("macro_ratings: 1 = low, 2 = moderate, 3 = high, relative to the meal's size.\n")
+        append("ingredients_detected: individual searchable TAGS (lowercase, singular where natural).")
+    }
+
     // ── Teaching request (tandem voice+camera) ───────────────────────────
 
     /**
@@ -702,6 +774,7 @@ You are an advanced, context-aware habit tracking assistant specializing in imag
 2. If the category is "FOOD_MEAL", perform a granular breakdown adhering strictly to any User Dietary Rules above:
    - Identify the meal/snack name.
    - Estimate ingredients and portion sizes.
+   - BRANDED / STANDARDIZED FOODS: if the meal is recognizably a specific restaurant or packaged product, base calories and macros on that product's OFFICIAL published nutrition values for the exact size and variant (from your knowledge, or any web search results available) — never a fresh ad-hoc guess. The same product must always yield the same numbers; count named sides/dips at their official per-pot values multiplied by the quantity given.
    - Calculate estimated calories and primary macronutrients (Protein, Carbs, Fats).
    - Also fill "macro_ratings": a simple 1-3 rating per macro (1 = low, 2 = moderate, 3 = high, relative to the meal's size) so meals can be compared at a glance.
    - Summarize the item in 1-2 concise sentences for a habit log entry.
