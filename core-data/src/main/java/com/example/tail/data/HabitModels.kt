@@ -938,6 +938,14 @@ data class AppSettings(
      */
     val appStatsRecordNotificationsEnabled: Boolean = true,
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
+
+    /**
+     * Habits with the "New record" notification enabled. When an amount input
+     * (custom input dialog or per-subtype dialog) is higher than every value
+     * ever input for that habit — or, for subtyped habits, for that specific
+     * subtype option — a celebratory popup flashes on the grid screen.
+     */
+    val recordNotifHabits: Set<String> = emptySet(),
     /** Custom display order for habits (legacy flat list, used when screens is empty). */
     val habitOrder: List<String> = emptyList(),
     /**

@@ -9,6 +9,8 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.example.tail.data.ExperimentStatus
+import com.example.tail.data.ExperimentStatusStore
 import com.example.tail.data.HabitNotification
 import com.example.tail.data.NotificationStore
 import com.example.tail.data.SettingsRepository
@@ -59,6 +61,31 @@ class TailCueSyncWorker(appContext: Context, params: WorkerParameters) :
         val store = NotificationStore(applicationContext)
         val service = TailCueService()
         for (cue in cues) {
+            // Special family: the experiment-status mirror (no notification).
+            // Store the active experiment so MainActivity can flash a reminder
+            // on app open; a "clear" event wipes it. Ack so it doesn't requeue.
+            if (cue.family == "experiment") {
+                try {
+                    val data = org.json.JSONObject(cue.body)
+                    when (data.optString("event")) {
+                        "started", "refresh" -> ExperimentStatusStore.save(
+                            applicationContext,
+                            ExperimentStatus(
+                                expId = data.optInt("exp_id", 0),
+                                title = data.optString("title", cue.title),
+                                daysLeft = data.optInt("days_left", 0),
+                                daysIn = data.optInt("days_in", 1),
+                                endsAt = data.optString("ends_at", "")
+                            )
+                        )
+                        "clear" -> ExperimentStatusStore.save(applicationContext, null)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Bad experiment status cue: ${e.message}")
+                }
+                service.ack(conn.first, conn.second, cue.id) // best-effort
+                continue
+            }
             val ask = HabitNotification(
                 id = TailCue.askId(cue.id),
                 habitName = "TailCue",

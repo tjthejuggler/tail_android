@@ -285,6 +285,19 @@ class HabitViewModel(
     val weightsPrFlash: StateFlow<com.example.tail.data.WeightsRecordsRepository.PrCheck?> =
         _weightsPrFlash.asStateFlow()
 
+    /** Repository for all-time per-channel amount-input records (New-record popups). */
+    val recordTrackingRepo = com.example.tail.data.RecordTrackingRepository(context)
+
+    /** Most recent "new record" event from a subtyped / custom-input habit (null = nothing to flash). */
+    internal val _recordFlash = MutableStateFlow<com.example.tail.data.RecordFlashEvent?>(null)
+    val recordFlash: StateFlow<com.example.tail.data.RecordFlashEvent?> =
+        _recordFlash.asStateFlow()
+
+    /** Dismisses the current record flash (or shows nothing when already dismissed). */
+    fun dismissRecordFlash() {
+        _recordFlash.value = null
+    }
+
     /** Exercise name + machine/free type of the current PR flash (for the headline). */
     internal val _weightsPrFlashMeta = MutableStateFlow<Pair<String, Boolean>?>(null)
     val weightsPrFlashMeta: StateFlow<Pair<String, Boolean>?> =

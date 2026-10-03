@@ -247,6 +247,7 @@ import com.example.tail.ui.viewmodel.previewMaxOneAffectedDays
 import com.example.tail.ui.viewmodel.previewMaxOneRestorableDays
 import com.example.tail.ui.viewmodel.recordMealTap
 import com.example.tail.ui.viewmodel.recordRecentIncrementAmount
+import com.example.tail.ui.viewmodel.checkRecordNotificationTotal
 import com.example.tail.ui.viewmodel.fetchLocationCandidates
 import com.example.tail.ui.viewmodel.getAllStoredLocations
 import com.example.tail.ui.viewmodel.getAssumedLocationForDate
@@ -1006,6 +1007,20 @@ fun HabitGridScreen(
     // exercise's all-time weight/reps record. Auto-dismisses after a
     // delay; a newer flash resets the timer via the version counter.
     val weightsPrCheck by viewModel.weightsPrFlash.collectAsState()
+    // "New record" flash state — shows when a subtyped / custom-input habit
+    // with the "New record" notification enabled logs an all-time-best amount.
+    val recordEvent by viewModel.recordFlash.collectAsState()
+    var recordFlashVersion by remember { mutableIntStateOf(0) }
+    LaunchedEffect(recordEvent) {
+        if (recordEvent != null) {
+            recordFlashVersion++
+            val currentVersion = recordFlashVersion
+            delay(RECORD_FLASH_SECONDS * 1000L)
+            if (recordFlashVersion == currentVersion) {
+                viewModel.dismissRecordFlash()
+            }
+        }
+    }
     val weightsPrMeta by viewModel.weightsPrFlashMeta.collectAsState()
     var weightsPrFlashVersion by remember { mutableIntStateOf(0) }
     LaunchedEffect(weightsPrCheck) {
@@ -2016,6 +2031,22 @@ fun HabitGridScreen(
         }
     }
 
+    // "New record" flash overlay at bottom of screen (above the PR flash)
+    val currentRecordEvent = recordEvent
+    if (currentRecordEvent != null) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 260.dp)
+        ) {
+            RecordFlashPopup(
+                event = currentRecordEvent,
+                visible = true,
+                onDismiss = { viewModel.dismissRecordFlash() }
+            )
+        }
+    }
+
     // Increment toast overlay at bottom of screen
     incrementToastHabit?.let { toastHabit ->
         Box(
@@ -2485,7 +2516,11 @@ fun HabitGridScreen(
             quickAmounts = customAmounts,
             recentAmounts = recentAmounts,
             onConfirm = { amount ->
+                // Increment FIRST, then the record check — the engine reads
+                // the post-write day total so the new amount is part of the
+                // judged day (day-total record semantics).
                 viewModel.incrementHabit(habit.name, amount, recordTimestamp = isToday)
+                viewModel.checkRecordNotificationTotal(habit.name, amount)
                 viewModel.recordRecentIncrementAmount(habit.name, amount)
                 dialogHabit = null
                 // Popup-gated increment: the lizard shimmer fires only now,

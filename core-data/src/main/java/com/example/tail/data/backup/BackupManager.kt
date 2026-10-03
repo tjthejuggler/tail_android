@@ -737,6 +737,7 @@ class BackupManager(
 
         // habit type sets
         settingsRepo.saveCustomInputHabits(s.customInputHabits.toSet())
+        settingsRepo.saveRecordNotifHabits(s.recordNotifHabits.toSet())
         settingsRepo.saveHabitOrder(s.habitOrder)
         settingsRepo.saveHabitScreens(s.habitScreens.map { HabitScreen(it.id, it.name, it.habitNames) })
         settingsRepo.saveActiveScreenIndex(s.activeScreenIndex)
@@ -1140,6 +1141,7 @@ class BackupManager(
         screensRelayFileUri = s.screensRelayFileUri,
         pcWidgetHabits = s.pcWidgetHabits.toList(),
         customInputHabits = s.customInputHabits.toList(),
+        recordNotifHabits = s.recordNotifHabits.toList(),
         habitOrder = s.habitOrder,
         habitScreens = s.habitScreens.map { HabitScreenBackup(it.id, it.name, it.habitNames) },
         activeScreenIndex = s.activeScreenIndex,

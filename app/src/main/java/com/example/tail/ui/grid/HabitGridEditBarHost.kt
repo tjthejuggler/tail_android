@@ -57,6 +57,7 @@ import com.example.tail.ui.viewmodel.toggleBridgeMovieHabit
 import com.example.tail.ui.viewmodel.toggleCameraHabit
 import com.example.tail.ui.viewmodel.toggleConditional
 import com.example.tail.ui.viewmodel.toggleCustomInput
+import com.example.tail.ui.viewmodel.toggleRecordNotif
 import com.example.tail.ui.viewmodel.toggleCustomPointRanges
 import com.example.tail.ui.viewmodel.toggleDisabledHabit
 import com.example.tail.ui.viewmodel.toggleInvertedBinary
@@ -176,6 +177,7 @@ internal fun EditBarHost(
         invertedBinaryHabits = settings.invertedBinaryHabits,
         customInputHabits = settings.customInputHabits,
         customInputAmounts = settings.customInputAmounts,
+        recordNotifHabits = settings.recordNotifHabits,
         textInputHabits = settings.textInputHabits,
         textInputOptionsHabits = settings.textInputOptionsHabits,
         sharableTextHabits = settings.sharableTextHabits,
@@ -202,6 +204,7 @@ internal fun EditBarHost(
         onToggleInvertedBinary = { name -> viewModel.toggleInvertedBinary(name) },
         onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) },
         onSetCustomInputAmounts = { name, amounts -> viewModel.setCustomInputAmounts(name, amounts) },
+        onToggleRecordNotif = { name -> viewModel.toggleRecordNotif(name) },
         onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
         onToggleTextInputOptions = { name -> viewModel.toggleTextInputOptions(name) },
         onEditTextInputOptions = { name ->

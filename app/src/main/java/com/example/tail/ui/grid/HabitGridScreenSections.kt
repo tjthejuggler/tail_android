@@ -1862,6 +1862,10 @@ internal fun EditModeControlBar(
     invertedBinaryHabits: Set<String> = emptySet(),
     customInputHabits: Set<String>,
     customInputAmounts: Map<String, List<Int>> = emptyMap(),
+    /** Habits with the "New record" popup enabled. */
+    recordNotifHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the "New record" popup for a habit. */
+    onToggleRecordNotif: (String) -> Unit = {},
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
     /** Text-input habits that appear in the system share sheet (ShareTextActivity picker). */
@@ -2525,6 +2529,8 @@ internal fun EditModeControlBar(
                         onToggleInvertedBinary = onToggleInvertedBinary,
                         customInputHabits = customInputHabits,
                         customInputAmounts = customInputAmounts,
+                        recordNotifHabits = recordNotifHabits,
+                        onToggleRecordNotif = onToggleRecordNotif,
                         onToggleCustomInput = onToggleCustomInput,
                         onSetCustomInputAmounts = onSetCustomInputAmounts,
                         textInputHabits = textInputHabits,
@@ -3935,6 +3941,10 @@ internal fun HabitInputModesSection(
     onToggleInvertedBinary: (String) -> Unit = {},
     customInputHabits: Set<String>,
     customInputAmounts: Map<String, List<Int>>,
+    /** Habits with the "New record" popup enabled (all-time-best amount input). */
+    recordNotifHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the "New record" popup for a habit. */
+    onToggleRecordNotif: (String) -> Unit = {},
     onToggleCustomInput: (String) -> Unit,
     onSetCustomInputAmounts: (String, List<Int>) -> Unit,
     textInputHabits: Set<String>,
@@ -4113,6 +4123,36 @@ internal fun HabitInputModesSection(
                 onDismiss = { showIncrementAmountsDialog = false }
             )
         }
+    }
+
+    // "New record" toggle — the popup fires when an entered amount (custom
+    // input dialog, or a subtype dialog row) beats the all-time best single
+    // input for that habit — or, on subtyped habits, for that subtype option.
+    Spacer(modifier = Modifier.height(6.dp))
+    val isRecordNotif = selectedHabitName in recordNotifHabits
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "New record 🏆", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isRecordNotif) "Popup on all-time-best input (per subtype)"
+                else "No record popups",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isRecordNotif,
+            onCheckedChange = { onToggleRecordNotif(selectedHabitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFFFD700),
+                checkedTrackColor = Color(0xFF4A3A00),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
     }
 
     Spacer(modifier = Modifier.height(6.dp))

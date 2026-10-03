@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -30,8 +33,11 @@ import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.data.parseDate
 import com.example.tail.ui.advice.AdviceViewModel
 import com.example.tail.ui.advice.AdviceViewModelFactory
+import com.example.tail.data.ExperimentStatus
+import com.example.tail.data.ExperimentStatusStore
 import com.example.tail.ui.chess.ChessReadinessStatsScreen
 import com.example.tail.ui.debug.DebugBubbleOverlay
+import com.example.tail.ui.experiment.ExperimentFlashOverlay
 import com.example.tail.ui.grid.HabitGridScreen
 import com.example.tail.ui.map.MapScreen
 import com.example.tail.ui.viewmodel.navigateToDate
@@ -230,6 +236,12 @@ private fun TailApp(
         factory = AdviceViewModelFactory(adviceRepo)
     )
 
+    // TailCue experiment flash: while an experiment is active (mirrored from
+    // the PC via the bridge), every app open starts with a brief full-screen
+    // "you are in an experiment" reminder. State lives here so the ON_START
+    // hook can (re)trigger it on every foreground entry.
+    var experimentFlash by remember { mutableStateOf<ExperimentStatus?>(null) }
+
     // Track current route for the debug bubble
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -295,6 +307,8 @@ private fun TailApp(
             when (event) {
                 Lifecycle.Event.ON_START  -> {
                     viewModel.onAppStarted()
+                    // Flash "you are in an experiment" if one is running.
+                    experimentFlash = ExperimentStatusStore.load(context)
                     // Quick captures the AI couldn't act on: notify the user
                     // so the images can be assigned + retried from the history.
                     appScope.launch {
@@ -411,6 +425,12 @@ private fun TailApp(
             currentRoute = currentRoute,
             debugPrefs = debugPrefs,
             debugNoteRepo = debugNoteRepo
+        )
+
+        // TailCue experiment reminder flash — above everything, incl. the bubble
+        ExperimentFlashOverlay(
+            status = experimentFlash,
+            onDismiss = { experimentFlash = null }
         )
     }
 }

@@ -1484,6 +1484,7 @@ fun HabitViewModel.deleteHabit(index: Int) {
             rebuildHabitList()
             // Deleted habits must no longer feed into (or be fed by) anything.
             removeConditionalReferences(deletedName)
+            recordTrackingRepo.clearHabit(deletedName)
         }
         persistScreens(updatedScreens)
     } else {
@@ -1814,6 +1815,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
                 valueDisplayLabels = settings.valueDisplayLabels.replaceKey(oldName, newName),
                 maxOneHabits = settings.maxOneHabits.replaceElement(oldName, newName),
                 invertedBinaryHabits = settings.invertedBinaryHabits.replaceElement(oldName, newName),
+                recordNotifHabits = settings.recordNotifHabits.replaceElement(oldName, newName),
                 bridgeMovieHabits = settings.bridgeMovieHabits.replaceElement(oldName, newName),
                 pcWidgetHabits = settings.pcWidgetHabits.replaceElement(oldName, newName),
                 rollForwardHabits = settings.rollForwardHabits.replaceElement(oldName, newName),
@@ -1917,6 +1919,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             // timed sessions survive the rename too
             subtypeDataRepo.renameHabit(oldName, newName)
             timedDataRepo.renameHabit(oldName, newName)
+            recordTrackingRepo.renameHabit(oldName, newName)
             sleepDataRepo.renameHabit(oldName, newName)
 
             // Rename in the weights exercise-name sidecar so per-day exercise
