@@ -2057,7 +2057,14 @@ class FloatingBubbleService : Service() {
                     Toast.LENGTH_SHORT
                 ).show()
             }
-            survivalCounterText?.text = "%02d / %d".format(survivalPassed + 1, survivalTarget)
+            // Post-gate the counter keeps the SOLVED-count convention set at
+            // the gate-secured moment ("20 / 19 ✓ — keep going"). Pre-gate it
+            // shows the puzzle you're ON ("07 / 19"). Using solved+1 after the
+            // gate skipped the 20/19 display (jumped straight to 21/19).
+            survivalCounterText?.text = if (survivalGatePassed)
+                "$survivalPassed / $survivalTarget ✓ — keep going"
+            else
+                "%02d / %d".format(survivalPassed + 1, survivalTarget)
         }
         survivalPuzzleStartMs = now
     }
