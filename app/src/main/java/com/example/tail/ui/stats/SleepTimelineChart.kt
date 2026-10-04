@@ -76,12 +76,21 @@ fun SleepTimelineChart(
     // evening maps left of centre, wake time right of centre.
     val AXIS_START = 16 * 60 // 16:00
 
+    // Newest dates first, and leading empty days trimmed: days before the
+    // earliest session (i.e. before ANY data existed) are dropped, while
+    // empty days AFTER data started (missed days) still render.
+    val firstDataDate = sessions.minOfOrNull { it.date }
+    val displayStart = firstDataDate?.let { maxOf(startDate, it) } ?: startDate
+    val displayDays = days.filter { !it.isBefore(displayStart) }.asReversed()
+
     Column(modifier = modifier) {
         // ── Hour labels along the top (every 4 h on the wrapped axis) ──
+        // Insets mirror the row layout below: 52dp = date-label gutter,
+        // 110dp = summary-text column, so labels sit exactly over the bars.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 52.dp, vertical = 0.dp),
+                .padding(start = 52.dp, end = 110.dp, top = 0.dp, bottom = 0.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             listOf(16, 20, 0, 4, 8, 12, 16).forEach { h ->
@@ -95,118 +104,104 @@ fun SleepTimelineChart(
             }
         }
 
-        // ── Bars ──
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height((days.size.coerceAtLeast(1) * 18).dp.coerceAtMost(240.dp))
-        ) {
-            val labelSpace = 48.dp.toPx()
-            val rowH = size.height / days.size.coerceAtLeast(1)
-            val barH = rowH * 0.62f
-            val axisW = size.width - labelSpace
-
-            // Vertical grid lines every 4 h on the wrapped axis
-            for (h in listOf(16, 20, 0, 4, 8, 12)) {
-                val x = labelSpace + axisW * (((h * 60 - AXIS_START + MINUTES_PER_DAY) % MINUTES_PER_DAY).toFloat() / MINUTES_PER_DAY)
-                drawLine(
-                    color = gridColor,
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 1f
-                )
-            }
-
-            days.forEachIndexed { i, day ->
-                val y = i * rowH + (rowH - barH) / 2
-                val s = sessionsByDate[day] ?: return@forEachIndexed
-
-                val bed = s.bed
-                val wake = s.wake
-                if (bed != null && wake != null && s.durationMin != null) {
-                    // Continuous band on the wrapped axis (may cross midnight centre)
-                    val startF = (((bed - AXIS_START + MINUTES_PER_DAY) % MINUTES_PER_DAY).toFloat()) / MINUTES_PER_DAY
-                    val endF = startF + (s.durationMin.toFloat() / MINUTES_PER_DAY)
-                    drawRoundRect(
-                        color = bedColor,
-                        topLeft = Offset(labelSpace + startF * axisW, y),
-                        size = Size((endF - startF) * axisW, barH),
-                        cornerRadius = CornerRadius(barH / 3f)
-                    )
-                    // Wake marker at the band's end
-                    drawCircle(
-                        color = wakeColor,
-                        radius = barH / 3.2f,
-                        center = Offset(labelSpace + endF * axisW, y + barH / 2)
-                    )
-                } else {
-                    // Only one half logged — draw a small pill at its minute
-                    val m = bed ?: wake ?: return@forEachIndexed
-                    val f = (((m - AXIS_START + MINUTES_PER_DAY) % MINUTES_PER_DAY).toFloat()) / MINUTES_PER_DAY
-                    drawRoundRect(
-                        color = missingColor,
-                        topLeft = Offset(labelSpace + f * axisW - barH, y),
-                        size = Size(barH * 2, barH),
-                        cornerRadius = CornerRadius(barH / 3f)
-                    )
-                    if (wake != null) {
-                        drawCircle(
-                            color = wakeColor,
-                            radius = barH / 3.2f,
-                            center = Offset(labelSpace + f * axisW + barH, y + barH / 2)
-                        )
-                    }
-                }
-
-                // Quality dots inside the band (only when both halves exist).
-                // With the 1–10 scale up to 10 dots are drawn, so the spread is
-                // proportional to the band width — dots stay inside short naps.
-                val q = s.quality
-                if (q != null && bed != null && wake != null && s.durationMin != null) {
-                    val startF = (((bed - AXIS_START + MINUTES_PER_DAY) % MINUTES_PER_DAY).toFloat()) / MINUTES_PER_DAY
-                    val spanF = (s.durationMin.toFloat() / MINUTES_PER_DAY) * 0.8f
-                    val step = spanF / q
-                    repeat(q) { i ->
-                        drawCircle(
-                            color = Color(0xFFFFFFFF).copy(alpha = 0.5f),
-                            radius = barH / 8f,
-                            center = Offset(
-                                labelSpace + (startF + step * (i + 1)) * axisW,
-                                y + barH / 2
-                            )
-                        )
-                    }
-                }
-            }
-        }
-
-        // ── Row labels (dates) under/next to the canvas are rendered by the
-        // overlay Row below — Canvas can't draw Compose text, so dates are
-        // drawn in a parallel column structure instead.
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp)
-        ) {
-            days.forEach { day ->
+        // ── One aligned row PER DAY: date label + that day's bar canvas +
+        // summary text all share the same 24dp Row, so bars can never drift
+        // out of sync with their dates regardless of window length.
+        Column {
+            displayDays.forEach { day ->
                 val s = sessionsByDate[day]
+                val rowSelected = selected?.date == day
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(18.dp)
+                        .height(24.dp)
                         .clickable(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() }
-                        ) { selected = if (selected?.date == day) null else s }
-                        .padding(horizontal = 8.dp),
+                        ) { selected = if (rowSelected) null else s },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Date label
                     Text(
                         text = day.format(DateTimeFormatter.ofPattern("EEE dd")),
-                        color = if (selected?.date == day) Color(0xFFE0E4FF) else textColor,
+                        color = if (rowSelected) Color(0xFFE0E4FF) else textColor,
                         fontSize = 9.sp,
-                        modifier = Modifier.width(48.dp)
+                        modifier = Modifier.padding(start = 8.dp).width(44.dp)
                     )
+                    // This day's bar (single-row canvas keeps bar & label locked)
+                    Canvas(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        val barH = size.height
+                        val axisW = size.width
+                        val y = 0f
+
+                        // Vertical grid lines every 4 h on the wrapped axis
+                        for (h in listOf(16, 20, 0, 4, 8, 12)) {
+                            val x = axisW * (((h * 60 - AXIS_START + MINUTES_PER_DAY) % MINUTES_PER_DAY).toFloat() / MINUTES_PER_DAY)
+                            drawLine(
+                                color = gridColor,
+                                start = Offset(x, 0f),
+                                end = Offset(x, size.height),
+                                strokeWidth = 1f
+                            )
+                        }
+
+                        if (s == null) return@Canvas
+                        if (s.segments.isNotEmpty()) {
+                            // One band PER bed→wake segment.
+                            var first = true
+                            s.segments.forEach { seg ->
+                                val startF = (((seg.bed - AXIS_START + MINUTES_PER_DAY) % MINUTES_PER_DAY).toFloat()) / MINUTES_PER_DAY
+                                val lenF = seg.durationMin.toFloat() / MINUTES_PER_DAY
+                                drawRoundRect(
+                                    color = bedColor,
+                                    topLeft = Offset(startF * axisW, y),
+                                    size = Size(lenF * axisW, barH),
+                                    cornerRadius = CornerRadius(barH / 3f)
+                                )
+                                drawCircle(
+                                    color = wakeColor,
+                                    radius = barH / 3.2f,
+                                    center = Offset((startF + lenF) * axisW, y + barH / 2)
+                                )
+                                // Quality dots only on single-segment nights.
+                                val q = s.quality
+                                if (q != null && first && s.segments.size == 1) {
+                                    val step = (lenF * 0.8f) / q
+                                    repeat(q) { k ->
+                                        drawCircle(
+                                            color = Color(0xFFFFFFFF).copy(alpha = 0.5f),
+                                            radius = barH / 8f,
+                                            center = Offset((startF + step * (k + 1)) * axisW, y + barH / 2)
+                                        )
+                                    }
+                                }
+                                first = false
+                            }
+                        } else {
+                            // Only one half logged — small pill at its minute.
+                            val m = s.bed ?: s.wake ?: return@Canvas
+                            val f = (((m - AXIS_START + MINUTES_PER_DAY) % MINUTES_PER_DAY).toFloat()) / MINUTES_PER_DAY
+                            drawRoundRect(
+                                color = missingColor,
+                                topLeft = Offset(f * axisW - barH, y),
+                                size = Size(barH * 2, barH),
+                                cornerRadius = CornerRadius(barH / 3f)
+                            )
+                            if (s.wake != null) {
+                                drawCircle(
+                                    color = wakeColor,
+                                    radius = barH / 3.2f,
+                                    center = Offset(f * axisW + barH, y + barH / 2)
+                                )
+                            }
+                        }
+                    }
+                    // Summary text (bed → wake, duration)
                     Text(
                         text = listOfNotNull(
                             s?.bed?.let { minutesToClockString(it) },
@@ -216,7 +211,7 @@ fun SleepTimelineChart(
                         color = Color(0xFF8899AA),
                         fontSize = 9.sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        modifier = Modifier.padding(start = 6.dp, end = 8.dp).widthIn(min = 96.dp)
                     )
                 }
             }
@@ -237,10 +232,23 @@ fun SleepTimelineChart(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )
-                val lines = listOfNotNull(
-                    s.bed?.let { "Bed: ${minutesToClockString(it)}" },
-                    s.wake?.let { "Wake: ${minutesToClockString(it)}" },
-                    s.durationMin?.let { "Duration: ${formatSleepDuration(it)}" },
+                val lines = (
+                    if (s.segments.size > 1) {
+                        // Multi-segment night: show every bed→wake pair.
+                        s.segments.mapIndexed { i, seg ->
+                            "Sleep ${i + 1}: ${minutesToClockString(seg.bed)} → " +
+                                "${minutesToClockString(seg.wake)} (${formatSleepDuration(seg.durationMin)})"
+                        } + listOfNotNull(
+                            s.durationMin?.let { "Total: ${formatSleepDuration(it)}" }
+                        )
+                    } else {
+                        listOfNotNull(
+                            s.bed?.let { "Bed: ${minutesToClockString(it)}" },
+                            s.wake?.let { "Wake: ${minutesToClockString(it)}" },
+                            s.durationMin?.let { "Duration: ${formatSleepDuration(it)}" }
+                        )
+                    }
+                ) + listOfNotNull(
                     s.tempTenths?.let { "Temp: ${it / 10.0}°C" },
                     s.conditions?.takeIf { it.isNotBlank() }?.let { "Conditions: $it" },
                     s.awakenings?.let { "Awakenings: $it" },
@@ -285,7 +293,7 @@ private fun SleepStatsGrid(
         avgBed?.let { SleepStat("Avg bed", minutesToClockString(it.toInt())) },
         avgWake?.let { SleepStat("Avg wake", minutesToClockString(it.toInt())) },
         avgDur?.let { SleepStat("Avg duration", formatSleepDuration(it.toInt())) },
-        avgTemp?.let { SleepStat("Avg temp", "${(it / 10).let { t -> "%.1f".format(t / 10.0) }}°C") },
+        avgTemp?.let { SleepStat("Avg temp", "%.1f°C".format(it / 10.0)) },
         if (totalAwakenings > 0) SleepStat("Awakenings", "$totalAwakenings") else null,
         if (totalAwakeMin > 0) SleepStat("Time awake", formatSleepDuration(totalAwakeMin)) else null,
         avgQual?.let { SleepStat("Avg quality", "%.1f/10".format(it)) }

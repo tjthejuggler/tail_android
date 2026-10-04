@@ -153,16 +153,17 @@ internal fun SleepDialogHost(
                 habitName = habit.name,
                 existing = record,
                 options = options,
-                onSave = { bed, temp, cond ->
+                onSave = { bedTimes, temp, cond ->
                     viewModel.saveSleepTimeEntry(
                         habitName = habit.name,
-                        bedMinutes = bed,
+                        bedTimes = bedTimes,
                         tempTenths = temp,
                         conditions = cond,
                         date = date,
-                        // Stamp mirrors the chosen bed time so the timestamp
+                        // Stamp mirrors the first bed time so the timestamp
                         // editor and the timeline graph stay aligned.
-                        stampTime = "%02d:%02d:00".format(bed / 60, bed % 60)
+                        stampTime = bedTimes.firstOrNull()
+                            ?.let { "%02d:%02d:00".format(it / 60, it % 60) } ?: "00:00:00"
                     )
                     onDismiss()
                 },
@@ -173,15 +174,16 @@ internal fun SleepDialogHost(
             WakeTimeDialog(
                 habitName = habit.name,
                 existing = record,
-                onSave = { wake, aw, awake, q ->
+                onSave = { wakeTimes, aw, awake, q ->
                     viewModel.saveWakeSurveyEntry(
                         habitName = habit.name,
-                        wakeMinutes = wake,
+                        wakeTimes = wakeTimes,
                         awakenings = aw,
                         awakeMin = awake,
                         quality = q,
                         date = date,
-                        stampTime = "%02d:%02d:00".format(wake / 60, wake % 60)
+                        stampTime = wakeTimes.lastOrNull()
+                            ?.let { "%02d:%02d:00".format(it / 60, it % 60) } ?: "00:00:00"
                     )
                     onDismiss()
                 },
@@ -194,9 +196,11 @@ internal fun SleepDialogHost(
 /**
  * SLEEP-TIME variant dialog.
  *
- * - Bed time: a single [TimeWheelPicker] (the only time control), pre-set to
+ * - Bed times: ANY NUMBER of [TimeWheelPicker]s (start with one, pre-set to
  *   the current wall-clock time when the dialog opens — or the earlier
- *   entry's time when re-editing the same night.
+ *   entries' times when re-editing the same night); "+ Add" appends another
+ *   wheel for naps / split nights, and every wheel but the last can be
+ *   removed.
  * - Room temperature: numeric text field (°C, one decimal allowed) with
  *   quick chips for common values and a "—" clear chip.
  * - Sleep conditions: a text field with an Add button feeding a CHECKBOX
@@ -212,39 +216,21 @@ fun SleepTimeDialog(
     habitName: String,
     existing: SleepRecord,
     options: List<String>,
-    onSave: (bedMinutes: Int, tempTenths: Int?, conditions: String?) -> Unit,
+    onSave: (bedTimes: List<Int>, tempTenths: Int?, conditions: String?) -> Unit,
     onDismiss: () -> Unit
 ) {
     val accent = Color(0xFF9FA8FF) // soft indigo — sleep palette
-    // Field state is keyed on [existing]: the record loads right after the
-    // dialog opens, and the new instance re-seeds every field exactly once.
-    var bed by remember(existing) { mutableIntStateOf(existing.bed ?: nowMinutesOfDay()) }
-    var tempText by remember(existing) {
-        mutableStateOf(
-            existing.temp?.let { (it / 10.0).toString() } ?: ""
-        )
-    }
+    // The dialog is FRESH on every open: one bed wheel at the current time,
+    // blank temperature and no pre-selected conditions — saved entries are
+    // APPENDED to the day's stored list, and blank temp/conditions keep the
+    // stored values (merge treats them as null). Re-keying on [existing]
+    // (which loads asynchronously) re-seeds the fresh state exactly once.
+    var bedTimes by remember(existing) { mutableStateOf(listOf(nowMinutesOfDay())) }
+    var tempText by remember(existing) { mutableStateOf("") }
     // Selected conditions as a set — stored back comma-joined on save.
-    var selectedConds by remember(existing) {
-        mutableStateOf(
-            existing.conditions?.split(',')
-                ?.map { it.trim() }
-                ?.filter { it.isNotEmpty() }
-                ?.toSet()
-                ?: emptySet()
-        )
-    }
-    // Entries added in THIS dialog session (pre-seeded from the stored entry
-    // so its fragments always appear as selectable checkboxes).
-    var addedConds by remember(existing) {
-        mutableStateOf(
-            existing.conditions?.split(',')
-                ?.map { it.trim() }
-                ?.filter { it.isNotEmpty() }
-                ?.distinct()
-                ?: emptyList()
-        )
-    }
+    var selectedConds by remember(existing) { mutableStateOf(emptySet<String>()) }
+    // Condition entries added in THIS dialog session.
+    var addedConds by remember(existing) { mutableStateOf(emptyList<String>()) }
     var newCond by remember { mutableStateOf("") }
 
     /** Checkbox list: newly added entries first, then everything ever used. */
@@ -261,17 +247,17 @@ fun SleepTimeDialog(
             val conditions = allCondOptions.filter { it in selectedConds }
                 .joinToString(", ")
                 .trim()
-            onSave(bed, tempTenths, conditions)
+            onSave(bedTimes, tempTenths, conditions)
         },
         onDismiss = onDismiss
     ) {
-        Text("Bed time", color = Color(0xFF888888), fontSize = 11.sp)
-        TimeWheelPicker(
-            hour24 = bed / 60,
-            minute = bed % 60,
-            onTimeChange = { h, m -> bed = h * 60 + m },
+        MultiTimeWheelList(
+            label = "Bed time${if (bedTimes.size > 1) "s" else ""}",
+            times = bedTimes,
             accent = accent,
-            modifier = Modifier.fillMaxWidth()
+            onChange = { i, t -> bedTimes = bedTimes.toMutableList().also { it[i] = t } },
+            onRemove = { i -> bedTimes = bedTimes.filterIndexed { idx, _ -> idx != i } },
+            onAdd = { bedTimes = bedTimes + nowMinutesOfDay() }
         )
 
         HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
@@ -400,25 +386,28 @@ fun SleepTimeDialog(
 }
 
 /**
- * WAKE-TIME variant dialog — wake wheel plus the mini survey:
- * number of awakenings, minutes spent awake, and perceived overall quality
- * on a 1–10 wheel scroller. All survey answers are optional; the wake time
- * alone saves fine, and "clear" removes the quality rating.
+ * WAKE-TIME variant dialog — ANY NUMBER of wake wheels (one per sleep
+ * segment; each wake pairs with the most recent bed time before it) plus the
+ * mini survey: number of awakenings, minutes spent awake, and perceived
+ * overall quality on a 1–10 wheel scroller. All survey answers are optional;
+ * the wake times alone save fine, and "clear" removes the quality rating.
  */
 @Composable
 fun WakeTimeDialog(
     habitName: String,
     existing: SleepRecord,
-    onSave: (wakeMinutes: Int, awakenings: Int?, awakeMin: Int?, quality: Int?) -> Unit,
+    onSave: (wakeTimes: List<Int>, awakenings: Int?, awakeMin: Int?, quality: Int?) -> Unit,
     onDismiss: () -> Unit
 ) {
     val accent = Color(0xFFFFB74D) // warm amber — morning palette
-    // Keyed on [existing] so the async pre-fill re-seeds every field once;
-    // the wake wheel defaults to the current time at dialog open.
-    var wake by remember(existing) { mutableIntStateOf(existing.wake ?: nowMinutesOfDay()) }
-    var awText by remember(existing) { mutableStateOf(existing.awakenings?.toString() ?: "") }
-    var awakeText by remember(existing) { mutableStateOf(existing.awakeMin?.toString() ?: "") }
-    var quality by remember(existing) { mutableStateOf<Int?>(existing.quality) } // null = not rated
+    // The dialog is FRESH on every open: one wake wheel at the current time
+    // and a blank survey — saved entries are APPENDED to the day's stored
+    // list, and blank survey answers keep the stored values (merge treats
+    // them as null). Re-keying on [existing] re-seeds the fresh state once.
+    var wakeTimes by remember(existing) { mutableStateOf(listOf(nowMinutesOfDay())) }
+    var awText by remember(existing) { mutableStateOf("") }
+    var awakeText by remember(existing) { mutableStateOf("") }
+    var quality by remember(existing) { mutableStateOf<Int?>(null) } // null = not rated
 
     SleepDialogScaffold(
         title = "🌅 $habitName",
@@ -426,7 +415,7 @@ fun WakeTimeDialog(
         saveLabel = "Save",
         onSave = {
             onSave(
-                wake,
+                wakeTimes,
                 awText.toIntOrNull()?.coerceIn(0, 99),
                 awakeText.toIntOrNull()?.coerceIn(0, 1439),
                 quality?.takeIf { it in 1..10 }
@@ -434,13 +423,13 @@ fun WakeTimeDialog(
         },
         onDismiss = onDismiss
     ) {
-        Text("Wake time", color = Color(0xFF888888), fontSize = 11.sp)
-        TimeWheelPicker(
-            hour24 = wake / 60,
-            minute = wake % 60,
-            onTimeChange = { h, m -> wake = h * 60 + m },
+        MultiTimeWheelList(
+            label = "Wake time${if (wakeTimes.size > 1) "s" else ""}",
+            times = wakeTimes,
             accent = accent,
-            modifier = Modifier.fillMaxWidth()
+            onChange = { i, t -> wakeTimes = wakeTimes.toMutableList().also { it[i] = t } },
+            onRemove = { i -> wakeTimes = wakeTimes.filterIndexed { idx, _ -> idx != i } },
+            onAdd = { wakeTimes = wakeTimes + nowMinutesOfDay() }
         )
 
         HorizontalDivider(color = Color(0xFF333344), thickness = 0.5.dp)
@@ -503,4 +492,71 @@ fun WakeTimeDialog(
             )
         }
     }
+}
+
+/**
+ * Editable list of time wheels for the sleep dialogs: every entry gets its
+ * own [TimeWheelPicker] (with a "remove" chip while more than one exists)
+ * and "+ Add" appends another wheel set to the current time. Powers the
+ * multi-segment bed/wake input (naps, split nights, post-midnight bedtimes).
+ */
+@Composable
+private fun MultiTimeWheelList(
+    label: String,
+    times: List<Int>,
+    accent: Color,
+    onChange: (index: Int, minutes: Int) -> Unit,
+    onRemove: (index: Int) -> Unit,
+    onAdd: () -> Unit
+) {
+    Text(label, color = Color(0xFF888888), fontSize = 11.sp)
+    times.forEachIndexed { i, t ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (times.size > 1) {
+                Text(
+                    text = "#${i + 1}",
+                    color = Color(0xFF666677),
+                    fontSize = 11.sp
+                )
+            }
+            TimeWheelPicker(
+                hour24 = t / 60,
+                minute = t % 60,
+                onTimeChange = { h, m -> onChange(i, h * 60 + m) },
+                accent = accent,
+                modifier = Modifier.weight(1f)
+            )
+            if (times.size > 1) {
+                Text(
+                    text = "✕",
+                    color = Color(0xFF888888),
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .background(Color(0xFF222222), RoundedCornerShape(8.dp))
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { onRemove(i) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+    Text(
+        text = "+ Add",
+        color = accent,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .background(Color(0xFF1A2438), RoundedCornerShape(8.dp))
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { onAdd() }
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    )
 }

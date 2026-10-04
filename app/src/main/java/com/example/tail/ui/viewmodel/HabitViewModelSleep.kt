@@ -33,6 +33,10 @@ internal data class SleepWakeHalf(
 fun HabitViewModel.isSleepHabit(habitName: String): Boolean =
     habitName in _settings.value.sleepHabits
 
+/** All sleep-suite habit names currently configured (both variants). */
+fun HabitViewModel.allSleepHabitNames(): List<String> =
+    _settings.value.sleepHabits.toList()
+
 /**
  * Returns the variant key for sleep habit [habitName]
  * ([SLEEP_VARIANT_SLEEP_TIME] or [SLEEP_VARIANT_WAKE_TIME]), or null when the
@@ -96,17 +100,19 @@ fun HabitViewModel.loadSleepConditionsHistory(
 }
 
 /**
- * Saves the SLEEP half of a night's record: bed time (minutes since midnight),
- * room temperature (tenths of °C) and the free-text conditions. Increments the
- * habit count by 1 — but only when the bed half was previously unset for that
- * date, so re-editing tonight's bedtime never inflates streaks.
+ * Saves the SLEEP half of a night's record: the bed times entered in THIS
+ * dialog session are APPENDED to the times already stored for the date
+ * (deduped), supporting naps and post-midnight bedtimes. Temperature and
+ * conditions overwrite only when provided. Increments the habit count by 1 —
+ * but only when the bed half was previously unset for that date, so
+ * re-editing tonight's bedtime never inflates streaks.
  *
- * @param stampTime "HH:mm:ss" matching the bed time, so the recorded timestamp
- *                  aligns with the timeline graph.
+ * @param stampTime "HH:mm:ss" matching the first bed time, so the recorded
+ *                  timestamp aligns with the timeline graph.
  */
 fun HabitViewModel.saveSleepTimeEntry(
     habitName: String,
-    bedMinutes: Int,
+    bedTimes: List<Int>,
     tempTenths: Int?,
     conditions: String?,
     date: LocalDate,
@@ -116,10 +122,16 @@ fun HabitViewModel.saveSleepTimeEntry(
         try {
             val dateStr = dateString(date)
             val existing = sleepDataRepo.getRecord(habitName, dateStr)
-            val firstEntry = existing.bed == null
+            val firstEntry = existing.bedTimes().isEmpty()
+            val merged = (existing.bedTimes() + bedTimes).distinct()
             sleepDataRepo.mergeRecord(
                 habitName, dateStr,
-                SleepRecord(bed = bedMinutes, temp = tempTenths, conditions = conditions?.trim()?.takeIf { it.isNotEmpty() })
+                SleepRecord(
+                    beds = merged,
+                    bed = merged.firstOrNull(),
+                    temp = tempTenths,
+                    conditions = conditions?.trim()?.takeIf { it.isNotEmpty() }
+                )
             )
             if (firstEntry) {
                 incrementHabit(habitName, 1, date = date, stampTime = stampTime)
@@ -132,14 +144,16 @@ fun HabitViewModel.saveSleepTimeEntry(
 }
 
 /**
- * Saves the WAKE half of a night's record: wake time (minutes since midnight),
- * the mini-survey answers (awakenings count, minutes awake, perceived quality
- * 1–10). Increments the habit count by 1 — only when the wake half was
- * previously unset for that date (re-edits don't re-count).
+ * Saves the WAKE half of a night's record: the wake times entered in THIS
+ * dialog session are APPENDED to the times already stored for the date
+ * (deduped, one per sleep segment), plus the mini-survey answers
+ * (awakenings count, minutes awake, perceived quality 1–10). Increments the
+ * habit count by 1 — only when the wake half was previously unset for that
+ * date (re-edits don't re-count).
  */
 fun HabitViewModel.saveWakeSurveyEntry(
     habitName: String,
-    wakeMinutes: Int,
+    wakeTimes: List<Int>,
     awakenings: Int?,
     awakeMin: Int?,
     quality: Int?,
@@ -150,11 +164,13 @@ fun HabitViewModel.saveWakeSurveyEntry(
         try {
             val dateStr = dateString(date)
             val existing = sleepDataRepo.getRecord(habitName, dateStr)
-            val firstEntry = existing.wake == null
+            val firstEntry = existing.wakeTimes().isEmpty()
+            val merged = (existing.wakeTimes() + wakeTimes).distinct()
             sleepDataRepo.mergeRecord(
                 habitName, dateStr,
                 SleepRecord(
-                    wake = wakeMinutes,
+                    wakes = merged,
+                    wake = merged.lastOrNull(),
                     awakenings = awakenings,
                     awakeMin = awakeMin,
                     quality = quality
@@ -172,21 +188,38 @@ fun HabitViewModel.saveWakeSurveyEntry(
 
 // ── Timeline graph data ─────────────────────────────────────────────────────
 
+/** One paired bed→wake segment of a night. */
+data class SleepSegment(
+    /** Bed time — minutes since midnight of [bedDate]. */
+    val bed: Int,
+    /** The date key of the bed entry. */
+    val bedDate: LocalDate,
+    /** Wake time — minutes since midnight of [wakeDate]. */
+    val wake: Int,
+    /** The date key of the wake entry. */
+    val wakeDate: LocalDate,
+    /** Segment duration in minutes (midnight-wrapping). */
+    val durationMin: Int
+)
+
 /**
- * One reconstructed sleep session for the timeline graph. The session date is
- * the BED entry's date; the wake half is matched from the same date or the
- * next morning, whichever produces a plausible session.
+ * One reconstructed sleep session (night) for the timeline graph. The session
+ * date is the FIRST bed entry's date. Any number of bed/wake pairs (naps,
+ * split nights, post-midnight bedtimes) are paired CHRONOLOGICALLY — each
+ * wake matches the most recent bed time before it — and aggregated here:
+ * [durationMin] is the SUM of all segment durations, [bed]/[wake] show the
+ * first bed and last wake, and [segments] carries the individual pairs.
  */
 data class SleepSession(
-    /** Session date = the date key of the bed entry. */
+    /** Session date = the date key of the first bed entry. */
     val date: LocalDate,
-    /** Bed time — minutes since midnight of [date]. Null = bed not logged. */
+    /** First bed time — minutes since midnight of [date]. Null = bed not logged. */
     val bed: Int?,
-    /** Wake time — minutes since midnight of [wakeDate]. Null = wake not logged. */
+    /** Last wake time — minutes since midnight of [wakeDate]. Null = wake not logged. */
     val wake: Int?,
-    /** The date key the matched wake record came from (usually [date] + 1). */
+    /** The date key the last matched wake record came from. */
     val wakeDate: LocalDate?,
-    /** Total sleep duration in minutes (midnight-wrapping), when both halves exist. */
+    /** TOTAL sleep duration in minutes (sum across all segments), when any wake exists. */
     val durationMin: Int?,
     /** Room temperature in tenths of °C. */
     val tempTenths: Int?,
@@ -197,17 +230,54 @@ data class SleepSession(
     /** Mini-survey: total minutes awake during the night. */
     val awakeMin: Int?,
     /** Mini-survey: perceived overall sleep quality 1–10. */
-    val quality: Int?
+    val quality: Int?,
+    /** The individual bed→wake segments, chronological. Empty when no wake is paired yet. */
+    val segments: List<SleepSegment> = emptyList()
 )
+
+/** One bed-time event, resolved to an absolute minute (epochDay × 1440 + minute). */
+internal class SleepBedEvent(
+    val absMin: Long,
+    val date: LocalDate,
+    val minutes: Int,
+    val half: SleepBedHalf
+)
+
+/** One wake-time event, resolved to an absolute minute (epochDay × 1440 + minute). */
+internal class SleepWakeEvent(
+    val absMin: Long,
+    val date: LocalDate,
+    val minutes: Int,
+    val half: SleepWakeHalf
+)
+
+/** Aggregates all bed→wake segments whose BED entry falls on one date. */
+internal class SleepNightGroup(val date: LocalDate) {
+    val segments = mutableListOf<SleepSegment>()
+    var firstBed: Int? = null
+    var temp: Int? = null
+    var cond: String? = null
+    var wakeHalf: SleepWakeHalf? = null
+    var lastWakeDate: LocalDate? = null
+
+    fun seedBed(min: Int, half: SleepBedHalf) {
+        if (firstBed == null) {
+            firstBed = min
+            temp = half.temp
+            cond = half.cond
+        }
+    }
+}
 
 /**
  * Builds the merged sleep-session timeline for the graph across
- * [startDate]..[endDate]. A session is keyed by the bed entry's date; its wake
- * half is searched on the same date (naps) and the next morning (overnight
- * sleep), preferring the combination that yields a positive duration ≤ 24 h.
- * Sleep habits are the SLEEP_TIME-variant habit names, wake habits the
- * WAKE_TIME-variant ones — pass the two halves explicitly so any pairing of
- * habit names works (e.g. "Sleep"/"Wake" or "Nap"/"Nap Wake").
+ * [startDate]..[endDate]. EVERY bed time and EVERY wake time from every
+ * sleep/wake-variant habit becomes an absolute-minute event; events are
+ * processed chronologically and each wake is paired with the MOST RECENT
+ * unconsumed bed before it — so naps, split nights and post-midnight
+ * bedtimes all pair correctly. Segments are grouped by their BED entry's
+ * date into one [SleepSession] per night, with [SleepSession.durationMin]
+ * being the SUM of the night's segment durations.
  */
 fun HabitViewModel.getSleepSessions(
     sleepHabitNames: List<String>,
@@ -216,73 +286,90 @@ fun HabitViewModel.getSleepSessions(
     endDate: LocalDate
 ): List<SleepSession> = runBlocking {
     try {
-        // Accumulate every bed half and every wake half, then pair them.
-        val beds = mutableMapOf<LocalDate, SleepBedHalf>()
+        // Collect bed events (first habit wins per identical absolute time).
+        val bedEvents = mutableListOf<SleepBedEvent>()
         for (name in sleepHabitNames) {
             val records = sleepDataRepo.loadHabitData(name)
             for ((dateStr, rec) in records) {
-                if (rec.bed == null) continue
                 val d = com.example.tail.data.parseDate(dateStr) ?: continue
-                // First habit wins; a second sleep habit for the same night
-                // (e.g. separate nap habit) keeps its own date key anyway.
-                if (!beds.containsKey(d)) {
-                    beds[d] = SleepBedHalf(rec.bed, rec.temp, rec.conditions)
+                for (m in rec.bedTimes()) {
+                    val abs = d.toEpochDay() * MINUTES_PER_DAY + m
+                    if (bedEvents.none { it.absMin == abs }) {
+                        bedEvents.add(SleepBedEvent(abs, d, m, SleepBedHalf(m, rec.temp, rec.conditions)))
+                    }
                 }
             }
         }
-        val wakes = mutableMapOf<LocalDate, SleepWakeHalf>()
+        // Collect wake events the same way.
+        val wakeEvents = mutableListOf<SleepWakeEvent>()
         for (name in wakeHabitNames) {
             val records = sleepDataRepo.loadHabitData(name)
             for ((dateStr, rec) in records) {
-                if (rec.wake == null) continue
                 val d = com.example.tail.data.parseDate(dateStr) ?: continue
-                if (!wakes.containsKey(d)) {
-                    wakes[d] = SleepWakeHalf(rec.wake, rec.awakenings, rec.awakeMin, rec.quality)
+                for (m in rec.wakeTimes()) {
+                    val abs = d.toEpochDay() * MINUTES_PER_DAY + m
+                    if (wakeEvents.none { it.absMin == abs }) {
+                        wakeEvents.add(SleepWakeEvent(abs, d, m, SleepWakeHalf(m, rec.awakenings, rec.awakeMin, rec.quality)))
+                    }
                 }
             }
         }
 
-        val sessions = mutableListOf<SleepSession>()
+        val sortedBeds = bedEvents.sortedBy { it.absMin }
+        val sortedWakes = wakeEvents.sortedBy { it.absMin }
+        val nights = LinkedHashMap<LocalDate, SleepNightGroup>()
+        var pending: SleepBedEvent? = null
+        var bi = 0
+        var wi = 0
+        while (bi < sortedBeds.size || wi < sortedWakes.size) {
+            val b = sortedBeds.getOrNull(bi)
+            val w = sortedWakes.getOrNull(wi)
+            // Beds win ties so a wake at the exact same minute pairs with it.
+            if (w == null || (b != null && b.absMin <= w.absMin)) {
+                pending = b
+                bi++
+            } else {
+                val bed = pending
+                if (bed != null) {
+                    val dur = (w.absMin - bed.absMin).toInt()
+                    if (dur > 0) {
+                        val g = nights.getOrPut(bed.date) { SleepNightGroup(bed.date) }
+                        g.seedBed(bed.minutes, bed.half)
+                        g.segments.add(SleepSegment(bed.minutes, bed.date, w.minutes, w.date, dur))
+                        g.wakeHalf = w.half
+                        g.lastWakeDate = w.date
+                    }
+                    pending = null
+                }
+                wi++
+            }
+        }
+        // A trailing bed with no wake yet becomes an open session (wake = null).
+        pending?.let { bed ->
+            val g = nights.getOrPut(bed.date) { SleepNightGroup(bed.date) }
+            g.seedBed(bed.minutes, bed.half)
+        }
+
         // Start one day early so sessions whose wake lands in the range but
         // whose bed entry is the previous evening still render.
-        var d = startDate.minusDays(1)
-        while (!d.isAfter(endDate)) {
-            val bedHalf = beds[d]
-            if (bedHalf != null) {
-                val bed = bedHalf.bed
-                // Prefer a wake on the NEXT date (overnight); fall back to the
-                // same date (nap / split log) when it produces a positive span.
-                val next = wakes[d.plusDays(1)]
-                val same = wakes[d]
-                var wakeHalf: SleepWakeHalf? = null
-                var wakeDate: LocalDate? = null
-                if (next != null && sleepDurationMinutes(bed, next.wake) != null) {
-                    wakeHalf = next; wakeDate = d.plusDays(1)
-                } else if (same != null && sleepDurationMinutes(bed, same.wake) != null) {
-                    wakeHalf = same; wakeDate = d
-                } else if (next != null) {
-                    wakeHalf = next; wakeDate = d.plusDays(1)
-                } else if (same != null) {
-                    wakeHalf = same; wakeDate = d
-                }
-                sessions.add(
-                    SleepSession(
-                        date = d,
-                        bed = bed,
-                        wake = wakeHalf?.wake,
-                        wakeDate = wakeDate,
-                        durationMin = sleepDurationMinutes(bed, wakeHalf?.wake),
-                        tempTenths = bedHalf.temp,
-                        conditions = bedHalf.cond,
-                        awakenings = wakeHalf?.aw,
-                        awakeMin = wakeHalf?.awake,
-                        quality = wakeHalf?.q
-                    )
+        nights.values
+            .filter { !it.date.isBefore(startDate.minusDays(1)) && !it.date.isAfter(endDate) }
+            .map { g ->
+                SleepSession(
+                    date = g.date,
+                    bed = g.firstBed,
+                    wake = g.segments.lastOrNull()?.wake,
+                    wakeDate = g.lastWakeDate,
+                    durationMin = g.segments.takeIf { it.isNotEmpty() }?.sumOf { it.durationMin },
+                    tempTenths = g.temp,
+                    conditions = g.cond,
+                    awakenings = g.wakeHalf?.aw,
+                    awakeMin = g.wakeHalf?.awake,
+                    quality = g.wakeHalf?.q,
+                    segments = g.segments.toList()
                 )
             }
-            d = d.plusDays(1)
-        }
-        sessions
+            .sortedBy { it.date }
     } catch (e: Exception) {
         Log.w(TAG, "getSleepSessions failed: ${e.message}")
         emptyList()

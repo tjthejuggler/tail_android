@@ -84,6 +84,7 @@ import com.example.tail.ui.viewmodel.isMaxOneHabit
 import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
 import com.example.tail.ui.viewmodel.isSleepHabit
 import com.example.tail.ui.viewmodel.loadSubtypeSessionInfoForGraph
+import com.example.tail.ui.viewmodel.allSleepHabitNames
 import com.example.tail.ui.viewmodel.isWeightsHabit
 import com.example.tail.ui.viewmodel.migrateValue1ToMinutesPrimary
 import com.example.tail.ui.viewmodel.navigateToDate
@@ -544,11 +545,15 @@ fun GraphsPanel(
             // of the standard line chart: sessions merge the SLEEP_TIME half
             // (bed + temp + conditions) with the WAKE_TIME half (wake +
             // awakenings + awake minutes + quality) and show duration + stats.
+            // ALL sleep-suite habits in settings feed the timeline whenever at
+            // least one sleep habit is graphed — pairing needs BOTH halves, so
+            // selecting only "Wake" would otherwise render an empty chart.
             val selectedSleepHabits = graphSelectedHabits.filter { viewModel.isSleepHabit(it) }
-            val sleepBedHabits = selectedSleepHabits.filter {
+            val allSleepHabits = viewModel.allSleepHabitNames()
+            val sleepBedHabits = allSleepHabits.filter {
                 viewModel.sleepVariantOf(it) == com.example.tail.data.SLEEP_VARIANT_SLEEP_TIME
             }
-            val sleepWakeHabits = selectedSleepHabits.filter {
+            val sleepWakeHabits = allSleepHabits.filter {
                 viewModel.sleepVariantOf(it) == com.example.tail.data.SLEEP_VARIANT_WAKE_TIME
             }
             val sleepSessions = rememberSleepSessions(

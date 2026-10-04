@@ -14,10 +14,16 @@ import java.io.File
 /**
  * One day's record in a sleep-suite habit's data file.
  *
- * A **sleep-time** habit only ever writes the SLEEP half ([bed], [temp], [conditions]);
- * a **wake-time** habit only ever writes the WAKE half ([wake], [awakenings], [awakeMin],
+ * A **sleep-time** habit only ever writes the SLEEP half ([beds], [temp], [conditions]);
+ * a **wake-time** habit only ever writes the WAKE half ([wakes], [awakenings], [awakeMin],
  * [quality]). Every field is nullable so the two halves stay independent — Gson parses
  * absent keys as null and [merge] keeps the other half intact on overwrite.
+ *
+ * Bed/wake times support MULTIPLE entries per day (naps, split nights, bedtime after
+ * midnight): the canonical storage is the [beds]/[wakes] lists in entry order. The
+ * legacy single [bed]/[wake] fields are still written (first bed / last wake) so older
+ * consumers keep working, and still serve as a one-element fallback when the lists are
+ * absent (pre-upgrade files).
  *
  * Minutes are "minutes since midnight of the entry's date" (0–1439), so a bedtime of
  * 23:30 on date D is 1410 and a wake-up of 07:15 on the SAME date key is 435. Sessions
@@ -31,12 +37,16 @@ import java.io.File
 data class SleepRecord(
     /** Bed time — minutes since midnight of the entry date. Null = not set. */
     val bed: Int? = null,
+    /** Bed times — minutes since midnight of the entry date, in entry order. Null = not set. */
+    val beds: List<Int>? = null,
     /** Room temperature in tenths of °C (e.g. 192 = 19.2 °C). Null = not set. */
     val temp: Int? = null,
     /** Free-text sleep conditions (blanket/fan/noise/…); powers the past-inputs suggestions. */
     val conditions: String? = null,
     /** Wake time — minutes since midnight of the entry date. Null = not set. */
     val wake: Int? = null,
+    /** Wake times — minutes since midnight of the entry date, in entry order. Null = not set. */
+    val wakes: List<Int>? = null,
     /** Number of awakenings during the night. Null = not set. */
     val awakenings: Int? = null,
     /** Total minutes spent awake during the night. Null = not set. */
@@ -47,13 +57,21 @@ data class SleepRecord(
     /** Returns this record with every non-null field of [other] overriding it. */
     fun merge(other: SleepRecord): SleepRecord = SleepRecord(
         bed = other.bed ?: bed,
+        beds = other.beds ?: beds,
         temp = other.temp ?: temp,
         conditions = other.conditions ?: conditions,
         wake = other.wake ?: wake,
+        wakes = other.wakes ?: wakes,
         awakenings = other.awakenings ?: awakenings,
         awakeMin = other.awakeMin ?: awakeMin,
         quality = other.quality ?: quality
     )
+
+    /** This record's bed times: the canonical [beds] list, or the legacy [bed] as a one-element list. */
+    fun bedTimes(): List<Int> = beds ?: listOfNotNull(bed)
+
+    /** This record's wake times: the canonical [wakes] list, or the legacy [wake] as a one-element list. */
+    fun wakeTimes(): List<Int> = wakes ?: listOfNotNull(wake)
 }
 
 /**
