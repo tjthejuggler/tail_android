@@ -309,6 +309,121 @@ def backup_habits_list(api_key: str = Security(verify_key)):
     return {"backups": items, "count": len(items)}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Timestamp-store backups (2026-10-05): the phone's habit_timestamps.json +
+# habit_timestamp_minutes.json ride the same debounced push as the habits DB.
+# Same storage scheme: snap_<ms>_<digest>.json + latest.json, atomic writes,
+# content dedup, pruned retention.
+# ─────────────────────────────────────────────────────────────────────────────
+
+TS_BACKUP_DIR = SCRIPT_DIR / "backups" / "timestamps"
+TS_BACKUP_LATEST = TS_BACKUP_DIR / "latest.json"
+
+
+def _prune_ts_backups():
+    try:
+        snaps = sorted(
+            (p for p in TS_BACKUP_DIR.glob("snap_*.json")),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        cutoff = time.time() - BACKUP_MAX_AGE_DAYS * 86400
+        for i, p in enumerate(snaps):
+            if i >= BACKUP_MAX_FILES or p.stat().st_mtime < cutoff:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+@app.post("/api/v1/backup/timestamps", tags=["backup"])
+async def backup_timestamps_push(request: Request, api_key: str = Security(verify_key)):
+    """
+    Accept the phone's timestamp stores as a backup.
+
+    Expected body: `{"timestamps": {...}, "minutes": {...}, "pushedAt": ms}`.
+    Validated as JSON before writing; atomic tmp+rename writes.
+    """
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty backup payload")
+    try:
+        doc = json.loads(body)
+    except (ValueError, UnicodeDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f"Payload is not valid JSON: {e}")
+    if not isinstance(doc, dict) or "timestamps" not in doc:
+        raise HTTPException(
+            status_code=400, detail="Payload must be an object with a 'timestamps' key")
+
+    ts_count = sum(len(v) for v in doc.get("timestamps", {}).values()
+                   if isinstance(v, dict))
+
+    digest = hashlib.sha256(body).hexdigest()[:8]
+    TS_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    deduped = False
+    try:
+        if TS_BACKUP_LATEST.exists() and \
+                hashlib.sha256(TS_BACKUP_LATEST.read_bytes()).hexdigest()[:8] == digest:
+            deduped = True
+    except OSError:
+        pass
+
+    if not deduped:
+        stamp_name = f"snap_{int(time.time() * 1000)}_{digest}.json"
+        tmp = TS_BACKUP_DIR / (stamp_name + ".tmp")
+        tmp.write_bytes(body)
+        os.replace(tmp, TS_BACKUP_DIR / stamp_name)
+        tmp_latest = TS_BACKUP_DIR / "latest.json.tmp"
+        tmp_latest.write_bytes(body)
+        os.replace(tmp_latest, TS_BACKUP_LATEST)
+        _prune_ts_backups()
+
+    logger.info(
+        "backup/timestamps: %s (%d habits, %d habit-days, %d bytes)",
+        "deduped" if deduped else "stored",
+        len(doc.get("timestamps", {})), ts_count, len(body),
+    )
+    return {
+        "status": "ok",
+        "deduped": deduped,
+        "hash": digest,
+        "habits": len(doc.get("timestamps", {})),
+        "days": ts_count,
+        "bytes": len(body),
+    }
+
+
+@app.get("/api/v1/backup/timestamps/latest", tags=["backup"])
+def backup_timestamps_latest(api_key: str = Security(verify_key)):
+    """Return the most recent accepted timestamp-store backup (restore path)."""
+    if not TS_BACKUP_LATEST.exists():
+        raise HTTPException(status_code=404, detail="No timestamp backup available yet")
+    return FileResponse(
+        TS_BACKUP_LATEST,
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/v1/backup/timestamps/list", tags=["backup"])
+def backup_timestamps_list(api_key: str = Security(verify_key)):
+    """Inventory of retained timestamp backups, newest first."""
+    if not TS_BACKUP_DIR.exists():
+        return {"backups": [], "count": 0}
+    items = []
+    for p in sorted(TS_BACKUP_DIR.glob("snap_*.json"),
+                    key=lambda p: p.stat().st_mtime, reverse=True):
+        st = p.stat()
+        items.append({
+            "name": p.name,
+            "bytes": st.st_size,
+            "modified": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+        })
+    return {"backups": items, "count": len(items)}
+
 # ── Movie-specific convenience endpoints ─────────────────────────────────────
 # These provide richer queries specific to the movie use-case while still
 # going through the source abstraction.

@@ -189,6 +189,8 @@ class BackupManager(
 
         val habitsDb = readHabitsDb(settings.fileUri)
         val habitTimestamps = readHabitTimestamps()
+        val habitTimestampMinutes = readHabitTimestampMinutes()
+        val internalFiles = readInternalFilesSection()
 
         val locations = readLocationsSection()
         val debug = readDebugSection()
@@ -212,6 +214,8 @@ class BackupManager(
             debug = debug,
             habitsDb = habitsDb,
             habitTimestamps = habitTimestamps,
+            habitTimestampMinutes = habitTimestampMinutes,
+            internalFiles = internalFiles,
             aiIcons = aiIcons,
             perHabitFiles = perHabit,
             voiceNoteMarkdown = voiceNoteMd,
@@ -255,6 +259,70 @@ class BackupManager(
             Log.w(TAG, "habit_timestamps.json read failed: ${e.message}")
             emptyMap()
         }
+    }
+
+    /**
+     * Full content of `files/habit_timestamp_minutes.json` (per-timestamp
+     * minute amounts). 2026-10-05: previously NOT in any backup — a restore
+     * silently dropped all watch-length / session-length minutes.
+     */
+    private fun readHabitTimestampMinutes(): Map<String, Map<String, Map<String, Int>>> {
+        val file = File(context.filesDir, "habit_timestamp_minutes.json")
+        if (!file.exists()) return emptyMap()
+        return try {
+            val text = file.readText()
+            if (text.isBlank()) return emptyMap()
+            val type = object : TypeToken<Map<String, Map<String, Map<String, Int>>>>() {}.type
+            gson.fromJson<Map<String, Map<String, Map<String, Int>>>>(text, type) ?: emptyMap()
+        } catch (e: Exception) {
+            Log.w(TAG, "habit_timestamp_minutes.json read failed: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    /** Excluded from [readInternalFilesSection] — covered by dedicated sections or transient. */
+    private val INTERNAL_FILES_EXCLUDE = setOf(
+        // dedicated backup sections
+        "habit_timestamps.json", "habit_timestamp_minutes.json",
+        "vision_queue.json", "debug_tail.json",
+        // caches / re-fetchable (see class KDoc "deliberately NOT backed up")
+        "movie_cache.json", "imdb_ratings_cache.json",
+        // transient state
+        "companion_change_state.json", "profileInstalled"
+    )
+
+    /** Directory names under filesDir never touched by the catch-all section. */
+    private val INTERNAL_FILES_EXCLUDE_DIRS = setOf(
+        "ai_icons", "meal_logs", "meal_images", "habit_snapshots",
+        "habit_timestamp_snapshots", "ai_assistant", "qc_diag",
+        "garmin_cache", "github_cache", "chess_com_cache", "datastore"
+    )
+
+    /** Per-file size cap for the catch-all — refuse to drag a runaway cache into the bundle. */
+    private val INTERNAL_FILES_MAX_BYTES = 8L * 1024 * 1024
+
+    /**
+     * Catch-all reader (2026-10-05 "backup everything" audit): raw text of
+     * every *.json directly under filesDir not covered elsewhere. New internal
+     * files added by future features are automatically included.
+     */
+    private fun readInternalFilesSection(): Map<String, String> {
+        val out = mutableMapOf<String, String>()
+        val root = context.filesDir ?: return out
+        root.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.forEach { f ->
+            if (f.name in INTERNAL_FILES_EXCLUDE) return@forEach
+            try {
+                if (f.length() > INTERNAL_FILES_MAX_BYTES) {
+                    Log.w(TAG, "internalFiles: skipping oversized ${f.name} (${f.length()} B)")
+                    return@forEach
+                }
+                val text = f.readText()
+                if (text.isNotBlank()) out[f.name] = text
+            } catch (e: Exception) {
+                Log.w(TAG, "internalFiles: read failed for ${f.name}: ${e.message}")
+            }
+        }
+        return out
     }
 
     private fun readLocationsSection(): LocationsSection {
@@ -717,6 +785,8 @@ class BackupManager(
         applyDebug(b.debug)
         applyHabitsDb(b.settings.fileUri, b.habitsDb)
         applyHabitTimestamps(b.habitTimestamps)
+        applyHabitTimestampMinutes(b.habitTimestampMinutes)
+        applyInternalFiles(b.internalFiles)
         applyAiIcons(b.aiIcons)
         applyPerHabitFiles(b.settings, b.perHabitFiles)
         applyVoiceNote(b.settings.voiceNoteFileUri, b.voiceNoteMarkdown)
@@ -816,6 +886,7 @@ class BackupManager(
         settingsRepo.saveCustomInputRecentAmounts(s.customInputRecentAmounts)
         settingsRepo.saveAutoBackupFolderUri(s.autoBackupFolderUri)
         settingsRepo.saveMapStatsHabits(s.mapStatsHabits.toSet())
+        settingsRepo.saveEnvironmentHabitMetrics(s.environmentHabitMetrics)
         settingsRepo.saveMapStatsShowTextHabits(s.mapStatsShowTextHabits.toSet())
         settingsRepo.saveMapMainHabit(s.mapMainHabit?.takeIf { it.isNotEmpty() })
         settingsRepo.saveMapHideZeroDays(s.mapHideZeroDays)
@@ -1004,6 +1075,38 @@ class BackupManager(
             file.writeText(gson.toJson(data))
         } catch (e: Exception) {
             Log.w(TAG, "habit_timestamps.json write failed: ${e.message}")
+        }
+    }
+
+    /** Restore counterpart of [readHabitTimestampMinutes]. */
+    private fun applyHabitTimestampMinutes(data: Map<String, Map<String, Map<String, Int>>>) {
+        if (data.isEmpty()) return
+        val file = File(context.filesDir, "habit_timestamp_minutes.json")
+        try {
+            file.writeText(gson.toJson(data))
+        } catch (e: Exception) {
+            Log.w(TAG, "habit_timestamp_minutes.json write failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Restore counterpart of [readInternalFilesSection]: rewrites each
+     * catch-all internal file (raw text, atomic tmp+rename so a crash mid-
+     * restore can't truncate it).
+     */
+    private fun applyInternalFiles(files: Map<String, String>) {
+        for ((name, text) in files) {
+            try {
+                val dest = File(context.filesDir, name)
+                val tmp = File(context.filesDir, "$name.restore.tmp")
+                tmp.writeText(text)
+                if (!tmp.renameTo(dest)) {
+                    dest.delete()
+                    if (!tmp.renameTo(dest)) error("rename failed for $name")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "internalFiles restore failed for '$name': ${e.message}")
+            }
         }
     }
 
@@ -1205,6 +1308,7 @@ class BackupManager(
         customInputRecentAmounts = s.customInputRecentAmounts,
         autoBackupFolderUri = s.autoBackupFolderUri,
         mapStatsHabits = s.mapStatsHabits.toList(),
+        environmentHabitMetrics = s.environmentHabitMetrics,
         mapStatsShowTextHabits = s.mapStatsShowTextHabits.toList(),
         mapMainHabit = s.mapMainHabit,
         mapHideZeroDays = s.mapHideZeroDays,

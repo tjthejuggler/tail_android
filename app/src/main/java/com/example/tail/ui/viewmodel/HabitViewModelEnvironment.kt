@@ -189,6 +189,20 @@ internal suspend fun HabitViewModel.syncEnvironmentHabits(
     val s = _settings.value
     val links = s.environmentHabitMetrics
     if (links.isEmpty() || s.fileUri.isEmpty()) return
+
+    // Self-healing guard: every environment-linked habit must be excluded
+    // from point counts. A settings restore (e.g. backup import after a
+    // reinstall) can bring back an older noPointsHabits list whose names no
+    // longer match the linked habits, which lets huge metric values blow up
+    // daily/weekly/monthly point totals. Re-assert the exclusion here on
+    // every sync so the lists can never drift apart again.
+    val unexcluded = links.keys.filter { it !in _settings.value.noPointsHabits }
+    if (unexcluded.isNotEmpty()) {
+        val noPoints = _settings.value.noPointsHabits + unexcluded
+        _settings.value = _settings.value.copy(noPointsHabits = noPoints)
+        settingsRepo.saveNoPointsHabits(noPoints)
+        Log.w(TAG, "Environment sync: re-excluded ${unexcluded.size} linked habit(s) from points: $unexcluded")
+    }
     if (!dbLoaded) {
         Log.w(TAG, "syncEnvironmentHabits: DB not loaded yet, skipping (anti-wipe gate)")
         return

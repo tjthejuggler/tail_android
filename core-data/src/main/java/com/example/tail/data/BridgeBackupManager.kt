@@ -12,6 +12,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -48,6 +50,11 @@ object BridgeBackupManager {
     private const val TAG = "BridgeBackup"
     private const val BACKUP_PATH = "backup/habits"
 
+    /** Timestamp-store backup path (2026-10-05: timestamps get off-device backups too). */
+    private const val TIMESTAMPS_BACKUP_PATH = "backup/timestamps"
+    private const val TIMESTAMPS_FILE = "habit_timestamps.json"
+    private const val MINUTES_FILE = "habit_timestamp_minutes.json"
+
     /** Minimum interval between actual pushes (coalesces burst increments). */
     private const val DEBOUNCE_MS = 60_000L
 
@@ -60,6 +67,10 @@ object BridgeBackupManager {
     /** Hash of the last successfully pushed payload — skips no-op uploads. */
     private var lastPushedHash: Int = 0
 
+    /** Combined hash of the last successfully pushed timestamp files. */
+    @Volatile
+    private var lastPushedTsHash: Int = 0
+
     /** Pending request marker for the debounce loop. */
     @Volatile
     private var pending = false
@@ -69,6 +80,16 @@ object BridgeBackupManager {
      * Cheap, non-blocking: just sets a flag and ensures the loop is running.
      */
     fun onDatabaseSaved(context: Context) {
+        pending = true
+        ensureLoopRunning(context.applicationContext)
+    }
+
+    /**
+     * Armed by [com.example.tail.data.HabitTimestampRepository] after every
+     * confirmed timestamp-store write. The debounce loop pushes the
+     * timestamp files (see [pushTimestampFiles]) alongside the habits DB.
+     */
+    fun onTimestampsSaved(context: Context) {
         pending = true
         ensureLoopRunning(context.applicationContext)
     }
@@ -224,7 +245,12 @@ object BridgeBackupManager {
                     lastGoodUrl = bridgeUrl
                     Log.i(TAG, "pushed ${bytes.size} bytes to $bridgeUrl")
                 }
-                ok
+                // Timestamp stores ride the same debounced push (2026-10-05):
+                // off-device coverage for habit_timestamps.json + minutes.
+                // Best-effort — a timestamp push failure must not fail the
+                // DB push result (and vice-versa below).
+                val tsOk = pushTimestampFiles(bridgeUrl, token, context)
+                ok || tsOk
             } catch (e: Throwable) {
                 if (e is OutOfMemoryError || e is StackOverflowError) throw e
                 Log.w(TAG, "pushNow failed: ${e.message}")
@@ -233,12 +259,41 @@ object BridgeBackupManager {
         }
     }
 
-    /** POSTs the raw DB bytes; returns true on HTTP 200 + status:ok. */
-    private fun postBackup(bridgeUrl: String, token: String, bytes: ByteArray): Boolean {
+    /**
+     * Pushes the internal timestamp stores to the bridge's
+     * `/api/v1/backup/timestamps` endpoint as
+     * `{"timestamps": …, "minutes": …}`. Content-hash-guarded so unchanged
+     * stores are skipped. Never throws.
+     */
+    private fun pushTimestampFiles(bridgeUrl: String, token: String, context: Context): Boolean {
         return try {
-            val cleanUrl = bridgeUrl.trim().trimEnd('/')
-            val conn = URL("$cleanUrl/api/v1/$BACKUP_PATH").openConnection()
-                as HttpURLConnection
+            val tsBytes = File(context.filesDir, TIMESTAMPS_FILE).takeIf { it.exists() }?.readBytes()
+            val minBytes = File(context.filesDir, MINUTES_FILE).takeIf { it.exists() }?.readBytes()
+            if (tsBytes == null && minBytes == null) return false
+            val combined = (tsBytes?.contentHashCode() ?: 0) * 31 + (minBytes?.contentHashCode() ?: 0)
+            if (combined == lastPushedTsHash) return true
+            // Wrap both stores in one JSON envelope the bridge can validate.
+            val envelope = JSONObject().apply {
+                tsBytes?.let { put("timestamps", JSONObject(String(it))) }
+                minBytes?.let { put("minutes", JSONObject(String(it))) }
+                put("pushedAt", System.currentTimeMillis())
+            }.toString().toByteArray(Charsets.UTF_8)
+            val ok = postBackupTo("$bridgeUrl/api/v1/$TIMESTAMPS_BACKUP_PATH", token, envelope)
+            if (ok) {
+                lastPushedTsHash = combined
+                Log.i(TAG, "pushed timestamp stores (${envelope.size} bytes) to $bridgeUrl")
+            }
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "timestamp backup push failed: ${e.message}")
+            false
+        }
+    }
+
+    /** POSTs raw bytes to [path]; returns true on HTTP 200 + status:ok. */
+    private fun postBackupTo(path: String, token: String, bytes: ByteArray): Boolean {
+        return try {
+            val conn = URL(path).openConnection() as HttpURLConnection
             conn.connectTimeout = 5_000
             conn.readTimeout = 30_000
             conn.requestMethod = "POST"
@@ -251,15 +306,17 @@ object BridgeBackupManager {
             val body = (if (code == 200) conn.inputStream else conn.errorStream)
                 ?.bufferedReader()?.readText()?.take(300) ?: ""
             conn.disconnect()
-            if (code == 200 && body.contains("\"status\"")) {
-                true
-            } else {
-                Log.w(TAG, "bridge backup POST → HTTP $code: $body")
-                false
-            }
+            code == 200 && body.contains("\"status\"")
         } catch (e: Exception) {
-            Log.w(TAG, "bridge backup POST failed: ${e.message}")
+            Log.w(TAG, "backup POST to $path failed: ${e.message}")
             false
         }
     }
+
+    /** POSTs the raw DB bytes; returns true on HTTP 200 + status:ok. */
+    private fun postBackup(bridgeUrl: String, token: String, bytes: ByteArray): Boolean {
+        val cleanUrl = bridgeUrl.trim().trimEnd('/')
+        return postBackupTo("$cleanUrl/api/v1/$BACKUP_PATH", token, bytes)
+    }
+
 }

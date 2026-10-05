@@ -49,6 +49,21 @@ data class BackupBundle(
      */
     val habitTimestamps: Map<String, Map<String, List<String>>> = emptyMap(),
 
+    /**
+     * Full content of `files/habit_timestamp_minutes.json` — per-timestamp
+     * minute amounts (2026-10-05: previously missing from every backup).
+     */
+    val habitTimestampMinutes: Map<String, Map<String, Map<String, Int>>> = emptyMap(),
+
+    /**
+     * Catch-all (2026-10-05 "backup everything" audit): raw text of every
+     * *.json file directly under filesDir that is not already covered by a
+     * dedicated section (sleep_data, media_library, records, chess readiness
+     * log, vision memory, weights, …). Future internal files are picked up
+     * automatically. Keyed by file name.
+     */
+    val internalFiles: Map<String, String> = emptyMap(),
+
     /** AI-generated icon library: metadata index + base64-encoded PNG bytes. */
     val aiIcons: AiIconsSection = AiIconsSection(),
 
@@ -156,6 +171,10 @@ data class SettingsSection(
     val autoBackupFolderUri: String = "",
     val mapStatsHabits: List<String> = emptyList(),
     val mapStatsShowTextHabits: List<String> = emptyList(),
+    /** Environment metric links (habitName -> metricKey). Must survive restores,
+     *  otherwise a restore's noPointsHabits list can no longer match the
+     *  environment habits the sync keeps writing to. */
+    val environmentHabitMetrics: Map<String, String> = emptyMap(),
     val mapMainHabit: String? = null,
     val mapHideZeroDays: Boolean = false,
     val mapBeginDate: String = "",

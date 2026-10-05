@@ -69,7 +69,9 @@ class HabitTimestampRepository(private val context: Context) {
         private class Snapshot(
             val lastModified: Long,
             val length: Long,
-            val data: Map<String, Map<String, List<String>>>
+            val data: Map<String, Map<String, List<String>>>,
+            /** False when the file exists but failed to parse (torn read / corruption). */
+            val parseOk: Boolean = true
         )
 
         /**
@@ -115,22 +117,39 @@ class HabitTimestampRepository(private val context: Context) {
      */
     private suspend fun readSnapshot(): Map<String, Map<String, List<String>>> =
         withContext(Dispatchers.IO) {
+            readSnapshotDetailed().data
+        }
+
+    /**
+     * Detailed variant of [readSnapshot] that also reports whether the file
+     * parsed cleanly. A FAILED parse must never be treated as an empty
+     * database by the mutating paths: a torn read (another process mid-write)
+     * that flows into loadMutable → saveAll is exactly how the 2026-10-04
+     * mass timestamp wipe happened — 59 of 82 habits vanished when a widget
+     * process parsed a half-written file as empty and saved it back. See
+     * [loadMutable] for the guard.
+     */
+    private suspend fun readSnapshotDetailed(): Snapshot =
+        withContext(Dispatchers.IO) {
             val (mtime, len) = fileStamps()
             cachedSnapshot?.get()?.let { snap ->
                 if (snap.lastModified == mtime && snap.length == len) {
-                    return@withContext snap.data
+                    return@withContext snap
                 }
             }
+            var parseOk = true
             val parsed: Map<String, Map<String, List<String>>> = try {
                 // Streaming parse: never materialise the whole file as a
                 // String before handing it to Gson (see loadDatabaseResult).
                 if (!file.exists()) emptyMap()
                 else gson.fromJson(file.reader(), mapType) ?: emptyMap()
             } catch (_: Exception) {
+                parseOk = false
                 emptyMap()
             }
-            cachedSnapshot = SoftReference(Snapshot(mtime, len, parsed))
-            parsed
+            Snapshot(mtime, len, parsed, parseOk).also {
+                if (parseOk) cachedSnapshot = SoftReference(it)
+            }
         }
 
     /** Load the full timestamp database (cached — see [readSnapshot]). */
@@ -146,19 +165,52 @@ class HabitTimestampRepository(private val context: Context) {
         withContext(Dispatchers.IO) {
             var saved = false
             try {
-                // Stream the serialization straight to disk — no multi-MB
-                // intermediate String on the heap.
-                file.writer().use { w -> prettyGson.toJson(data, w) }
+                // ATOMIC write (tmp + rename): writing in place truncates the
+                // file first, so a reader in ANOTHER process (widget, IPC
+                // receiver, voice service — each has its own repository and
+                // the companion mutex only serialises within one process)
+                // could observe a half-written file mid-serialisation, fail
+                // to parse it, and persist an "empty" database on its next
+                // increment. That cross-process torn read is the root cause
+                // of the 2026-10-04 mass timestamp loss. rename(2) over the
+                // destination is atomic: readers always see either the old
+                // complete file or the new complete file, never a partial one.
+                val tmp = File(context.filesDir, "habit_timestamps.json.tmp")
+                tmp.writer().use { w -> prettyGson.toJson(data, w) }
+                if (!tmp.renameTo(file)) {
+                    // renameTo can fail if a stale .tmp survives; retry once.
+                    file.delete()
+                    if (!tmp.renameTo(file)) error("atomic rename failed for habit_timestamps.json")
+                }
                 saved = true
             } catch (_: Exception) {
                 // Best-effort
             }
             if (saved) {
                 val (mtime, len) = fileStamps()
-                cachedSnapshot = SoftReference(Snapshot(mtime, len, deepCopy(data)))
+                cachedSnapshot = SoftReference(Snapshot(mtime, len, deepCopy(data), true))
                 dataVersion.value += 1
+                notifyBackupSystems()
             }
         }
+
+    /**
+     * After every confirmed write of a timestamp store: drop an on-device
+     * GFS snapshot (separate directory — wipe-proof) and arm the debounced
+     * push to the Tail Bridge so the OFF-DEVICE backup can never lag more
+     * than [com.example.tail.data.BridgeBackupManager]'s debounce window
+     * behind (2026-10-05 incident hardening). Best-effort, never throws.
+     */
+    private fun notifyBackupSystems() {
+        try {
+            com.example.tail.data.backup.TimestampSnapshotManager.snapshotAll(context)
+        } catch (_: Exception) {
+        }
+        try {
+            com.example.tail.data.BridgeBackupManager.onTimestampsSaved(context)
+        } catch (_: Exception) {
+        }
+    }
 
     /** Deep copy so cached/shared structures are never aliased by a mutation. */
     private fun deepCopy(
@@ -331,12 +383,12 @@ class HabitTimestampRepository(private val context: Context) {
         withContext(Dispatchers.IO) {
             // Always called under fileMutex. The minutes sidecar is tiny and
             // rarely read, so a plain parse (no snapshot cache) suffices.
-            try {
-                if (!minutesFile.exists()) mutableMapOf()
-                else gson.fromJson(minutesFile.reader(), minutesMapType) ?: mutableMapOf()
-            } catch (_: Exception) {
-                mutableMapOf()
-            }
+            // Same torn-read guard as loadMutable: refuse to return an empty
+            // map for a non-empty file that failed to parse (2026-10-05).
+            if (!minutesFile.exists()) mutableMapOf()
+            else gson.fromJson<MutableMap<String, MutableMap<String, MutableMap<String, Int>>>>(
+                minutesFile.reader(), minutesMapType
+            ) ?: mutableMapOf()
         }
 
     private suspend fun saveMinutes(data: Map<String, Map<String, Map<String, Int>>>) {
@@ -345,8 +397,14 @@ class HabitTimestampRepository(private val context: Context) {
                 if (data.isEmpty()) {
                     minutesFile.delete()
                 } else {
-                    // Stream serialization straight to disk (OOM hardening).
-                    minutesFile.writer().use { w -> prettyGson.toJson(data, w) }
+                    // Atomic write (tmp + rename) — see saveAll for why an
+                    // in-place write is a cross-process data-loss hazard.
+                    val tmp = File(context.filesDir, "habit_timestamp_minutes.json.tmp")
+                    tmp.writer().use { w -> prettyGson.toJson(data, w) }
+                    if (!tmp.renameTo(minutesFile)) {
+                        minutesFile.delete()
+                        if (!tmp.renameTo(minutesFile)) error("atomic rename failed for habit_timestamp_minutes.json")
+                    }
                 }
             } catch (_: Exception) {
                 // Best-effort
@@ -669,11 +727,22 @@ class HabitTimestampRepository(private val context: Context) {
             // Always called under fileMutex. Serves from the snapshot cache
             // when fresh, deep-copying so callers can mutate freely without
             // ever touching the shared cached structure.
-            try {
-                deepCopy(readSnapshot())
-            } catch (e: Exception) {
-                mutableMapOf()
+            //
+            // GUARD (2026-10-05 wipe): if the file exists with content but
+            // failed to parse (torn cross-process read, corruption), we
+            // REFUSE to hand back an empty map — the caller would add one
+            // entry and saveAll would persist it over the real database.
+            // Aborting the mutation is safe: every call-site already wraps
+            // timestamp writes in try/catch (a dropped timestamp is an
+            // acceptable, invisible failure; a wiped store is not).
+            val snap = readSnapshotDetailed()
+            if (!snap.parseOk) {
+                throw java.io.IOException(
+                    "habit_timestamps.json unreadable — refusing to mutate " +
+                        "(would persist an empty store over ${snap.length} bytes)"
+                )
             }
+            deepCopy(snap.data)
         }
 
     /**
