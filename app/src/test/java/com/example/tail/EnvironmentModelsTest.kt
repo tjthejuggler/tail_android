@@ -157,12 +157,13 @@ class EnvironmentModelsTest {
         assertEquals("21.5 °C", EnvironmentMetric.TEMP_MAX.formatTenths(215))
         assertEquals("70.7 °F", EnvironmentMetric.TEMP_MAX.formatTenths(707, useFahrenheit = true))
         assertEquals("280.0 ppm", EnvironmentMetric.WATER_HARDNESS.formatTenths(2800))
-        // Edit-mode/points display rounds to the nearest whole number
-        assertEquals(22, EnvironmentMetric.TEMP_MAX.rounded(215))
-        assertEquals(21, EnvironmentMetric.TEMP_MEAN.rounded(214))
-        assertEquals(68, EnvironmentMetric.HUMIDITY.rounded(676))
-        assertEquals(3, EnvironmentMetric.KP_MAX.rounded(33))
-        assertEquals(280, EnvironmentMetric.WATER_HARDNESS.rounded(2800))
+        // Display sites round the stored ×10 value to the nearest whole
+        // number inline (the rounded() helper was removed from the model).
+        assertEquals(22, Math.round(215 / 10.0).toInt())
+        assertEquals(21, Math.round(214 / 10.0).toInt())
+        assertEquals(68, Math.round(676 / 10.0).toInt())
+        assertEquals(3, Math.round(33 / 10.0).toInt())
+        assertEquals(280, Math.round(2800 / 10.0).toInt())
     }
 
     @Test

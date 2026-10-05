@@ -69,6 +69,9 @@ import com.example.tail.ui.loading.LoadingMetrics
  *   "Length" row shows the suggested watch-length, editable with a wheel picker
  *   exactly like the time. On OK the length is appended to the free-text entry
  *   as " (N min)" — the format the rest of the app parses back out.
+ * - When [suggestedEntryTime] is non-null (movie-bridge suggestion), the time
+ *   wheel starts at the movie's watch time instead of the current time, and
+ *   stays fully editable.
  * - OK saves all entries (selected options + free text if non-empty) with the
  *   chosen time; Cancel dismisses without saving.
  *
@@ -90,6 +93,8 @@ fun TextInputDialog(
     initialText: String = "",
     suggestionLabel: String = "",
     suggestedMinutes: Int? = null,
+    /** Suggested watch time-of-day (movie bridge); null = keep the defaults. */
+    suggestedEntryTime: java.time.LocalTime? = null,
     recentMovies: List<BridgeMovie> = emptyList(),
     suggestionLoading: Boolean = false,
     loadingMetrics: LoadingMetrics? = null,
@@ -119,10 +124,15 @@ fun TextInputDialog(
     // entry field so filter text can never be submitted as an entry.
     var searchQuery by remember { mutableStateOf("") }
 
-    // Time picker state — wheel-based
+    // Time picker state — wheel-based. A movie suggestion may arrive after
+    // the dialog opened, carrying the movie's own watch time — that pre-fills
+    // the wheel (and stays editable) exactly like the suggested text/length.
     var selectedHour by remember { mutableIntStateOf(initialHour) }
     var selectedMinute by remember { mutableIntStateOf(initialMinute) }
     var showTimePicker by remember { mutableStateOf(false) }
+    // Set once the user spins the time wheel — later-arriving suggestion
+    // updates must never clobber a deliberate time choice.
+    var timeTouched by remember { mutableStateOf(false) }
 
     // Length (minutes) state — wheel-based, for movie-bridge suggestions.
     // Becomes available also once a recent movie is picked, so a partially
@@ -144,6 +154,12 @@ fun TextInputDialog(
     }
     LaunchedEffect(suggestedMinutes) {
         if (!lengthTouched && suggestedMinutes != null) lengthMinutes = suggestedMinutes
+    }
+    LaunchedEffect(suggestedEntryTime) {
+        if (!timeTouched && suggestedEntryTime != null) {
+            selectedHour = suggestedEntryTime.hour
+            selectedMinute = suggestedEntryTime.minute
+        }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -436,6 +452,7 @@ fun TextInputDialog(
                             hour24 = selectedHour,
                             minute = selectedMinute,
                             onTimeChange = { h, m ->
+                                timeTouched = true
                                 selectedHour = h
                                 selectedMinute = m
                             },

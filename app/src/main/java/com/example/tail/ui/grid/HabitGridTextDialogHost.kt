@@ -47,6 +47,8 @@ internal data class TextInputDialogState(
     val suggestionLabel: String = "",
     /** Suggested watch-length in minutes (movie bridge); null = no length section. */
     val suggestedMinutes: Int? = null,
+    /** Suggested watch time-of-day (movie bridge); null = dialog default time. */
+    val suggestedEntryTime: java.time.LocalTime? = null,
     /** True while the movie suggestion is still resolving (cache → bridge). */
     val suggestionLoading: Boolean = false,
     /** Last watched movies (newest first) for the quick picker. */
@@ -74,6 +76,7 @@ internal fun openTextInputDialog(
         suggestedText: String = "",
         suggestionLabel: String = "",
         suggestedMinutes: Int? = null,
+        suggestedEntryTime: java.time.LocalTime? = null,
         suggestionLoading: Boolean = false,
         recentMovies: List<BridgeMovie> = emptyList()
     ) {
@@ -86,6 +89,7 @@ internal fun openTextInputDialog(
                 suggestedText = suggestedText,
                 suggestionLabel = suggestionLabel,
                 suggestedMinutes = suggestedMinutes,
+                suggestedEntryTime = suggestedEntryTime,
                 suggestionLoading = suggestionLoading,
                 recentMovies = recentMovies
             )
@@ -132,6 +136,9 @@ internal fun openTextInputDialog(
                         // The file duration (from ffprobe) goes into the
                         // separate, wheel-editable Length field.
                         suggestedMinutes = sugg.movie?.totalWatchMin?.takeIf { it > 0 },
+                        // The watch time (last session start) pre-fills the
+                        // wheel-editable Time field the same way.
+                        suggestedEntryTime = sugg.suggestedEntryTime,
                         suggestionLoading = sugg.loading,
                         recentMovies = sugg.recent
                     )
@@ -414,6 +421,9 @@ internal fun TextInputDialogHost(
         initialText = state.suggestedText,
         suggestionLabel = state.suggestionLabel,
         suggestedMinutes = state.suggestedMinutes,
+        // Movie suggestion: pre-fill the time wheel with the movie's watch
+        // time (falls back to the defaults above when null / not a movie).
+        suggestedEntryTime = state.suggestedEntryTime,
         recentMovies = state.recentMovies,
         suggestionLoading = state.suggestionLoading,
         loadingMetrics = loadingMetrics,

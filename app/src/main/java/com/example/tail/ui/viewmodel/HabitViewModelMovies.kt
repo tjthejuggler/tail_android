@@ -228,7 +228,9 @@ fun HabitViewModel.clearMovieSuggestion() {
 data class MovieSuggestion(
     val movie: BridgeMovie?,
     val recent: List<BridgeMovie>,
-    val loading: Boolean
+    val loading: Boolean,
+    /** Watch-time pre-fill for the dialog wheel, or null to keep the default. */
+    val suggestedEntryTime: java.time.LocalTime? = null
 )
 
 /**
@@ -257,21 +259,29 @@ fun HabitViewModel.streamMovieSuggestion(
         viewModelScope.launch {
             val cached = loadMovieCacheOnce()
             val stale = !MovieCacheStore.Cached(cached, movieCacheFetchedAt).isFresh
+            val cachedMovie = suggestMovieFromCache(cached, excludeKeys)
             onUpdate(
                 MovieSuggestion(
-                    movie = suggestMovieFromCache(cached, excludeKeys),
+                    movie = cachedMovie,
                     recent = cached.take(5),
-                    loading = stale
+                    loading = stale,
+                    suggestedEntryTime = cachedMovie?.let {
+                        com.example.tail.notify.HabitAsks.movieSuggestionEntryTime(it, date)
+                    }
                 )
             )
             if (!stale) return@launch
             val fresh = refreshMovieCacheFromBridge()
             val final = if (fresh.isNullOrEmpty()) cached else fresh
+            val finalMovie = suggestMovieFromCache(final, excludeKeys)
             onUpdate(
                 MovieSuggestion(
-                    movie = suggestMovieFromCache(final, excludeKeys),
+                    movie = finalMovie,
                     recent = final.take(5),
-                    loading = false
+                    loading = false,
+                    suggestedEntryTime = finalMovie?.let {
+                        com.example.tail.notify.HabitAsks.movieSuggestionEntryTime(it, date)
+                    }
                 )
             )
         }

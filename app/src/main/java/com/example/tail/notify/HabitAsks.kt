@@ -476,6 +476,30 @@ object HabitAsks {
     }
 
     /**
+     * Time-of-day pre-fill for a movie added MANUALLY (habit tap → suggestion
+     * dialog): the last session's start time when the movie was watched on
+     * [forDate], else null so the dialog keeps its default time. Unlike
+     * [moviePromptEntryTime] this never falls back to "now" — the manual
+     * dialog's default time must not silently masquerade as a watch time.
+     * The dialog wheel stays editable, so the pre-fill is only a starting
+     * point.
+     */
+    fun movieSuggestionEntryTime(movie: BridgeMovie, forDate: LocalDate): LocalTime? {
+        if (movieWatchDay(movie) != forDate) return null
+        movie.sessions.maxByOrNull { it.startUnix }?.startUnix?.takeIf { it > 0 }?.let { unix ->
+            return java.time.Instant.ofEpochSecond(unix)
+                .atZone(java.time.ZoneId.systemDefault())
+                .toLocalTime()
+        }
+        return try {
+            java.time.LocalDateTime.parse(
+                movie.lastWatched,
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            ).toLocalTime()
+        } catch (e: Exception) { null }
+    }
+
+    /**
      * Scans [movies] (newest-first, as served by the bridge / kept in the
      * phone-local cache) for ones worth asking about, and registers an ask in
      * the notification system (in-app center + system notification) for EVERY
