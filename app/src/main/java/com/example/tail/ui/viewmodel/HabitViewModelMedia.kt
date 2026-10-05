@@ -342,7 +342,7 @@ fun HabitViewModel.loadMediaTodayShows(habitName: String) {
     viewModelScope.launch {
         val shows = withContext(Dispatchers.IO) {
             try {
-                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
                 log.entries
                     .filter { (ts, _) -> ts.startsWith(datePrefix) }
                     .mapNotNull { (_, text) -> parseMediaShowEntry(text) }
@@ -385,7 +385,7 @@ fun HabitViewModel.removeMediaShowFromToday(habitName: String, show: String) {
         try {
             val textUri = Uri.parse(uriString)
             val log = withContext(Dispatchers.IO) {
-                textInputRepo.loadTextLog(textUri, context)
+                textInputRepo.loadTextLog(textUri, context, habitName)
             }
             val doomed = log.entries.filter { (ts, text) ->
                 ts.startsWith(datePrefix) && parseMediaShowEntry(text)?.first == show

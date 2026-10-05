@@ -88,7 +88,10 @@ class TierBarWidgetProvider : AppWidgetProvider() {
             val ids = mgr.getAppWidgetIds(
                 android.content.ComponentName(appContext, TierBarWidgetProvider::class.java)
             )
-            if (ids.isEmpty()) return
+            // NOTE: the tier computation + TierStateStore.save below must run
+            // even when no widget is placed — the in-app SteelPanel pit lizard
+            // reads TierStateStore directly, so bailing early here would leave
+            // it stale (e.g. stuck red after a reinstall wiped widget ids).
 
             var today = 0
             var avg7 = 0.0
@@ -133,6 +136,8 @@ class TierBarWidgetProvider : AppWidgetProvider() {
             // (nav-mode/keyboard config change) onUpdate must paint the
             // COMPLETE widget from this state without a DB round-trip.
             TierStateStore.save(appContext, tiers)
+
+            if (ids.isEmpty()) return
 
             val views = buildRenderViews(appContext, tiers, mgr, ids)
             for (id in ids) {

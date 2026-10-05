@@ -553,7 +553,7 @@ suspend fun HabitViewModel.moveMovieEntryTime(
         .split(':').fold(0) { acc, v -> acc * 60 + (v.toIntOrNull() ?: 0) }
     val target = secsOf("$dateStr $oldTime")
     val log = try {
-        textInputRepo.loadTextLog(Uri.parse(uriString), context)
+        textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
     } catch (e: Exception) {
         Log.w(TAG, "moveMovieEntryTime: failed to load text log for '$habitName': ${e.message}")
         return false
@@ -701,7 +701,7 @@ internal suspend fun HabitViewModel.updateImdbSecondaryValues(habitName: String)
     val fileUri = _settings.value.fileUri
 
     val textLog = try {
-        textInputRepo.loadTextLog(Uri.parse(uriString), context)
+        textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
     } catch (e: Exception) {
         Log.w(TAG, "Failed to load text log for IMDb update: ${e.message}")
         return
@@ -825,7 +825,7 @@ fun HabitViewModel.fetchImdbBacklog(retryFailed: Boolean = false, onProgress: ((
                 val uriString = _settings.value.textInputFileUris[habitName]
                 if (uriString.isNullOrEmpty()) continue
                 val textLog = try {
-                    textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                    textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
                 } catch (e: Exception) { continue }
 
                 for ((_, text) in textLog) {
@@ -1039,7 +1039,7 @@ fun HabitViewModel.fetchMovieMinutesBacklog(onProgress: ((String) -> Unit)? = nu
                 val uriString = _settings.value.textInputFileUris[habitName]
                 if (uriString.isNullOrEmpty()) continue
                 val textLog = try {
-                    textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                    textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
                 } catch (e: Exception) { continue }
 
                 val list = perHabit.getOrPut(habitName) { mutableListOf() }
@@ -1258,7 +1258,7 @@ suspend fun HabitViewModel.getImdbRatingsForDate(
 
     val datePrefix = dateString(date)
     val textLog = try {
-        textInputRepo.loadTextLog(Uri.parse(uriString), context)
+        textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
     } catch (e: Exception) { return emptyMap() }
 
     val result = mutableMapOf<String, String?>()

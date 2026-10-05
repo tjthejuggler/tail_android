@@ -100,30 +100,58 @@ class TextInputRepository {
      * Served from the metadata-keyed cache when the document is unchanged
      * since the last parse; the returned map is unmodifiable (callers that
      * mutate copy it first, e.g. via toMutableMap()).
+     *
+     * Grant-loss resilience: SAF persistable URI grants do NOT survive an
+     * app reinstall, so a restored URI string can throw SecurityException
+     * here even though the association (and the mirrored internal backup
+     * under files/text_input_backups) is intact. When [habitName] is given:
+     *  - on read failure/empty external file → the internal backup is
+     *    returned instead, so history never appears lost;
+     *  - on a successful external read → keys present ONLY in the internal
+     *    backup (entries added while grants were dead) are merged in, so
+     *    nothing written during the outage is hidden once access returns.
      */
-    suspend fun loadTextLog(uri: Uri, context: Context): Map<String, String> =
+    suspend fun loadTextLog(
+        uri: Uri,
+        context: Context,
+        habitName: String? = null
+    ): Map<String, String> =
         withContext(Dispatchers.IO) {
+            fun internalFallback(): Map<String, String> =
+                if (habitName == null) emptyMap()
+                else loadInternalBackup(context, habitName) ?: emptyMap()
+
             val key = queryStamps(uri, context)
             if (key != null) {
                 textLogCache?.let { cache ->
                     if (cache.key == key) return@withContext cache.log
                 }
             }
-            try {
+            val external: Map<String, String>? = try {
                 val cr = context.contentResolver
                 cr.openInputStream(uri)?.use { stream ->
                     val text = stream.bufferedReader().readText()
-                    if (text.isBlank()) return@withContext emptyMap()
-                    val parsed: Map<String, String> =
-                        gson.fromJson(text, textLogType) ?: emptyMap()
-                    val safe = java.util.Collections.unmodifiableMap(parsed)
-                    if (key != null) {
-                        textLogCache = TextLogCache(key, safe)
-                    }
-                    safe
-                } ?: emptyMap()
+                    if (text.isBlank()) null
+                    else gson.fromJson(text, textLogType)
+                }
             } catch (e: Exception) {
-                emptyMap()
+                null
+            }
+            when {
+                external == null -> internalFallback()
+                external.isEmpty() && habitName != null ->
+                    loadInternalBackup(context, habitName) ?: emptyMap()
+                habitName != null -> {
+                    val internal = loadInternalBackup(context, habitName)
+                    val extras = internal?.filterKeys { it !in external }
+                    if (extras.isNullOrEmpty()) external
+                    else java.util.Collections.unmodifiableMap(external + extras)
+                }
+                else -> external
+            }.also { result ->
+                if (key != null && external != null) {
+                    textLogCache = TextLogCache(key, result)
+                }
             }
         }
 
@@ -148,7 +176,7 @@ class TextInputRepository {
         time: LocalTime? = null,
         habitName: String? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
-        val existing = loadTextLog(uri, context).toMutableMap()
+        val existing = loadTextLog(uri, context, habitName).toMutableMap()
         val timestamp = when {
             date != null && time != null -> LocalDateTime.of(date, time)
             date != null -> LocalDateTime.of(date, LocalTime.NOON)
@@ -182,8 +210,8 @@ class TextInputRepository {
         time: LocalTime? = null,
         habitName: String? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
-        if (texts.isEmpty()) return@withContext loadTextLog(uri, context)
-        val existing = loadTextLog(uri, context).toMutableMap()
+        if (texts.isEmpty()) return@withContext loadTextLog(uri, context, habitName)
+        val existing = loadTextLog(uri, context, habitName).toMutableMap()
         val baseDateTime = when {
             date != null && time != null -> LocalDateTime.of(date, time)
             date != null -> LocalDateTime.of(date, LocalTime.NOON)
@@ -307,7 +335,7 @@ class TextInputRepository {
         newText: String,
         habitName: String? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
-        val existing = loadTextLog(uri, context).toMutableMap()
+        val existing = loadTextLog(uri, context, habitName).toMutableMap()
         var changed = false
         for ((ts, text) in existing) {
             if (text == oldText) {
@@ -342,7 +370,7 @@ class TextInputRepository {
         newText: String,
         habitName: String? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
-        val existing = loadTextLog(uri, context).toMutableMap()
+        val existing = loadTextLog(uri, context, habitName).toMutableMap()
         existing[oldTimestamp] = newText
         saveTextLog(uri, context, existing)
         if (habitName != null) saveInternalBackup(context, habitName, existing)
@@ -364,7 +392,7 @@ class TextInputRepository {
         newTimestamp: String,
         habitName: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
-        val existing = loadTextLog(uri, context).toMutableMap()
+        val existing = loadTextLog(uri, context, habitName).toMutableMap()
         val text = existing[oldTimestamp] ?: return@withContext false
         existing.remove(oldTimestamp)
         val parsed = runCatching { LocalDateTime.parse(newTimestamp, TEXT_LOG_DATE_FMT) }.getOrNull()
@@ -402,8 +430,8 @@ class TextInputRepository {
         updates: Map<String, String>,
         habitName: String? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
-        if (updates.isEmpty()) return@withContext loadTextLog(uri, context)
-        val existing = loadTextLog(uri, context).toMutableMap()
+        if (updates.isEmpty()) return@withContext loadTextLog(uri, context, habitName)
+        val existing = loadTextLog(uri, context, habitName).toMutableMap()
         existing.putAll(updates)
         saveTextLog(uri, context, existing)
         if (habitName != null) saveInternalBackup(context, habitName, existing)
@@ -422,7 +450,7 @@ class TextInputRepository {
         timestamp: String,
         habitName: String? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
-        val existing = loadTextLog(uri, context).toMutableMap()
+        val existing = loadTextLog(uri, context, habitName).toMutableMap()
         existing.remove(timestamp)
         saveTextLog(uri, context, existing)
         if (habitName != null) saveInternalBackup(context, habitName, existing)
@@ -442,8 +470,8 @@ class TextInputRepository {
         timestamps: Collection<String>,
         habitName: String? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
-        if (timestamps.isEmpty()) return@withContext loadTextLog(uri, context)
-        val existing = loadTextLog(uri, context).toMutableMap()
+        if (timestamps.isEmpty()) return@withContext loadTextLog(uri, context, habitName)
+        val existing = loadTextLog(uri, context, habitName).toMutableMap()
         timestamps.forEach { existing.remove(it) }
         saveTextLog(uri, context, existing)
         if (habitName != null) saveInternalBackup(context, habitName, existing)
@@ -465,7 +493,7 @@ class TextInputRepository {
         endDate: LocalDate,
         habitName: String? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
-        val existing = loadTextLog(uri, context).toMutableMap()
+        val existing = loadTextLog(uri, context, habitName).toMutableMap()
         val sourceText = existing[sourceTimestamp] ?: return@withContext existing
 
         var currentDate = startDate
@@ -559,7 +587,7 @@ class TextInputRepository {
         for ((habitName, uriStr) in fileUris) {
             if (uriStr.isBlank()) continue
             try {
-                val external = loadTextLog(Uri.parse(uriStr), context)
+                val external = loadTextLog(Uri.parse(uriStr), context, habitName)
                 val internal = loadInternalBackup(context, habitName)
                 // Only save if external has more entries than internal (or no internal exists)
                 if (external.isNotEmpty() && (internal == null || external.size > internal.size)) {

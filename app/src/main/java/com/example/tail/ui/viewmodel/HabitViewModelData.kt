@@ -402,7 +402,7 @@ internal suspend fun HabitViewModel.performRollForwardIfNeeded() {
                         .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
                     
                     // Load yesterday's text
-                    val textLog = textInputRepo.loadTextLog(Uri.parse(textUriString), context)
+                    val textLog = textInputRepo.loadTextLog(Uri.parse(textUriString), context, habitName)
                     val yesterdayText = textLog[yesterdayTimestamp]
                     
                     if (yesterdayText != null) {
@@ -1821,7 +1821,7 @@ fun HabitViewModel.moveHabitDayInstances(
             val movedTextTimes = mutableSetOf<String>()
             if (!textUriStr.isNullOrEmpty()) {
                 val textUri = Uri.parse(textUriStr)
-                val fromKeys = textInputRepo.loadTextLog(textUri, context).keys
+                val fromKeys = textInputRepo.loadTextLog(textUri, context, habitName).keys
                     .filter { it.startsWith("$fromStr ") }.sorted()
                 val keysToMove = if (time == null) {
                     fromKeys

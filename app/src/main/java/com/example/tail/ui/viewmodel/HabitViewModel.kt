@@ -1559,7 +1559,7 @@ class HabitViewModel(
         }
         viewModelScope.launch {
             try {
-                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
                 _textEntriesCache.value = _textEntriesCache.value.toMutableMap().apply {
                     put(habitName, log)
                 }
@@ -1979,7 +1979,7 @@ class HabitViewModel(
         val datePrefix = dateString(date)
         viewModelScope.launch {
             try {
-                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
                 val entries = log.filter { (key, _) -> key.startsWith(datePrefix) }
                     .values.toList()
                 onResult(entries)
@@ -2011,7 +2011,7 @@ class HabitViewModel(
                     emptyMap()
                 } else {
                     try {
-                        val log = textInputRepo.loadTextLog(Uri.parse(uriString), context)
+                        val log = textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
                         Log.d(TAG, "loadTextEntriesWithTimestamps: loaded ${log.size} total entries, keys sample=${log.keys.take(5)}")
                         log
                     } catch (e: Exception) {
@@ -2067,7 +2067,7 @@ class HabitViewModel(
     internal suspend fun syncMovieTimestamps(habitName: String) {
         val uriString = _settings.value.textInputFileUris[habitName] ?: return
         val log = try {
-            textInputRepo.loadTextLog(Uri.parse(uriString), context)
+            textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
         } catch (e: Exception) {
             Log.w(TAG, "syncMovieTimestamps: failed to load text log for '$habitName': ${e.message}")
             return
@@ -2106,7 +2106,7 @@ class HabitViewModel(
         if (!dbLoaded) return
         val uriString = _settings.value.textInputFileUris[habitName] ?: return
         val log = try {
-            textInputRepo.loadTextLog(Uri.parse(uriString), context)
+            textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
         } catch (e: Exception) {
             Log.w(TAG, "syncMovieMinutesSlot: failed to load text log for '$habitName': ${e.message}")
             return
@@ -2180,7 +2180,7 @@ class HabitViewModel(
         val uriString = _settings.value.textInputFileUris[habitName]
         if (uriString.isNullOrEmpty()) return emptyMap()
         val datePrefix = dateString(date)
-        return textInputRepo.loadTextLog(Uri.parse(uriString), context)
+        return textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
             .filterKeys { it.startsWith(datePrefix) && it.length >= 16 }
             .mapKeys { (timestamp, _) -> timestamp.substring(11) }
             .mapValues { (_, text) ->
