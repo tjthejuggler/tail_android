@@ -180,6 +180,7 @@ import com.example.tail.data.displayLabelForValue
 import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.encodeShortcutEntry
 import com.example.tail.data.findShortcutInfo
+import com.example.tail.ui.viewmodel.buildHabitSuggestions
 import com.example.tail.ui.viewmodel.incrementHabit
 import com.example.tail.data.isActivityEntry
 import com.example.tail.data.isAppIconName
@@ -235,6 +236,8 @@ import com.example.tail.ui.viewmodel.confirmPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.isMovieBridgeHabit
 import com.example.tail.ui.viewmodel.loadSubtypeBreakdown
 import com.example.tail.ui.viewmodel.loadSubtypeTimestampLabels
+import com.example.tail.ui.viewmodel.saveSubtypeIncrement
+import com.example.tail.ui.viewmodel.saveTextEntries
 import com.example.tail.ui.viewmodel.skipPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.moveHabitDayInstances
 import com.example.tail.ui.viewmodel.moveMovieEntryTime
@@ -902,6 +905,11 @@ fun HabitGridScreen(
     var subtypeDialogBreakdown by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     // Weights input dialog state (weights-type habits)
     var weightsDialogHabit by remember { mutableStateOf<Habit?>(null) }
+    // Increment-suggestion flash state (SuggestionFlash.kt): built once per
+    // app session from time-of-day history; each card is fully pre-filled.
+    var suggestions by remember { mutableStateOf<List<HabitSuggestion>>(emptyList()) }
+    var suggestionFlashVisible by remember { mutableStateOf(false) }
+    var suggestionsRequested by remember { mutableStateOf(false) }
     // Sleep-suite dialog state (SleepDialogs.kt keeps this composable small)
     val sleepDialogState = remember { SleepDialogStateHolder() }
     var showCalendarPicker by remember { mutableStateOf(false) }
@@ -2140,6 +2148,80 @@ fun HabitGridScreen(
                     flashAsk = null
                     flashCycle++
                 }
+            )
+        }
+    }
+
+    // ── Increment-suggestion flash ─────────────────────────────────────────
+    // Built ONCE per session (when the feature is enabled, the DB is loaded
+    // and today is the viewed date): time-of-day scoring over the timestamp
+    // history, minus meal / special-flow / automatically-incremented habits
+    // and (for 1-max binaries) already-done ones. See
+    // HabitViewModelSuggestions.kt and SuggestionFlash.kt.
+    LaunchedEffect(settings.suggestionFlashEnabled, isLoading, isToday, suggestionsRequested) {
+        if (suggestionsRequested || isLoading || !isToday) return@LaunchedEffect
+        if (!settings.suggestionFlashEnabled) return@LaunchedEffect
+        suggestionsRequested = true
+        viewModel.buildHabitSuggestions { built ->
+            suggestions = built
+            suggestionFlashVisible = built.isNotEmpty()
+        }
+    }
+    if (suggestionFlashVisible && !editMode && !graphMode && !scheduleMode) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 150.dp)
+        ) {
+            SuggestionFlash(
+                suggestions = suggestions,
+                visible = suggestionFlashVisible,
+                onConfirm = { s ->
+                    when (s.kind) {
+                        SuggestionKind.TEXT -> viewModel.saveTextEntries(
+                            s.habitName, listOf(s.text ?: ""), null, java.time.LocalTime.now()
+                        )
+                        SuggestionKind.SUBTYPE -> viewModel.saveSubtypeIncrement(
+                            s.habitName, mapOf((s.subtype ?: return@SuggestionFlash) to 1)
+                        )
+                        else -> viewModel.incrementHabit(s.habitName, s.amount)
+                    }
+                    lizardShimmerGen.intValue++
+                    suggestions = suggestions - s
+                    if (suggestions.isEmpty()) suggestionFlashVisible = false
+                },
+                onEdit = { s ->
+                    suggestionFlashVisible = false
+                    val habit = habits.firstOrNull { it.name == s.habitName }
+                    when (s.kind) {
+                        SuggestionKind.TEXT -> {
+                            if (habit != null) {
+                                openTextInputDialog(
+                                    setState = { textInputDialogState = it },
+                                    getState = { textInputDialogState },
+                                    viewModel = viewModel,
+                                    habit = habit,
+                                    selectedDate = selectedDate,
+                                    showOpts = habit.name in settings.textInputOptionsHabits,
+                                    isMovieLinked = false
+                                )
+                                // Pre-fill the suggested text into the just-opened dialog
+                                textInputDialogState = textInputDialogState?.copy(
+                                    suggestedText = s.text ?: "",
+                                    suggestionLabel = "⚡ From suggestion"
+                                )
+                            }
+                        }
+                        SuggestionKind.SUBTYPE -> viewModel.loadSubtypeBreakdown(s.habitName) { breakdown ->
+                            subtypeDialogBreakdown = breakdown
+                            subtypeDialogHabit = habits.firstOrNull { it.name == s.habitName }
+                        }
+                        SuggestionKind.WEIGHTS -> weightsDialogHabit = habit
+                        SuggestionKind.CUSTOM_AMOUNT -> { if (habit != null) dialogHabit = habit }
+                        SuggestionKind.PLAIN -> { /* plain habits have nothing to edit */ }
+                    }
+                },
+                onDismiss = { suggestionFlashVisible = false }
             )
         }
     }

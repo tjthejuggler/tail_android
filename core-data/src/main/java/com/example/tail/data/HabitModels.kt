@@ -937,6 +937,17 @@ data class AppSettings(
      * notifications are posted.
      */
     val appStatsRecordNotificationsEnabled: Boolean = true,
+
+    /**
+     * Master switch for the increment-suggestion flash — the scrollable
+     * "likely next" strip shown once on app open. Habits are scored by
+     * time-of-day history (which habits are usually incremented around the
+     * current time) and by what has already been done today. Meal habits and
+     * habits incremented automatically (PC widget, phone bubble, media
+     * tracker, share targets, external integrations like Garmin / chess.com /
+     * GitHub / Inuit / Wags / bridge) are always excluded. ON by default.
+     */
+    val suggestionFlashEnabled: Boolean = true,
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
 
     /**

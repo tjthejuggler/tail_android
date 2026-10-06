@@ -37,6 +37,8 @@ private val KEY_BUBBLE_MULTI_TIMER_APPS = stringSetPreferencesKey("bubble_multi_
 
 // App-stats record notifications master switch
 private val KEY_APP_STATS_RECORD_NOTIFS = booleanPreferencesKey("app_stats_record_notifications_enabled")
+// Increment-suggestion flash master switch (on-app-open "likely next" strip)
+private val KEY_SUGGESTION_FLASH_ENABLED = booleanPreferencesKey("suggestion_flash_enabled")
 private val KEY_CUSTOM_INPUT = stringSetPreferencesKey("custom_input_habits")
 private val KEY_RECORD_NOTIF_HABITS = stringSetPreferencesKey("record_notif_habits")
 private val KEY_HABIT_ORDER = stringPreferencesKey("habit_order")
@@ -1016,6 +1018,7 @@ class SettingsRepository(private val context: Context) {
             bubbleFullScreenApps = prefs[KEY_BUBBLE_FULL_SCREEN_APPS] ?: emptySet(),
             bubbleMultiTimerApps = prefs[KEY_BUBBLE_MULTI_TIMER_APPS] ?: emptySet(),
             appStatsRecordNotificationsEnabled = prefs[KEY_APP_STATS_RECORD_NOTIFS] ?: true,
+            suggestionFlashEnabled = prefs[KEY_SUGGESTION_FLASH_ENABLED] ?: true,
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             recordNotifHabits = prefs[KEY_RECORD_NOTIF_HABITS] ?: emptySet(),
             habitOrder = customOrder,
@@ -1239,6 +1242,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveAppStatsRecordNotificationsEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[KEY_APP_STATS_RECORD_NOTIFS] = enabled
+        }
+    }
+
+    /** Saves the master switch for the increment-suggestion flash. */
+    suspend fun saveSuggestionFlashEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_SUGGESTION_FLASH_ENABLED] = enabled
         }
     }
 

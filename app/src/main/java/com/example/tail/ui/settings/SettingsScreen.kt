@@ -147,6 +147,7 @@ import com.example.tail.ui.viewmodel.navigateToDate
 import com.example.tail.ui.viewmodel.recalculateFitnessAgeDistance
 import com.example.tail.ui.viewmodel.screenIndexForHabit
 import com.example.tail.ui.viewmodel.setAppStatsRecordNotificationsEnabled
+import com.example.tail.ui.viewmodel.setSuggestionFlashEnabled
 import com.example.tail.ui.viewmodel.setChessEnforcementEnabled
 import com.example.tail.ui.viewmodel.setChessReadinessApp
 import com.example.tail.ui.viewmodel.setChessReadinessEnabled
@@ -438,11 +439,13 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Notifications",
-                    summary = "App stats records · habit asks",
+                    summary = "App stats records · habit asks · suggestions",
                     icon = Icons.Filled.Notifications,
                     accent = BorderPink
                 ) {
                     NotificationsSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    SuggestionFlashSettingsSection(viewModel = viewModel, settings = settings)
                 }
             }
 
@@ -2275,6 +2278,34 @@ private fun NotificationsSettingsSection(
         Switch(
             checked = settings.appStatsRecordNotificationsEnabled,
             onCheckedChange = { viewModel.setAppStatsRecordNotificationsEnabled(it) }
+        )
+    }
+}
+
+@Composable
+private fun SuggestionFlashSettingsSection(
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("⚡ Increment suggestions", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(
+                text = "On app open, show a closable flash of the habits you're " +
+                    "most likely to increment right now (based on time-of-day history " +
+                    "and what's already done today). Each card is fully pre-filled — " +
+                    "one tap increments it. Meal and automatically-tracked habits " +
+                    "(bubbles, widgets, integrations) are never suggested.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = settings.suggestionFlashEnabled,
+            onCheckedChange = { viewModel.setSuggestionFlashEnabled(it) }
         )
     }
 }
