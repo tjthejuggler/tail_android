@@ -547,13 +547,14 @@ suspend fun HabitViewModel.moveMovieEntryTime(
     oldTime: String,
     newTime: String
 ): Boolean {
-    val uriString = _settings.value.textInputFileUris[habitName] ?: return false
+    // Internal-first: works with no external file (null URI = internal only).
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     val dateStr = com.example.tail.data.dateString(date)
     fun secsOf(ts: String): Int = ts.substringAfter(' ')
         .split(':').fold(0) { acc, v -> acc * 60 + (v.toIntOrNull() ?: 0) }
     val target = secsOf("$dateStr $oldTime")
     val log = try {
-        textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+        textInputRepo.loadTextLog(uri, context, habitName)
     } catch (e: Exception) {
         Log.w(TAG, "moveMovieEntryTime: failed to load text log for '$habitName': ${e.message}")
         return false
@@ -571,7 +572,7 @@ suspend fun HabitViewModel.moveMovieEntryTime(
     var moved = false
     for (key in keys) {
         if (textInputRepo.moveTextEntry(
-                Uri.parse(uriString), context, key, "$dateStr $newTime", habitName = habitName
+                uri, context, key, "$dateStr $newTime", habitName = habitName
             )
         ) moved = true
     }
@@ -695,13 +696,12 @@ internal suspend fun HabitViewModel.fetchAndCacheImdbRating(parsed: ParsedTitle,
  * it as a secondary value (x 10) in the habits database.
  */
 internal suspend fun HabitViewModel.updateImdbSecondaryValues(habitName: String) {
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) return
-
+    // Internal-first: works with no external file (null URI = internal only).
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     val fileUri = _settings.value.fileUri
 
     val textLog = try {
-        textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+        textInputRepo.loadTextLog(uri, context, habitName)
     } catch (e: Exception) {
         Log.w(TAG, "Failed to load text log for IMDb update: ${e.message}")
         return
@@ -822,10 +822,10 @@ fun HabitViewModel.fetchImdbBacklog(retryFailed: Boolean = false, onProgress: ((
             val titleMap = mutableMapOf<String, ParsedTitle>()
 
             for (habitName in movieHabits) {
-                val uriString = _settings.value.textInputFileUris[habitName]
-                if (uriString.isNullOrEmpty()) continue
+                // Internal-first: works with no external file (null URI = internal only).
+                val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
                 val textLog = try {
-                    textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+                    textInputRepo.loadTextLog(uri, context, habitName)
                 } catch (e: Exception) { continue }
 
                 for ((_, text) in textLog) {
@@ -1036,10 +1036,10 @@ fun HabitViewModel.fetchMovieMinutesBacklog(onProgress: ((String) -> Unit)? = nu
             val perHabit = mutableMapOf<String, MutableList<PendingEntry>>()
 
             for (habitName in movieHabits) {
-                val uriString = _settings.value.textInputFileUris[habitName]
-                if (uriString.isNullOrEmpty()) continue
+                // Internal-first: works with no external file (null URI = internal only).
+                val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
                 val textLog = try {
-                    textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+                    textInputRepo.loadTextLog(uri, context, habitName)
                 } catch (e: Exception) { continue }
 
                 val list = perHabit.getOrPut(habitName) { mutableListOf() }
@@ -1083,16 +1083,14 @@ fun HabitViewModel.fetchMovieMinutesBacklog(onProgress: ((String) -> Unit)? = nu
                     }
                 }
                 if (updates.isNotEmpty()) {
-                    val uriString = _settings.value.textInputFileUris[habitName]
-                    if (!uriString.isNullOrEmpty()) {
-                        try {
-                            textInputRepo.updateTextEntries(
-                                Uri.parse(uriString), context, updates, habitName
-                            )
-                            bridgeUpdated += updates.size
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Bridge minutes write failed for '$habitName': ${e.message}")
-                        }
+                    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
+                    try {
+                        textInputRepo.updateTextEntries(
+                            uri, context, updates, habitName
+                        )
+                        bridgeUpdated += updates.size
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Bridge minutes write failed for '$habitName': ${e.message}")
                     }
                 }
                 if (stillPending.isNotEmpty()) {
@@ -1162,16 +1160,14 @@ fun HabitViewModel.fetchMovieMinutesBacklog(onProgress: ((String) -> Unit)? = nu
                         }
                     }
                     if (updates.isNotEmpty()) {
-                        val uriString = _settings.value.textInputFileUris[habitName]
-                        if (!uriString.isNullOrEmpty()) {
-                            try {
-                                textInputRepo.updateTextEntries(
-                                    Uri.parse(uriString), context, updates, habitName
-                                )
-                                omdbUpdated += updates.size
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Minutes backfill write failed for '$habitName': ${e.message}")
-                            }
+                        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
+                        try {
+                            textInputRepo.updateTextEntries(
+                                uri, context, updates, habitName
+                            )
+                            omdbUpdated += updates.size
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Minutes backfill write failed for '$habitName': ${e.message}")
                         }
                     }
                 }
@@ -1253,12 +1249,11 @@ suspend fun HabitViewModel.getImdbRatingsForDate(
 ): Map<String, String?> {
     if (!hasImdbRatings(habitName)) return emptyMap()
 
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) return emptyMap()
-
+    // Internal-first: works with no external file (null URI = internal only).
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     val datePrefix = dateString(date)
     val textLog = try {
-        textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+        textInputRepo.loadTextLog(uri, context, habitName)
     } catch (e: Exception) { return emptyMap() }
 
     val result = mutableMapOf<String, String?>()

@@ -373,15 +373,13 @@ class ShareImageActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val settings = settingsRepo.settingsFlow.first()
-                val logUriStr = settings.textInputFileUris[habitName]
-                if (!logUriStr.isNullOrEmpty()) {
-                    textInputRepo.appendTextEntry(
-                        Uri.parse(logUriStr),
-                        applicationContext,
-                        "📷 [shared image]",
-                        habitName = habitName
-                    )
-                }
+                // Internal-first: no external file needed — null URI means internal-only.
+                textInputRepo.appendTextEntry(
+                    TextInputRepository.textUriOrNull(settings.textInputFileUris[habitName]),
+                    applicationContext,
+                    "📷 [shared image]",
+                    habitName = habitName
+                )
                 val phoneUriStr = settings.fileUri
                 if (phoneUriStr.isNotEmpty()) {
                     val habitsRepo = com.example.tail.data.HabitsRepository()

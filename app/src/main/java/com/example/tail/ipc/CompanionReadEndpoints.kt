@@ -440,9 +440,11 @@ internal object CompanionReadEndpoints {
         val repo = TextInputRepository()
         val live: Map<String, String>? = runBlocking {
             try {
-                settings.textInputFileUris[habitId]
-                    ?.let { Uri.parse(it) }
-                    ?.let { repo.loadTextLog(it, context) }
+                // Internal-first: merges external mirror with the internal store.
+                repo.loadTextLog(
+                    TextInputRepository.textUriOrNull(settings.textInputFileUris[habitId]),
+                    context, habitId
+                )
             } catch (_: Exception) {
                 null
             }

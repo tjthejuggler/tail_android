@@ -68,10 +68,14 @@ class WidgetInputActivity : ComponentActivity() {
                 LaunchedEffect(habitName) {
                     val settings = settingsRepo.settingsFlow.first()
                     showOptions = habitName in settings.textInputOptionsHabits
-                    val logUri = settings.textInputFileUris[habitName]
-                    optionsState = if (showOptions && logUri != null) {
+                    // Internal-first: options come from the internal store even
+                    // with no external file (null URI = internal only).
+                    optionsState = if (showOptions) {
                         try {
-                            textInputRepo.loadTextLog(Uri.parse(logUri), applicationContext)
+                            textInputRepo.loadTextLog(
+                                TextInputRepository.textUriOrNull(settings.textInputFileUris[habitName]),
+                                applicationContext, habitName
+                            )
                                 .values
                                 .toSet()
                                 .sorted()
@@ -106,11 +110,12 @@ class WidgetInputActivity : ComponentActivity() {
                 val settings = settingsRepo.settingsFlow.first()
                 val entryTime = java.time.LocalTime.of(hour, minute)
 
-                // 1. Append text entries to the habit's log file (only if a URI is set).
-                val logUriStr = settings.textInputFileUris[habitName]
-                if (entries.isNotEmpty() && !logUriStr.isNullOrEmpty()) {
+                // 1. Append text entries to the habit's log — internal-first
+                //    (null URI = internal only, no external file needed).
+                if (entries.isNotEmpty()) {
                     textInputRepo.appendMultipleTextEntries(
-                        Uri.parse(logUriStr), applicationContext, entries, null, entryTime,
+                        TextInputRepository.textUriOrNull(settings.textInputFileUris[habitName]),
+                        applicationContext, entries, null, entryTime,
                         habitName = habitName
                     )
                 }

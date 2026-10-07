@@ -394,31 +394,30 @@ internal suspend fun HabitViewModel.performRollForwardIfNeeded() {
         
         // Roll forward text entry (if this habit has text input enabled)
         if (habitName in _settings.value.textInputHabits) {
-            val textUriString = _settings.value.textInputFileUris[habitName]
-            if (!textUriString.isNullOrEmpty()) {
-                try {
-                    // Find yesterday's text entry (noon timestamp)
-                    val yesterdayTimestamp = java.time.LocalDateTime.of(yesterday, java.time.LocalTime.NOON)
+            // Internal-first: works with no external file (null URI = internal only).
+            val textUri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
+            try {
+                // Find yesterday's text entry (noon timestamp)
+                val yesterdayTimestamp = java.time.LocalDateTime.of(yesterday, java.time.LocalTime.NOON)
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                
+                // Load yesterday's text
+                val textLog = textInputRepo.loadTextLog(textUri, context, habitName)
+                val yesterdayText = textLog[yesterdayTimestamp]
+                
+                if (yesterdayText != null) {
+                    // Check if today already has a text entry
+                    val todayTimestamp = java.time.LocalDateTime.of(today, java.time.LocalTime.NOON)
                         .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
                     
-                    // Load yesterday's text
-                    val textLog = textInputRepo.loadTextLog(Uri.parse(textUriString), context, habitName)
-                    val yesterdayText = textLog[yesterdayTimestamp]
-                    
-                    if (yesterdayText != null) {
-                        // Check if today already has a text entry
-                        val todayTimestamp = java.time.LocalDateTime.of(today, java.time.LocalTime.NOON)
-                            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-                        
-                        if (!textLog.containsKey(todayTimestamp)) {
-                            // Roll forward the text
-                            textInputRepo.updateTextEntry(Uri.parse(textUriString), context, todayTimestamp, yesterdayText, habitName = habitName)
-                            Log.d(TAG, "Roll forward: copied $habitName text from $yesterdayStr to $todayStr: $yesterdayText")
-                        }
+                    if (!textLog.containsKey(todayTimestamp)) {
+                        // Roll forward the text
+                        textInputRepo.updateTextEntry(textUri, context, todayTimestamp, yesterdayText, habitName = habitName)
+                        Log.d(TAG, "Roll forward: copied $habitName text from $yesterdayStr to $todayStr: $yesterdayText")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Roll forward: failed to roll forward text for $habitName: ${e.message}")
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Roll forward: failed to roll forward text for $habitName: ${e.message}")
             }
         }
     }
@@ -1327,15 +1326,12 @@ fun HabitViewModel.updateTextEntryWithRollForward(
     customEndDate: LocalDate,
     onComplete: () -> Unit = {}
 ) {
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) {
-        onComplete()
-        return
-    }
+    // Internal-first: works with no external file (null URI = internal only).
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     viewModelScope.launch {
         try {
             // Update the text entry at the old timestamp
-            textInputRepo.updateTextEntry(Uri.parse(uriString), context, oldTimestamp, newText, habitName = habitName)
+            textInputRepo.updateTextEntry(uri, context, oldTimestamp, newText, habitName = habitName)
             
             // Parse the date from the oldTimestamp
             val dateStr = oldTimestamp.substring(0, 10)
@@ -1345,7 +1341,7 @@ fun HabitViewModel.updateTextEntryWithRollForward(
                 // Roll forward the text to all dates from entryDate+1 to customEndDate
                 if (entryDate < customEndDate) {
                     textInputRepo.rollForwardTextEntry(
-                        Uri.parse(uriString),
+                        uri,
                         context,
                         oldTimestamp,
                         entryDate.plusDays(1),
@@ -1412,11 +1408,8 @@ fun HabitViewModel.setTextEntriesForDateWithRollForward(
         onComplete()
         return
     }
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) {
-        onComplete()
-        return
-    }
+    // Internal-first: works with no external file (null URI = internal only).
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     val effectiveTime = time ?: java.time.LocalTime.NOON
     val baseTimestamp = java.time.LocalDateTime.of(date, effectiveTime)
         .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
@@ -1424,7 +1417,7 @@ fun HabitViewModel.setTextEntriesForDateWithRollForward(
         try {
             // Save all entries atomically
             textInputRepo.appendMultipleTextEntries(
-                Uri.parse(uriString), context, texts, date, effectiveTime, habitName = habitName
+                uri, context, texts, date, effectiveTime, habitName = habitName
             )
 
             // If this is a roll forward habit, also roll forward the text AND increment the habit counts
@@ -1432,7 +1425,7 @@ fun HabitViewModel.setTextEntriesForDateWithRollForward(
                 // Roll forward the first entry's text to all dates from date+1 to customEndDate
                 if (date < customEndDate) {
                     textInputRepo.rollForwardTextEntry(
-                        Uri.parse(uriString),
+                        uri,
                         context,
                         baseTimestamp,
                         date.plusDays(1),
@@ -1819,8 +1812,9 @@ fun HabitViewModel.moveHabitDayInstances(
             // Times-of-day of the text entries actually moved — the bridge
             // path must clear exactly these from the source-day store below.
             val movedTextTimes = mutableSetOf<String>()
-            if (!textUriStr.isNullOrEmpty()) {
-                val textUri = Uri.parse(textUriStr)
+            // Internal-first: works with no external file (null URI = internal only).
+            run {
+                val textUri = TextInputRepository.textUriOrNull(textUriStr)
                 val fromKeys = textInputRepo.loadTextLog(textUri, context, habitName).keys
                     .filter { it.startsWith("$fromStr ") }.sorted()
                 val keysToMove = if (time == null) {

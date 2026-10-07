@@ -22,6 +22,15 @@ private const val TAG = "TextInputRepo"
 private const val BACKUP_DIR = "text_input_backups"
 
 /**
+ * Parses a stored URI string into a [Uri], or null when the habit has no
+ * external file association (or it is blank). Central helper for the
+ * internal-first model: a null result simply means "internal only".
+ */
+fun textUriOrNull(uriString: String?): Uri? =
+    uriString?.takeIf { it.isNotBlank() }?.let(Uri::parse)
+
+
+/**
  * Handles reading and writing per-habit text-log JSON files.
  *
  * File format:
@@ -41,6 +50,10 @@ private const val BACKUP_DIR = "text_input_backups"
 class TextInputRepository {
 
     companion object {
+        /** See the top-level [textUriOrNull]. Kept on the companion so
+         *  `TextInputRepository.textUriOrNull(...)` call sites resolve. */
+        fun textUriOrNull(uriString: String?): Uri? =
+            com.example.tail.data.textUriOrNull(uriString)
         /**
          * Process-wide parse cache for text logs. [loadTextLog] is called in
          * hot paths — twice per movie habit on every schedule day switch,
@@ -95,11 +108,17 @@ class TextInputRepository {
     }
 
     /**
-     * Loads the text log from the given SAF URI.
-     * Returns an empty map if the file is missing, empty, or malformed.
-     * Served from the metadata-keyed cache when the document is unchanged
-     * since the last parse; the returned map is unmodifiable (callers that
-     * mutate copy it first, e.g. via toMutableMap()).
+     * Loads the text log — INTERNAL FIRST, external mirror merged when present.
+     *
+     * [uri] may be null: the habit then has no external file at all and the
+     * internal storage (files/text_input_backups) is the sole source. This is
+     * the normal case for newly enabled text-input habits; users never need
+     * to pick an external file.
+     *
+     * Returns an empty map if nothing exists yet. Served from the
+     * metadata-keyed cache when the document is unchanged since the last
+     * parse; the returned map is unmodifiable (callers that mutate copy it
+     * first, e.g. via toMutableMap()).
      *
      * Grant-loss resilience: SAF persistable URI grants do NOT survive an
      * app reinstall, so a restored URI string can throw SecurityException
@@ -112,7 +131,7 @@ class TextInputRepository {
      *    nothing written during the outage is hidden once access returns.
      */
     suspend fun loadTextLog(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         habitName: String? = null
     ): Map<String, String> =
@@ -121,6 +140,7 @@ class TextInputRepository {
                 if (habitName == null) emptyMap()
                 else loadInternalBackup(context, habitName) ?: emptyMap()
 
+            if (uri == null) return@withContext internalFallback()
             val key = queryStamps(uri, context)
             if (key != null) {
                 textLogCache?.let { cache ->
@@ -169,7 +189,7 @@ class TextInputRepository {
      * Returns the updated log map.
      */
     suspend fun appendTextEntry(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         text: String,
         date: LocalDate? = null,
@@ -203,7 +223,7 @@ class TextInputRepository {
      * Returns the updated log map.
      */
     suspend fun appendMultipleTextEntries(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         texts: List<String>,
         date: LocalDate? = null,
@@ -237,20 +257,27 @@ class TextInputRepository {
      * queried the cache is dropped, forcing a fresh read (never stale data).
      */
     private suspend fun saveTextLog(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         log: Map<String, String>,
         /** Habit the write belongs to, when the caller knows it — used only for the companion change broadcast. */
         habitHint: String? = null
-    ) = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(Dispatchers.IO) {
         // Sort entries chronologically by timestamp (keys are "YYYY-MM-DD HH:mm:ss")
         val sortedLog = log.toSortedMap()
+        if (uri == null) return@withContext false // internal-only habit — mirror handled by caller
         val json = prettyGson.toJson(sortedLog)
         val cr = context.contentResolver
         var saved = false
-        cr.openOutputStream(uri, "wt")?.use { stream ->
-            stream.bufferedWriter().use { it.write(json) }
-            saved = true
+        try {
+            cr.openOutputStream(uri, "wt")?.use { stream ->
+                stream.bufferedWriter().use { it.write(json) }
+                saved = true
+            }
+        } catch (_: Exception) {
+            // Lost URI grant (reinstall) or vanished file — never fatal: the
+            // internal mirror written by the caller remains the source of truth.
+            saved = false
         }
         if (saved) {
             val key = queryStamps(uri, context)
@@ -264,16 +291,21 @@ class TextInputRepository {
                 TailChangeLog.noteChange(context, habitHint)
             } catch (_: Exception) {
             }
+        } else {
+            // External write failed — drop the cache so the next load re-reads
+            // rather than serving content that never reached the document.
+            textLogCache = null
         }
+        saved
     }
 
     /**
      * Returns all unique text values ever entered for this habit (from the log file),
      * sorted alphabetically for display as options.
      */
-    suspend fun loadUniqueOptions(uri: Uri, context: Context): List<String> =
+    suspend fun loadUniqueOptions(uri: Uri?, context: Context, habitName: String? = null): List<String> =
         withContext(Dispatchers.IO) {
-            loadTextLog(uri, context).values.toSortedSet().toList()
+            loadTextLog(uri, context, habitName).values.toSortedSet().toList()
         }
 
     /**
@@ -296,11 +328,11 @@ class TextInputRepository {
      * Builds the decomposed option inventory (see [TextOptionInventory]).
      * Both lists are sorted alphabetically.
      */
-    suspend fun loadOptionInventory(uri: Uri, context: Context): TextOptionInventory =
+    suspend fun loadOptionInventory(uri: Uri?, context: Context, habitName: String? = null): TextOptionInventory =
         withContext(Dispatchers.IO) {
             val singleCounts = mutableMapOf<String, Int>()
             val groupingCounts = mutableMapOf<String, Int>()
-            for (text in loadTextLog(uri, context).values) {
+            for (text in loadTextLog(uri, context, habitName).values) {
                 if (text.contains('\n')) {
                     groupingCounts[text] = (groupingCounts[text] ?: 0) + 1
                     for (part in text.split('\n')) {
@@ -329,7 +361,7 @@ class TextInputRepository {
      * Returns the updated log map.
      */
     suspend fun renameOptionValues(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         oldText: String,
         newText: String,
@@ -364,7 +396,7 @@ class TextInputRepository {
      * Returns the updated log map.
      */
     suspend fun updateTextEntry(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         oldTimestamp: String,
         newText: String,
@@ -386,7 +418,7 @@ class TextInputRepository {
      * Returns true when the entry moved.
      */
     suspend fun moveTextEntry(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         oldTimestamp: String,
         newTimestamp: String,
@@ -425,7 +457,7 @@ class TextInputRepository {
      * Returns the updated log map.
      */
     suspend fun updateTextEntries(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         updates: Map<String, String>,
         habitName: String? = null
@@ -445,7 +477,7 @@ class TextInputRepository {
      * Returns the updated log map.
      */
     suspend fun deleteTextEntry(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         timestamp: String,
         habitName: String? = null
@@ -465,7 +497,7 @@ class TextInputRepository {
      * Returns the updated log map.
      */
     suspend fun deleteTextEntries(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         timestamps: Collection<String>,
         habitName: String? = null
@@ -486,7 +518,7 @@ class TextInputRepository {
      * Returns the updated log map.
      */
     suspend fun rollForwardTextEntry(
-        uri: Uri,
+        uri: Uri?,
         context: Context,
         sourceTimestamp: String,
         startDate: LocalDate,

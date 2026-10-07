@@ -254,21 +254,14 @@ class HabitsContentProvider : ContentProvider() {
         val now = LocalDateTime.now()
 
         for (habit in habits) {
-            // Prefer the live SAF log; fall back to the internal backup when
-            // the external file is unreachable (deleted, provider hiccup…).
+            // Internal-first: merges the external mirror with the internal
+            // store; works with no external file at all.
             val log: Map<String, String> = runBlocking {
                 try {
-                    settings.textInputFileUris[habit]
-                        ?.let { Uri.parse(it) }
-                        ?.let { repo.loadTextLog(it, ctx) }
-                        ?.takeIf { it.isNotEmpty() }
-                        ?: emptyMap()
-                } catch (_: Exception) {
-                    emptyMap()
-                }
-            }.ifEmpty {
-                try {
-                    repo.loadInternalBackup(ctx, habit) ?: emptyMap()
+                    repo.loadTextLog(
+                        TextInputRepository.textUriOrNull(settings.textInputFileUris[habit]),
+                        ctx, habit
+                    )
                 } catch (_: Exception) {
                     emptyMap()
                 }

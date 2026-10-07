@@ -1353,6 +1353,12 @@ fun HabitGridScreen(
                 .padding(paddingValues)
                 .imePadding()
         ) {
+            // ── Permission restore banner — after a reinstall / backup
+            // restore the special access grants (overlay, notification
+            // listener, usage access) are gone while the settings that need
+            // them survived. Surface one-click re-grant suggestions.
+            PermissionRestoreBanner(settings = settings)
+
             // ── Location strip — fills the thin gap between the top bar and
             // the tab row/grid below. Purely additive: nothing above or below
             // moves. Falls back to the assumed location (suffix "*") when the

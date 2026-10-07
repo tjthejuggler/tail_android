@@ -1552,14 +1552,11 @@ class HabitViewModel(
      * This should be called before using getGraphData with a text filter.
      */
     fun loadTextEntriesForGraph(habitName: String) {
-        val uriString = _settings.value.textInputFileUris[habitName]
-        if (uriString.isNullOrEmpty()) {
-            _textEntriesCache.value = _textEntriesCache.value.toMutableMap().apply { remove(habitName) }
-            return
-        }
+        // Internal-first: works with no external file (null URI = internal only).
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         viewModelScope.launch {
             try {
-                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+                val log = textInputRepo.loadTextLog(uri, context, habitName)
                 _textEntriesCache.value = _textEntriesCache.value.toMutableMap().apply {
                     put(habitName, log)
                 }
@@ -1971,15 +1968,12 @@ class HabitViewModel(
      * Returns all text entries whose timestamp starts with the given date string.
      */
     fun loadTextEntriesForDate(habitName: String, date: LocalDate, onResult: (List<String>) -> Unit) {
-        val uriString = _settings.value.textInputFileUris[habitName]
-        if (uriString.isNullOrEmpty()) {
-            onResult(emptyList())
-            return
-        }
+        // Internal-first: works with no external file (null URI = internal only).
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         val datePrefix = dateString(date)
         viewModelScope.launch {
             try {
-                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+                val log = textInputRepo.loadTextLog(uri, context, habitName)
                 val entries = log.filter { (key, _) -> key.startsWith(datePrefix) }
                     .values.toList()
                 onResult(entries)
@@ -1996,28 +1990,25 @@ class HabitViewModel(
      * Includes all increment timestamps for the day, even those without text entries.
      */
     fun loadTextEntriesWithTimestamps(habitName: String, date: LocalDate, onResult: (List<Pair<String, String>>) -> Unit) {
-        val uriString = _settings.value.textInputFileUris[habitName]
+        // Internal-first: works with no external file (null URI = internal only).
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         val datePrefix = dateString(date)
-        Log.d(TAG, "loadTextEntriesWithTimestamps: habit=$habitName date=$date prefix=$datePrefix uri=${uriString?.take(50)}")
+        Log.d(TAG, "loadTextEntriesWithTimestamps: habit=$habitName date=$date prefix=$datePrefix uri=$uri")
         viewModelScope.launch {
             try {
                 // Get all increment timestamps for the day
                 val incrementTimestamps = timestampRepo.getTimestampsForDay(habitName, date)
                 Log.d(TAG, "loadTextEntriesWithTimestamps: incrementTimestamps=$incrementTimestamps")
                 
-                // Get text entries if URI is available
-                val textEntries = if (uriString.isNullOrEmpty()) {
-                    Log.d(TAG, "loadTextEntriesWithTimestamps: no URI for habit=$habitName")
+                // Text entries come from the internal-first load (empty when
+                // nothing exists yet for this habit).
+                val textEntries = try {
+                    val log = textInputRepo.loadTextLog(uri, context, habitName)
+                    Log.d(TAG, "loadTextEntriesWithTimestamps: loaded ${log.size} total entries, keys sample=${log.keys.take(5)}")
+                    log
+                } catch (e: Exception) {
+                    Log.e(TAG, "loadTextEntriesWithTimestamps: failed to load text log", e)
                     emptyMap()
-                } else {
-                    try {
-                        val log = textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
-                        Log.d(TAG, "loadTextEntriesWithTimestamps: loaded ${log.size} total entries, keys sample=${log.keys.take(5)}")
-                        log
-                    } catch (e: Exception) {
-                        Log.e(TAG, "loadTextEntriesWithTimestamps: failed to load text log", e)
-                        emptyMap()
-                    }
                 }
                 
                 // Merge increment timestamps with text entries
@@ -2065,9 +2056,10 @@ class HabitViewModel(
      * the same gesture. Idempotent — no write when already in sync.
      */
     internal suspend fun syncMovieTimestamps(habitName: String) {
-        val uriString = _settings.value.textInputFileUris[habitName] ?: return
+        // Internal-first: the log lives internally even without a file link.
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         val log = try {
-            textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+            textInputRepo.loadTextLog(uri, context, habitName)
         } catch (e: Exception) {
             Log.w(TAG, "syncMovieTimestamps: failed to load text log for '$habitName': ${e.message}")
             return
@@ -2104,9 +2096,10 @@ class HabitViewModel(
      */
     internal suspend fun syncMovieMinutesSlot(habitName: String) {
         if (!dbLoaded) return
-        val uriString = _settings.value.textInputFileUris[habitName] ?: return
+        // Internal-first: the log lives internally even without a file link.
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         val log = try {
-            textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+            textInputRepo.loadTextLog(uri, context, habitName)
         } catch (e: Exception) {
             Log.w(TAG, "syncMovieMinutesSlot: failed to load text log for '$habitName': ${e.message}")
             return
@@ -2177,10 +2170,10 @@ class HabitViewModel(
         // The text log is the source of truth — reconcile the timestamp
         // store to it so each entry's watch time IS the habit's timestamp.
         syncMovieTimestamps(habitName)
-        val uriString = _settings.value.textInputFileUris[habitName]
-        if (uriString.isNullOrEmpty()) return emptyMap()
+        // Internal-first: works with no external file (null URI = internal only).
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         val datePrefix = dateString(date)
-        return textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+        return textInputRepo.loadTextLog(uri, context, habitName)
             .filterKeys { it.startsWith(datePrefix) && it.length >= 16 }
             .mapKeys { (timestamp, _) -> timestamp.substring(11) }
             .mapValues { (_, text) ->
@@ -2216,15 +2209,12 @@ class HabitViewModel(
      * [onComplete] is called when the update is finished.
      */
     fun updateTextEntry(habitName: String, oldTimestamp: String, newText: String, onComplete: () -> Unit = {}) {
-        val uriString = _settings.value.textInputFileUris[habitName]
-        if (uriString.isNullOrEmpty()) {
-            onComplete()
-            return
-        }
+        // Internal-first: works with no external file (null URI = internal only).
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         viewModelScope.launch {
             try {
                 // Update the text entry at the old timestamp
-                textInputRepo.updateTextEntry(Uri.parse(uriString), context, oldTimestamp, newText, habitName = habitName)
+                textInputRepo.updateTextEntry(uri, context, oldTimestamp, newText, habitName = habitName)
                 
                 // If this is a roll forward habit, also roll forward the text
                 if (habitName in _settings.value.rollForwardHabits) {
@@ -2243,7 +2233,7 @@ class HabitViewModel(
                         // Roll forward the text to all dates from entryDate+1 to endDate
                         if (entryDate < endDate) {
                             textInputRepo.rollForwardTextEntry(
-                                Uri.parse(uriString),
+                                uri,
                                 context,
                                 oldTimestamp,
                                 entryDate.plusDays(1),
@@ -2277,17 +2267,14 @@ class HabitViewModel(
      * [onComplete] is called when the write is finished.
      */
     fun setTextEntryForDate(habitName: String, date: LocalDate, text: String, onComplete: () -> Unit = {}) {
-        val uriString = _settings.value.textInputFileUris[habitName]
-        if (uriString.isNullOrEmpty()) {
-            onComplete()
-            return
-        }
+        // Internal-first: works with no external file (null URI = internal only).
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         val timestamp = java.time.LocalDateTime.of(date, java.time.LocalTime.NOON)
             .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
         viewModelScope.launch {
             try {
                 // updateTextEntry adds the key if it is missing
-                textInputRepo.updateTextEntry(Uri.parse(uriString), context, timestamp, text, habitName = habitName)
+                textInputRepo.updateTextEntry(uri, context, timestamp, text, habitName = habitName)
                 
                 // If this is a roll forward habit, also roll forward the text
                 if (habitName in _settings.value.rollForwardHabits) {
@@ -2301,7 +2288,7 @@ class HabitViewModel(
                     // Roll forward the text to all dates from date+1 to endDate
                     if (date < endDate) {
                         textInputRepo.rollForwardTextEntry(
-                            Uri.parse(uriString),
+                            uri,
                             context,
                             timestamp,
                             date.plusDays(1),
@@ -2339,13 +2326,12 @@ class HabitViewModel(
      * [onComplete] is called when the deletion is finished.
      */
     fun deleteTextEntry(habitName: String, timestamp: String, onComplete: () -> Unit = {}) {
-        val uriString = _settings.value.textInputFileUris[habitName]
+        // Internal-first: works with no external file (null URI = internal only).
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         viewModelScope.launch {
             try {
-                // 1. Delete the text entry from the text log (if URI is available)
-                if (!uriString.isNullOrEmpty()) {
-                    textInputRepo.deleteTextEntry(Uri.parse(uriString), context, timestamp, habitName = habitName)
-                }
+                // 1. Delete the text entry from the text log
+                textInputRepo.deleteTextEntry(uri, context, timestamp, habitName = habitName)
 
                 // 2. Also delete the corresponding increment timestamp so the entry is
                 //    completely removed from history (not just its text).

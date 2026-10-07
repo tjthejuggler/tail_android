@@ -333,16 +333,13 @@ internal fun HabitViewModel.parseMediaShowEntry(text: String): Pair<String, Int>
  * minutes descending. Habits without a text log get an empty list.
  */
 fun HabitViewModel.loadMediaTodayShows(habitName: String) {
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) {
-        _mediaTodayShows.value = emptyList()
-        return
-    }
+    // Internal-first: works with no external file (null URI = internal only).
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     val datePrefix = dateString(LocalDate.now())
     viewModelScope.launch {
         val shows = withContext(Dispatchers.IO) {
             try {
-                val log = textInputRepo.loadTextLog(Uri.parse(uriString), context, habitName)
+                val log = textInputRepo.loadTextLog(uri, context, habitName)
                 log.entries
                     .filter { (ts, _) -> ts.startsWith(datePrefix) }
                     .mapNotNull { (_, text) -> parseMediaShowEntry(text) }
@@ -377,22 +374,21 @@ fun HabitViewModel.loadMediaTodayShows(habitName: String) {
  * contributed). Then refreshes the breakdown, widgets and listeners.
  */
 fun HabitViewModel.removeMediaShowFromToday(habitName: String, show: String) {
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) return
+    // Internal-first: works with no external file (null URI = internal only).
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     val dbUriString = _settings.value.fileUri
     val datePrefix = dateString(LocalDate.now())
     viewModelScope.launch {
         try {
-            val textUri = Uri.parse(uriString)
             val log = withContext(Dispatchers.IO) {
-                textInputRepo.loadTextLog(textUri, context, habitName)
+                textInputRepo.loadTextLog(uri, context, habitName)
             }
             val doomed = log.entries.filter { (ts, text) ->
                 ts.startsWith(datePrefix) && parseMediaShowEntry(text)?.first == show
             }
             if (doomed.isNotEmpty()) {
                 textInputRepo.deleteTextEntries(
-                    textUri, context, doomed.map { it.key }, habitName = habitName
+                    uri, context, doomed.map { it.key }, habitName = habitName
                 )
             }
             val minutes = doomed.sumOf { parseMediaShowEntry(it.value)?.second ?: 0 }

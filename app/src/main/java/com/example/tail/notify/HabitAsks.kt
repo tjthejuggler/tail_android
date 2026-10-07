@@ -161,19 +161,8 @@ object HabitAsks {
                 return true
             }
             val settings = settingsRepo.settingsFlow.first()
+            // Internal-first: no external file needed — null URI means internal-only.
             val uriStr = settings.textInputFileUris[ask.habitName]
-            if (uriStr.isNullOrEmpty()) {
-                Log.w(TAG, "No text log URI for '${ask.habitName}' — cannot log movie")
-                postInfo(
-                    appContext, "movie-log-failed:${ask.id}",
-                    "🎬 Movie not logged",
-                    "Could not log '${ask.title}' — no text log file is configured " +
-                        "for the habit '${ask.habitName}'.",
-                    ask.habitName
-                )
-                markHandled()
-                return true
-            }
             val (payloadTime, payloadMinutes) = HabitNotification.parseMoviePayload(ask.payload)
             val time = payloadTime?.let { parseTime(it) } ?: LocalTime.now()
             // The movie's watch day: embedded in the payload when the ask was
@@ -185,7 +174,7 @@ object HabitAsks {
             // Carry the watch length onto the logged entry so the minutes
             // slot fills from the annotation at the next sync.
             val text = if (payloadMinutes > 0) "${ask.title} ($payloadMinutes min)" else ask.title
-            val entryUri = Uri.parse(uriStr)
+            val entryUri = TextInputRepository.textUriOrNull(uriStr)
             var entryLogged = false
             var lastEntryError: Exception? = null
             for (attempt in 1..ANSWER_RETRY_ATTEMPTS) {
@@ -198,7 +187,7 @@ object HabitAsks {
                     // the WATCH day, where the entry was just written.
                     val dayPrefix = watchDay.toString()
                     val onDisk = TextInputRepository()
-                        .loadTextLog(entryUri, appContext)
+                        .loadTextLog(entryUri, appContext, ask.habitName)
                         .filterKeys { it.startsWith(dayPrefix) }
                         .values.map { OmdbService.parseTitle(it).cacheKey }
                     if (OmdbService.parseTitle(text).cacheKey in onDisk) {
@@ -601,12 +590,12 @@ object HabitAsks {
         day: LocalDate,
         appContext: Context
     ): List<Pair<String, String>> {
-        val uriStr = settings.textInputFileUris[habitName] ?: return emptyList()
-        if (uriStr.isEmpty()) return emptyList()
+        // Internal-first: no external file needed — null URI means internal-only.
+        val uri = TextInputRepository.textUriOrNull(settings.textInputFileUris[habitName])
         return try {
             val prefix = day.toString()
             TextInputRepository()
-                .loadTextLog(Uri.parse(uriStr), appContext)
+                .loadTextLog(uri, appContext, habitName)
                 .filterKeys { it.startsWith(prefix) }
                 .map { (ts, text) -> ts to text }
         } catch (e: Exception) {

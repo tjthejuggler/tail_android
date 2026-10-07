@@ -399,8 +399,8 @@ object MediaPlaybackTracker {
     private suspend fun logMediaEntry(context: Context, habit: String, meta: MediaMeta) {
         try {
             val settings = SettingsRepository(context).settingsFlow.first()
-            val textUri = settings.textInputFileUris[habit]
-            if (textUri.isNullOrEmpty()) return
+            // Internal-first: no external file needed — null URI means internal-only.
+            val textUri = TextInputRepository.textUriOrNull(settings.textInputFileUris[habit])
             val entry = buildString {
                 append(LocalTime.now().format(ENTRY_TIME_FMT))
                 append("  ")
@@ -415,7 +415,7 @@ object MediaPlaybackTracker {
                 trackUri?.let { append(" — ").append(it) }
             }
             TextInputRepository().appendTextEntry(
-                Uri.parse(textUri), context, entry, habitName = habit
+                textUri, context, entry, habitName = habit
             )
             Log.i(TAG, "Logged media item for '$habit': $entry")
         } catch (e: Exception) {

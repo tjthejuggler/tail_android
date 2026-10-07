@@ -386,11 +386,8 @@ fun HabitViewModel.saveTextEntry(
     date: LocalDate? = null,
     time: java.time.LocalTime? = null
 ) {
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) {
-        _errorMessage.value = "No text log file set for '$habitName'. Select one in edit mode."
-        return
-    }
+    // Internal-first: no external file needed — null URI means internal-only.
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     viewModelScope.launch {
         try {
             // Capture ONE time for both the text-log key and the increment
@@ -401,7 +398,7 @@ fun HabitViewModel.saveTextEntry(
             val entryClock = time ?: java.time.LocalTime.now()
             val stampTime = entryClock.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
             // Save the text entry for the current date
-            textInputRepo.appendTextEntry(Uri.parse(uriString), context, text, entryDate, entryClock, habitName = habitName)
+            textInputRepo.appendTextEntry(uri, context, text, entryDate, entryClock, habitName = habitName)
 
             // If this is a roll forward habit, also roll forward the text
             if (habitName in _settings.value.rollForwardHabits) {
@@ -418,7 +415,7 @@ fun HabitViewModel.saveTextEntry(
                 // Roll forward the text to all dates from entryDate+1 to endDate
                 if (entryDate < endDate) {
                     textInputRepo.rollForwardTextEntry(
-                        Uri.parse(uriString),
+                        uri,
                         context,
                         timestamp,
                         entryDate.plusDays(1),
@@ -496,15 +493,12 @@ fun HabitViewModel.saveTextEntries(
         saveTextEntry(habitName, texts.first(), date, time)
         return
     }
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) {
-        _errorMessage.value = "No text log file set for '$habitName'. Select one in edit mode."
-        return
-    }
+    // Internal-first: no external file needed — null URI means internal-only.
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     viewModelScope.launch {
         try {
             textInputRepo.appendMultipleTextEntries(
-                Uri.parse(uriString), context, texts, date, time, habitName = habitName
+                uri, context, texts, date, time, habitName = habitName
             )
 
             // If this is a roll forward habit, also roll forward the text
@@ -522,7 +516,7 @@ fun HabitViewModel.saveTextEntries(
 
                 if (entryDate < endDate) {
                     textInputRepo.rollForwardTextEntry(
-                        Uri.parse(uriString),
+                        uri,
                         context,
                         timestamp,
                         entryDate.plusDays(1),
@@ -574,15 +568,12 @@ fun HabitViewModel.saveTextEntries(
  * Calls [onResult] on the main thread with the sorted unique options.
  */
 fun HabitViewModel.loadTextOptions(habitName: String, onResult: (List<String>) -> Unit) {
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) {
-        onResult(emptyList())
-        return
-    }
+    // Internal-first: options come from the internal store even with no external file.
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     viewModelScope.launch {
         try {
             val hidden = _settings.value.textInputHiddenGroupings[habitName] ?: emptySet()
-            val options = textInputRepo.loadUniqueOptions(Uri.parse(uriString), context)
+            val options = textInputRepo.loadUniqueOptions(uri, context, habitName = habitName)
             // Multi-option groupings the user removed from this picker are
             // filtered here — history is untouched, only the popup list is.
             onResult(options.filter { it !in hidden })
@@ -603,14 +594,10 @@ fun HabitViewModel.loadTextOptionInventory(
     habitName: String,
     onResult: (TextInputRepository.TextOptionInventory) -> Unit
 ) {
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty()) {
-        onResult(TextInputRepository.TextOptionInventory(emptyList(), emptyList()))
-        return
-    }
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     viewModelScope.launch {
         try {
-            onResult(textInputRepo.loadOptionInventory(Uri.parse(uriString), context))
+            onResult(textInputRepo.loadOptionInventory(uri, context, habitName = habitName))
         } catch (e: Exception) {
             onResult(TextInputRepository.TextOptionInventory(emptyList(), emptyList()))
         }
@@ -631,15 +618,15 @@ fun HabitViewModel.renameTextOption(
     newText: String,
     onDone: () -> Unit = {}
 ) {
-    val uriString = _settings.value.textInputFileUris[habitName]
-    if (uriString.isNullOrEmpty() || newText == oldText) {
+    if (newText == oldText) {
         onDone()
         return
     }
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
     viewModelScope.launch {
         try {
             textInputRepo.renameOptionValues(
-                Uri.parse(uriString), context, oldText, newText, habitName = habitName
+                uri, context, oldText, newText, habitName = habitName
             )
             // Carry the description (if any) over to the new option text
             val descriptions = _settings.value.textInputOptionDescriptions.toMutableMap()

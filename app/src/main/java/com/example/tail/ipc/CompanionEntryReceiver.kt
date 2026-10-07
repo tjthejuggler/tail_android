@@ -158,19 +158,16 @@ class CompanionEntryReceiver : BroadcastReceiver() {
             return
         }
         val settings = SettingsRepository(context).settingsFlow.first()
-        val logUriStr = settings.textInputFileUris[habitName]
-        if (logUriStr.isNullOrEmpty()) {
-            Log.w(TAG, "Habit '$habitName' has no text log (not a text habit?) — ignoring")
-            return
-        }
+        // Internal-first: no external file needed — null URI means internal-only.
+        val logUri = TextInputRepository.textUriOrNull(settings.textInputFileUris[habitName])
 
         val moment = Instant.ofEpochMilli(timestampMs).atZone(ZoneId.systemDefault())
 
         fileMutex.withLock {
-            // 1. Append to the text log file (change broadcast + internal
+            // 1. Append to the text log (change broadcast + internal
             //    mirror happen inside the repository).
             TextInputRepository().appendTextEntry(
-                Uri.parse(logUriStr), context, text,
+                logUri, context, text,
                 date = moment.toLocalDate(), time = moment.toLocalTime(),
                 habitName = habitName
             )
