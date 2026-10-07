@@ -181,6 +181,7 @@ import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.encodeShortcutEntry
 import com.example.tail.data.findShortcutInfo
 import com.example.tail.ui.viewmodel.buildHabitSuggestions
+import com.example.tail.ui.viewmodel.setSuggestionExcluded
 import com.example.tail.ui.viewmodel.incrementHabit
 import com.example.tail.data.isActivityEntry
 import com.example.tail.data.isAppIconName
@@ -910,6 +911,8 @@ fun HabitGridScreen(
     var suggestions by remember { mutableStateOf<List<HabitSuggestion>>(emptyList()) }
     var suggestionFlashVisible by remember { mutableStateOf(false) }
     var suggestionsRequested by remember { mutableStateOf(false) }
+    // Suggestion card whose "don't suggest anymore" popup is open (null = none)
+    var excludePopupSuggestion by remember { mutableStateOf<HabitSuggestion?>(null) }
     // Sleep-suite dialog state (SleepDialogs.kt keeps this composable small)
     val sleepDialogState = remember { SleepDialogStateHolder() }
     var showCalendarPicker by remember { mutableStateOf(false) }
@@ -2167,6 +2170,28 @@ fun HabitGridScreen(
             suggestionFlashVisible = built.isNotEmpty()
         }
     }
+    // Auto-close the suggestion flash once the user interacts with anything else
+    // on the habit screen: a normal increment (habits list changes), switching
+    // habit screens, or entering edit/graph/schedule mode.
+    var suggestionHideSnapshot by remember {
+        mutableStateOf<Triple<Int, Int, Boolean>?>(null)
+    }
+    LaunchedEffect(suggestionFlashVisible) {
+        if (suggestionFlashVisible) {
+            suggestionHideSnapshot = Triple(habits.hashCode(), activeScreenIndex, false)
+        } else {
+            suggestionHideSnapshot = null
+        }
+    }
+    LaunchedEffect(habits, activeScreenIndex, editMode, graphMode, scheduleMode, selectedDate) {
+        val snap = suggestionHideSnapshot ?: return@LaunchedEffect
+        if (!suggestionFlashVisible) return@LaunchedEffect
+        val changed = habits.hashCode() != snap.first ||
+            activeScreenIndex != snap.second ||
+            editMode || graphMode || scheduleMode ||
+            selectedDate != java.time.LocalDate.now()
+        if (changed) suggestionFlashVisible = false
+    }
     if (suggestionFlashVisible && !editMode && !graphMode && !scheduleMode) {
         Box(
             modifier = Modifier
@@ -2221,9 +2246,21 @@ fun HabitGridScreen(
                         SuggestionKind.PLAIN -> { /* plain habits have nothing to edit */ }
                     }
                 },
+                onExcludeRequest = { s -> excludePopupSuggestion = s },
                 onDismiss = { suggestionFlashVisible = false }
             )
         }
+        // "Don't suggest this habit anymore" confirmation popup
+        SuggestionExcludePopup(
+            suggestion = excludePopupSuggestion,
+            onExclude = { s ->
+                viewModel.setSuggestionExcluded(s.habitName, excluded = true)
+                suggestions = suggestions - s
+                if (suggestions.isEmpty()) suggestionFlashVisible = false
+                excludePopupSuggestion = null
+            },
+            onDismiss = { excludePopupSuggestion = null }
+        )
     }
 
     // ── Advice banner at bottom of screen (hidden in edit/graph/schedule modes) ──

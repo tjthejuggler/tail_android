@@ -147,7 +147,11 @@ import com.example.tail.ui.viewmodel.navigateToDate
 import com.example.tail.ui.viewmodel.recalculateFitnessAgeDistance
 import com.example.tail.ui.viewmodel.screenIndexForHabit
 import com.example.tail.ui.viewmodel.setAppStatsRecordNotificationsEnabled
+import com.example.tail.ui.viewmodel.setSuggestionExcluded
 import com.example.tail.ui.viewmodel.setSuggestionFlashEnabled
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.TextButton
 import com.example.tail.ui.viewmodel.setChessEnforcementEnabled
 import com.example.tail.ui.viewmodel.setChessReadinessApp
 import com.example.tail.ui.viewmodel.setChessReadinessEnabled
@@ -2307,6 +2311,63 @@ private fun SuggestionFlashSettingsSection(
             checked = settings.suggestionFlashEnabled,
             onCheckedChange = { viewModel.setSuggestionFlashEnabled(it) }
         )
+    }
+
+    // Manual per-habit exclusion list. Checking a habit permanently hides it
+    // from the suggestion flash; unchecking restores it. Habits excluded via
+    // the flash card's 🚫 popup show up here pre-checked, so any exclusion
+    // can always be undone.
+    val allHabits = remember(settings.habitScreens) {
+        if (settings.habitScreens.isNotEmpty()) {
+            settings.habitScreens.flatMap { it.habitNames }
+                .filter { !com.example.tail.data.isAppLink(it) }
+                .distinct()
+        } else com.example.tail.data.HABIT_ORDER
+    }
+    var showExcludedList by remember { mutableStateOf(false) }
+    Spacer(modifier = Modifier.height(8.dp))
+    TextButton(onClick = { showExcludedList = !showExcludedList }) {
+        Text(
+            text = (if (showExcludedList) "▾" else "▸") +
+                " Excluded habits (${settings.suggestionExcludedHabits.size})",
+            fontSize = 13.sp
+        )
+    }
+    if (showExcludedList) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 320.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = "Checked habits are never suggested in the ⚡ flash.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            allHabits.forEach { habitName ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            viewModel.setSuggestionExcluded(
+                                habitName,
+                                excluded = habitName !in settings.suggestionExcludedHabits
+                            )
+                        }
+                        .padding(vertical = 2.dp)
+                ) {
+                    Checkbox(
+                        checked = habitName in settings.suggestionExcludedHabits,
+                        onCheckedChange = { checked ->
+                            viewModel.setSuggestionExcluded(habitName, excluded = checked)
+                        }
+                    )
+                    Text(text = habitName, fontSize = 13.sp)
+                }
+            }
+        }
     }
 }
 

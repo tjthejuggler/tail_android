@@ -948,6 +948,15 @@ data class AppSettings(
      * GitHub / Inuit / Wags / bridge) are always excluded. ON by default.
      */
     val suggestionFlashEnabled: Boolean = true,
+
+    /**
+     * Habits the user has manually excluded from the increment-suggestion
+     * flash — either via the "don't suggest this anymore" popup on a
+     * suggestion card, or via the checkbox list in Settings → Notifications
+     * → Increment suggestions. Managed in one place so an exclusion can
+     * always be undone from Settings.
+     */
+    val suggestionExcludedHabits: Set<String> = emptySet(),
     val customInputHabits: Set<String> = DEFAULT_CUSTOM_INPUT_HABITS,
 
     /**

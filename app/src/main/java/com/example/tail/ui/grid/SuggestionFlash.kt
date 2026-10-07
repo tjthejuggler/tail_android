@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,14 +68,15 @@ data class HabitSuggestion(
 /**
  * Scrollable "likely next" flash strip shown once on app open. Each card
  * carries a fully pre-filled increment (amount / text / subtype); the ✓
- * applies it instantly, and the ✎ opens the habit's normal input dialog
- * with the payload already typed in / selected. Closable via the ✕ in the
- * corner.
+ * applies it instantly, the ✎ opens the habit's normal input dialog with
+ * the payload already typed in / selected, and the 🚫 opens the
+ * "don't suggest this anymore" popup. Closable via the ✕ in the corner.
  *
  * @param suggestions Ordered suggestions (highest score first)
  * @param visible Whether the flash is shown
  * @param onConfirm One-tap increment for the suggestion
  * @param onEdit Open the habit's pre-filled input dialog
+ * @param onExcludeRequest Open the "don't suggest this anymore" popup
  * @param onDismiss ✕ pressed — hide the flash
  */
 @Composable
@@ -82,6 +85,7 @@ fun SuggestionFlash(
     visible: Boolean,
     onConfirm: (HabitSuggestion) -> Unit,
     onEdit: (HabitSuggestion) -> Unit,
+    onExcludeRequest: (HabitSuggestion) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -134,7 +138,8 @@ fun SuggestionFlash(
                     SuggestionCard(
                         suggestion = s,
                         onConfirm = { onConfirm(s) },
-                        onEdit = { onEdit(s) }
+                        onEdit = { onEdit(s) },
+                        onExcludeRequest = { onExcludeRequest(s) }
                     )
                 }
             }
@@ -146,7 +151,8 @@ fun SuggestionFlash(
 private fun SuggestionCard(
     suggestion: HabitSuggestion,
     onConfirm: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    onExcludeRequest: () -> Unit
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -156,14 +162,27 @@ private fun SuggestionCard(
             .border(1.dp, Color(0xFF3D3D44), RoundedCornerShape(10.dp))
             .padding(10.dp)
     ) {
-        Text(
-            text = suggestion.habitName,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = suggestion.habitName,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            // Small "don't suggest anymore" icon button in the upper-right corner
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF3A3236), CircleShape)
+                    .clickable(onClick = onExcludeRequest)
+                    .padding(horizontal = 5.dp, vertical = 2.dp)
+            ) {
+                Text(text = "🚫", fontSize = 10.sp, maxLines = 1)
+            }
+        }
         // Pre-fill summary — what the ✓ will actually log
         Text(
             text = when (suggestion.kind) {
@@ -229,4 +248,44 @@ private fun SuggestionCard(
             }
         }
     }
+}
+
+/**
+ * Popup opened from a suggestion card's 🚫 button: lets the user permanently
+ * exclude that habit from future suggestions. The exclusion is always
+ * reversible via Settings → Notifications → Increment suggestions.
+ *
+ * @param suggestion Habit being excluded (null = popup hidden)
+ * @param onExclude Confirmed — persist the exclusion
+ * @param onDismiss Cancel / hide
+ */
+@Composable
+fun SuggestionExcludePopup(
+    suggestion: HabitSuggestion?,
+    onExclude: (HabitSuggestion) -> Unit,
+    onDismiss: () -> Unit
+) {
+    if (suggestion == null) return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = suggestion.habitName, fontSize = 16.sp) },
+        text = {
+            Text(
+                text = "Stop suggesting “${suggestion.habitName}” in the ⚡ flash?\n\n" +
+                    "You can undo this anytime in Settings → Notifications → " +
+                    "Increment suggestions.",
+                fontSize = 13.sp
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onExclude(suggestion) }) {
+                Text("🚫 Don't suggest anymore")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

@@ -106,6 +106,7 @@ private suspend fun HabitViewModel.computeSuggestions(
             !isAutoIncrementedHabit(h.name, settings) &&
             h.name !in settings.datedEntryHabits &&
             h.name !in settings.disabledHabits &&
+            h.name !in settings.suggestionExcludedHabits &&
             // 1-max / inverted-binary habits already done today are pointless to suggest
             !((h.name in settings.maxOneHabits || h.name in settings.invertedBinaryHabits) && h.rawTodayCount > 0)
     }
@@ -211,5 +212,19 @@ fun HabitViewModel.setSuggestionFlashEnabled(enabled: Boolean) {
     viewModelScope.launch {
         settingsRepo.saveSuggestionFlashEnabled(enabled)
         _settings.value = _settings.value.copy(suggestionFlashEnabled = enabled)
+    }
+}
+
+/**
+ * Adds or removes a habit from the manual suggestion-exclusion list.
+ * Excluding a habit from a suggestion card's popup and un-excluding it
+ * later in Settings both go through here.
+ */
+fun HabitViewModel.setSuggestionExcluded(habitName: String, excluded: Boolean) {
+    viewModelScope.launch {
+        val updated = _settings.value.suggestionExcludedHabits.toMutableSet()
+        if (excluded) updated.add(habitName) else updated.remove(habitName)
+        settingsRepo.saveSuggestionExcludedHabits(updated)
+        _settings.value = _settings.value.copy(suggestionExcludedHabits = updated)
     }
 }

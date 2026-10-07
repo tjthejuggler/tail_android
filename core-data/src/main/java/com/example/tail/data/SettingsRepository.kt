@@ -39,6 +39,8 @@ private val KEY_BUBBLE_MULTI_TIMER_APPS = stringSetPreferencesKey("bubble_multi_
 private val KEY_APP_STATS_RECORD_NOTIFS = booleanPreferencesKey("app_stats_record_notifications_enabled")
 // Increment-suggestion flash master switch (on-app-open "likely next" strip)
 private val KEY_SUGGESTION_FLASH_ENABLED = booleanPreferencesKey("suggestion_flash_enabled")
+// Habits manually excluded from the increment-suggestion flash
+private val KEY_SUGGESTION_EXCLUDED_HABITS = stringSetPreferencesKey("suggestion_excluded_habits")
 private val KEY_CUSTOM_INPUT = stringSetPreferencesKey("custom_input_habits")
 private val KEY_RECORD_NOTIF_HABITS = stringSetPreferencesKey("record_notif_habits")
 private val KEY_HABIT_ORDER = stringPreferencesKey("habit_order")
@@ -1019,6 +1021,7 @@ class SettingsRepository(private val context: Context) {
             bubbleMultiTimerApps = prefs[KEY_BUBBLE_MULTI_TIMER_APPS] ?: emptySet(),
             appStatsRecordNotificationsEnabled = prefs[KEY_APP_STATS_RECORD_NOTIFS] ?: true,
             suggestionFlashEnabled = prefs[KEY_SUGGESTION_FLASH_ENABLED] ?: true,
+            suggestionExcludedHabits = prefs[KEY_SUGGESTION_EXCLUDED_HABITS] ?: emptySet(),
             customInputHabits = prefs[KEY_CUSTOM_INPUT] ?: DEFAULT_CUSTOM_INPUT_HABITS,
             recordNotifHabits = prefs[KEY_RECORD_NOTIF_HABITS] ?: emptySet(),
             habitOrder = customOrder,
@@ -1249,6 +1252,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveSuggestionFlashEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[KEY_SUGGESTION_FLASH_ENABLED] = enabled
+        }
+    }
+
+    /** Saves the per-habit exclusion list for the increment-suggestion flash. */
+    suspend fun saveSuggestionExcludedHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_SUGGESTION_EXCLUDED_HABITS] = habits
         }
     }
 
