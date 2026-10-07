@@ -149,6 +149,25 @@ private const val TAG = "HabitVM"
  * This migration moves old session-count data to secondary_value so the
  * fallback mechanism can use it for points on days with 0 minutes.
  */
+/**
+ * One-time reseed: for every habit with the "New record" popup enabled,
+ * recompute the standing records (BEST_SET + day-total tiers) from the
+ * ENTIRE history — repairing sidecars written before full-history seeding
+ * existed (2026-10-07).
+ */
+internal suspend fun HabitViewModel.performRecordReseedMigration() {
+    try {
+        val enabled = _settings.value.recordNotifHabits
+        for (habitName in enabled) {
+            reseedHabitRecordChannels(habitName)
+        }
+        settingsRepo.setRecordReseedMigrationDone()
+        Log.i(TAG, "performRecordReseedMigration: done (${enabled.size} habits)")
+    } catch (e: Exception) {
+        Log.e(TAG, "performRecordReseedMigration failed (will retry next load): ${e.message}")
+    }
+}
+
 internal suspend fun HabitViewModel.performApneaSecondaryMigration(uri: Uri) {
     val cutoff = "2026-03-12"
     val habitsToMigrate = listOf("Apnea apb", "Apnea practiced")

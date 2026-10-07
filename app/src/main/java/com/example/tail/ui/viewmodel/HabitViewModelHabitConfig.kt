@@ -1153,21 +1153,39 @@ fun HabitViewModel.skipPendingSubtypeFeed() {
 // ── New-record notifications (day-total records: all-time / 30d / 365d) ─
 
 /**
- * Seed: the standing day-total records for a channel computed by scanning
- * the ENTIRE historical series STRICTLY BEFORE the evaluated day (all-time
- * day max + best rolling 30/365-day window sums). Marked seeded=true so the
- * same-day suppression never mistakes a back-filled record for a live one.
+ * Days whose habit timestamp list has exactly ONE distinct time — the whole
+ * day's total was logged as a single input, so the day total IS that set's
+ * size. Used to seed BEST_SET records from history (individual input
+ * amounts are not persisted, so only single-input days are derivable —
+ * deliberately conservative, never a false flash).
+ */
+internal fun singleInputDayTotals(
+    series: Map<String, Int>,
+    timestampsByDate: Map<String, List<String>>
+): Map<String, Int> = series.filter { (d, v) ->
+    v > 0 && (timestampsByDate[d]?.distinct()?.size ?: 0) == 1
+}
+
+/**
+ * Seed: the standing records for a channel computed by scanning the ENTIRE
+ * historical series STRICTLY BEFORE the evaluated day (best single-input
+ * "set" from [setSeriesBefore] + all-time day max + best rolling 30/365-day
+ * window sums). Marked seeded=true so the same-day suppression never
+ * mistakes a back-filled record for a live one.
  */
 private suspend fun HabitViewModel.recordSeedEntries(
     habitName: String,
     channel: String,
     seriesBefore: Map<String, Int>,
+    setSeriesBefore: Map<String, Int> = emptyMap(),
     today: LocalDate
 ): Map<RecordTier, RecordEntry> {
+    val (maxSet, maxSetDate) = recordMaxDayTotal(setSeriesBefore)
     val (maxDay, maxDayDate) = recordMaxDayTotal(seriesBefore)
     val (max30, max30Date) = recordMaxWindowSum(seriesBefore, 30, today)
     val (max365, max365Date) = recordMaxWindowSum(seriesBefore, 365, today)
     return mapOf(
+        RecordTier.BEST_SET to RecordEntry(maxSet, maxSetDate, seeded = true),
         RecordTier.ALL_TIME to RecordEntry(maxDay, maxDayDate, seeded = true),
         RecordTier.ROLLING_30D to RecordEntry(max30, max30Date, seeded = true),
         RecordTier.ROLLING_365D to RecordEntry(max365, max365Date, seeded = true)
@@ -1192,13 +1210,17 @@ private suspend fun HabitViewModel.evaluateDayTotalRecords(
     seriesBefore: Map<String, Int>,
     seriesFull: Map<String, Int>,
     date: LocalDate,
-    dayTotalPostWrite: Int
+    dayTotalPostWrite: Int,
+    /** The single input ("set") amount being judged; null skips the BEST_SET tier. */
+    inputAmount: Int? = null,
+    /** Day totals of historical single-input days, seeding BEST_SET. */
+    setSeriesBefore: Map<String, Int> = emptyMap()
 ): RecordFlashEvent? {
     val dateStr = dateString(date)
     val existing = recordTrackingRepo.entriesFor(habitName, channel)
     var stored = existing
     if (existing.isEmpty()) {
-        stored = recordSeedEntries(habitName, channel, seriesBefore, date)
+        stored = recordSeedEntries(habitName, channel, seriesBefore, setSeriesBefore, date)
         for ((tier, entry) in stored) {
             recordTrackingRepo.put(habitName, channel, tier, entry)
         }
@@ -1208,11 +1230,13 @@ private suspend fun HabitViewModel.evaluateDayTotalRecords(
     val updates = mutableListOf<Pair<RecordTier, RecordEntry>>()
     for (tier in RecordTier.entries) {
         val standing = stored[tier] ?: RecordEntry()
-        // Candidate: the post-write day total (all-time) or the rolling
-        // window sum ending on the evaluated day (30d / 365d). A record set
-        // earlier THE SAME DAY was already stored at its celebrated value,
-        // so it only re-flashes when the total climbs even higher.
+        // Candidate: the input amount itself (best set), the post-write day
+        // total (all-time) or the rolling window sum ending on the evaluated
+        // day (30d / 365d). A record set earlier THE SAME DAY was already
+        // stored at its celebrated value, so it only re-flashes when the
+        // total climbs even higher.
         val candidate = when (tier) {
+            RecordTier.BEST_SET -> inputAmount ?: continue
             RecordTier.ALL_TIME -> dayTotalPostWrite
             RecordTier.ROLLING_30D -> recordWindowSumEnding(seriesFull, date, 30)
             RecordTier.ROLLING_365D -> recordWindowSumEnding(seriesFull, date, 365)
@@ -1272,6 +1296,14 @@ internal fun HabitViewModel.checkRecordNotifications(
         // Post-write subtype breakdowns, loaded once (date → subtype → count).
         val subtypeByDate = if (isSubtyped) subtypeDataRepo.loadSubtypeData(habitName) else emptyMap()
 
+        // Per-day increment timestamps (no amounts) — used to recognise
+        // historical single-input days for BEST_SET seeding.
+        val tsByDate = try {
+            timestampRepo.loadAll()[habitName] ?: emptyMap()
+        } catch (_: Exception) {
+            emptyMap()
+        }
+
         for ((channel, input) in increments) {
             if (input <= 0) continue
             // Post-write day total for this channel on the evaluated day.
@@ -1311,7 +1343,9 @@ internal fun HabitViewModel.checkRecordNotifications(
                 seriesBefore = before,
                 seriesFull = full,
                 date = date,
-                dayTotalPostWrite = dayTotalPostWrite
+                dayTotalPostWrite = dayTotalPostWrite,
+                inputAmount = input,
+                setSeriesBefore = singleInputDayTotals(before, tsByDate)
             )
             if (event != null) _recordFlash.value = event
         }
@@ -1328,16 +1362,116 @@ internal fun HabitViewModel.checkRecordNotificationTotal(habitName: String, amou
 }
 
 /**
- * Toggles the "New record" popup for [habitName]: when enabled, an amount
- * input higher than every value ever input for that habit (or for the
- * specific subtype option, on subtyped habits) flashes a popup.
+ * Toggles the "New record" popup for [habitName]: when enabled, record
+ * popups flash when an amount input beats the best single input ("set")
+ * or a day-total record (best day / rolling 30d / 365d) for that habit —
+ * or for the specific subtype option, on subtyped habits.
  */
 fun HabitViewModel.toggleRecordNotif(habitName: String) {
     viewModelScope.launch {
         val current = _settings.value.recordNotifHabits.toMutableSet()
-        if (habitName in current) current.remove(habitName) else current.add(habitName)
+        if (habitName in current) {
+            current.remove(habitName)
+        } else {
+            current.add(habitName)
+            // Enabling (re)seeds the standing records from the ENTIRE
+            // history so the feature never flashes on records the backlog
+            // already beats.
+            reseedHabitRecordChannels(habitName)
+        }
         settingsRepo.saveRecordNotifHabits(current)
         _settings.value = _settings.value.copy(recordNotifHabits = current)
+    }
+}
+
+/**
+ * Recomputes the standing records of EVERY channel of [habitName] (habit
+ * total, subtype options, and any weights-exercise channels already stored
+ * in the sidecar) from the full historical series, raising any tier whose
+ * historical best exceeds the stored one. Live-recorded entries are never
+ * lowered — the historical scan is a superset, but max() keeps us safe.
+ */
+internal suspend fun HabitViewModel.reseedHabitRecordChannels(habitName: String) {
+    try {
+        val today = _selectedDate.value
+        val todayStr = dateString(today)
+        val tsByDate = try {
+            timestampRepo.loadAll()[habitName] ?: emptyMap()
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        val storedChannels = recordTrackingRepo.loadAll()[habitName] ?: emptyMap()
+
+        val seriesByChannel = mutableMapOf<String, Map<String, Int>>()
+
+        // Habit-total channel.
+        cachedPhoneDb[habitName]?.let { totals ->
+            val series = totals.filter { (_, v) -> v > 0 }
+            if (series.isNotEmpty()) seriesByChannel[RECORD_CHANNEL_TOTAL] = series
+        }
+
+        // Subtype channels (declared options + any ever present in data).
+        val subtypeByDate = try {
+            subtypeDataRepo.loadSubtypeData(habitName)
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        val subtypeKeys = mutableSetOf<String>()
+        for ((_, breakdown) in subtypeByDate) subtypeKeys += breakdown.keys
+        subtypeKeys += _settings.value.habitSubtypes[habitName].orEmpty()
+        for (key in subtypeKeys) {
+            val series = mutableMapOf<String, Int>()
+            for ((d, breakdown) in subtypeByDate) {
+                val v = breakdown[key] ?: continue
+                if (v > 0) series[d] = v
+            }
+            if (series.isNotEmpty()) seriesByChannel[key] = series
+        }
+
+        // Weights-exercise channels already stored in the sidecar
+        // ("machine\u0001name" keys) — rebuild their day-reps series.
+        if (storedChannels.keys.any { it.contains('\u0001') }) {
+            val namesByDate = try {
+                weightsExerciseRepo.loadAll()[habitName] ?: emptyMap()
+            } catch (_: Exception) {
+                emptyMap()
+            }
+            for (channel in storedChannels.keys) {
+                if (seriesByChannel.containsKey(channel)) continue
+                val sep = channel.indexOf('\u0001')
+                if (sep <= 0) continue
+                val machine = channel.substring(0, sep) == "machine"
+                val exercise = channel.substring(sep + 1)
+                if (exercise.isBlank()) continue
+                val typeKey = if (machine) com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE
+                              else com.example.tail.data.WeightsExerciseRepository.KEY_FREE
+                val repsKey = if (machine) com.example.tail.data.secondaryValueSlotKey(habitName, 2)
+                              else com.example.tail.data.secondaryValueSlotKey(habitName, 4)
+                val repsByDate = cachedPhoneDb[repsKey] ?: emptyMap()
+                val series = mutableMapOf<String, Int>()
+                for ((d, reps) in repsByDate) {
+                    if (reps <= 0) continue
+                    val named = namesByDate[d]?.get(typeKey) ?: continue
+                    if (!named.equals(exercise, ignoreCase = true)) continue
+                    series[d] = reps
+                }
+                if (series.isNotEmpty()) seriesByChannel[channel] = series
+            }
+        }
+
+        for ((channel, full) in seriesByChannel) {
+            val before = full.filterKeys { it != todayStr }
+            val setBefore = singleInputDayTotals(before, tsByDate)
+            val seed = recordSeedEntries(habitName, channel, before, setBefore, today)
+            for ((tier, entry) in seed) {
+                val existing = storedChannels[channel]?.get(tier.name)
+                if (existing == null || entry.value > existing.value) {
+                    recordTrackingRepo.put(habitName, channel, tier, entry)
+                }
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("RecordReseed", "reseedHabitRecordChannels failed: ${e.message}")
     }
 }
 
@@ -1518,6 +1652,9 @@ internal fun HabitViewModel.checkWeightsVolumeRecords(
         }
         if (full.isEmpty()) return@launch
 
+        // BEST_SET is skipped here (inputAmount null): the single-set
+        // records for weights (heaviest weight / best reps per set) live in
+        // the WeightsPrFlash sidecar, which already honours full history.
         val event = evaluateDayTotalRecords(
             habitName = habitName,
             channel = com.example.tail.data.WeightsRecordsRepository.recordKey(

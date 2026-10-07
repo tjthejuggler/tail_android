@@ -4126,8 +4126,11 @@ internal fun HabitInputModesSection(
     }
 
     // "New record" toggle — the popup fires when an entered amount (custom
-    // input dialog, or a subtype dialog row) beats the all-time best single
-    // input for that habit — or, on subtyped habits, for that subtype option.
+    // input dialog, or a subtype dialog row) breaks a personal-best record:
+    // the best single input ("set") or a day-total record (best day /
+    // rolling 30d / 365d), for that habit — or, on subtyped habits, per
+    // subtype option. Standing records are seeded from the ENTIRE history
+    // when the toggle is switched on.
     Spacer(modifier = Modifier.height(6.dp))
     val isRecordNotif = selectedHabitName in recordNotifHabits
     Row(
@@ -4138,7 +4141,7 @@ internal fun HabitInputModesSection(
         Column {
             Text(text = "New record 🏆", color = Color(0xFFCCCCCC), fontSize = 12.sp)
             Text(
-                text = if (isRecordNotif) "Popup on all-time-best input (per subtype)"
+                text = if (isRecordNotif) "Popup on best-set & day records (per subtype)"
                 else "No record popups",
                 color = Color(0xFF888888), fontSize = 10.sp
             )

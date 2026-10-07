@@ -37,6 +37,8 @@ private val KEY_BUBBLE_MULTI_TIMER_APPS = stringSetPreferencesKey("bubble_multi_
 
 // App-stats record notifications master switch
 private val KEY_APP_STATS_RECORD_NOTIFS = booleanPreferencesKey("app_stats_record_notifications_enabled")
+// One-time reseed of the habit "New record" sidecar from full history
+private val KEY_MIGRATION_RECORD_RESEED_DONE = booleanPreferencesKey("migration_record_reseed_done")
 // Increment-suggestion flash master switch (on-app-open "likely next" strip)
 private val KEY_SUGGESTION_FLASH_ENABLED = booleanPreferencesKey("suggestion_flash_enabled")
 // Habits manually excluded from the increment-suggestion flash
@@ -907,6 +909,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setMinutesSlotMigrationDone() {
         context.dataStore.edit { it[KEY_MIGRATION_MINUTES_SLOT_DONE] = true }
+    }
+
+    suspend fun isRecordReseedMigrationDone(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_RECORD_RESEED_DONE] ?: false }.first()
+    }
+
+    suspend fun setRecordReseedMigrationDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_RECORD_RESEED_DONE] = true }
     }
 
     /** True after the one-time minutes-enabled set initialisation has run. */

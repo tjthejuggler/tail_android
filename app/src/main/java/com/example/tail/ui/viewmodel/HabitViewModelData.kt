@@ -187,6 +187,15 @@ internal suspend fun HabitViewModel.catchUpAndLoad(uri: Uri) {
             performResonanceSecondaryMigration(uri)
         }
 
+        // ── One-time habit-record sidecar reseed ─────────────────────
+        // Habits that had the "New record" popup enabled before the
+        // full-history seeding/toggle-reseed existed carry stale standing
+        // records (set at feature-creation values). Recompute them from
+        // the entire backlog once.
+        if (!settingsRepo.isRecordReseedMigrationDone()) {
+            performRecordReseedMigration()
+        }
+
         // ── One-time first-class minutes-slot migration ────────────────
         // Timer features used to write minutes into the generic secondary
         // slot; move them to the dedicated minutes: slot.

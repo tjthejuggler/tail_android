@@ -29,7 +29,8 @@ const val RECORD_FLASH_SECONDS = 7
 
 /** Human label for a broken record tier. */
 private fun tierLabel(tier: RecordTier): String = when (tier) {
-    RecordTier.ALL_TIME -> "ALL-TIME"
+    RecordTier.BEST_SET -> "BEST SET"
+    RecordTier.ALL_TIME -> "BEST DAY (all-time)"
     RecordTier.ROLLING_30D -> "30-DAY"
     RecordTier.ROLLING_365D -> "365-DAY"
 }

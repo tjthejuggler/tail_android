@@ -18,10 +18,14 @@ const val RECORD_CHANNEL_TOTAL = "_total"
 
 /**
  * Record tiers, evaluated per channel. ALL_TIME is the best single DAY
- * TOTAL ever; the other two are best rolling-window SUMS over any
+ * TOTAL ever; the rolling tiers are best rolling-window SUMS over any
  * consecutive [n]-day window — true rolling periods, not calendar ones.
+ * BEST_SET is the best single INPUT ("set") ever — the amount logged in
+ * one increment event, independent of the day total.
  */
 enum class RecordTier {
+    /** Best single input (set) ever logged for the channel. */
+    BEST_SET,
     /** Best single day total ever (per channel). */
     ALL_TIME,
     /** Best sum over any 30 consecutive days (window ending before the evaluated day). */
