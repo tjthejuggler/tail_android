@@ -14,9 +14,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -172,15 +174,24 @@ fun SleepTimelineChart(
                                     radius = barH / 3.2f,
                                     center = Offset((startF + lenF) * axisW, y + barH / 2)
                                 )
-                                // Quality dots only on single-segment nights.
+                                // Quality number at the START of the first band
+                                // (replaces the old quality pips).
                                 val q = s.quality
-                                if (q != null && first && s.segments.size == 1) {
-                                    val step = (lenF * 0.8f) / q
-                                    repeat(q) { k ->
-                                        drawCircle(
-                                            color = Color(0xFFFFFFFF).copy(alpha = 0.5f),
-                                            radius = barH / 8f,
-                                            center = Offset((startF + step * (k + 1)) * axisW, y + barH / 2)
+                                if (q != null && first) {
+                                    drawIntoCanvas { canvas ->
+                                        val paint = android.graphics.Paint().apply {
+                                            isAntiAlias = true
+                                            color = android.graphics.Color.WHITE
+                                            textSize = barH * 0.62f
+                                            textAlign = android.graphics.Paint.Align.LEFT
+                                        }
+                                        val text = q.toString()
+                                        val tw = paint.measureText(text)
+                                        canvas.nativeCanvas.drawText(
+                                            text,
+                                            (startF * axisW + 4f).coerceAtMost(size.width - tw - 2f),
+                                            y + barH / 2f - (paint.ascent() + paint.descent()) / 2f,
+                                            paint
                                         )
                                     }
                                 }
