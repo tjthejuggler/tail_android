@@ -65,6 +65,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -661,6 +662,25 @@ fun MapScreen(
         }
         seen.size
     }
+
+    // ── Distance travelled between the range-start marker and the selected
+    // day, summed over consecutive tracked coords (haversine). Cached via
+    // remember keyed on (coords snapshot, window) so playback ticks and
+    // recompositions never re-sum more than once per actual change.
+    val distanceTravelledKm = remember(selectedDate, rangeStart, coordsByDate) {
+        val window = coordsByDate.entries
+            .filter { !it.key.isBefore(rangeStart) && !it.key.isAfter(selectedDate) }
+            .sortedBy { it.key }
+        var km = 0.0
+        for (i in 1 until window.size) {
+            val a = window[i - 1].value
+            val b = window[i].value
+            km += com.example.tail.data.location.haversineMeters(
+                a.first, a.second, b.first, b.second
+            ) / 1000.0
+        }
+        km
+    }
     // Cached PRIMARY location label for the top bar (avoid SharedPrefs on
     // every recomp). Always show a label: use the exact entry for the day
     // if present, otherwise fall back to the most recent preceding entry
@@ -891,6 +911,7 @@ fun MapScreen(
                     stats = dayStats,
                     statsLoading = statsLoading,
                     countriesVisited = countriesVisited,
+                    distanceTravelledKm = distanceTravelledKm,
                     onCountriesClick = {
                         // Build sorted distinct list from the cache only when the popup opens
                         val seen = LinkedHashSet<String>()
@@ -2017,6 +2038,7 @@ private fun MapInfoPanel(
     stats: DayStats,
     statsLoading: Boolean,
     countriesVisited: Int,
+    distanceTravelledKm: Double = 0.0,
     onCountriesClick: () -> List<String>,
     onPointsClick: () -> List<Pair<String, Int>>,
     onGetIgnoredCountries: () -> Set<String>,
@@ -2032,6 +2054,8 @@ private fun MapInfoPanel(
     modifier: Modifier = Modifier
 ) {
     var showCountriesPopup by remember { mutableStateOf(false) }
+    // Distance unit toggle — survives recomposition AND process recreation.
+    var distanceInMiles by rememberSaveable { mutableStateOf(true) }
     var showIgnoredDialog  by remember { mutableStateOf(false) }
     var showPointsPopup    by remember { mutableStateOf(false) }
     var countrySectionExpanded by remember { mutableStateOf(true) }
@@ -2165,6 +2189,22 @@ private fun MapInfoPanel(
                             value = countriesVisited.toString(),
                             accent = accent,
                             onClick = { showCountriesPopup = true }
+                        )
+                        ClickableStatLine(
+                            label = "Distance",
+                            value = if (distanceInMiles) {
+                                String.format(
+                                    "%,d mi",
+                                    (distanceTravelledKm / 1.609344).roundToInt()
+                                )
+                            } else {
+                                String.format(
+                                    "%,d km",
+                                    distanceTravelledKm.roundToInt()
+                                )
+                            },
+                            accent = accent,
+                            onClick = { distanceInMiles = !distanceInMiles }
                         )
                     }
                 }
