@@ -4298,8 +4298,10 @@ internal fun HabitInputModesSection(
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // File picker row
+        // File picker row — tapping the "File selected" chip flashes the
+        // hooked-up file's folder path + filename (see [SelectedFileFlash])
         val hasFile = textInputFileUris.containsKey(selectedHabitName)
+        var showFileFlash by remember(selectedHabitName) { mutableStateOf(false) }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -4307,11 +4309,18 @@ internal fun HabitInputModesSection(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = "  Text log file", color = Color(0xFFAAAAAA), fontSize = 12.sp)
-                Text(
-                    text = if (hasFile) "✓ File selected" else "⚠ No file selected",
-                    color = if (hasFile) Color(0xFF88FF88) else Color(0xFFFF8844),
-                    fontSize = 10.sp
-                )
+                if (hasFile) {
+                    FileSelectedLabelButton(
+                        onClick = { showFileFlash = !showFileFlash },
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                } else {
+                    Text(
+                        text = "⚠ No file selected",
+                        color = Color(0xFFFF8844),
+                        fontSize = 10.sp
+                    )
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
@@ -4351,6 +4360,17 @@ internal fun HabitInputModesSection(
                     }
                 }
             }
+        }
+
+        // Flash showing the selected file's folder path + filename
+        val fileUri = textInputFileUris[selectedHabitName]
+        if (hasFile && fileUri != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            SelectedFileFlash(
+                uriString = fileUri,
+                visible = showFileFlash,
+                onDismiss = { showFileFlash = false }
+            )
         }
     }
 }
