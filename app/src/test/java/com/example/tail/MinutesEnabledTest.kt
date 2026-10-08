@@ -23,9 +23,11 @@ class MinutesEnabledTest {
         media: Set<String> = emptySet(),
         movieBridge: Set<String> = emptySet(),
         minutesPrimary: Set<String> = emptySet(),
-        maxOne: Set<String> = emptySet()
+        maxOne: Set<String> = emptySet(),
+        habitTimerHabits: Set<String> = emptySet()
     ): Boolean = effectiveMinutesEnabled(
-        habit, minutesEnabled, pcWidget, widgetTrigger, media, movieBridge, minutesPrimary, maxOne
+        habit, minutesEnabled, pcWidget, widgetTrigger, media, movieBridge, minutesPrimary, maxOne,
+        habitTimerHabits
     )
 
     @Test
@@ -68,6 +70,16 @@ class MinutesEnabledTest {
     @Test
     fun `minutes primary implies minutes on`() {
         assertTrue(effective("Meditations", minutesPrimary = setOf("Meditations")))
+    }
+
+    @Test
+    fun `habit timer forces minutes on`() {
+        assertTrue(effective("Reading", habitTimerHabits = setOf("Reading")))
+    }
+
+    @Test
+    fun `habit timer loses to max one`() {
+        assertFalse(effective("Flossed", habitTimerHabits = setOf("Flossed"), maxOne = setOf("Flossed")))
     }
 
     @Test

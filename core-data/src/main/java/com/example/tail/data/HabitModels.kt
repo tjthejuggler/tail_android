@@ -1692,6 +1692,21 @@ data class AppSettings(
      */
     val bubbleMultiTimerApps: Set<String> = emptySet(),
 
+    /**
+     * Habits with the per-habit "Habit Timer" feature enabled (edit-mode
+     * toggle). Tapping such a habit in the grid does NOT increment/open its
+     * input dialog right away — instead a floating bubble (with the habit's
+     * own icon) appears and the habit's timer starts. The bubble stays over
+     * every app until tapped again; that tap stops the timer, records the
+     * minutes and then opens the habit's input window (text-input habits)
+     * or the increment happens as part of the stop (plain habits).
+     *
+     * Enabling this forces the habit's minutes value ON (and minutes as the
+     * primary value, sessions secondary); turning minutes OFF clears this
+     * set — a habit timer without the minutes value is meaningless.
+     */
+    val habitTimerHabits: Set<String> = emptySet(),
+
     // ── Chess Readiness settings ───────────────────────────────────────────
     /**
      * Whether the Chess Readiness feature is enabled (global toggle in the
@@ -1897,7 +1912,8 @@ fun effectiveMinutesEnabled(
     mediaHabits: Set<String>,
     movieBridgeHabits: Set<String>,
     minutesPrimaryHabits: Set<String>,
-    maxOneHabits: Set<String>
+    maxOneHabits: Set<String>,
+    habitTimerHabits: Set<String> = emptySet()
 ): Boolean {
     if (habitName in maxOneHabits) return false
     return habitName in minutesEnabledHabits ||
@@ -1905,7 +1921,8 @@ fun effectiveMinutesEnabled(
         habitName in widgetTriggerHabits ||
         habitName in mediaHabits ||
         habitName in movieBridgeHabits ||
-        habitName in minutesPrimaryHabits
+        habitName in minutesPrimaryHabits ||
+        habitName in habitTimerHabits
 }
 
 /** Default quick-increment amounts shown in the IncrementDialog when no custom amounts are set. */

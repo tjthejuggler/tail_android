@@ -60,6 +60,7 @@ import com.example.tail.ui.viewmodel.toggleCustomInput
 import com.example.tail.ui.viewmodel.toggleRecordNotif
 import com.example.tail.ui.viewmodel.toggleCustomPointRanges
 import com.example.tail.ui.viewmodel.toggleDisabledHabit
+import com.example.tail.ui.viewmodel.toggleHabitTimer
 import com.example.tail.ui.viewmodel.toggleInvertedBinary
 import com.example.tail.ui.viewmodel.toggleLockWidgetHabit
 import com.example.tail.ui.viewmodel.toggleMealHabit
@@ -444,6 +445,8 @@ internal fun EditBarHost(
         onSetTimerPrimaryValue = { name, minutesPrimary ->
             viewModel.setWidgetTimerPrimaryValue(name, minutesPrimary)
         },
+        habitTimerHabits = settings.habitTimerHabits,
+        onToggleHabitTimer = { name -> viewModel.toggleHabitTimer(name) },
         minutesEnabled = selectedHabitName?.let {
             viewModel.isMinutesEnabled(it)
         } ?: false,

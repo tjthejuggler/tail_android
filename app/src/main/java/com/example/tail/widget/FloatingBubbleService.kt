@@ -147,6 +147,16 @@ class FloatingBubbleService : Service() {
         const val ACTION_TAIL_MODE = "com.example.tail.widget.TAIL_MODE"
 
         /**
+         * Action used by the per-habit "Habit Timer" feature: the bubble is
+         * started directly from a habit tap (not by a trigger app), shows the
+         * habit's own icon, starts the habit's timer immediately and stays
+         * over ALL apps until tapped — that tap stops & records the timer
+         * and opens the habit's input window (text habits) or records the
+         * increment as part of the stop (plain habits).
+         */
+        const val ACTION_HABIT_TIMER = "com.example.tail.widget.HABIT_TIMER"
+
+        /**
          * Action sent by [WidgetTriggerService] when the trigger app left the
          * foreground (closed or switched away from): any still-running habit
          * timer is stopped and recorded before the bubble hides itself.
@@ -233,6 +243,14 @@ class FloatingBubbleService : Service() {
      * timer (and dismisses the bubble).
      */
     private var tailMode = false
+
+    /**
+     * Habit-timer mode: this bubble instance was started by tapping a habit
+     * with the "Habit Timer" feature on. The bubble shows the habit's icon,
+     * the timer runs persistently over all apps, and a tap stops the timer,
+     * records it and opens the habit's input window / increments it.
+     */
+    private var habitTimerMode = false
 
     // ── Timer chip overlay (live elapsed time above the bubble) ───────────
     private var timerChipView: TextView? = null
@@ -501,6 +519,42 @@ class FloatingBubbleService : Service() {
                 handleTriggerAppLeft()
                 return START_NOT_STICKY
             }
+            ACTION_HABIT_TIMER -> {
+                // Per-habit timer bubble (started from a habit tap): show the
+                // bubble with the habit's icon and run its timer persistently
+                // over every app until the user taps to stop.
+                handler.removeCallbacks(delayedStopRunnable)
+                startGeneration++
+                noteRestarted()
+                tailMode = false
+                habitTimerMode = true
+                persistentMode = true
+                val habit = intent.getStringExtra(EXTRA_HABIT_NAME)
+                if (habit != null) {
+                    triggerHabitNames = listOf(habit)
+                    triggerHabitName = habit
+                    chessReadinessActive = false
+                    try {
+                        BubbleStateStore.save(this, triggerHabitNames, false)
+                    } catch (_: Exception) { /* prefs are best-effort */ }
+                }
+                if (bubbleView == null) {
+                    refreshMultiTimerConfig()
+                    showBubble()
+                }
+                val timerHabit = triggerHabitName
+                if (timerHabit != null) {
+                    setHabitIconOnBubble(timerHabit)
+                    if (WidgetTimerStore.isTimerRunning(this, timerHabit)) {
+                        setBubbleRunningVisuals(running = true)
+                        hideTimerChip()
+                        showTimerChip()
+                    } else {
+                        startTimerForHabit(timerHabit)
+                    }
+                }
+                return START_STICKY
+            }
             ACTION_TAIL_MODE -> {
                 // Tail is the foreground app and a persistent timer started
                 // in another app is still running — show the bubble over Tail
@@ -533,6 +587,7 @@ class FloatingBubbleService : Service() {
         startGeneration++
         noteRestarted()
         tailMode = false
+        habitTimerMode = false
         // The "stay visible over everything" mode comes from the monitor.
         persistentMode = intent?.getBooleanExtra(EXTRA_PERSISTENT_MODE, false) ?: false
 
@@ -1127,6 +1182,20 @@ class FloatingBubbleService : Service() {
             return
         }
 
+        // Habit-timer mode: the tap ENDS the timer — stop & record the
+        // minutes, then open the habit's input window (text-input habits)
+        // or let the stop's session increment stand on its own.
+        if (habitTimerMode) {
+            val timerHabit = triggerHabitName
+            if (timerHabit != null && WidgetTimerStore.isTimerRunning(this, timerHabit)) {
+                stopHabitTimerAndFinish(timerHabit)
+            } else {
+                noteDeliberateStop()
+                stopSelf()
+            }
+            return
+        }
+
         // Multi-timer group live: the tap STOPS the whole group (every
         // member's banked + running time is recorded) — the same contract as
         // the other modes, where tapping the bubble ends the running timer.
@@ -1194,6 +1263,18 @@ class FloatingBubbleService : Service() {
         // running time is recorded, then Tail opens as usual.
         if (multiModeLive()) {
             stopMultiGroupAndRecord { openTailApp() }
+            return
+        }
+
+        // Habit-timer mode: same as a tap — stop, record, open the input.
+        if (habitTimerMode) {
+            val timerHabit = triggerHabitName
+            if (timerHabit != null && WidgetTimerStore.isTimerRunning(this, timerHabit)) {
+                stopHabitTimerAndFinish(timerHabit)
+            } else {
+                noteDeliberateStop()
+                stopSelf()
+            }
             return
         }
 
@@ -3208,15 +3289,64 @@ class FloatingBubbleService : Service() {
         handler.postDelayed(delayedStopRunnable, LINGER_STOP_DELAY_MS)
     }
 
-    /**
-     * Records a finished timer session ATOMICALLY: adds [minutes] to the
-     * habit's minutes secondary value AND +1 session to the habit's own slot
-     * in a single read-modify-write, then refreshes UI surfaces and shows
-     * the increment flash. (Two separate writes allowed a concurrent
-     * reader/writer — e.g. the app starting up — to interleave between them
-     * and lose the session increment.)
+   /**
+    * Ends a habit-timer session ([habit]): stops the clock, records the
+     * minutes (+1 session for plain habits — a text-input habit's session
+     * comes from its input window instead) and then opens the habit's input
+     * window (text habits) before lingering out the increment flash.
      */
+    private fun stopHabitTimerAndFinish(habit: String) {
+        val minutes = WidgetTimerStore.stopTimerAndComputeMinutes(this, habit)
+        hideTimerChip()
+        setBubbleRunningVisuals(running = false)
+        persistenceScope.launch {
+            val isTextHabit = try {
+                habit in settingsRepo.settingsFlow.first().textInputHabits
+            } catch (_: Exception) { false }
+            if (minutes > 0) {
+                writeMinutesToHabit(habit, minutes, if (isTextHabit) 0 else 1) {
+                    handler.post { scheduleLingerStop() }
+                }
+            } else {
+                handler.post {
+                    if (!isTextHabit) {
+                        Toast.makeText(
+                            this@FloatingBubbleService,
+                            "Timer stopped — under a minute, nothing recorded",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    scheduleLingerStop()
+                }
+            }
+            // Take the user back to Tail: text-input habits get their input
+            // window (the confirm there performs the increment); plain
+            // habits were already incremented by the minutes write above.
+            if (isTextHabit) {
+                try {
+                    startActivity(
+                        Intent(this@FloatingBubbleService, WidgetInputActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            .putExtra(WidgetInputActivity.EXTRA_HABIT_NAME, habit)
+                    )
+                } catch (e: Exception) {
+                    Log.w("FloatingBubbleService", "Input window failed: ${e.message}")
+                    openTailApp()
+                }
+            }
+        }
+    }
+
     private fun writeMinutesToHabit(habit: String, minutes: Int, onFinished: (() -> Unit)? = null) {
+        writeMinutesToHabit(habit, minutes, 1, onFinished)
+    }
+
+    private fun writeMinutesToHabit(
+        habit: String,
+        minutes: Int,
+        sessions: Int,
+        onFinished: (() -> Unit)?
+    ) {
         // persistenceScope (NOT serviceScope): the write must survive a
         // stopSelf() that lands while it is still in flight.
         persistenceScope.launch {
@@ -3233,7 +3363,7 @@ class FloatingBubbleService : Service() {
                 }
 
                 val db = habitsRepo.incrementHabitWithMinutes(
-                    Uri.parse(uriStr), applicationContext, habit, minutes, 1
+                    Uri.parse(uriStr), applicationContext, habit, minutes, sessions
                 )
 
                 // Record the session in the timestamp store — same convention
@@ -3262,8 +3392,8 @@ class FloatingBubbleService : Service() {
                     // Day totals straight from the just-saved state
                     val today = dateString(LocalDate.now())
                     val totalMinutes = db[secondaryValueKey(habit)]?.get(today) ?: minutes
-                    val totalSessions = db[habit]?.get(today) ?: 1
-                    showIncrementFlash(habit, minutes, totalMinutes, 1, totalSessions)
+                    val totalSessions = db[habit]?.get(today) ?: sessions
+                    showIncrementFlash(habit, minutes, totalMinutes, sessions, totalSessions)
                 } catch (e: Exception) { /* UI-only — save already succeeded */ }
             } catch (e: Exception) {
                 Toast.makeText(this@FloatingBubbleService, "Failed to save minutes: ${e.message}", Toast.LENGTH_LONG).show()

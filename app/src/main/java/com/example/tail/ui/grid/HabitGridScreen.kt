@@ -1689,6 +1689,22 @@ fun HabitGridScreen(
                                     revealCellIndex = index
                                     revealNonce++
                                 }
+                                // Habit Timer feature: the tap starts the
+                                // floating bubble timer (with the habit's
+                                // icon) INSTEAD of the normal behaviour —
+                                // the increment/input happens when the bubble
+                                // is tapped to end the session.
+                                isToday && habit.name in settings.habitTimerHabits -> {
+                                    if (android.provider.Settings.canDrawOverlays(context)) {
+                                        com.example.tail.widget.startHabitTimerBubble(context, habit.name)
+                                    } else {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Habit Timer needs the \"Display over other apps\" permission",
+                                            android.widget.Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
                                 habit.name in settings.mealHabits -> {
                                     // Meal tap = merge-or-increment: ALWAYS yields a
                                     // card (placeholder until details are added) and

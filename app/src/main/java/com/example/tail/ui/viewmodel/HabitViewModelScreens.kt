@@ -1229,6 +1229,41 @@ fun HabitViewModel.toggleWidgetPersistentTimer(habitName: String) {
 }
 
 /**
+ * Toggles the per-habit "Habit Timer" feature for [habitName] (edit-mode
+ * toggle). When enabled, tapping the habit in the grid starts a floating
+ * bubble timer (with the habit's icon) instead of the usual tap behaviour;
+ * tapping the bubble again stops it, records the minutes and opens the
+ * habit's input window / performs the increment.
+ *
+ * Enabling forces minutes ON and makes MINUTES the primary value (sessions
+ * become the secondary/fallback) — the timer feeds the minutes slot. Turning
+ * the minutes value OFF elsewhere automatically clears this flag.
+ */
+fun HabitViewModel.toggleHabitTimer(habitName: String) {
+    viewModelScope.launch {
+        val s = _settings.value
+        if (habitName in s.maxOneHabits) return@launch
+        val enabling = habitName !in s.habitTimerHabits
+        val timers = if (enabling) s.habitTimerHabits + habitName else s.habitTimerHabits - habitName
+        var minutes = s.minutesEnabledHabits
+        var primary = s.widgetTimerMinutesPrimary
+        if (enabling) {
+            if (habitName !in minutes) minutes = minutes + habitName
+            if (habitName !in primary) primary = primary + habitName
+        }
+        settingsRepo.saveHabitTimerHabits(timers)
+        if (minutes != s.minutesEnabledHabits) settingsRepo.saveMinutesEnabledHabits(minutes)
+        if (primary != s.widgetTimerMinutesPrimary) settingsRepo.saveWidgetTimerMinutesPrimary(primary)
+        _settings.value = s.copy(
+            habitTimerHabits = timers,
+            minutesEnabledHabits = minutes,
+            widgetTimerMinutesPrimary = primary
+        )
+        rebuildHabitList()
+    }
+}
+
+/**
  * Toggles the floating bubble's "Full-screen menu on bubble open"
  * sub-option for [habitName]'s TRIGGER APP. The set is keyed by app
  * package, so every habit sharing that trigger app shares one switch:

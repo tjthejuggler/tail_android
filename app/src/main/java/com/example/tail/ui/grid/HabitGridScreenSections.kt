@@ -1600,6 +1600,52 @@ internal fun MinutesToggleSection(
 }
 
 /**
+ * Per-habit toggle for the "Habit Timer" feature. ON: tapping the habit in
+ * the grid starts a floating bubble timer (with the habit's icon) instead of
+ * the normal tap behaviour — tap the bubble to stop it, record the minutes
+ * and open the habit's input window / increment it. Enabling also forces the
+ * minutes value ON and makes minutes the primary value (sessions secondary);
+ * turning the minutes value OFF turns this feature back off automatically.
+ *
+ * Hidden for max-1 habits (a binary habit has no duration).
+ */
+@Composable
+internal fun HabitTimerToggleSection(
+    habitName: String,
+    timerEnabled: Boolean,
+    onToggleHabitTimer: (String) -> Unit
+) {
+    Spacer(modifier = Modifier.height(6.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "⏱ Habit Timer", color = Color(0xFF66CCFF), fontSize = 11.sp)
+            Text(
+                text = if (timerEnabled) {
+                    "Tap starts a bubble timer — minutes primary, sessions secondary"
+                } else {
+                    "Tap the habit to start a floating timer bubble"
+                },
+                color = if (timerEnabled) Color(0xFF66BB6A) else Color(0xFF888888),
+                fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = timerEnabled,
+            onCheckedChange = { onToggleHabitTimer(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF66CCFF),
+                checkedTrackColor = Color(0xFF003A5A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+}
+/**
  * A single row for editing a display-only value/subtype label.
  * Shows the default label as a hint and lets the user type a custom override.
  * When the field is cleared, the override is removed and the default is used again.
@@ -2095,6 +2141,10 @@ internal fun EditModeControlBar(
     widgetTimerMinutesPrimary: Set<String> = emptySet(),
     /** Called when the user changes which value is primary (true = minutes). */
     onSetTimerPrimaryValue: (String, Boolean) -> Unit = { _, _ -> },
+    /** Habits with the per-habit "Habit Timer" (tap → floating bubble) enabled. */
+    habitTimerHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the per-habit timer feature. */
+    onToggleHabitTimer: (String) -> Unit = {},
     /** Effective minutes-enabled state for the selected habit. */
     minutesEnabled: Boolean = false,
     /** Minutes forced ON by a timer-widget connection (locked toggle). */
@@ -2894,6 +2944,17 @@ internal fun EditModeControlBar(
                         showOnTimeline = selectedHabitName !in timelineExcludedHabits,
                         onToggleTimeline = onToggleTimelineExcluded
                     )
+
+                    // ── Habit Timer (tap → floating bubble timer) ──
+                    // Hidden for max-1 habits (a binary habit has no
+                    // duration to time).
+                    if (selectedHabitName !in maxOneHabits) {
+                        HabitTimerToggleSection(
+                            habitName = selectedHabitName,
+                            timerEnabled = selectedHabitName in habitTimerHabits,
+                            onToggleHabitTimer = onToggleHabitTimer
+                        )
+                    }
 
                     // ── Minutes value on/off — first-class minutes toggle ──
                     // Hidden for max-1 habits (a binary habit never has

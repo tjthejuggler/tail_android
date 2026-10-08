@@ -297,6 +297,8 @@ private val KEY_WIDGET_TIMER_MINUTES_PRIMARY = stringSetPreferencesKey("widget_t
 // Habits with the "Persistent Timer" sub-option of Use Widget enabled —
 // their bubble timer keeps running across app switches / screen-off.
 private val KEY_WIDGET_PERSISTENT_TIMER_HABITS = stringSetPreferencesKey("widget_persistent_timer_habits")
+// Habits with the per-habit "Habit Timer" (tap → floating bubble timer) enabled
+private val KEY_HABIT_TIMER_HABITS = stringSetPreferencesKey("habit_timer_habits")
 // Habits with the first-class minutes value explicitly enabled (opt-in toggle)
 private val KEY_MINUTES_ENABLED_HABITS = stringSetPreferencesKey("minutes_enabled_habits")
 // Per-habit fallback source for minutes-primary habits (habit → none/sessions/value2),
@@ -1147,6 +1149,7 @@ class SettingsRepository(private val context: Context) {
             widgetTriggerApps = decodeFileUriMap(prefs[KEY_WIDGET_TRIGGER_APPS] ?: ""),
             widgetTimerMinutesPrimary = prefs[KEY_WIDGET_TIMER_MINUTES_PRIMARY] ?: emptySet(),
             widgetPersistentTimerHabits = prefs[KEY_WIDGET_PERSISTENT_TIMER_HABITS] ?: emptySet(),
+            habitTimerHabits = prefs[KEY_HABIT_TIMER_HABITS] ?: emptySet(),
             minutesEnabledHabits = prefs[KEY_MINUTES_ENABLED_HABITS] ?: emptySet(),
             minutesPrimaryFallbacks = decodeFileUriMap(prefs[KEY_MINUTES_PRIMARY_FALLBACKS] ?: ""),
             mediaHabits = prefs[KEY_MEDIA_HABITS] ?: emptySet(),
@@ -2033,6 +2036,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits with the minutes value explicitly enabled. */
     suspend fun saveMinutesEnabledHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_MINUTES_ENABLED_HABITS] = habits }
+    }
+
+    /** Saves the set of habits with the per-habit "Habit Timer" enabled. */
+    suspend fun saveHabitTimerHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_HABIT_TIMER_HABITS] = habits }
     }
 
     /** Saves the per-habit fallback source for minutes-primary habits. */

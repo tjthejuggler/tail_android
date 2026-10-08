@@ -2287,7 +2287,8 @@ fun HabitViewModel.isMinutesEnabled(habitName: String): Boolean {
         s.mediaHabits,
         s.bridgeMovieHabits,
         s.widgetTimerMinutesPrimary,
-        s.maxOneHabits
+        s.maxOneHabits,
+        s.habitTimerHabits
     )
 }
 
@@ -2343,6 +2344,7 @@ fun HabitViewModel.toggleMinutesEnabled(habitName: String) {
         var primary = s.widgetTimerMinutesPrimary
         var fallback = s.secondaryValueFallbackHabits
         var mpFallbacks = s.minutesPrimaryFallbacks
+        var timers = s.habitTimerHabits
         if (!enabling) {
             if (habitName in primary) primary = primary - habitName
             if (habitName in mpFallbacks) mpFallbacks = mpFallbacks - habitName
@@ -2351,6 +2353,10 @@ fun HabitViewModel.toggleMinutesEnabled(habitName: String) {
             val legacyFallbackSource = habitName in s.secondaryValueHabits ||
                 !cachedPhoneDb[secondaryValueKey(habitName)].isNullOrEmpty()
             if (habitName in fallback && !legacyFallbackSource) fallback = fallback - habitName
+            // Turning minutes OFF also turns the per-habit timer OFF — the
+            // habit-timer bubble feeds the minutes slot, so it cannot work
+            // without the minutes value.
+            if (habitName in timers) timers = timers - habitName
         }
         settingsRepo.saveMinutesEnabledHabits(minutes)
         if (primary != s.widgetTimerMinutesPrimary) {
@@ -2362,11 +2368,15 @@ fun HabitViewModel.toggleMinutesEnabled(habitName: String) {
         if (mpFallbacks != s.minutesPrimaryFallbacks) {
             settingsRepo.saveMinutesPrimaryFallbacks(mpFallbacks)
         }
+        if (timers != s.habitTimerHabits) {
+            settingsRepo.saveHabitTimerHabits(timers)
+        }
         _settings.value = s.copy(
             minutesEnabledHabits = minutes,
             widgetTimerMinutesPrimary = primary,
             secondaryValueFallbackHabits = fallback,
-            minutesPrimaryFallbacks = mpFallbacks
+            minutesPrimaryFallbacks = mpFallbacks,
+            habitTimerHabits = timers
         )
         rebuildHabitList()
     }
