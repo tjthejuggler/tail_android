@@ -42,12 +42,22 @@ internal fun weightsPrOldRecordLabel(
     dateStr: String?,
     location: String?
 ): String? {
-    val datePart = try {
-        dateStr?.let { LocalDate.parse(it).format(PR_FLASH_DATE_FMT) }
+    val oldDate = try {
+        dateStr?.let { LocalDate.parse(it) }
     } catch (_: Exception) {
         null
     }
-    return listOfNotNull(datePart?.let { "on $it" }, location?.let { "at $it" })
+    val datePart = oldDate?.format(PR_FLASH_DATE_FMT)
+    // How long the record had stood before today (null-safe, best-effort).
+    val stoodPart = oldDate?.let {
+        val days = java.time.temporal.ChronoUnit.DAYS.between(it, LocalDate.now())
+        if (days > 0) "stood ${recordStoodLabel(days)}" else null
+    }
+    return listOfNotNull(
+        datePart?.let { "on $it" },
+        stoodPart,
+        location?.let { "at $it" }
+    )
         .takeIf { it.isNotEmpty() }
         ?.joinToString(" ")
 }

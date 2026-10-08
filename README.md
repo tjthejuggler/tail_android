@@ -1,6 +1,12 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-10-03T09:25Z
+**Last updated:** 2026-10-08T08:10Z
+
+## 2026-10-08T08:10Z — Records rework #2: BEST_SET tier, stand-duration framing, full-history reseeding
+- **Set + day records.** The "New record" popup now flashes on TWO kinds of personal best per channel: BEST SET (best single input / increment amount) and BEST DAY (best day total) — each labeled which kind it is ([`RecordTier`](core-data/src/main/java/com/example/tail/data/RecordTrackingRepository.kt:26)).
+- **"30-day / 365-day" means how long the record STOOD.** The rolling-window sum tiers (ROLLING_30D / ROLLING_365D) were removed — that framing was a misunderstanding. When a record is broken, the popup reports how long the previous one had stood ([`recordStoodDays`](core-data/src/main/java/com/example/tail/data/RecordTrackingRepository.kt:62)): "BEST SET: 16 (was 12, record stood 47 days)" / "…1y 40d". Same for the weights PR flash, whose old-record line now includes "stood N days" ([`weightsPrOldRecordLabel`](app/src/main/java/com/example/tail/ui/grid/WeightsPrFlash.kt:41)).
+- **Full-history presetting.** Enabling the toggle (re)seeds every channel's standing records from the ENTIRE backlog ([`reseedHabitRecordChannels`](app/src/main/java/com/example/tail/ui/viewmodel/HabitViewModelHabitConfig.kt:1394)), raising entries but never lowering live ones; a one-time migration (`migration_record_reseed_done` flag) repaired habits enabled before seeding existed — the "only records since the feature was created" bug. BEST_SET is seeded conservatively from days whose timestamps are a single distinct time (day total = set size; [`singleInputDayTotals`](app/src/main/java/com/example/tail/ui/viewmodel/HabitViewModelHabitConfig.kt:1162)).
+- **Weights habits:** day-total reps records per exercise share the same engine (seeded + stand-duration now); single-set weight/reps PRs remain in the WeightsPrFlash sidecar with the DB day-max history floor.
 
 ## 2026-10-03T09:25Z — Records rework: false-positive fixed, day-total semantics, rolling 30d/365d tiers, weights volume records
 - **The bug.** First test on Pullups flashed "new record" for 3 pullups — nowhere near the all-time best. Two compounding defects in the v1 engine: (1) the history seed indexed the subtype store by the wrong key ([`subtypeHistory[channel]`](app/src/main/java/com/example/tail/ui/viewmodel/HabitViewModelHabitConfig.kt) — the outer map is DATE → subtype → count, so the "seed" silently found nothing and every input looked like a record); (2) semantics compared the SINGLE INPUT against stored maxima instead of the day total, so even correct history couldn't credit several small inputs jointly setting a record.

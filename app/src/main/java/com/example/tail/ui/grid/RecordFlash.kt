@@ -27,21 +27,24 @@ import com.example.tail.data.RecordTier
 /** Seconds before the record flash auto-dismisses. */
 const val RECORD_FLASH_SECONDS = 7
 
-/** Human label for a broken record tier. */
+/** Human label for a broken record kind. */
 private fun tierLabel(tier: RecordTier): String = when (tier) {
     RecordTier.BEST_SET -> "BEST SET"
-    RecordTier.ALL_TIME -> "BEST DAY (all-time)"
-    RecordTier.ROLLING_30D -> "30-DAY"
-    RecordTier.ROLLING_365D -> "365-DAY"
+    RecordTier.ALL_TIME -> "BEST DAY"
 }
+
+/** "47 days" / "1y 40d" style duration a broken record had stood. */
+internal fun recordStoodLabel(stoodDays: Long): String =
+    if (stoodDays >= 365) "${stoodDays / 365}y ${stoodDays % 365}d"
+    else "$stoodDays days"
 
 /**
  * Celebratory popup shown on the grid screen when a habit with the
- * "New record" notification enabled logs an amount input that pushes a
- * channel (a subtype option, a weights exercise, or the habit itself)
- * past one of its standing DAY-TOTAL records: the all-time best day, the
- * best rolling 30-day sum, or the best rolling 365-day sum. A single
- * popup lists EVERY tier the input broke.
+ * "New record" notification enabled logs an amount input that breaks one
+ * of a channel's (subtype option, weights exercise, or the habit itself)
+ * standing records: the BEST SET (best single input) or the BEST DAY
+ * (best day total). A single popup lists every record the input broke,
+ * each with how long the previous record had stood.
  *
  * Same bottom-flash style as [WeightsPrFlash] in a purple/gold scheme.
  * Auto-dismiss is handled by the host via [RECORD_FLASH_SECONDS]; tapping
@@ -90,9 +93,14 @@ fun RecordFlashPopup(
                     color = Color(0xFFE1BEE7)
                 )
                 for (beat in event.beats) {
+                    val suffix = when {
+                        beat.oldValue <= 0 -> " — first ever!"
+                        beat.stoodDays != null ->
+                            " (was ${beat.oldValue}, record stood ${recordStoodLabel(beat.stoodDays ?: 0)})"
+                        else -> " (was ${beat.oldValue})"
+                    }
                     Text(
-                        text = "${tierLabel(beat.tier)}: ${beat.newValue}" +
-                            if (beat.oldValue > 0) " (previous: ${beat.oldValue})" else " — first ever!",
+                        text = "${tierLabel(beat.tier)}: ${beat.newValue}$suffix",
                         fontSize = 12.sp,
                         color = Color(0xFFEEFFEE)
                     )

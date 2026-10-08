@@ -17,21 +17,16 @@ import java.time.LocalDate
 const val RECORD_CHANNEL_TOTAL = "_total"
 
 /**
- * Record tiers, evaluated per channel. ALL_TIME is the best single DAY
- * TOTAL ever; the rolling tiers are best rolling-window SUMS over any
- * consecutive [n]-day window — true rolling periods, not calendar ones.
- * BEST_SET is the best single INPUT ("set") ever — the amount logged in
- * one increment event, independent of the day total.
+ * Record kinds, evaluated per channel. BEST_SET is the best single INPUT
+ * ("set") ever — the amount logged in one increment event. ALL_TIME is the
+ * best single DAY TOTAL ever. When either is broken, the flash also reports
+ * HOW LONG the previous record had stood (see [recordStoodDays]).
  */
 enum class RecordTier {
     /** Best single input (set) ever logged for the channel. */
     BEST_SET,
     /** Best single day total ever (per channel). */
-    ALL_TIME,
-    /** Best sum over any 30 consecutive days (window ending before the evaluated day). */
-    ROLLING_30D,
-    /** Best sum over any 365 consecutive days (window ending before the evaluated day). */
-    ROLLING_365D
+    ALL_TIME
 }
 
 /** One stored record: the best value, the date it was set, and whether it was back-filled from history. */
@@ -54,9 +49,19 @@ data class RecordTierBeat(
     val tier: RecordTier,
     /** The standing record before the input (0 = none). */
     val oldValue: Int,
-    /** The new record value (the evaluated day total / window sum). */
-    val newValue: Int
+    /** The new record value (the input amount / the evaluated day total). */
+    val newValue: Int,
+    /** Days the previous record had stood before being broken (null = no previous record). */
+    val stoodDays: Long? = null
 )
+
+/** Days between the old record's date and the day it was broken (null when unknown). */
+fun recordStoodDays(oldDate: String?, on: LocalDate): Long? =
+    try {
+        oldDate?.let { java.time.temporal.ChronoUnit.DAYS.between(LocalDate.parse(it), on) }
+    } catch (_: Exception) {
+        null
+    }
 
 /** One "new record" popup event: every tier record a single input broke for one channel. */
 data class RecordFlashEvent(
@@ -91,11 +96,15 @@ data class RecordFlashEvent(
  * {
  *   "Pullups": {
  *     "chinups": {
- *       "ALL_TIME":    { "value": 12, "date": "2026-09-01", "seeded": true },
- *       "ROLLING_30D": { "value": 40, "date": "2026-09-20", "seeded": true },
- *       "ROLLING_365D": { "value": 300, "date": "2026-10-01", "seeded": false }
+ *       "BEST_SET": { "value": 12, "date": "2026-09-01", "seeded": true },
+ *       "ALL_TIME": { "value": 25, "date": "2026-09-20", "seeded": false }
  *     }
  *   }
+ *
+ * Two kinds per channel: BEST_SET (best single input) and ALL_TIME (best
+ * day total). When a record is broken the flash reports how long the
+ * previous one had stood (recordStoodDays) — "30-DAY / 365-DAY / all-time"
+ * are stand durations, NOT rolling sums.
  * }
  * ```
  *
@@ -222,47 +231,6 @@ fun recordMaxDayTotal(
     return best to bestDate
 }
 
-/**
- * Sum of [daily] over the [windowDays]-day window ENDING on [end] (inclusive
- * both ends). Days missing from [daily] count as 0. [todayOverride] replaces
- * the end day's value — used when the evaluated day's total is not yet in
- * [daily] (the input being judged is still pre-write).
- */
-fun recordWindowSumEnding(
-    daily: Map<String, Int>,
-    end: LocalDate,
-    windowDays: Int,
-    todayOverride: Int? = null
-): Int {
-    val start = end.minusDays((windowDays - 1).toLong())
-    var sum = 0
-    for ((d, v) in daily) {
-        val ld = try { LocalDate.parse(d) } catch (_: Exception) { continue }
-        if (!ld.isBefore(start) && !ld.isAfter(end)) sum += v
-    }
-    if (todayOverride != null && !end.isBefore(start)) sum += todayOverride
-    return sum
-}
-
-/**
- * Best window sum over all windows of [windowDays] days ENDING strictly
- * before [endBefore]. Returns (sum, end-date of the best window).
- */
-fun recordMaxWindowSum(
-    daily: Map<String, Int>,
-    windowDays: Int,
-    endBefore: LocalDate
-): Pair<Int, String?> {
-    var best = 0
-    var bestDate: String? = null
-    for ((d, _) in daily) {
-        val ld = try { LocalDate.parse(d) } catch (_: Exception) { continue }
-        if (!ld.isBefore(endBefore)) continue
-        val s = recordWindowSumEnding(daily, ld, windowDays)
-        if (s > best) {
-            best = s
-            bestDate = d
-        }
-    }
-    return best to bestDate
-}
+// (The former rolling-window helpers recordWindowSumEnding /
+// recordMaxWindowSum were removed on 2026-10-08: the "30-day / 365-day"
+// framing now means how long a broken record had STOOD, not rolling sums.)

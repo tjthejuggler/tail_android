@@ -71,8 +71,7 @@ import com.example.tail.data.RecordFlashEvent
 import com.example.tail.data.RecordTier
 import com.example.tail.data.RecordTierBeat
 import com.example.tail.data.recordMaxDayTotal
-import com.example.tail.data.recordMaxWindowSum
-import com.example.tail.data.recordWindowSumEnding
+import com.example.tail.data.recordStoodDays
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.movie.ImdbRatingCache
 import com.example.tail.data.health.ImportResult
@@ -1182,13 +1181,9 @@ private suspend fun HabitViewModel.recordSeedEntries(
 ): Map<RecordTier, RecordEntry> {
     val (maxSet, maxSetDate) = recordMaxDayTotal(setSeriesBefore)
     val (maxDay, maxDayDate) = recordMaxDayTotal(seriesBefore)
-    val (max30, max30Date) = recordMaxWindowSum(seriesBefore, 30, today)
-    val (max365, max365Date) = recordMaxWindowSum(seriesBefore, 365, today)
     return mapOf(
         RecordTier.BEST_SET to RecordEntry(maxSet, maxSetDate, seeded = true),
-        RecordTier.ALL_TIME to RecordEntry(maxDay, maxDayDate, seeded = true),
-        RecordTier.ROLLING_30D to RecordEntry(max30, max30Date, seeded = true),
-        RecordTier.ROLLING_365D to RecordEntry(max365, max365Date, seeded = true)
+        RecordTier.ALL_TIME to RecordEntry(maxDay, maxDayDate, seeded = true)
     )
 }
 
@@ -1230,19 +1225,23 @@ private suspend fun HabitViewModel.evaluateDayTotalRecords(
     val updates = mutableListOf<Pair<RecordTier, RecordEntry>>()
     for (tier in RecordTier.entries) {
         val standing = stored[tier] ?: RecordEntry()
-        // Candidate: the input amount itself (best set), the post-write day
-        // total (all-time) or the rolling window sum ending on the evaluated
-        // day (30d / 365d). A record set earlier THE SAME DAY was already
-        // stored at its celebrated value, so it only re-flashes when the
-        // total climbs even higher.
+        // Candidate: the input amount itself (best set) or the post-write
+        // day total (best day). A record set earlier THE SAME DAY was
+        // already stored at its celebrated value, so it only re-flashes
+        // when the value climbs even higher.
         val candidate = when (tier) {
             RecordTier.BEST_SET -> inputAmount ?: continue
             RecordTier.ALL_TIME -> dayTotalPostWrite
-            RecordTier.ROLLING_30D -> recordWindowSumEnding(seriesFull, date, 30)
-            RecordTier.ROLLING_365D -> recordWindowSumEnding(seriesFull, date, 365)
         }
         if (candidate > standing.value) {
-            beats.add(RecordTierBeat(tier, standing.value, candidate))
+            beats.add(
+                RecordTierBeat(
+                    tier = tier,
+                    oldValue = standing.value,
+                    newValue = candidate,
+                    stoodDays = recordStoodDays(standing.date, date)
+                )
+            )
             updates.add(tier to RecordEntry(candidate, dateStr, seeded = false))
         }
     }
