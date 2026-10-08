@@ -51,7 +51,8 @@ fun SleepTimelineChart(
     sessions: List<SleepSession>,
     startDate: LocalDate,
     endDate: LocalDate,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onDateSelected: ((LocalDate) -> Unit)? = null
 ) {
     val bedColor = Color(0xFF7986CB)       // indigo — sleep band
     val wakeColor = Color(0xFFFFB74D)      // amber — wake marker
@@ -118,7 +119,10 @@ fun SleepTimelineChart(
                         .clickable(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() }
-                        ) { selected = if (rowSelected) null else s },
+                        ) {
+                            selected = if (rowSelected) null else s
+                            onDateSelected?.invoke(day)
+                        },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Date label

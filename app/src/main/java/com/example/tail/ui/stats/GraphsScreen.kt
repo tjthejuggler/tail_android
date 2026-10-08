@@ -577,7 +577,8 @@ fun GraphsPanel(
                         sessions = sleepSessions,
                         startDate = fullStartDate,
                         endDate = fullEndDate,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        onDateSelected = { day -> viewModel.navigateToDate(day) }
                     )
                 }
             }
