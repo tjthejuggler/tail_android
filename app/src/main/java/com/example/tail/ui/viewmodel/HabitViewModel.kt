@@ -1233,7 +1233,8 @@ class HabitViewModel(
         habitName: String,
         linkedNames: Set<String>,
         values: Map<String, String> = emptyMap(),
-        amounts: Map<String, Int> = emptyMap()
+        amounts: Map<String, Int> = emptyMap(),
+        feedMinutes: Set<String> = emptySet()
     ) {
         viewModelScope.launch {
             val current = _settings.value.conditionalLinkedHabits.toMutableMap()
@@ -1252,13 +1253,22 @@ class HabitViewModel(
                 .filterValues { it != 1 }
             val storedAmounts = _settings.value.conditionalLinkAmounts.toMutableMap()
             if (cleanedAmounts.isEmpty()) storedAmounts.remove(habitName) else storedAmounts[habitName] = cleanedAmounts
+            // Per-link "feed minutes" flags limited to the (new) link set
+            // (absent = off)
+            val cleanedFeedMinutes = feedMinutes.filter { it in linkedNames }
+                .associateWith { 1 }
+            val storedFeedMinutes = _settings.value.conditionalLinkFeedMinutes.toMutableMap()
+            if (cleanedFeedMinutes.isEmpty()) storedFeedMinutes.remove(habitName)
+            else storedFeedMinutes[habitName] = cleanedFeedMinutes
             settingsRepo.saveConditionalLinkedHabits(current)
             settingsRepo.saveConditionalLinkValues(storedValues)
             settingsRepo.saveConditionalLinkAmounts(storedAmounts)
+            settingsRepo.saveConditionalLinkFeedMinutes(storedFeedMinutes)
             _settings.value = _settings.value.copy(
                 conditionalLinkedHabits = current,
                 conditionalLinkValues = storedValues,
-                conditionalLinkAmounts = storedAmounts
+                conditionalLinkAmounts = storedAmounts,
+                conditionalLinkFeedMinutes = storedFeedMinutes
             )
         }
     }
@@ -1274,6 +1284,10 @@ class HabitViewModel(
     /** Returns the current per-link feed-amount multipliers for a conditional habit (absent = 1). */
     fun getConditionalLinkAmounts(habitName: String): Map<String, Int> =
         _settings.value.conditionalLinkAmounts[habitName] ?: emptyMap()
+
+    /** Returns the linked habits with "feed minutes" enabled for a conditional habit. */
+    fun getConditionalLinkFeedMinutes(habitName: String): Set<String> =
+        _settings.value.conditionalLinkFeedMinutes[habitName]?.keys ?: emptySet()
 
     /**
      * Toggles the "feed max1 point/day" sub-setting for a conditional habit.

@@ -428,6 +428,11 @@ fun HabitViewModel.saveTextEntry(
             // Also increment the habit count so it registers as done for
             // today. Movie-bridge habits: suppress the "now" stamp — the
             // text entry's watch-start time is THE timestamp (sync below).
+            // A trailing "(N min)" annotation carries minutes, which are
+            // forwarded to conditional-linked habits that have the per-link
+            // "feed minutes" flag enabled.
+            val entryMinutes = Regex("""\((\d+)\s*min\)\s*$""")
+                .find(text)?.groupValues?.get(1)?.toIntOrNull()
             incrementHabit(
                 habitName, 1,
                 recordTimestamp = !isMovieBridgeHabit(habitName),
@@ -436,7 +441,8 @@ fun HabitViewModel.saveTextEntry(
                 // bug: answered while browsing a past day → count on the
                 // wrong day). Null date = "current date" per the doc above.
                 date = entryDate,
-                stampTime = stampTime
+                stampTime = stampTime,
+                minutes = entryMinutes
             )
 
             // Movie-bridge habits: reconcile the timestamp store to the

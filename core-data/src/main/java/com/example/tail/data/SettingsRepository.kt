@@ -97,6 +97,9 @@ private val KEY_CONDITIONAL_FEED_POINTS_HABITS = stringSetPreferencesKey("condit
 // Per-link conditional feed-amount multipliers (source habit → linked habit →
 // amount), stored with the nested-map codec; absent link = 1.
 private val KEY_CONDITIONAL_LINK_AMOUNTS = stringPreferencesKey("conditional_link_amounts")
+// Per-link "feed minutes" flags (source habit → linked habit → 1), stored
+// with the nested-map codec; absent link = off.
+private val KEY_CONDITIONAL_LINK_FEED_MINUTES = stringPreferencesKey("conditional_link_feed_minutes")
 // Subtyped habit type keys
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
@@ -878,6 +881,23 @@ class SettingsRepository(private val context: Context) {
                 }
             }
 
+            // Keep per-link feed-minutes flags consistent with the link sets,
+            // same rule as the feed-amount multipliers above.
+            val feedMinutesRaw = prefs[KEY_CONDITIONAL_LINK_FEED_MINUTES]
+            if (!feedMinutesRaw.isNullOrBlank()) {
+                val feedMinutes = decodeNestedIntMap(feedMinutesRaw)
+                val prunedFeedMinutes = feedMinutes.mapNotNull { (src, inner) ->
+                    val kept = inner.filterKeys { it in (pruned[src] ?: emptySet()) }
+                    if (kept.isEmpty()) null else src to kept
+                }.toMap()
+                if (prunedFeedMinutes != feedMinutes) {
+                    Log.i("SettingsRepo", "Pruning orphaned conditional feed-minutes flags for: ${feedMinutes.keys - prunedFeedMinutes.keys}")
+                    prefs[KEY_CONDITIONAL_LINK_FEED_MINUTES] = encodeNestedStringMap(
+                        prunedFeedMinutes.mapValues { (_, inner) -> inner.mapValues { (_, v) -> v.toString() } }
+                    )
+                }
+            }
+
             // Drop feed-max-one flags for habits that no longer exist or are
             // no longer conditional.
             val feedMaxOneRaw = prefs[KEY_CONDITIONAL_FEED_MAX_ONE_HABITS] ?: emptySet()
@@ -1074,6 +1094,7 @@ class SettingsRepository(private val context: Context) {
             conditionalFeedPointsHabits = prefs[KEY_CONDITIONAL_FEED_POINTS_HABITS] ?: emptySet(),
             conditionalLinkValues = decodeNestedStringMap(prefs[KEY_CONDITIONAL_LINK_VALUES] ?: ""),
             conditionalLinkAmounts = decodeNestedIntMap(prefs[KEY_CONDITIONAL_LINK_AMOUNTS] ?: ""),
+            conditionalLinkFeedMinutes = decodeNestedIntMap(prefs[KEY_CONDITIONAL_LINK_FEED_MINUTES] ?: ""),
             valueDisplayLabels = decodeNestedStringMap(prefs[KEY_VALUE_DISPLAY_LABELS] ?: ""),
             textInputOptionDescriptions = decodeNestedStringMap(prefs[KEY_TEXT_INPUT_OPTION_DESCRIPTIONS] ?: ""),
             textInputHiddenGroupings = decodeLinkedHabitsMap(prefs[KEY_TEXT_INPUT_HIDDEN_GROUPINGS] ?: ""),
@@ -1547,6 +1568,15 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveConditionalLinkAmounts(values: Map<String, Map<String, Int>>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_CONDITIONAL_LINK_AMOUNTS] = encodeNestedStringMap(
+                values.mapValues { (_, inner) -> inner.mapValues { (_, v) -> v.toString() } }
+            )
+        }
+    }
+
+    /** Persists per-link "feed minutes" flags (absent link = off). */
+    suspend fun saveConditionalLinkFeedMinutes(values: Map<String, Map<String, Int>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CONDITIONAL_LINK_FEED_MINUTES] = encodeNestedStringMap(
                 values.mapValues { (_, inner) -> inner.mapValues { (_, v) -> v.toString() } }
             )
         }

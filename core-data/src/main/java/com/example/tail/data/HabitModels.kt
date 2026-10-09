@@ -1140,6 +1140,16 @@ data class AppSettings(
     val conditionalLinkAmounts: Map<String, Map<String, Int>> = emptyMap(),
 
     /**
+     * Per-link "feed minutes" flags (nested int-map codec; 1 = enabled):
+     * conditional habit name → linked habit name → 1. When enabled, an
+     * increment of the source that carries a minutes value (e.g. a
+     * text-entry increment annotated "(N min)") ALSO adds those minutes to
+     * the linked habit's first-class `minutes:` slot, on top of the normal
+     * count/value feed. Absent entry = off (classic behaviour).
+     */
+    val conditionalLinkFeedMinutes: Map<String, Map<String, Int>> = emptyMap(),
+
+    /**
      * Conditional habits whose Points feeds are capped at 1 point per day
      * (sub-setting of the conditional type): the first increment of a day
      * feeds each linked habit at most 1 point, further increments that day

@@ -789,7 +789,12 @@ fun HabitViewModel.incrementHabit(
      *  text-log key (the text-input dialog) pass THE SAME time here so the
      *  stamp and the text key never drift apart — a drifted stamp renders as
      *  a phantom text-less card in the timestamp editor (took-pills bug). */
-    stampTime: String? = null
+    stampTime: String? = null,
+    /** Minutes carried by this increment (e.g. a text entry annotated
+     *  "(N min)"). Null/0 = no minutes. Forwarded to conditional-linked
+     *  habits that have the per-link "feed minutes" flag enabled, adding
+     *  to their first-class `minutes:` slot on top of the count feed. */
+    minutes: Int? = null
 ) {
     val uriString = _settings.value.fileUri
     if (uriString.isEmpty()) {
@@ -942,6 +947,15 @@ fun HabitViewModel.incrementHabit(
         val targetKey = conditionalLinkStorageKey(linkedName, valueKey)
         // Per-link feed-amount multiplier (default 1): lets one tap feed
         // different amounts to different linked habits.
+        // Per-link "feed minutes": the increment's minutes (if any) are also
+        // added to this linked habit's minutes slot.
+        if (minutes != null && minutes > 0 &&
+            (_settings.value.conditionalLinkFeedMinutes[habitName]?.get(linkedName) ?: 0) > 0
+        ) {
+            updatedDb = habitsRepo.applyIncrementToDb(
+                updatedDb, minutesKey(linkedName), minutes, targetDate
+            )
+        }
         val linkAmount = _settings.value.conditionalLinkAmounts[habitName]?.get(linkedName) ?: 1
         val linkBaseFeedAmount = baseFeedAmount * linkAmount.coerceAtLeast(1)
         val feedAmount = if (targetKey == linkedName && feedMaxOne) {

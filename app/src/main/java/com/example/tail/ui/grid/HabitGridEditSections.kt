@@ -877,10 +877,11 @@ internal fun ConditionalLinksPickerDialog(
     currentLinks: Set<String>,
     currentValues: Map<String, String> = emptyMap(),
     currentAmounts: Map<String, Int> = emptyMap(),
+    currentFeedMinutes: Set<String> = emptySet(),
     secondaryValueHabits: Set<String> = emptySet(),
     chessComHabitLinks: Map<String, String> = emptyMap(),
     valueDisplayLabels: Map<String, Map<String, String>> = emptyMap(),
-    onConfirm: (Set<String>, Map<String, String>, Map<String, Int>) -> Unit,
+    onConfirm: (Set<String>, Map<String, String>, Map<String, Int>, Set<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
     // Alphabetically sorted candidate list (case-insensitive).
@@ -901,6 +902,11 @@ internal fun ConditionalLinksPickerDialog(
     // Linked habit name → feed-amount multiplier (default 1: one tap = +1)
     var amountChoices by remember(currentAmounts) {
         mutableStateOf(currentAmounts.filterValues { it != 1 }.toMutableMap())
+    }
+    // Linked habits that ALSO receive the increment's minutes (if any) into
+    // their `minutes:` slot, on top of the count/value feed.
+    var feedMinutesChoices by remember(currentFeedMinutes) {
+        mutableStateOf(currentFeedMinutes.toMutableSet())
     }
     // Raw text per linked amount field, so clearing/typing ("1" → "" → "15")
     // isn't fought by the parsed value being written back into the field.
@@ -1001,6 +1007,9 @@ internal fun ConditionalLinksPickerDialog(
                                             val amts = amountChoices.toMutableMap()
                                             amts.remove(name)
                                             amountChoices = amts
+                                            val fm = feedMinutesChoices.toMutableSet()
+                                            fm.remove(name)
+                                            feedMinutesChoices = fm
                                             val drafts = amountDrafts.toMutableMap()
                                             drafts.remove(name)
                                             amountDrafts = drafts
@@ -1053,6 +1062,41 @@ internal fun ConditionalLinksPickerDialog(
                                 }
                             }
                             if (isChecked) {
+                                // Per-link "feed minutes" toggle: when the
+                                // source's increment carries a minutes value
+                                // (e.g. a text entry annotated "(N min)"),
+                                // those minutes are ALSO added to this linked
+                                // habit's minutes slot.
+                                Row(
+                                    modifier = Modifier.padding(start = 26.dp, top = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    val minutesActive = name in feedMinutesChoices
+                                    val toggleMinutes = {
+                                        val fm = feedMinutesChoices.toMutableSet()
+                                        if (minutesActive) fm.remove(name) else fm.add(name)
+                                        feedMinutesChoices = fm
+                                    }
+                                    Text(
+                                        text = if (minutesActive) "☑" else "☐",
+                                        color = if (minutesActive) Color(0xFFFF88CC) else Color(0xFF666666),
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.clickable(
+                                            indication = null,
+                                            interactionSource = remember { MutableInteractionSource() }
+                                        ) { toggleMinutes() }
+                                    )
+                                    Text(
+                                        text = "Also feed minutes (if any)",
+                                        color = if (minutesActive) Color(0xFFFF88CC) else Color(0xFF888888),
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.clickable(
+                                            indication = null,
+                                            interactionSource = remember { MutableInteractionSource() }
+                                        ) { toggleMinutes() }
+                                    )
+                                }
                                 // Per-link feed amount: one tap of the source
                                 // increments this linked habit by this amount.
                                 Row(
@@ -1113,7 +1157,10 @@ internal fun ConditionalLinksPickerDialog(
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = {
-                        onConfirm(selected.toSet(), valueChoices.toMap(), amountChoices.toMap())
+                        onConfirm(
+                            selected.toSet(), valueChoices.toMap(),
+                            amountChoices.toMap(), feedMinutesChoices.toSet()
+                        )
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A0030))
                 ) {
