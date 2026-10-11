@@ -300,12 +300,17 @@ class TextInputRepository {
     }
 
     /**
-     * Returns all unique text values ever entered for this habit (from the log file),
-     * sorted alphabetically for display as options.
+     * Returns all unique text values ever entered for this habit (from the log
+     * file), ordered MOST-LIKELY-FIRST by [TextOptionScorer]: overall usage
+     * frequency (recency-weighted) plus a time-of-day affinity boost for
+     * options historically chosen around the current clock time. Applies to
+     * every text-input habit with options enabled (the increment picker, the
+     * suggestion flash prefill, and the options editor all read through
+     * here); the picker's search box still filters this list unchanged.
      */
     suspend fun loadUniqueOptions(uri: Uri?, context: Context, habitName: String? = null): List<String> =
         withContext(Dispatchers.IO) {
-            loadTextLog(uri, context, habitName).values.toSortedSet().toList()
+            TextOptionScorer.orderOptions(loadTextLog(uri, context, habitName), LocalTime.now())
         }
 
     /**
@@ -641,5 +646,86 @@ class TextInputRepository {
      */
     private fun sanitizeFileName(name: String): String {
         return name.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(100)
+    }
+}
+
+/**
+ * Most-likely-first ordering for text-habit option lists.
+ *
+ * Every option (a unique log VALUE — multi-option groupings keep their
+ * combined identity, exactly like the old alphabetical list) is scored from
+ * the habit's full timestamped history:
+ *
+ *  1. FREQUENCY TERM — the option's share of the log's total recency-weighted
+ *     occurrence mass (exponential decay, half-life ~30 days; entries older
+ *     than 90 days only count with a small floor weight so they stay listed).
+ *  2. TIME-OF-DAY TERM — occurrences within ±[TIME_WINDOW_MINUTES] of the
+ *     CURRENT clock time (circular midnight distance, linearly decaying to
+ *     the window edge, same recency weighting) divided by the option's total
+ *     weighted count: an option ALWAYS taken around now scores ~1, one that
+ *     merely has many entries scores ~0 — a single lucky timestamp cannot
+ *     carry the term.
+ *  3. FINAL SCORE = frequencyShare + [TIME_WEIGHT] × timeAffinity, so a
+ *     strongly time-matched option outranks a somewhat-more-frequent one,
+ *     while overall frequency still dominates among equal time matches.
+ *
+ * Ties break alphabetically so the list is deterministic.
+ */
+object TextOptionScorer {
+
+    /** History window feeding the scoring, in days. */
+    private const val HISTORY_DAYS = 90L
+
+    /** Recency decay half-life, in days (occurrence weight = e^(−daysAgo/halfLife)). */
+    private const val HALF_LIFE_DAYS = 30.0
+
+    /** Half-width of the "around now" time-of-day window, in minutes. */
+    const val TIME_WINDOW_MINUTES = 150
+
+    /** Contribution multiplier of the time-of-day term relative to frequency. */
+    const val TIME_WEIGHT = 1.4
+
+    private val TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+    /**
+     * Orders the log's unique values most-likely-first for the given [now]
+     * clock time. [today] is injectable for tests. Malformed timestamp keys
+     * are skipped; an empty log yields an empty list.
+     */
+    fun orderOptions(log: Map<String, String>, now: LocalTime, today: LocalDate = LocalDate.now()): List<String> {
+        val nowMinutes = now.hour * 60 + now.minute
+        val floorWeight = Math.exp(-HISTORY_DAYS / HALF_LIFE_DAYS)
+
+        data class Occ(val minutesOfDay: Int, val weight: Double)
+
+        val byOption = LinkedHashMap<String, MutableList<Occ>>()
+        var totalWeightAll = 0.0
+        for ((ts, text) in log) {
+            val dt = runCatching { LocalDateTime.parse(ts, TS_FMT) }.getOrNull() ?: continue
+            val daysAgo = java.time.temporal.ChronoUnit.DAYS.between(dt.toLocalDate(), today)
+            if (daysAgo < 0) continue // future keys are ignored
+            val weight = if (daysAgo > HISTORY_DAYS) floorWeight
+            else Math.exp(-daysAgo / HALF_LIFE_DAYS)
+            totalWeightAll += weight
+            byOption.getOrPut(text) { mutableListOf() }
+                .add(Occ(dt.hour * 60 + dt.minute, weight))
+        }
+
+        data class Scored(val option: String, val score: Double)
+        return byOption.map { (option, occs) ->
+            val total = occs.sumOf { it.weight }
+            var windowed = 0.0
+            for (o in occs) {
+                var dist = kotlin.math.abs(nowMinutes - o.minutesOfDay)
+                if (dist > 720) dist = 1440 - dist // circular across midnight
+                if (dist <= TIME_WINDOW_MINUTES) {
+                    windowed += o.weight * (1.0 - dist.toDouble() / TIME_WINDOW_MINUTES)
+                }
+            }
+            val share = total / totalWeightAll.coerceAtLeast(1e-9)
+            val timeAffinity = if (total > 0) (windowed / total).coerceIn(0.0, 1.0) else 0.0
+            Scored(option, share + TIME_WEIGHT * timeAffinity)
+        }.sortedWith(compareByDescending<Scored> { it.score }.thenBy { it.option })
+            .map { it.option }
     }
 }
