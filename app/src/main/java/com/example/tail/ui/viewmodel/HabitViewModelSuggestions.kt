@@ -29,6 +29,12 @@ const val SUGGESTION_MAX_COUNT = 6
 /** Minimum score a habit must reach to be suggested at all. */
 private const val SUGGESTION_MIN_SCORE = 0.35
 
+/** Habits stamped on fewer distinct days (within the history window) are never suggested. */
+private const val SUGGESTION_MIN_DAYS = 4
+
+/** Streak length from which the reason label mentions the streak. */
+private const val SUGGESTION_STREAK_REASON_MIN = 7
+
 private val SUGG_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss")
 
 /**
@@ -60,14 +66,26 @@ fun isSpecialFlowHabit(name: String, s: AppSettings): Boolean =
 
 /**
  * Builds the "likely next increment" suggestions for the flash shown on
- * app open. Scoring per habit:
- *  - time-of-day match: timestamped increments within ±90 min of NOW over
- *    the last 60 days, exponentially decayed by age (recent days count
- *    more);
- *  - a small general-frequency term (any-time increments in the last 14
- *    days) so rarely-stamped habits still surface;
- *  - habits already done TODAY are heavily deprioritised (and 1-max /
- *    inverted-binary habits done today are excluded outright).
+ * app open. Scoring per habit (all terms over the last 60 days of
+ * timestamped history):
+ *
+ *  1. REGULARITY GATE — habits stamped on fewer than 4 distinct days are
+ *     treated as "rarely done" and never suggested.
+ *  2. TIME-OF-DAY MATCH — increments within ±90 min of NOW, exponentially
+ *     decayed by age, scaled by a confidence factor so a one-off lucky
+ *     timestamp cannot carry a suggestion (needs ~5 matching days for
+ *     full confidence).
+ *  3. DAY-FREQUENCY TERM — fraction of the last 30 days the habit was
+ *     done; near-daily habits surface even without a sharp time pattern.
+ *  4. STREAK BOOST — an active streak (habit not yet done today) raises
+ *     the score up to 1.5x; keeping a long streak going is exactly when
+ *     a nudge is most useful.
+ *  5. CO-OCCURRENCE BOOST — habits that historically land on the same
+ *     day as a habit ALREADY stamped today get up to 1.6x ("goes with
+ *     X"), using lift = P(both on a day) / P(partner on a day).
+ *  6. DONE-TODAY PENALTY — habits already done today are heavily
+ *     deprioritised (and 1-max / inverted-binary habits done today are
+ *     excluded outright).
  *
  * Excluded outright: meal + sleep special flows, dated-entry (derived
  * counts), disabled habits, app links, and every automatically-incremented
@@ -117,11 +135,43 @@ private suspend fun HabitViewModel.computeSuggestions(
     val nowMinutes = now.hour * 60 + now.minute
     val timestamps = timestampRepo.loadAll() // habit → date → ["HH:mm:ss"]
 
-    data class Scored(val habit: Habit, val score: Double, val usualMinutes: Int)
+    // ---- Pass 1: parse timestamps into per-habit day sets (last 60 days).
+    // daySets covers EVERY habit (including auto-incremented ones) because
+    // co-occurrence partners may be automatic habits.
+    val daySets = HashMap<String, HashSet<LocalDate>>()
+    for ((habitName, byDate) in timestamps) {
+        val days = daySets.getOrPut(habitName) { HashSet() }
+        for (dateStr in byDate.keys) {
+            val date = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: continue
+            val daysAgo = Duration.between(date.atStartOfDay(), today.atStartOfDay()).toDays()
+            if (daysAgo in 0..SUGGESTION_HISTORY_DAYS) days.add(date)
+        }
+    }
 
-    val scored = eligible.map { habit ->
+    val todayStr = today.toString()
+    // Habits already stamped today (any increment, manual or automatic).
+    val stampedToday: Set<String> = timestamps
+        .filter { it.value.containsKey(todayStr) && it.value[todayStr].orEmpty().isNotEmpty() }
+        .keys
+
+    // ---- Pass 2: score each eligible habit.
+    data class Scored(
+        val habit: Habit,
+        val score: Double,
+        val usualMinutes: Int,
+        val dayFreq: Double,
+        val coocPartner: String?
+    )
+
+    val scored = eligible.mapNotNull { habit ->
         val byDate = timestamps[habit.name] ?: emptyMap()
-        var score = 0.0
+        val daysDone = daySets[habit.name] ?: emptySet()
+
+        // 1. Regularity gate: rarely-done habits are never suggested.
+        if (daysDone.size < SUGGESTION_MIN_DAYS) return@mapNotNull null
+
+        var timeScore = 0.0
+        var matchedDays = 0
         var weightedMinutes = 0.0
         var weightSum = 0.0
         for ((dateStr, times) in byDate) {
@@ -129,24 +179,69 @@ private suspend fun HabitViewModel.computeSuggestions(
             val daysAgo = Duration.between(date.atStartOfDay(), today.atStartOfDay()).toDays()
             if (daysAgo < 0 || daysAgo > SUGGESTION_HISTORY_DAYS) continue
             val ageWeight = Math.exp(-daysAgo / 21.0) // ~3-week half-life-ish decay
+            var dayMatched = false
             for (t in times) {
                 val lt = runCatching { LocalTime.parse(t, SUGG_TIME_FMT) }.getOrNull() ?: continue
                 val dist = abs(nowMinutes - (lt.hour * 60 + lt.minute))
                 if (dist <= SUGGESTION_WINDOW_MINUTES) {
                     val closeness = 1.0 - dist.toDouble() / SUGGESTION_WINDOW_MINUTES
-                    score += ageWeight * (0.5 + closeness)
+                    timeScore += ageWeight * (0.5 + closeness)
                     weightedMinutes += ageWeight * (lt.hour * 60 + lt.minute)
                     weightSum += ageWeight
+                    dayMatched = true
                 }
-                // General-frequency term (last 14 days, any time)
-                if (daysAgo <= 14) score += 0.03
+            }
+            if (dayMatched) matchedDays++
+        }
+        // Confidence: a sharp time pattern needs several matching days to
+        // be trusted; one or two lucky timestamps count for little.
+        val timeConfidence = (matchedDays / 5.0).coerceAtMost(1.0)
+
+        // 3. Day-frequency: fraction of the last 30 days the habit was
+        // done. Near-daily habits earn a strong base score.
+        val daysLast30 = daysDone.count { !it.isBefore(today.minusDays(30)) }
+        val dayFreq = daysLast30 / 30.0
+        val freqScore = 1.8 * dayFreq
+
+        val doneToday = habit.rawTodayCount > 0
+
+        // 4. Streak boost: only meaningful when the habit is NOT yet done
+        // today (that's when keeping the streak alive matters).
+        val streak = habit.currentStreak
+        val streakBoost = if (!doneToday && streak > 0)
+            1.0 + (streak.coerceAtMost(30)) / 60.0 else 1.0
+
+        // 5. Co-occurrence: find the partner already stamped today with
+        // the strongest historical lift for this habit.
+        var coocBoost = 1.0
+        var coocPartner: String? = null
+        if (!doneToday) {
+            for (partner in stampedToday) {
+                if (partner == habit.name) continue
+                val partnerDays = daySets[partner] ?: continue
+                if (partnerDays.size < 5) continue
+                val both = daysDone.count { it in partnerDays }
+                if (both < 3) continue
+                val lift = (both.toDouble() / partnerDays.size) /
+                    (daysDone.size.toDouble() / (SUGGESTION_HISTORY_DAYS + 1))
+                if (lift > 1.15) {
+                    val boost = (1.0 + 0.5 * (lift - 1.0)).coerceAtMost(1.6)
+                    if (boost > coocBoost) {
+                        coocBoost = boost
+                        coocPartner = partner
+                    }
+                }
             }
         }
-        // Already done today → strong deprioritise, but keep suggestible
+
+        var score = (timeScore * timeConfidence + freqScore) *
+            streakBoost * coocBoost
+        // 6. Already done today → strong deprioritise, but keep suggestible
         // (count habits can legitimately be incremented again)
-        if (habit.rawTodayCount > 0) score *= 0.35
+        if (doneToday) score *= 0.35
+
         val usual = if (weightSum > 0) (weightedMinutes / weightSum).toInt() else -1
-        Scored(habit, score, usual)
+        Scored(habit, score, usual, dayFreq, coocPartner)
     }.filter { it.score >= SUGGESTION_MIN_SCORE }
         .sortedByDescending { it.score }
         .take(SUGGESTION_MAX_COUNT)
@@ -158,8 +253,13 @@ private suspend fun HabitViewModel.computeSuggestions(
     val out = mutableListOf<HabitSuggestion>()
     for (s in scored) {
         val h = s.habit
+        val streak = h.currentStreak
         val reason = when {
+            h.rawTodayCount == 0 && streak >= SUGGESTION_STREAK_REASON_MIN ->
+                "%d-day streak".format(streak)
+            s.coocPartner != null -> "goes with %s".format(s.coocPartner)
             s.usualMinutes >= 0 -> "usual around %02d:%02d".format(s.usualMinutes / 60, s.usualMinutes % 60)
+            s.dayFreq >= 0.8 -> "daily habit"
             h.rawTodayCount > 0 -> "already %d today".format(h.rawTodayCount)
             else -> "frequent habit"
         }
