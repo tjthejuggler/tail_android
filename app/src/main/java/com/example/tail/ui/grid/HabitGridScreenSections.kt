@@ -3847,7 +3847,8 @@ internal fun TodayTextEntriesSection(
                     OutlinedTextField(
                         value = editText,
                         onValueChange = { editText = it },
-                        singleLine = true,
+                        minLines = 1,
+                        maxLines = 6,
                         modifier = Modifier.weight(1f),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
@@ -3889,8 +3890,7 @@ internal fun TodayTextEntriesSection(
                         text = text,
                         color = Color(0xFFCCCCCC),
                         fontSize = 12.sp,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 2
+                        modifier = Modifier.weight(1f)
                     )
                     TextButton(
                         onClick = { isEditing = true; editText = text },
