@@ -858,6 +858,103 @@ def pc_widget_acks(payload: Dict[str, Any], api_key: str = Security(verify_key))
     return {"ok": True, "remaining": len(remaining)}
 
 
+# ── Paperclip timeline (paperclip_journals share ingest) ──────────────────────
+#
+# The phone shares articles/text via PaperclipShareActivity → POST submit.
+# Items accumulate here until the paperclip_journals backend drains them via
+# /pending + /acks (same queue discipline as pc_widget events).
+
+PAPERCLIP_PENDING_PATH = PC_WIDGET_STATE_DIR / "paperclip_pending.jsonl"
+PAPERCLIP_MAX_QUEUE = int(os.environ.get("PAPERCLIP_MAX_QUEUE", "500"))
+PAPERCLIP_MAX_TEXT = 64 * 1024  # 64 KB clamp on shared text
+
+
+def _paperclip_read() -> list:
+    try:
+        with open(PAPERCLIP_PENDING_PATH, "r", encoding="utf-8") as f:
+            items = [json.loads(line) for line in f if line.strip()]
+        return [i for i in items if isinstance(i, dict)]
+    except (OSError, ValueError):
+        return []
+
+
+def _paperclip_write(items: list) -> None:
+    PAPERCLIP_PENDING_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = PAPERCLIP_PENDING_PATH.with_suffix(".jsonl.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        for item in items:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+    tmp.replace(PAPERCLIP_PENDING_PATH)
+
+
+@app.post("/api/v1/paperclip/submit", tags=["paperclip"])
+async def paperclip_submit(request: Request, api_key: str = Security(verify_key)):
+    """Phone (or PC) pushes a shared article/text for the AI-takeover timeline."""
+    try:
+        payload = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+
+    url = str(payload.get("url") or "").strip()
+    text = str(payload.get("text") or "")[:PAPERCLIP_MAX_TEXT]
+    title = str(payload.get("title") or "").strip()[:500]
+    shared_at = str(payload.get("shared_at") or "")
+
+    if not url and not text.strip():
+        raise HTTPException(status_code=400, detail="'url' or 'text' is required")
+
+    item = {
+        "id": f"pc_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}",
+        "url": url or None,
+        "title": title or None,
+        "text": text or None,
+        "shared_at": shared_at or datetime.now().isoformat(timespec="seconds"),
+        "received_at": datetime.now().isoformat(timespec="seconds"),
+        "source": str(payload.get("source") or "tail_android"),
+    }
+
+    items = _paperclip_read()
+    items.append(item)  # append at the end → oldest-first file order
+    _paperclip_write(items[-PAPERCLIP_MAX_QUEUE:])
+
+    logger.info(f"paperclip submit: {item['id']} url={bool(url)} text={len(text)}ch "
+                f"queue={len(items)}")
+    dashboard.note("phone", "paperclip_submit",
+                   f"Paperclip share queued ({'url' if url else 'text'}, "
+                   f"{len(items)} pending)")
+    return {"id": item["id"], "queued": True, "queue_depth": min(len(items), PAPERCLIP_MAX_QUEUE)}
+
+
+@app.get("/api/v1/paperclip/pending", tags=["paperclip"])
+def paperclip_pending(limit: int = 100, api_key: str = Security(verify_key)):
+    """paperclip_journals backend: un-acked items, oldest first (does NOT ack)."""
+    items = _paperclip_read()[:max(1, min(limit, PAPERCLIP_MAX_QUEUE))]
+    return {"items": items, "remaining": len(_paperclip_read())}
+
+
+@app.post("/api/v1/paperclip/acks", tags=["paperclip"])
+def paperclip_acks(payload: Dict[str, Any], api_key: str = Security(verify_key)):
+    """paperclip_journals backend: processed item ids; removes them from the queue."""
+    processed = payload.get("ids")
+    if not isinstance(processed, list):
+        raise HTTPException(status_code=400, detail="body must contain an 'ids' list")
+    acked = {i for i in processed if isinstance(i, str)}
+    items = _paperclip_read()
+    remaining = [i for i in items if i.get("id") not in acked]
+    if len(remaining) != len(items):
+        _paperclip_write(remaining)
+    logger.info(f"paperclip acks: {len(acked)} ids, {len(remaining)} still queued")
+    return {"ok": True, "remaining": len(remaining)}
+
+
+@app.get("/api/v1/paperclip/health", tags=["paperclip"])
+def paperclip_health(api_key: str = Security(verify_key)):
+    depth = len(_paperclip_read())
+    return {"status": "ok", "queue_depth": depth, "max_queue": PAPERCLIP_MAX_QUEUE}
+
+
 # ── Chess analysis (Tail-owned Stockfish service) ─────────────────────────────
 #
 # Fully standalone: the bridge runs its own Stockfish analysis (python-chess),

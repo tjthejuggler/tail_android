@@ -9,6 +9,7 @@ import com.example.tail.data.AdviceRepository
 import com.example.tail.data.AppSettings
 import com.example.tail.data.HabitScreen
 import com.example.tail.data.PointRange
+import com.example.tail.data.QuickCaptureActionType
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.SubtypeDataRepository
@@ -98,6 +99,14 @@ data class HabitRestorePreview(
  *      GitHub, Bridge, OMDb, point ranges, graph metrics, habit notes,
  *      roll-forward, meal engine, app links, long-press actions, widget
  *      triggers, chess readiness, GDrive — were missing and are now included)
+ *  15. 2026-10 audit: Quick Capture actions, AI Assistant, stats overlay /
+ *      bubble app lists, combo habits, companion IPC, conditional
+ *      feed-minutes, environment toggles, graph weight unit, timeline /
+ *      lock-widget exclusions, scheduled ask times, habit timers, media
+ *      habits/apps + backup bookkeeping dates; plus SharedPrefs stores
+ *      tail_chess_freeplay, tail_chess_pending_games, tail_chess_puzzle_rush,
+ *      tail_podcast_tracker, tail_env_backlog, tail_stats_overlay,
+ *      tail_floating_bubble
  *
  * Things deliberately NOT backed up (because they are derived / re-fetchable):
  *   - Screens-layout relay file (regenerated whenever screens change)
@@ -411,7 +420,15 @@ class BackupManager(
     private fun readExtraPrefs(): Map<String, List<PrefEntryBackup>> {
         val names = listOf(
             "tail_chess_readiness", "tail_chess_phase2",
-            "tail_environment_prefs" // environment habit snapshots + water memory
+            "tail_environment_prefs", // environment habit snapshots + water memory
+            // 2026-10 completeness audit: remaining user-data prefs stores
+            "tail_chess_freeplay",      // freeplay ticket ledger / grant weeks
+            "tail_chess_pending_games", // pending-game tracking state
+            "tail_chess_puzzle_rush",   // puzzle-rush overlay + record state
+            "tail_podcast_tracker",     // media listening dedup / last positions
+            "tail_env_backlog",         // environment backlog job progress
+            "tail_stats_overlay",       // stats overlay geometry / font settings
+            "tail_floating_bubble"      // floating bubble last start config
         )
         val out = mutableMapOf<String, List<PrefEntryBackup>>()
         for (name in names) {
@@ -942,6 +959,42 @@ class BackupManager(
         settingsRepo.saveWallpaperSettings(
             s.wallpaperEnabled, s.wallpaperDirUri, s.wallpaperTarget, s.wallpaperMetric
         )
+
+        // ── Fields added in the 2026-10 completeness audit ───────────────
+        settingsRepo.saveQuickCaptureActionTypes(
+            s.quickCaptureActionTypes.map {
+                QuickCaptureActionType(id = it.id, name = it.name, description = it.description)
+            }
+        )
+        settingsRepo.saveAiAssistantSettings(
+            baseUrl = s.aiAssistantBaseUrl,
+            apiKey = s.aiAssistantApiKey,
+            model = s.aiAssistantModel
+        )
+        settingsRepo.saveStatsOverlayEnabled(s.statsOverlayEnabled)
+        settingsRepo.saveBubbleFullScreenApps(s.bubbleFullScreenApps.toSet())
+        settingsRepo.saveBubbleMultiTimerApps(s.bubbleMultiTimerApps.toSet())
+        settingsRepo.saveAppStatsRecordNotificationsEnabled(s.appStatsRecordNotificationsEnabled)
+        settingsRepo.saveSuggestionFlashEnabled(s.suggestionFlashEnabled)
+        settingsRepo.saveSuggestionExcludedHabits(s.suggestionExcludedHabits.toSet())
+        settingsRepo.saveComboHabitMembers(s.comboHabitMembers.mapValues { it.value.toSet() })
+        settingsRepo.saveComboInputHabits(s.comboInputHabits.toSet())
+        settingsRepo.saveComboHabitEndMode(s.comboHabitEndMode)
+        settingsRepo.saveCompanionApiEnabled(s.companionApiEnabled)
+        settingsRepo.saveCompanionReadHabits(s.companionReadHabits.toSet())
+        settingsRepo.saveConditionalLinkFeedMinutes(s.conditionalLinkFeedMinutes)
+        settingsRepo.saveEnvironmentEnabled(s.environmentEnabled)
+        settingsRepo.saveEnvironmentWaterMemoryEnabled(s.environmentWaterMemoryEnabled)
+        settingsRepo.saveEnvironmentTemperatureUnit(s.environmentTemperatureUnit)
+        settingsRepo.saveAutoBackupLastDate(s.autoBackupLastDate)
+        settingsRepo.saveGdriveLastBackupDate(s.gdriveLastBackupDate)
+        settingsRepo.saveGraphWeightUnit(s.graphWeightUnit)
+        settingsRepo.saveTimelineExcludedHabits(s.timelineExcludedHabits.toSet())
+        settingsRepo.saveHabitScheduleTimes(s.habitScheduleTimes)
+        settingsRepo.saveHabitTimerHabits(s.habitTimerHabits.toSet())
+        settingsRepo.saveLockWidgetExcludedHabits(s.lockWidgetExcludedHabits.toSet())
+        settingsRepo.saveMediaHabits(s.mediaHabits.toSet())
+        settingsRepo.saveMediaApps(s.mediaApps)
     }
 
     private suspend fun applyAdvice(items: List<AdviceBackupItem>) {
@@ -1362,7 +1415,39 @@ class BackupManager(
         wallpaperEnabled = s.wallpaperEnabled,
         wallpaperDirUri = s.wallpaperDirUri,
         wallpaperTarget = s.wallpaperTarget.name,
-        wallpaperMetric = s.wallpaperMetric.name
+        wallpaperMetric = s.wallpaperMetric.name,
+
+        // ── Fields added in the 2026-10 completeness audit ───────────────
+        quickCaptureActionTypes = s.quickCaptureActionTypes.map {
+            QuickCaptureActionTypeBackup(it.id, it.name, it.description)
+        },
+        aiAssistantBaseUrl = s.aiAssistantBaseUrl,
+        aiAssistantApiKey = s.aiAssistantApiKey,
+        aiAssistantModel = s.aiAssistantModel,
+        statsOverlayEnabled = s.statsOverlayEnabled,
+        bubbleFullScreenApps = s.bubbleFullScreenApps.toList(),
+        bubbleMultiTimerApps = s.bubbleMultiTimerApps.toList(),
+        appStatsRecordNotificationsEnabled = s.appStatsRecordNotificationsEnabled,
+        suggestionFlashEnabled = s.suggestionFlashEnabled,
+        suggestionExcludedHabits = s.suggestionExcludedHabits.toList(),
+        comboHabitMembers = s.comboHabitMembers.mapValues { it.value.toList() },
+        comboInputHabits = s.comboInputHabits.toList(),
+        comboHabitEndMode = s.comboHabitEndMode,
+        companionApiEnabled = s.companionApiEnabled,
+        companionReadHabits = s.companionReadHabits.toList(),
+        conditionalLinkFeedMinutes = s.conditionalLinkFeedMinutes,
+        environmentEnabled = s.environmentEnabled,
+        environmentWaterMemoryEnabled = s.environmentWaterMemoryEnabled,
+        environmentTemperatureUnit = s.environmentTemperatureUnit,
+        autoBackupLastDate = s.autoBackupLastDate,
+        gdriveLastBackupDate = s.gdriveLastBackupDate,
+        graphWeightUnit = s.graphWeightUnit,
+        timelineExcludedHabits = s.timelineExcludedHabits.toList(),
+        habitScheduleTimes = s.habitScheduleTimes,
+        habitTimerHabits = s.habitTimerHabits.toList(),
+        lockWidgetExcludedHabits = s.lockWidgetExcludedHabits.toList(),
+        mediaHabits = s.mediaHabits.toList(),
+        mediaApps = s.mediaApps
     )
 
     private fun AdviceItem.toBackup() = AdviceBackupItem(

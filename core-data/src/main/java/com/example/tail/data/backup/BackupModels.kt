@@ -227,7 +227,58 @@ data class SettingsSection(
     val wallpaperEnabled: Boolean = false,
     val wallpaperDirUri: String = "",
     val wallpaperTarget: String = "SYSTEM",
-    val wallpaperMetric: String = "TODAY"
+    val wallpaperMetric: String = "TODAY",
+
+    // ── Fields added in the 2026-10 completeness audit ───────────────────
+    // Quick Capture user-defined actions (Settings → Quick Capture → Actions)
+    val quickCaptureActionTypes: List<QuickCaptureActionTypeBackup> = emptyList(),
+    // AI Assistant settings
+    val aiAssistantBaseUrl: String = "",
+    val aiAssistantApiKey: String = "",
+    val aiAssistantModel: String = "",
+    // Stats overlay / floating bubble service settings
+    val statsOverlayEnabled: Boolean = false,
+    val bubbleFullScreenApps: List<String> = emptyList(),
+    val bubbleMultiTimerApps: List<String> = emptyList(),
+    // App-stats notification + suggestion flash settings
+    val appStatsRecordNotificationsEnabled: Boolean = true,
+    val suggestionFlashEnabled: Boolean = true,
+    val suggestionExcludedHabits: List<String> = emptyList(),
+    // Combo habits
+    val comboHabitMembers: Map<String, List<String>> = emptyMap(),
+    val comboInputHabits: List<String> = emptyList(),
+    val comboHabitEndMode: Boolean = false,
+    // Companion IPC
+    val companionApiEnabled: Boolean = true,
+    val companionReadHabits: List<String> = emptyList(),
+    // Conditional link minute-feeding
+    val conditionalLinkFeedMinutes: Map<String, Map<String, Int>> = emptyMap(),
+    // Environment integration
+    val environmentEnabled: Boolean = false,
+    val environmentWaterMemoryEnabled: Boolean = true,
+    val environmentTemperatureUnit: String = "C",
+    // Backup bookkeeping dates (restored so the UI reads the same after import)
+    val autoBackupLastDate: String = "",
+    val gdriveLastBackupDate: String = "",
+    // Graphs / timeline
+    val graphWeightUnit: String = "kg",
+    val timelineExcludedHabits: List<String> = emptyList(),
+    // Scheduled asks (daily notification prompts)
+    val habitScheduleTimes: Map<String, String> = emptyMap(),
+    // Habit timers
+    val habitTimerHabits: List<String> = emptyList(),
+    // Lock-widget exclusion list
+    val lockWidgetExcludedHabits: List<String> = emptyList(),
+    // Media habits (playback tracking) + per-habit media app overrides
+    val mediaHabits: List<String> = emptyList(),
+    val mediaApps: Map<String, String> = emptyMap()
+)
+
+/** Backup form of [com.example.tail.data.QuickCaptureActionType]. */
+data class QuickCaptureActionTypeBackup(
+    val id: String = "",
+    val name: String = "",
+    val description: String = ""
 )
 
 /** Backup form of [com.example.tail.data.PointRange]. */

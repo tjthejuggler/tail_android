@@ -116,6 +116,23 @@
         </activity>
 
         <!--
+            PaperclipShareActivity: second share-sheet target (alongside
+            "tail") that forwards any shared text/link to the Tail Bridge
+            paperclip queue for the paperclip_journals AI-takeover timeline.
+        -->
+        <activity
+            android:name=".PaperclipShareActivity"
+            android:exported="true"
+            android:label="@string/paperclip_share_activity_label"
+            android:theme="@style/Theme.Tail.Transparent">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!--
             ShareImageActivity (Quick Capture): appears in the system share
             sheet when the user shares an IMAGE from anywhere on the phone.
             Offers three destinations: Note (saves image + markdown entry),
