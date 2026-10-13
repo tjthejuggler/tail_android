@@ -233,6 +233,8 @@ import com.example.tail.ui.viewmodel.getDeleteDataDayCount
 import com.example.tail.ui.viewmodel.getEarliestLocationDate
 import com.example.tail.ui.viewmodel.getMinutesTodayCount
 import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
+import com.example.tail.ui.viewmodel.setComboHabitEndMode
+import com.example.tail.ui.viewmodel.submitComboHabit
 import com.example.tail.ui.viewmodel.confirmPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.isMovieBridgeHabit
 import com.example.tail.ui.viewmodel.loadSubtypeBreakdown
@@ -901,6 +903,8 @@ fun HabitGridScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var dialogHabit by remember { mutableStateOf<Habit?>(null) }
+    // Combo-input popup: the combo habit name while the popup should show.
+    var comboDialogHabit by remember { mutableStateOf<String?>(null) }
     // Subtype increment dialog state
     var subtypeDialogHabit by remember { mutableStateOf<Habit?>(null) }
     var subtypeDialogBreakdown by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
@@ -1661,6 +1665,12 @@ fun HabitGridScreen(
                         habitLongPressUrls = settings.habitLongPressUrls,
                         onHabitClick = { habit, index ->
                             when {
+                                // Combo-input TYPE habit: the tap opens the
+                                // combo batch-input popup instead of an
+                                // increment — the habit itself is untracked.
+                                !editMode && habit.name in settings.comboInputHabits -> {
+                                    comboDialogHabit = habit.name
+                                }
                                 isAppLink(habit.name) -> {
                                     if (editMode) {
                                         viewModel.selectEditHabit(index)
@@ -2644,6 +2654,34 @@ fun HabitGridScreen(
             onDismiss       = { showCalendarPicker = false },
             minYear         = earliestYear
         )
+    }
+
+    // Combo-input popup: batch-increment the configured member habits with
+    // per-session minutes and one anchor (start/end) time.
+    comboDialogHabit?.let { comboName ->
+        val comboMembers = (settings.comboHabitMembers[comboName] ?: emptySet()).sorted()
+        if (comboMembers.isEmpty()) {
+            android.widget.Toast.makeText(
+                context,
+                "No members selected for '$comboName' — pick them in edit mode",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            comboDialogHabit = null
+        } else {
+        ComboHabitDialog(
+            memberHabits = comboMembers,
+            initialEndMode = settings.comboHabitEndMode,
+            onModeChange = { viewModel.setComboHabitEndMode(it) },
+            onSubmit = { sessions, anchorHour, anchorMinute, endMode ->
+                comboDialogHabit = null
+                viewModel.submitComboHabit(sessions, anchorHour, anchorMinute, endMode)
+                // Popup-gated increment: the combo was submitted — the lizard
+                // shimmer may fire.
+                lizardShimmerGen.intValue++
+            },
+            onDismiss = { comboDialogHabit = null }
+        )
+        }
     }
 
     // Custom increment dialog

@@ -163,6 +163,21 @@ typealias HabitsDatabase = Map<String, Map<String, Int>>
  */
 const val APP_LINK_PREFIX = "app_link:"
 
+// ── Combo-input pseudo-habit helpers ─────────────────────────────────────────
+/**
+ * Prefix for the combo-input pseudo-habit tile injected at the head of the
+ * habit grid (non-edit/graph modes). Not a real habit: it has no points,
+ * history or DB entry — tapping it opens the combo popup that batch-increments
+ * the habits selected in Settings (e.g. sauna + cold exposure sessions).
+ */
+const val COMBO_INPUT_PREFIX = "combo_input:"
+
+/** The single, fixed grid key for the combo-input tile. */
+const val COMBO_INPUT_KEY = "${COMBO_INPUT_PREFIX}combo"
+
+/** Returns true if [name] is the combo-input tile key. */
+fun isComboInput(name: String): Boolean = name.startsWith(COMBO_INPUT_PREFIX)
+
 /** Returns true if [name] is an app-link entry (starts with [APP_LINK_PREFIX]). */
 fun isAppLink(name: String): Boolean = name.startsWith(APP_LINK_PREFIX)
 
@@ -997,6 +1012,29 @@ data class AppSettings(
      * (or in addition to) incrementing the numeric count.
      */
     val textInputHabits: Set<String> = emptySet(),
+
+    /**
+     * Per-combo member habits (combo habit name → habits it batch-increments).
+     * Edited in the combo habit's edit-mode panel. Pure input convenience:
+     * submitting the combo popup increments the members (count + minutes +
+     * timestamps) — the combo habit itself is never tracked.
+     */
+    val comboHabitMembers: Map<String, Set<String>> = emptyMap(),
+
+    /**
+     * Habits marked as the "⚡ Combo input" TYPE in edit mode. Tapping such a
+     * habit opens the combo popup instead of incrementing it — the habit is
+     * not tracked (no points/history/minutes of its own); it only serves as
+     * the launcher for batch-incrementing the habits in [comboHabitHabits].
+     */
+    val comboInputHabits: Set<String> = emptySet(),
+
+    /**
+     * Last used anchor-time mode in the combo popup: true = the wheel was
+     * set to "End" time, false = "Start" time. Remembered so the next popup
+     * opens with the previously used mode pre-selected.
+     */
+    val comboHabitEndMode: Boolean = false,
 
     /**
      * Habits that have the "show options" sub-feature enabled.

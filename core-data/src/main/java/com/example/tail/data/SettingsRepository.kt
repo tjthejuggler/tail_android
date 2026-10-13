@@ -63,6 +63,10 @@ private val KEY_INUIT_INTEGRATION_ENABLED = booleanPreferencesKey("inuit_integra
 private val KEY_INUIT_TEXT_HABITS = stringSetPreferencesKey("inuit_text_habits")
 // Companion read API (v2 provider endpoints): master switch + per-habit opt-in
 private val KEY_COMPANION_API_ENABLED = booleanPreferencesKey("companion_api_enabled")
+// Combo-input pseudo-habit: member habits + last anchor-time mode
+private val KEY_COMBO_HABIT_MEMBERS = stringPreferencesKey("combo_habit_members")
+private val KEY_COMBO_HABIT_END_MODE = booleanPreferencesKey("combo_habit_end_mode")
+private val KEY_COMBO_INPUT_HABITS = stringSetPreferencesKey("combo_input_habits")
 private val KEY_COMPANION_READ_HABITS = stringSetPreferencesKey("companion_read_habits")
 // Stored as "habitName\x00uri|||habitName\x00uri" pairs
 private val KEY_TEXT_INPUT_FILE_URIS = stringPreferencesKey("text_input_file_uris")
@@ -1066,6 +1070,9 @@ class SettingsRepository(private val context: Context) {
             sharableTextHabits = prefs[KEY_SHARABLE_TEXT_HABITS] ?: emptySet(),
             inuitIntegrationEnabled = prefs[KEY_INUIT_INTEGRATION_ENABLED] ?: false,
             inuitTextHabits = prefs[KEY_INUIT_TEXT_HABITS] ?: emptySet(),
+            comboHabitMembers = decodeLinkedHabitsMap(prefs[KEY_COMBO_HABIT_MEMBERS] ?: ""),
+            comboHabitEndMode = prefs[KEY_COMBO_HABIT_END_MODE] ?: false,
+            comboInputHabits = prefs[KEY_COMBO_INPUT_HABITS] ?: emptySet(),
             companionApiEnabled = prefs[KEY_COMPANION_API_ENABLED] ?: true,
             companionReadHabits = prefs[KEY_COMPANION_READ_HABITS] ?: emptySet(),
             textInputFileUris = decodeFileUriMap(textInputFileUrisRaw),
@@ -1401,6 +1408,27 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveInuitIntegrationEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[KEY_INUIT_INTEGRATION_ENABLED] = enabled
+        }
+    }
+
+    /** Saves the per-combo member habits (combo habit → habits it increments). */
+    suspend fun saveComboHabitMembers(members: Map<String, Set<String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_COMBO_HABIT_MEMBERS] = encodeLinkedHabitsMap(members)
+        }
+    }
+
+    /** Saves the set of habits marked as the "Combo input" type (launchers). */
+    suspend fun saveComboInputHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_COMBO_INPUT_HABITS] = habits
+        }
+    }
+
+    /** Saves the combo popup's last anchor-time mode (true = End time). */
+    suspend fun saveComboHabitEndMode(endMode: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_COMBO_HABIT_END_MODE] = endMode
         }
     }
 

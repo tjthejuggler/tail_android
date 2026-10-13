@@ -1912,6 +1912,14 @@ internal fun EditModeControlBar(
     recordNotifHabits: Set<String> = emptySet(),
     /** Called when the user toggles the "New record" popup for a habit. */
     onToggleRecordNotif: (String) -> Unit = {},
+    /** Habits marked as the "⚡ Combo input" type (batch-input launchers). */
+    comboInputHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the combo-input type for a habit. */
+    onToggleComboInput: (String) -> Unit = {},
+    /** Per-combo member habits (combo habit → habits it increments). */
+    comboHabitMembers: Map<String, Set<String>> = emptyMap(),
+    /** Called when the member set of a combo habit is edited. */
+    onSetComboMembers: (String, Set<String>) -> Unit = { _, _ -> },
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
     /** Text-input habits that appear in the system share sheet (ShareTextActivity picker). */
@@ -2581,6 +2589,11 @@ internal fun EditModeControlBar(
                         customInputAmounts = customInputAmounts,
                         recordNotifHabits = recordNotifHabits,
                         onToggleRecordNotif = onToggleRecordNotif,
+                        comboInputHabits = comboInputHabits,
+                        onToggleComboInput = onToggleComboInput,
+                        comboHabitMembers = comboHabitMembers,
+                        onSetComboMembers = onSetComboMembers,
+                        allHabitNames = allHabitNames,
                         onToggleCustomInput = onToggleCustomInput,
                         onSetCustomInputAmounts = onSetCustomInputAmounts,
                         textInputHabits = textInputHabits,
@@ -4018,7 +4031,17 @@ internal fun HabitInputModesSection(
     onPickTextInputFile: (String) -> Unit,
     onCreateTextInputFile: (String) -> Unit = {},
     /** Opens the large past-entries options editor popup for the habit. */
-    onEditTextInputOptions: (String) -> Unit = {}
+    onEditTextInputOptions: (String) -> Unit = {},
+    /** Habits marked as the "⚡ Combo input" type (batch-input launchers). */
+    comboInputHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the combo-input type for a habit. */
+    onToggleComboInput: (String) -> Unit = {},
+    /** Per-combo member habits (combo habit → habits it increments). */
+    comboHabitMembers: Map<String, Set<String>> = emptyMap(),
+    /** Called when the member set of a combo habit is edited. */
+    onSetComboMembers: (String, Set<String>) -> Unit = { _, _ -> },
+    /** All habit names, for the member picker. */
+    allHabitNames: List<String> = emptyList()
 ) {
     // ── Note section ───────────────────────────────────────────
     val currentNote = habitNotes[selectedHabitName] ?: ""
@@ -4217,6 +4240,111 @@ internal fun HabitInputModesSection(
                 uncheckedTrackColor = Color(0xFF333333)
             )
         )
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+
+    // ⚡ Combo input type toggle — makes the habit a batch-input launcher.
+    // Enabling shows a warning first: the habit stops being tracked (no
+    // points/history/minutes of its own); it only increments other habits.
+    val isComboInput = selectedHabitName in comboInputHabits
+    var showComboWarn by remember(selectedHabitName) { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "⚡ Combo input", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isComboInput) "Tap opens the combo batch-input popup"
+                else "Normal habit",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isComboInput,
+            onCheckedChange = { want ->
+                if (want) showComboWarn = true
+                else onToggleComboInput(selectedHabitName)
+            },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF88DDFF),
+                checkedTrackColor = Color(0xFF0A3A4A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+    if (showComboWarn) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showComboWarn = false },
+            title = { Text("⚡ Combo input habit", fontSize = 15.sp) },
+            text = {
+                Text(
+                    "This habit becomes a combo-input launcher: tapping it " +
+                        "opens a popup for batch-incrementing OTHER habits " +
+                        "(picked in Settings → Habit Features → Combo Input " +
+                        "Habit). It is no longer a real habit of its own — " +
+                        "any history, points and minutes it might have will " +
+                        "be lost, since this type exists only to aid " +
+                        "incrementing other, real habits.",
+                    fontSize = 12.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showComboWarn = false
+                        onToggleComboInput(selectedHabitName)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A3A4A))
+                ) { Text("Enable", color = Color(0xFF88DDFF), fontSize = 12.sp) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showComboWarn = false }) {
+                    Text("Cancel", fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
+    if (isComboInput) {
+        Spacer(modifier = Modifier.height(4.dp))
+        // Members sub-row: which habits this combo batch-increments.
+        val members = comboHabitMembers[selectedHabitName] ?: emptySet()
+        var showMemberPicker by remember(selectedHabitName) { mutableStateOf(false) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "  Members", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                Text(
+                    text = if (members.isEmpty()) "Choose the habits this combo increments"
+                    else members.sorted().joinToString(" · "),
+                    color = Color(0xFF666666), fontSize = 10.sp
+                )
+            }
+            Button(
+                onClick = { showMemberPicker = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A3A4A)),
+                modifier = Modifier.height(32.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+            ) {
+                Text("Edit", fontSize = 11.sp, color = Color(0xFF88DDFF))
+            }
+        }
+        if (showMemberPicker) {
+            com.example.tail.ui.settings.SearchableHabitListDialog(
+                title = "Combo members",
+                habits = allHabitNames.filter { it != selectedHabitName },
+                selected = members,
+                onApply = { picked -> onSetComboMembers(selectedHabitName, picked) },
+                onDismiss = { showMemberPicker = false }
+            )
+        }
     }
 
     Spacer(modifier = Modifier.height(6.dp))

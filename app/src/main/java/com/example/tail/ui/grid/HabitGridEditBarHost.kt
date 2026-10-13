@@ -9,6 +9,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.example.tail.data.GitHubMetric
 import com.example.tail.ui.viewmodel.invertHabit
+import com.example.tail.ui.viewmodel.setComboHabitMembers
 import com.example.tail.ui.viewmodel.renameHabit
 import com.example.tail.ui.viewmodel.openNotificationListenerSettings
 import com.example.tail.ui.settings.TextInputOptionsEditorDialog
@@ -55,6 +56,7 @@ import com.example.tail.ui.viewmodel.setWeightsDayValues
 import com.example.tail.ui.viewmodel.setWidgetTimerPrimaryValue
 import com.example.tail.ui.viewmodel.toggleBridgeMovieHabit
 import com.example.tail.ui.viewmodel.toggleCameraHabit
+import com.example.tail.ui.viewmodel.toggleComboInputHabit
 import com.example.tail.ui.viewmodel.toggleConditional
 import com.example.tail.ui.viewmodel.toggleCustomInput
 import com.example.tail.ui.viewmodel.toggleRecordNotif
@@ -179,6 +181,8 @@ internal fun EditBarHost(
         customInputHabits = settings.customInputHabits,
         customInputAmounts = settings.customInputAmounts,
         recordNotifHabits = settings.recordNotifHabits,
+        comboInputHabits = settings.comboInputHabits,
+        comboHabitMembers = settings.comboHabitMembers,
         textInputHabits = settings.textInputHabits,
         textInputOptionsHabits = settings.textInputOptionsHabits,
         sharableTextHabits = settings.sharableTextHabits,
@@ -206,6 +210,8 @@ internal fun EditBarHost(
         onToggleCustomInput = { name -> viewModel.toggleCustomInput(name) },
         onSetCustomInputAmounts = { name, amounts -> viewModel.setCustomInputAmounts(name, amounts) },
         onToggleRecordNotif = { name -> viewModel.toggleRecordNotif(name) },
+        onToggleComboInput = { name -> viewModel.toggleComboInputHabit(name) },
+        onSetComboMembers = { name, members -> viewModel.setComboHabitMembers(name, members) },
         onToggleTextInput = { name -> viewModel.toggleTextInput(name) },
         onToggleTextInputOptions = { name -> viewModel.toggleTextInputOptions(name) },
         onEditTextInputOptions = { name ->
