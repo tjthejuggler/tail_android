@@ -72,6 +72,7 @@ import com.example.tail.QuickCaptureActivity
 import com.example.tail.data.meal.MealLog
 import com.example.tail.data.meal.VisionQueueItem
 import com.example.tail.data.meal.VisionQueueStatus
+import com.example.tail.ui.common.TimeWheelPicker
 import com.example.tail.ui.common.rememberSpeechRecognizer
 import com.example.tail.ui.viewmodel.HabitViewModel
 import com.example.tail.ui.viewmodel.addManualMealLog
@@ -182,9 +183,14 @@ fun MealDetailDialog(
         },
         onError = { voiceError = it }
     )
+    // Timestamp the next AI/voice meal will be logged at. Defaults to "now"
+    // but can be dialled back via the time chip in the AI input card so a
+    // meal eaten earlier can still be recorded with its real time.
+    var entryTimeMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+
     val submitAiParse: () -> Unit = {
         if (voiceText.isNotBlank() && !aiParsing) {
-            viewModel.processVoiceMeal(habitName, voiceText.trim())
+            viewModel.processVoiceMeal(habitName, voiceText.trim(), entryTimeMillis)
             voiceText = ""
         }
     }
@@ -289,7 +295,9 @@ fun MealDetailDialog(
                 onClearMic = { if (isListening) speech.stop() },
                 onSubmit = submitAiParse,
                 voiceError = voiceError,
-                voiceStatus = voiceStatus
+                voiceStatus = voiceStatus,
+                entryTimeMillis = entryTimeMillis,
+                onEntryTimeChange = { entryTimeMillis = it }
             )
 
             // ── Secondary capture actions: photos & quick log ─────────────
@@ -517,8 +525,22 @@ private fun AiInputCard(
     onClearMic: () -> Unit,
     onSubmit: () -> Unit,
     voiceError: String?,
-    voiceStatus: String?
+    voiceStatus: String?,
+    /** Timestamp the parsed meal will be logged at (adjustable via time chip). */
+    entryTimeMillis: Long,
+    onEntryTimeChange: (Long) -> Unit
 ) {
+    var showTimeWheel by remember { mutableStateOf(false) }
+    val entryZdt = remember(entryTimeMillis) {
+        Instant.ofEpochMilli(entryTimeMillis).atZone(ZoneId.systemDefault())
+    }
+    var wheelHour by remember { mutableStateOf(entryZdt.hour) }
+    var wheelMinute by remember { mutableStateOf(entryZdt.minute) }
+    // Keep the wheel in sync when the anchor time changes from outside.
+    LaunchedEffect(entryTimeMillis) {
+        wheelHour = entryZdt.hour
+        wheelMinute = entryZdt.minute
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -544,6 +566,51 @@ private fun AiInputCard(
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(
+                    text = if (showTimeWheel) "Done"
+                    else "🕒 " + mealTimeFormat.format(Date(entryTimeMillis)),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { showTimeWheel = !showTimeWheel }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+            if (showTimeWheel) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    TimeWheelPicker(
+                        hour24 = wheelHour,
+                        minute = wheelMinute,
+                        onTimeChange = { h, m ->
+                            wheelHour = h
+                            wheelMinute = m
+                            // Apply the picked time-of-day onto today's date
+                            // (keeps the current day even past midnight edges).
+                            val cal = java.util.Calendar.getInstance().apply {
+                                timeInMillis = entryTimeMillis
+                                set(java.util.Calendar.HOUR_OF_DAY, h)
+                                set(java.util.Calendar.MINUTE, m)
+                                set(java.util.Calendar.SECOND, 0)
+                                set(java.util.Calendar.MILLISECOND, 0)
+                            }
+                            onEntryTimeChange(cal.timeInMillis)
+                        },
+                        compact = true
                     )
                 }
             }

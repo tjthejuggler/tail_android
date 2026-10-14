@@ -443,7 +443,12 @@ fun HabitViewModel.deleteMealLog(habitName: String, logId: String) {
  * title/calories/macros/tags/ratings — no photo needed. Merges into the
  * active meal group when one exists (no extra increment).
  */
-fun HabitViewModel.processVoiceMeal(habitName: String, transcript: String) {
+fun HabitViewModel.processVoiceMeal(
+    habitName: String,
+    transcript: String,
+    /** Timestamp the meal is logged at (defaults to now; back-datable via UI). */
+    entryTimeMillis: Long = System.currentTimeMillis()
+) {
     viewModelScope.launch(Dispatchers.IO) {
         _mealAiParsing.value = true
         try {
@@ -467,7 +472,7 @@ fun HabitViewModel.processVoiceMeal(habitName: String, transcript: String) {
                 }
             }
 
-            val now = System.currentTimeMillis()
+            val now = entryTimeMillis
             val active = mealLogRepo.findActiveGroup(habitName, now)
             if (active != null) {
                 // No newTimestamp: the log must keep the time its habit stamp
