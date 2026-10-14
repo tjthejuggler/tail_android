@@ -7,6 +7,7 @@ import com.example.tail.ui.viewmodel.incrementHabit
 import com.example.tail.ui.common.TextInputDialog
 import com.example.tail.ui.loading.LoadingMetrics
 import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.deleteTextEntryWithRollForward
 import com.example.tail.ui.viewmodel.incrementHabitWithRollForward
 import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
 import com.example.tail.ui.viewmodel.loadSubtypeTimestampLabels
@@ -247,6 +248,60 @@ internal fun editModeEditEntry(
     // Reload entries after edit
     viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
         setTextEntries(entries)
+    }
+}
+
+/**
+ * Edit-mode "delete text entry" handler with roll-forward support. Mirrors
+ * [editModeEditEntry]: for roll-forward habits on a past date, the roll
+ * forward confirmation popup asks for the end date before the deletion (and
+ * its rolled-forward copies) are removed.
+ */
+internal fun editModeDeleteEntry(
+    name: String,
+    timestamp: String,
+    viewModel: HabitViewModel,
+    settings: com.example.tail.data.AppSettings,
+    selectedDate: java.time.LocalDate,
+    setTextEntries: (List<Pair<String, String>>) -> Unit,
+    onShowRollForward: (RollForwardDialogState) -> Unit
+) {
+    fun reloadEntries() {
+        viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
+            setTextEntries(entries)
+        }
+    }
+    // Check if this is a roll forward habit and we're viewing a past date
+    if (name in settings.rollForwardHabits && selectedDate < java.time.LocalDate.now()) {
+        // Parse the date from the timestamp
+        val dateStr = timestamp.substring(0, 10)
+        val entryDate = com.example.tail.data.parseDate(dateStr)
+        if (entryDate != null) {
+            // Find the next manual date
+            val nextManualDate = settings.rollForwardManualDates[name]?.mapNotNull { dateStr ->
+                com.example.tail.data.parseDate(dateStr)
+            }?.sorted()?.firstOrNull { it > entryDate }
+            val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
+            // Show roll forward confirmation dialog
+            onShowRollForward(
+                RollForwardDialogState(
+                    habitName = name,
+                    actionType = "text",
+                    startDate = entryDate,
+                    initialEndDate = endDate,
+                    onConfirm = { confirmedEndDate ->
+                        viewModel.deleteTextEntryWithRollForward(name, timestamp, confirmedEndDate) {
+                            reloadEntries()
+                        }
+                    }
+                )
+            )
+            return
+        }
+    }
+    // Normal delete without roll forward
+    viewModel.deleteTextEntry(name, timestamp) {
+        reloadEntries()
     }
 }
 

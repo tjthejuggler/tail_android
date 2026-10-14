@@ -410,13 +410,15 @@ internal fun EditBarHost(
             )
         },
         onDeleteTextEntry = { name, timestamp ->
-            viewModel.deleteTextEntry(name, timestamp) {
-                // Reload entries after delete completes so the
-                // removed row vanishes instantly from the list.
-                viewModel.loadTextEntriesWithTimestamps(name, selectedDate) { entries ->
-                    setEditModeTextEntries(entries)
-                }
-            }
+            editModeDeleteEntry(
+                name = name,
+                timestamp = timestamp,
+                viewModel = viewModel,
+                settings = settings,
+                selectedDate = selectedDate,
+                setTextEntries = setEditModeTextEntries,
+                onShowRollForward = onShowRollForward
+            )
         },
         habitNotes = settings.habitNotes,
         onSetHabitNote = { name, note -> viewModel.setHabitNote(name, note) },

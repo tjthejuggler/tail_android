@@ -1383,6 +1383,65 @@ fun HabitViewModel.updateTextEntryWithRollForward(
 }
 
 /**
+ * Deletes a text entry for [habitName] and, for roll-forward habits, also
+ * removes the rolled-forward copies (noon keys carrying the same text) on
+ * every date from the entry's date + 1 through [customEndDate].
+ * The base deletion (text log key + increment timestamp + count sync) reuses
+ * [deleteTextEntry]; this wrapper only adds the rolled-forward cleanup.
+ */
+fun HabitViewModel.deleteTextEntryWithRollForward(
+    habitName: String,
+    timestamp: String,
+    customEndDate: LocalDate,
+    onComplete: () -> Unit = {}
+) {
+    // Internal-first: works with no external file (null URI = internal only).
+    val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
+    viewModelScope.launch {
+        try {
+            // Capture the deleted text BEFORE the base deletion removes it.
+            val deletedText = textInputRepo.loadTextLog(uri, context, habitName)[timestamp] ?: ""
+
+            // Base delete: text key + corresponding timestamp + count sync.
+            deleteTextEntry(habitName, timestamp) {
+                viewModelScope.launch {
+                    try {
+                        if (deletedText.isNotBlank()) {
+                            val dateStr = timestamp.substring(0, 10)
+                            val entryDate = com.example.tail.data.parseDate(dateStr)
+                            if (entryDate != null && entryDate < customEndDate) {
+                                // Collect the rolled-forward noon keys in range whose
+                                // text matches the deleted entry (a manual entry with
+                                // different text that day must survive).
+                                val log = textInputRepo.loadTextLog(uri, context, habitName)
+                                val keys = mutableListOf<String>()
+                                var d = entryDate.plusDays(1)
+                                val fmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                                while (!d.isAfter(customEndDate)) {
+                                    val key = java.time.LocalDateTime.of(d, java.time.LocalTime.NOON).format(fmt)
+                                    if (log[key] == deletedText) keys.add(key)
+                                    d = d.plusDays(1)
+                                }
+                                if (keys.isNotEmpty()) {
+                                    textInputRepo.deleteTextEntries(uri, context, keys, habitName = habitName)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        _errorMessage.value = "Failed to roll forward text deletion: ${e.message}"
+                    } finally {
+                        onComplete()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            _errorMessage.value = "Failed to delete text entry: ${e.message}"
+            onComplete()
+        }
+    }
+}
+
+/**
  * Sets a text entry with roll forward to a specified end date.
  * This is used when the user confirms the roll forward dialog.
  */
