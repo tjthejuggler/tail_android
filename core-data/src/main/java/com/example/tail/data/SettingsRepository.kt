@@ -104,6 +104,11 @@ private val KEY_CONDITIONAL_LINK_AMOUNTS = stringPreferencesKey("conditional_lin
 // Per-link "feed minutes" flags (source habit → linked habit → 1), stored
 // with the nested-map codec; absent link = off.
 private val KEY_CONDITIONAL_LINK_FEED_MINUTES = stringPreferencesKey("conditional_link_feed_minutes")
+// Episode habit type keys ("Injury (episode)")
+private val KEY_EPISODE_HABITS = stringSetPreferencesKey("episode_habits")
+private val KEY_EPISODE_FILE_URIS = stringPreferencesKey("episode_file_uris")
+// One-time legacy-Injured→episode migration flag
+private val KEY_INJURY_EPISODE_MIGRATED = booleanPreferencesKey("injury_episode_migrated")
 // Subtyped habit type keys
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
@@ -1084,6 +1089,9 @@ class SettingsRepository(private val context: Context) {
             habitDividers = decodeIntMap(habitDividersRaw),
             conditionalHabits = prefs[KEY_CONDITIONAL_HABITS] ?: emptySet(),
             conditionalLinkedHabits = decodeLinkedHabitsMap(conditionalLinkedHabitsRaw),
+            episodeHabits = prefs[KEY_EPISODE_HABITS] ?: emptySet(),
+            episodeFileUris = decodeFileUriMap(prefs[KEY_EPISODE_FILE_URIS] ?: ""),
+            injuryEpisodeMigrated = prefs[KEY_INJURY_EPISODE_MIGRATED] ?: false,
             subtypedHabits = prefs[KEY_SUBTYPED_HABITS] ?: emptySet(),
             habitSubtypes = decodeSubtypesMap(habitSubtypesRaw),
             subtypeDataFileUris = decodeFileUriMap(subtypeDataFileUrisRaw),
@@ -1525,6 +1533,19 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that have the "subtyped" type enabled. */
     suspend fun saveSubtypedHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_SUBTYPED_HABITS] = habits }
+    }
+
+    /** Episode habit type ("Injury (episode)") — type set, per-habit episode file URIs, migration flag. */
+    suspend fun saveEpisodeHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_EPISODE_HABITS] = habits }
+    }
+
+    suspend fun saveEpisodeFileUris(uris: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_EPISODE_FILE_URIS] = encodeFileUriMap(uris) }
+    }
+
+    suspend fun saveInjuryEpisodeMigrated(done: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_INJURY_EPISODE_MIGRATED] = done }
     }
 
     /** Saves the map of habit name → ordered list of subtype names. */

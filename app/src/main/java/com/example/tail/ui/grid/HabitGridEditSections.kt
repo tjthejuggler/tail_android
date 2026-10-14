@@ -480,6 +480,7 @@ internal fun SpecialHabitTypesSection(
     mediaContent: @Composable () -> Unit,
     garminContent: @Composable () -> Unit,
     environmentContent: @Composable () -> Unit = {},
+    episodeContent: @Composable () -> Unit = {},
     githubContent: @Composable () -> Unit,
     movieBridgeContent: @Composable () -> Unit
 ) {
@@ -525,6 +526,7 @@ internal fun SpecialHabitTypesSection(
         mediaContent()
         garminContent()
         environmentContent()
+        episodeContent()
         githubContent()
         movieBridgeContent()
     }

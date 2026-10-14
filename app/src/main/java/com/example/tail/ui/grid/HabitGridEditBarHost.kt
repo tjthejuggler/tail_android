@@ -77,6 +77,7 @@ import com.example.tail.ui.viewmodel.toggleSecondaryValueFallbackHabit
 import com.example.tail.ui.viewmodel.toggleSecondaryValueHabit
 import com.example.tail.ui.viewmodel.toggleSharableText
 import com.example.tail.ui.viewmodel.toggleSubtyped
+import com.example.tail.ui.viewmodel.toggleEpisodeHabit
 import com.example.tail.ui.viewmodel.toggleTextInput
 import com.example.tail.ui.viewmodel.toggleTextInputOptions
 import com.example.tail.ui.viewmodel.toggleTimeless
@@ -251,6 +252,8 @@ internal fun EditBarHost(
         onBackfillConditional = onBackfillConditional,
         onToggleSubtyped = { name -> viewModel.toggleSubtyped(name) },
         onSetSubtypes = { name, types -> viewModel.setHabitSubtypes(name, types) },
+        episodeHabits = settings.episodeHabits,
+        onToggleEpisode = { name -> viewModel.toggleEpisodeHabit(name) },
         sleepHabits = settings.sleepHabits,
         sleepHabitVariants = settings.sleepHabitVariants,
         onSetSleepVariant = { name, variant -> viewModel.setSleepVariant(name, variant) },

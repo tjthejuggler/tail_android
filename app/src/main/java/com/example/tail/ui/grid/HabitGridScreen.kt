@@ -238,6 +238,7 @@ import com.example.tail.ui.viewmodel.submitComboHabit
 import com.example.tail.ui.viewmodel.confirmPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.isMovieBridgeHabit
 import com.example.tail.ui.viewmodel.loadSubtypeBreakdown
+import com.example.tail.ui.viewmodel.loadEpisodes
 import com.example.tail.ui.viewmodel.loadSubtypeTimestampLabels
 import com.example.tail.ui.viewmodel.saveSubtypeIncrement
 import com.example.tail.ui.viewmodel.saveTextEntries
@@ -907,6 +908,9 @@ fun HabitGridScreen(
     var comboDialogHabit by remember { mutableStateOf<String?>(null) }
     // Subtype increment dialog state
     var subtypeDialogHabit by remember { mutableStateOf<Habit?>(null) }
+    // Injury (episode) dialog: habit + loaded episodes (open episode → update mode)
+    var episodeDialogHabit by remember { mutableStateOf<Habit?>(null) }
+    var episodeDialogEpisodes by remember { mutableStateOf<List<com.example.tail.data.InjuryEpisode>>(emptyList()) }
     var subtypeDialogBreakdown by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     // Weights input dialog state (weights-type habits)
     var weightsDialogHabit by remember { mutableStateOf<Habit?>(null) }
@@ -1735,6 +1739,15 @@ fun HabitGridScreen(
                                     viewModel.loadSubtypeBreakdown(habit.name) { breakdown ->
                                         subtypeDialogBreakdown = breakdown
                                         subtypeDialogHabit = habit
+                                    }
+                                }
+                                // Injury (episode) type: tapping opens the episode
+                                // dialog — NEW episode when none is open, "Update
+                                // episode" (severity/note/resolve) while one is.
+                                habit.name in settings.episodeHabits -> {
+                                    viewModel.loadEpisodes(habit.name) { episodes ->
+                                        episodeDialogEpisodes = episodes
+                                        episodeDialogHabit = habit
                                     }
                                 }
                                 habit.name in settings.weightsHabits -> weightsDialogHabit = habit
@@ -2741,6 +2754,16 @@ fun HabitGridScreen(
             viewModel = viewModel,
             lizardShimmerGen = lizardShimmerGen,
             onDismiss = { subtypeDialogHabit = null }
+        )
+    }
+
+    // Injury (episode) dialog — create on onset, update/resolve while open.
+    episodeDialogHabit?.let { habit ->
+        InjuryEpisodeDialog(
+            habitName = habit.name,
+            openEpisode = episodeDialogEpisodes.lastOrNull { it.resolvedDate == null },
+            viewModel = viewModel,
+            onDismiss = { episodeDialogHabit = null }
         )
     }
 

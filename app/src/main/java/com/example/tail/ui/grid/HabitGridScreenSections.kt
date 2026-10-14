@@ -1944,6 +1944,8 @@ internal fun EditModeControlBar(
     onToggleConditionalFeedPoints: (String) -> Unit = {},
     subtypedHabits: Set<String>,
     habitSubtypes: Map<String, List<String>>,
+    episodeHabits: Set<String> = emptySet(),
+    onToggleEpisode: (String) -> Unit = {},
     allHabitNames: List<String>,
     rollForwardHabits: Set<String> = emptySet(),
     rollForwardManualDates: Map<String, Set<String>> = emptyMap(),
@@ -2926,7 +2928,6 @@ internal fun EditModeControlBar(
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 
-                    Spacer(modifier = Modifier.height(6.dp))
 
                     // ── Long-press action selector ────────────────────────────
                     LongPressActionSection(
@@ -3456,6 +3457,34 @@ internal fun EditModeControlBar(
                                     selectedHabitName = selHabitName,
                                     garminHabitLinks = garminHabitLinks,
                                     onSetGarminLink = onSetGarminLink
+                                )
+                            }
+                        },
+                        episodeContent = {
+                            // ── Injury (episode) toggle ─────────────────────────
+                            val isEpisode = selHabitName in episodeHabits
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(text = "Injury (episode)", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                    Text(
+                                        text = if (isEpisode) "Episodic: log onset, update, resolve"
+                                        else "Track injuries as dated episodes",
+                                        color = Color(0xFF888888), fontSize = 10.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = isEpisode,
+                                    onCheckedChange = { onToggleEpisode(selHabitName) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFF44DDAA),
+                                        checkedTrackColor = Color(0xFF0A3A2A),
+                                        uncheckedThumbColor = Color(0xFF888888),
+                                        uncheckedTrackColor = Color(0xFF333333)
+                                    )
                                 )
                             }
                         },

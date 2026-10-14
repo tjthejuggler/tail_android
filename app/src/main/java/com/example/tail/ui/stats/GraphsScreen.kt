@@ -79,7 +79,10 @@ import com.example.tail.ui.viewmodel.getAvailableMetrics
 import com.example.tail.ui.viewmodel.getImdbRatingsForDate
 import com.example.tail.ui.viewmodel.getSelectedMetrics
 import com.example.tail.ui.viewmodel.hasImdbRatings
+import com.example.tail.ui.viewmodel.isEpisodeHabit
 import com.example.tail.ui.viewmodel.isGithubHabit
+import com.example.tail.ui.viewmodel.loadEpisodes
+import com.example.tail.ui.viewmodel.loadEpisodesForGraph
 import com.example.tail.ui.viewmodel.isMaxOneHabit
 import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
 import com.example.tail.ui.viewmodel.isSleepHabit
@@ -193,6 +196,10 @@ fun GraphsPanel(
     // selected graph point (loads asynchronously, like the text entries).
     var subtypeSessionsForPoint by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var subtypeDayTotalsForPoint by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    // Episode ("Injury") habits: the episode covering the selected day.
+    var episodeForPoint by remember {
+        mutableStateOf<com.example.tail.data.InjuryEpisode?>(null)
+    }
     
     // Text filter state
     var showFilterDialog by remember { mutableStateOf(false) }
@@ -232,6 +239,11 @@ fun GraphsPanel(
             if (viewModel.isTextInputHabit(habitName)) {
                 viewModel.loadTextEntriesForGraph(habitName)
             }
+            // Load episodes for injury-episode habits (severity-over-time
+            // series + day-click details).
+            if (viewModel.isEpisodeHabit(habitName)) {
+                viewModel.loadEpisodesForGraph(habitName)
+            }
         }
     }
 
@@ -252,6 +264,19 @@ fun GraphsPanel(
             } else {
                 textEntriesForPoint = emptyList()
                 imdbRatingsForPoint = emptyMap()
+            }
+            if (viewModel.isEpisodeHabit(point.habitName)) {
+                viewModel.loadEpisodes(point.habitName) { episodes ->
+                    episodeForPoint = episodes.firstOrNull { ep ->
+                        val onset = runCatching { java.time.LocalDate.parse(ep.onsetDate) }.getOrNull()
+                        val end = ep.resolvedDate?.let {
+                            runCatching { java.time.LocalDate.parse(it) }.getOrNull()
+                        } ?: java.time.LocalDate.now()
+                        onset != null && !point.date.isBefore(onset) && !point.date.isAfter(end)
+                    }
+                }
+            } else {
+                episodeForPoint = null
             }
             if (viewModel.isDatedEntryHabit(point.habitName)) {
                 viewModel.loadDatedEntriesForDate(point.habitName, point.date) { chunks ->
@@ -722,6 +747,54 @@ fun GraphsPanel(
                                         color = Color(0xFFFFCC66),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+
+                        // Episode ("Injury") details — structured episode info
+                        // for the injury covering the selected day.
+                        if (episodeForPoint != null && viewModel.isEpisodeHabit(point.habitName)) {
+                            val ep = episodeForPoint!!
+                            val typeLabel = com.example.tail.ui.grid.INJURY_TYPES
+                                .firstOrNull { it.first == ep.type }?.second ?: ep.type
+                            val partLabel = com.example.tail.ui.grid.INJURY_BODY_PARTS
+                                .firstOrNull { it.first == ep.bodyPart }?.second
+                                ?: ep.bodyPart
+                            val sideLabel = com.example.tail.ui.grid.INJURY_SIDES
+                                .firstOrNull { it.first == ep.side }?.second ?: ep.side
+                            val daySeverity = ep.severityByDay[
+                                com.example.tail.data.dateString(point.date)
+                            ]
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
+                            ) {
+                                HorizontalDivider(color = Color(0xFF334433), thickness = 0.5.dp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Injury: $typeLabel — $partLabel" +
+                                        (if (ep.side != "na") " ($sideLabel)" else "") +
+                                        "  ·  onset ${ep.onsetDate}" +
+                                        (ep.resolvedDate?.let { " · resolved $it" } ?: " · OPEN"),
+                                    color = Color(0xFFFF8866),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                daySeverity?.let {
+                                    Text(
+                                        text = "Severity this day: $it",
+                                        color = Color(0xFFCCAA88),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                if (ep.note.isNotBlank()) {
+                                    Text(
+                                        text = "\u201C${ep.note}\u201D",
+                                        color = Color(0xFFCCEECC),
+                                        fontSize = 11.sp,
+                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
                                     )
                                 }
                             }

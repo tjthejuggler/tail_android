@@ -1211,6 +1211,20 @@ data class AppSettings(
     val subtypedHabits: Set<String> = emptySet(),
 
     /**
+     * Habits that use EPISODE capture ("Injury (episode)"): one structured
+     * record per event, created only on onset, closed by an explicit
+     * "Mark resolved" action. Never daily rows — the daily habitsdb value is
+     * a DERIVED injured_today flag (1 between onset and resolved date).
+     */
+    val episodeHabits: Set<String> = emptySet(),
+
+    /** Maps episode habit name → SAF URI of the per-habit episodes JSON file. */
+    val episodeFileUris: Map<String, String> = emptyMap(),
+
+    /** One-time migration flag: legacy daily "Injured" habit → episode type. */
+    val injuryEpisodeMigrated: Boolean = false,
+
+    /**
      * Habits that have the "sleep" type enabled — the sleep-suite suite:
      * each habit is additionally mapped in [sleepHabitVariants] to either
      * SLEEP_TIME (bed time + room temperature + conditions text with

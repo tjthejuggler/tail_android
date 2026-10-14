@@ -16,6 +16,7 @@ import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
 import com.example.tail.data.BridgeClient
 import com.example.tail.data.movie.BridgeMovie
+import com.example.tail.data.InjuryEpisode
 import com.example.tail.data.chess.ChessComRepository
 import com.example.tail.data.chess.ChessComType
 import com.example.tail.data.chess.DailyStatsMap
@@ -236,6 +237,8 @@ class HabitViewModel(
     
     // Cache for text entries used in graph filtering
     internal val _textEntriesCache = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
+    /** Episode-habit data cache (habit → episodes) for the graph, mirroring [_textEntriesCache]. */
+    internal val _episodesCache = MutableStateFlow<Map<String, List<InjuryEpisode>>>(emptyMap())
     val textEntriesCache: StateFlow<Map<String, Map<String, String>>> = _textEntriesCache.asStateFlow()
 
     // ── Deferred conditional feeds into subtyped habits ────────────────────
@@ -1597,6 +1600,11 @@ class HabitViewModel(
         textFilter: String = ""
     ): List<GraphDataPoint> {
         val isMeal = isMealHabit(habitName)
+        // Episode ("Injury") habits: the DB value is the binary injured flag;
+        // a recorded per-day severity rating overrides it so the graph line
+        // shows how the intensity changed over the course of the episode.
+        val isEpisode = habitName in _settings.value.episodeHabits
+        val episodeCache = if (isEpisode) _episodesCache.value[habitName] else null
         // Garmin-linked habits keep their raw values in the Garmin cache; the
         // JSON key only holds the derived per-day points (and may not exist
         // yet). A missing key must not blank the whole graph — fall through
@@ -1715,6 +1723,13 @@ class HabitViewModel(
             }
 
             
+            // Per-day episode severity (1..5) when rated that day
+            // (null-safe: episodes deserialized before the field existed
+            // can carry a null map despite the load-time sanitizer)
+            val episodeSeverity = episodeCache
+                ?.firstOrNull { it.severityByDay?.containsKey(ds) == true }
+                ?.severityByDay?.get(ds)
+             
             // Get Garmin value if this is a Garmin-linked habit
             val garminVal = if (garminType != null) {
                 when (garminType) {
@@ -1781,8 +1796,8 @@ class HabitViewModel(
                 GraphDataPoint(
                     date = cursor,
                     dateStr = ds,
-                    rawValue = filteredRaw,
-                    pointsValue = pointsVal,
+                    rawValue = episodeSeverity ?: filteredRaw,
+                    pointsValue = episodeSeverity ?: pointsVal,
                     garminValue = garminVal,
                     secondaryValue = secVal,
                     tertiaryValue = tertiaryEntries?.get(ds),

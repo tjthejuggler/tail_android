@@ -196,6 +196,16 @@ internal suspend fun HabitViewModel.catchUpAndLoad(uri: Uri) {
             performRecordReseedMigration()
         }
 
+        // ── One-time Injury (episode) migration ─────────────────────────
+        // Converts the legacy daily "Injured" checkbox+text habit into the
+        // structured episode type: collapses the daily status log into one
+        // dated episode, deletes phantom zero-point text rows, rewrites the
+        // daily values as the derived injured_today flag, and switches the
+        // habit's type flags in settings.
+        if (!_settings.value.injuryEpisodeMigrated) {
+            performInjuryEpisodeMigration(uri)
+        }
+
         // ── One-time first-class minutes-slot migration ────────────────
         // Timer features used to write minutes into the generic secondary
         // slot; move them to the dedicated minutes: slot.
@@ -371,6 +381,15 @@ internal suspend fun HabitViewModel.performRollForwardIfNeeded() {
     if (rollForwardLastDate == today) {
         Log.d(TAG, "Roll forward already performed for $today, skipping")
         return
+    }
+
+    // Episode habits ("Injury (episode)"): keep today's DERIVED daily flag
+    // correct — 1 while an episode is open, 0 otherwise. Independent of the
+    // roll-forward habit set, so it runs even with no roll-forward habits.
+    try {
+        performEpisodeDailyFlagMaintenance()
+    } catch (e: Exception) {
+        Log.w(TAG, "Episode daily flag maintenance failed: ${e.message}")
     }
     
     // Skip if no roll forward habits are configured
@@ -1529,7 +1548,10 @@ fun HabitViewModel.setTextEntriesForDateWithRollForward(
                         baseTimestamp,
                         date.plusDays(1),
                         customEndDate,
-                        habitName = habitName
+                        habitName = habitName,
+                        // Corruption guard: text may never land on a day with
+                        // 0 points (the phantom "Pulled muscle" rows bug).
+                        includeDate = { hasPointsOnDate(habitName, it) }
                     )
                 }
 

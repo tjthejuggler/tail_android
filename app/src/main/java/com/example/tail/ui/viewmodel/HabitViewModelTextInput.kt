@@ -420,7 +420,10 @@ fun HabitViewModel.saveTextEntry(
                         timestamp,
                         entryDate.plusDays(1),
                         endDate,
-                        habitName = habitName
+                        habitName = habitName,
+                        // Corruption guard: text may never land on a day with
+                        // 0 points (the phantom "Pulled muscle" rows bug).
+                        includeDate = { hasPointsOnDate(habitName, it) }
                     )
                 }
             }
@@ -527,7 +530,10 @@ fun HabitViewModel.saveTextEntries(
                         timestamp,
                         entryDate.plusDays(1),
                         endDate,
-                        habitName = habitName
+                        habitName = habitName,
+                        // Corruption guard: text may never land on a day with
+                        // 0 points (the phantom "Pulled muscle" rows bug).
+                        includeDate = { hasPointsOnDate(habitName, it) }
                     )
                 }
             }

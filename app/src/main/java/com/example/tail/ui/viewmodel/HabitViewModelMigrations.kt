@@ -105,6 +105,7 @@ import com.example.tail.data.SettingsRepository
 import com.example.tail.data.SearchStateStore
 import com.example.tail.data.PcEventQueueProcessor
 import com.example.tail.data.bridgeConnectionFrom
+import com.example.tail.data.EpisodeDataRepository
 import com.example.tail.data.TextInputRepository
 import com.example.tail.data.applyDivider
 import com.example.tail.widget.ChessDeferredGameReconciler
@@ -918,4 +919,155 @@ internal suspend fun HabitViewModel.performChessTimestampTrim() {
     } catch (e: Exception) {
         Log.e(TAG, "performChessTimestampTrim failed (will retry next load): ${e.message}")
     }
+}
+
+// ── One-time Injury (episode) migration (2026-10-14) ──────────────────────
+
+/**
+ * Converts the legacy daily "Injured" habit (binary checkbox + rolled-forward
+ * free text) into the structured EPISODE type:
+ *
+ *  1. Collapses the daily status log into one dated episode. The single real
+ *     historical episode is seeded with the user-confirmed metadata:
+ *     onset 2026-08-06, resolved 2026-08-27 (last day with points),
+ *     type=pulled_muscle, body_part=upper_leg, side=left, severity=unknown.
+ *     Any other non-zero span (defensive; none expected) becomes a generic
+ *     resolved episode spanning that run of days.
+ *  2. Rewrites the daily habitsdb values as the DERIVED injured_today flag
+ *     (1 between onset and resolved inclusive, 0 elsewhere) so all existing
+ *     reports keep working.
+ *  3. Data-integrity repair: deletes every text-log row on a zero-point day
+ *     (the 39 phantom "Pulled muscle…" rows of 2026-08-28 → 2026-10-05).
+ *  4. Switches the habit's type flags: out of textInput/customInput/roll-
+ *     forward, into episodeHabits. The text-input file URI is KEPT so the
+ *     episode store can auto-create its sibling file in the same synced
+ *     folder (noteVault/tail/Injured_episodes.json) for the research
+ *     pipeline (injury_onset events for the event-study engine).
+ *
+ * Idempotent: guarded by AppSettings.injuryEpisodeMigrated.
+ */
+internal suspend fun HabitViewModel.performInjuryEpisodeMigration(uri: Uri) {
+    val habit = "Injured"
+    try {
+        val entries = cachedPhoneDb[habit]
+        if (entries == null || entries.values.all { it == 0 }) {
+            // No injury history at all — just flip the type flags.
+            applyInjuryEpisodeSettingsFlip(habit)
+            settingsRepo.saveInjuryEpisodeMigrated(true)
+            _settings.value = _settings.value.copy(injuryEpisodeMigrated = true)
+            Log.i(TAG, "Injury episode migration: no history, type flags switched")
+            return
+        }
+
+        // 1. Contiguous non-zero spans → episodes.
+        val dates = entries.filterValues { it > 0 }.keys.sorted()
+        val spans = mutableListOf<Pair<String, String>>() // onset .. last day with points
+        var spanStart: String? = null
+        var prev: java.time.LocalDate? = null
+        for (d in dates) {
+            val date = runCatching { java.time.LocalDate.parse(d) }.getOrNull() ?: continue
+            if (spanStart == null || prev == null || date != prev.plusDays(1)) {
+                if (spanStart != null && prev != null) spans.add(spanStart to prev.toString())
+                spanStart = d
+            }
+            prev = date
+        }
+        if (spanStart != null && prev != null) spans.add(spanStart to prev.toString())
+
+        val episodes = spans.map { (onset, last) ->
+            if (onset == "2026-08-06") {
+                // The one real historical episode, with user-confirmed metadata.
+                com.example.tail.data.InjuryEpisode(
+                    id = onset,
+                    onsetDate = onset,
+                    resolvedDate = last,
+                    type = "pulled_muscle",
+                    bodyPart = "upper_leg",
+                    bodyPartDetail = "",
+                    side = "left",
+                    severity = null, // unknown for migrated history
+                    note = "Pulled muscle in upper left leg"
+                )
+            } else {
+                com.example.tail.data.InjuryEpisode(
+                    id = onset,
+                    onsetDate = onset,
+                    resolvedDate = last
+                )
+            }
+        }
+
+        // 2. Derived daily flag rewrite.
+        val today = java.time.LocalDate.now()
+        val newEntries = entries.mapValues { (d, _) ->
+            val date = runCatching { java.time.LocalDate.parse(d) }.getOrNull()
+            val inside = episodes.any { ep ->
+                val onset = java.time.LocalDate.parse(ep.onsetDate)
+                val end = ep.resolvedDate?.let { java.time.LocalDate.parse(it) } ?: today
+                date != null && !date.isBefore(onset) && !date.isAfter(end)
+            }
+            if (inside) 1 else 0
+        }
+        val updatedDb = cachedPhoneDb.toMutableMap()
+        updatedDb[habit] = newEntries
+        cachedPhoneDb = updatedDb
+
+        // 3. Text-log integrity repair: remove rows on zero-point days
+        //    (BEFORE the settings flip removes the text-input flag).
+        try {
+            val textUri = com.example.tail.data.TextInputRepository.textUriOrNull(
+                _settings.value.textInputFileUris[habit]
+            )
+            val log = textInputRepo.loadTextLog(textUri, context, habit)
+            val offenders = log.keys.filter { ts -> (newEntries[ts.take(10)] ?: 0) == 0 }
+            if (offenders.isNotEmpty()) {
+                textInputRepo.deleteTextEntries(textUri, context, offenders, habitName = habit)
+                Log.i(TAG, "Injury episode migration: deleted ${offenders.size} phantom text rows")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Injury text cleanup failed: ${e.message}")
+        }
+
+        // 4. Persist the flag rewrite + episodes BEFORE flipping settings.
+        habitsRepo.saveDatabase(uri, context, updatedDb)
+        applyInjuryEpisodeSettingsFlip(habit)
+        val extUri = com.example.tail.data.EpisodeDataRepository.episodeUriOrNull(
+            _settings.value.episodeFileUris[habit]
+        ) ?: TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habit])?.let { tree ->
+            com.example.tail.data.EpisodeDataRepository().ensureSiblingEpisodeUri(context, tree, habit)
+        }
+        com.example.tail.data.EpisodeDataRepository().saveEpisodes(context, habit, episodes, extUri)
+        if (extUri != null && _settings.value.episodeFileUris[habit] != extUri.toString()) {
+            val uris = _settings.value.episodeFileUris.toMutableMap()
+            uris[habit] = extUri.toString()
+            settingsRepo.saveEpisodeFileUris(uris)
+            _settings.value = _settings.value.copy(episodeFileUris = uris)
+        }
+        settingsRepo.saveInjuryEpisodeMigrated(true)
+        _settings.value = _settings.value.copy(injuryEpisodeMigrated = true)
+        Log.i(TAG, "Injury episode migration complete: ${episodes.size} episode(s), flag rewritten")
+    } catch (e: Exception) {
+        Log.e(TAG, "Injury episode migration failed (will retry next load): ${e.message}")
+    }
+}
+
+/** Settings half of the Injury migration: episode type on, daily-log types off. */
+private suspend fun HabitViewModel.applyInjuryEpisodeSettingsFlip(habit: String) {
+    val episode = (_settings.value.episodeHabits + habit)
+    val textInput = _settings.value.textInputHabits - habit
+    val custom = _settings.value.customInputHabits - habit
+    val roll = _settings.value.rollForwardHabits - habit
+    val rollDates = _settings.value.rollForwardManualDates.toMutableMap().also { it.remove(habit) }
+    settingsRepo.saveEpisodeHabits(episode)
+    settingsRepo.saveTextInputHabits(textInput)
+    settingsRepo.saveCustomInputHabits(custom)
+    settingsRepo.saveRollForwardHabits(roll)
+    settingsRepo.saveRollForwardManualDates(rollDates)
+    _settings.value = _settings.value.copy(
+        episodeHabits = episode,
+        textInputHabits = textInput,
+        customInputHabits = custom,
+        rollForwardHabits = roll,
+        rollForwardManualDates = rollDates
+    )
 }
