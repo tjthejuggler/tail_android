@@ -264,6 +264,27 @@ fun HabitViewModel.setHabitCountForDate(habitName: String, newCount: Int, date: 
             currentDate = currentDate.plusDays(1)
         }
 
+        // A roll-forward day with 0 points must carry no text: when the count
+        // is zeroed, the rolled-forward text entries (noon keys) on the edited
+        // day and every rolled day are removed (corruption guard).
+        if (storedValue == 0 && habitName in _settings.value.textInputHabits) {
+            val textUri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
+            viewModelScope.launch {
+                try {
+                    val fmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                    val keys = mutableListOf<String>()
+                    var d = date
+                    while (!d.isAfter(endDate)) {
+                        keys.add(java.time.LocalDateTime.of(d, java.time.LocalTime.NOON).format(fmt))
+                        d = d.plusDays(1)
+                    }
+                    textInputRepo.deleteTextEntries(textUri, context, keys, habitName = habitName)
+                } catch (e: Exception) {
+                    _errorMessage.value = "Failed to clear rolled-forward text: ${e.message}"
+                }
+            }
+        }
+
         // Update the database with the filled entries
         updatedDb = updatedDb.toMutableMap()
         updatedDb[habitName] = habitEntries
@@ -429,6 +450,28 @@ fun HabitViewModel.setHabitCountWithRollForward(
             currentDate = currentDate.plusDays(1)
         }
         
+        // A roll-forward day with 0 points must carry no text: when the count
+        // is rolled down to 0, the rolled-forward text entries (noon keys) on
+        // the selected day and every rolled day are removed (corruption guard —
+        // the "points 1→0 but text kept rolling forward" bug).
+        if (storedValue == 0 && habitName in _settings.value.textInputHabits) {
+            val textUri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
+            viewModelScope.launch {
+                try {
+                    val fmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                    val keys = mutableListOf<String>()
+                    var d = selectedDate
+                    while (!d.isAfter(customEndDate)) {
+                        keys.add(java.time.LocalDateTime.of(d, java.time.LocalTime.NOON).format(fmt))
+                        d = d.plusDays(1)
+                    }
+                    textInputRepo.deleteTextEntries(textUri, context, keys, habitName = habitName)
+                } catch (e: Exception) {
+                    _errorMessage.value = "Failed to clear rolled-forward text: ${e.message}"
+                }
+            }
+        }
+
         // Update the database with the filled entries
         updatedDb = updatedDb.toMutableMap()
         updatedDb[habitName] = habitEntries

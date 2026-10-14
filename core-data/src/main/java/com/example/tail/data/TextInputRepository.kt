@@ -519,6 +519,8 @@ class TextInputRepository {
      * Rolls forward a text entry to multiple dates.
      * Copies the text from [sourceTimestamp] to all dates in the range [startDate] to [endDate] (inclusive).
      * For each date in the range, uses noon (12:00:00) as the time.
+     * [includeDate] optionally filters target dates — a roll-forward habit day
+     * with 0 points must not receive rolled text (data-corruption guard).
      * @param habitName If provided, also mirrors the updated log to internal storage.
      * Returns the updated log map.
      */
@@ -528,15 +530,18 @@ class TextInputRepository {
         sourceTimestamp: String,
         startDate: LocalDate,
         endDate: LocalDate,
-        habitName: String? = null
+        habitName: String? = null,
+        includeDate: (LocalDate) -> Boolean = { _ -> true }
     ): Map<String, String> = withContext(Dispatchers.IO) {
         val existing = loadTextLog(uri, context, habitName).toMutableMap()
         val sourceText = existing[sourceTimestamp] ?: return@withContext existing
 
         var currentDate = startDate
         while (!currentDate.isAfter(endDate)) {
-            val targetTimestamp = LocalDateTime.of(currentDate, LocalTime.NOON).format(TEXT_LOG_DATE_FMT)
-            existing[targetTimestamp] = sourceText
+            if (includeDate(currentDate)) {
+                val targetTimestamp = LocalDateTime.of(currentDate, LocalTime.NOON).format(TEXT_LOG_DATE_FMT)
+                existing[targetTimestamp] = sourceText
+            }
             currentDate = currentDate.plusDays(1)
         }
 

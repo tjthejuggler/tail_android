@@ -2244,7 +2244,9 @@ class HabitViewModel(
                         
                         val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
                         
-                        // Roll forward the text to all dates from entryDate+1 to endDate
+                        // Roll forward the text to all dates from entryDate+1 to
+                        // endDate — only to days WITH points (0-points days
+                        // must carry no text).
                         if (entryDate < endDate) {
                             textInputRepo.rollForwardTextEntry(
                                 uri,
@@ -2252,7 +2254,8 @@ class HabitViewModel(
                                 oldTimestamp,
                                 entryDate.plusDays(1),
                                 endDate,
-                            habitName = habitName
+                            habitName = habitName,
+                            includeDate = { hasPointsOnDate(habitName, it) }
                             )
                         }
                     }
@@ -2299,7 +2302,8 @@ class HabitViewModel(
                     
                     val endDate = nextManualDate?.minusDays(1) ?: java.time.LocalDate.now()
                     
-                    // Roll forward the text to all dates from date+1 to endDate
+                    // Roll forward the text to all dates from date+1 to endDate —
+                    // only to days WITH points (0-points days must carry no text).
                     if (date < endDate) {
                         textInputRepo.rollForwardTextEntry(
                             uri,
@@ -2307,7 +2311,8 @@ class HabitViewModel(
                             timestamp,
                             date.plusDays(1),
                             endDate,
-                            habitName = habitName
+                            habitName = habitName,
+                            includeDate = { hasPointsOnDate(habitName, it) }
                         )
                     }
                 }

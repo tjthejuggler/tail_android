@@ -356,6 +356,14 @@ internal suspend fun HabitViewModel.runAutoRestoreIfNeeded(uri: Uri) {
  * 1. The increment amount from yesterday to today
  * 2. The text entry (if any) from yesterday to today
  */
+/**
+ * True when [habitName] has non-zero stored points on [date] in the cached
+ * habits DB. Roll-forward text may only land on days WITH points — a day
+ * rolled forward to 0 points must carry no text (corruption guard).
+ */
+fun HabitViewModel.hasPointsOnDate(habitName: String, date: LocalDate): Boolean =
+    (cachedPhoneDb[habitName]?.get(com.example.tail.data.dateString(date)) ?: 0) > 0
+
 internal suspend fun HabitViewModel.performRollForwardIfNeeded() {
     val today = LocalDate.now()
     
@@ -401,8 +409,14 @@ internal suspend fun HabitViewModel.performRollForwardIfNeeded() {
             Log.d(TAG, "Roll forward: copied $habitName increment from $yesterdayStr to $todayStr: $yesterdayValue")
         }
         
-        // Roll forward text entry (if this habit has text input enabled)
-        if (habitName in _settings.value.textInputHabits) {
+        // Roll forward text entry (if this habit has text input enabled).
+        // Text only rolls to a day that HAS points: if yesterday was zeroed
+        // out, or today's points are 0, the text must NOT propagate (the
+        // "0 points but text kept rolling forward" corruption bug).
+        val todayPointsValue = habitEntries[todayStr] ?: 0
+        if (habitName in _settings.value.textInputHabits &&
+            yesterdayValue != null && yesterdayValue != 0 && todayPointsValue != 0
+        ) {
             // Internal-first: works with no external file (null URI = internal only).
             val textUri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
             try {
@@ -1361,7 +1375,9 @@ fun HabitViewModel.updateTextEntryWithRollForward(
             val entryDate = com.example.tail.data.parseDate(dateStr)
             
             if (entryDate != null && habitName in _settings.value.rollForwardHabits) {
-                // Roll forward the text to all dates from entryDate+1 to customEndDate
+                // Roll forward the text to all dates from entryDate+1 to customEndDate.
+                // Only days WITH points receive text — a roll-forward habit day
+                // set to 0 points must carry no text (corruption guard).
                 if (entryDate < customEndDate) {
                     textInputRepo.rollForwardTextEntry(
                         uri,
@@ -1369,7 +1385,8 @@ fun HabitViewModel.updateTextEntryWithRollForward(
                         oldTimestamp,
                         entryDate.plusDays(1),
                         customEndDate,
-                        habitName = habitName
+                        habitName = habitName,
+                        includeDate = { hasPointsOnDate(habitName, it) }
                     )
                 }
             }
