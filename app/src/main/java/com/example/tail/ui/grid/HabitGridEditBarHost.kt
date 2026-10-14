@@ -31,6 +31,7 @@ import com.example.tail.ui.viewmodel.reapplyGarminHistoryForHabit
 import com.example.tail.ui.viewmodel.removeHabitAppAssociation
 import com.example.tail.ui.viewmodel.setEnvironmentHabitMetric
 import com.example.tail.ui.viewmodel.removeMediaShowFromToday
+import com.example.tail.ui.viewmodel.generateOptionDescriptionFromCamera
 import com.example.tail.ui.viewmodel.renameTextOption
 import com.example.tail.ui.viewmodel.screenIndexForHabit
 import com.example.tail.ui.viewmodel.setBubbleFullScreenMenu
@@ -494,6 +495,11 @@ internal fun EditBarHost(
             },
             onSetDescription = { optionText, description ->
                 viewModel.setTextOptionDescription(editorHabit, optionText, description)
+            },
+            onGenerateDescription = { optionText, instruction, imageFile, onResult ->
+                viewModel.generateOptionDescriptionFromCamera(
+                    editorHabit, optionText, instruction, imageFile, onResult
+                )
             },
             onHideGrouping = { grouping ->
                 viewModel.hideTextOptionGrouping(editorHabit, grouping)

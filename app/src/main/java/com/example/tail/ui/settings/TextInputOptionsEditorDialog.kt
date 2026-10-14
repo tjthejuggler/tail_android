@@ -1,5 +1,9 @@
 package com.example.tail.ui.settings
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +81,9 @@ internal fun TextInputOptionsEditorDialog(
     onSetDescription: (optionText: String, description: String) -> Unit,
     onHideGrouping: (grouping: String) -> Unit,
     onUnhideGrouping: (grouping: String) -> Unit,
+    /** AI-camera assist: analyse the captured photo + instruction (style-
+     *  matched against the habit's other descriptions) into a description. */
+    onGenerateDescription: (optionText: String, instruction: String, imageFile: java.io.File, onResult: (String?) -> Unit) -> Unit,
     onDismiss: () -> Unit
 ) {
     val options = remember(singles, descriptions) {
@@ -90,6 +98,56 @@ internal fun TextInputOptionsEditorDialog(
     // Editable fields, re-seeded whenever a different option is selected
     var editName by remember { mutableStateOf("") }
     var editDescription by remember { mutableStateOf("") }
+
+    // ── AI-camera assist state ──────────────────────────────────────────
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var aiInstruction by rememberSaveable { mutableStateOf("") }
+    var aiBusy by remember { mutableStateOf(false) }
+    var aiError by remember { mutableStateOf<String?>(null) }
+    var aiCaptureFile by remember { mutableStateOf<java.io.File?>(null) }
+
+    val aiCameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { ok ->
+        val file = aiCaptureFile
+        aiCaptureFile = null
+        if (ok && file != null && selected != null) {
+            val optionAtCapture = selected!!.text
+            aiBusy = true
+            aiError = null
+            onGenerateDescription(optionAtCapture, aiInstruction, file) { result ->
+                aiBusy = false
+                if (result != null) {
+                    editDescription = result
+                } else {
+                    aiError = "AI generation failed — check LLM settings (Meals AI)"
+                }
+            }
+        }
+    }
+    fun aiFileUri(file: java.io.File) = androidx.core.content.FileProvider.getUriForFile(
+        context, "com.example.tail.fileprovider", file
+    )
+    val aiPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            aiCaptureFile?.let { aiCameraLauncher.launch(aiFileUri(it)) }
+        } else aiError = "Camera permission denied"
+    }
+    fun launchAiCamera() {
+        if (selected == null) return
+        val file = java.io.File(
+            context.filesDir,
+            "meal_images/option_ai_${java.util.UUID.randomUUID()}.jpg"
+        ).apply { parentFile?.mkdirs() }
+        aiCaptureFile = file
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) aiCameraLauncher.launch(aiFileUri(file))
+        else aiPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
 
     LaunchedEffect(selected) {
         editName = selected?.text ?: ""
@@ -291,6 +349,52 @@ internal fun TextInputOptionsEditorDialog(
                         cursorColor = Color(0xFFFFAA00)
                     )
                 )
+
+                // ── AI camera assist ─────────────────────────────────────
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = aiInstruction,
+                    onValueChange = { aiInstruction = it },
+                    label = { Text("AI instruction (e.g. parse the nutritional data)", color = Color(0xFF888888)) },
+                    singleLine = true,
+                    enabled = !aiBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFF88FFCC),
+                        unfocusedBorderColor = Color(0xFF555555),
+                        cursorColor = Color(0xFF88FFCC)
+                    )
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = { launchAiCamera() },
+                        enabled = !aiBusy,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF1E3A50),
+                            disabledContainerColor = Color(0xFF2A2A2A)
+                        )
+                    ) {
+                        Text(
+                            if (aiBusy) "Analyzing photo…" else "📷 AI camera",
+                            color = if (aiBusy) Color(0xFF888888) else Color(0xFF88CCFF)
+                        )
+                    }
+                    aiError?.let {
+                        Text(
+                            text = it,
+                            color = Color(0xFFFF6666),
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(start = 8.dp, end = 0.dp).weight(1f, fill = false)
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(

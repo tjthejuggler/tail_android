@@ -375,13 +375,15 @@ class TextInputRepository {
         val existing = loadTextLog(uri, context, habitName).toMutableMap()
         var changed = false
         for ((ts, text) in existing) {
-            if (text == oldText) {
+            if (text == oldText || text.trim() == oldText) {
                 existing[ts] = newText
                 changed = true
             } else if (text.contains('\n')) {
                 val parts = text.split('\n')
-                if (oldText in parts) {
-                    existing[ts] = parts.joinToString("\n") { if (it == oldText) newText else it }
+                // Trim-tolerant: the options editor lists parts trimmed, so a
+                // line with stray leading/trailing whitespace must still match.
+                if (parts.any { it == oldText || it.trim() == oldText }) {
+                    existing[ts] = parts.joinToString("\n") { if (it.trim() == oldText) newText else it }
                     changed = true
                 }
             }

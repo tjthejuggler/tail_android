@@ -640,6 +640,26 @@ fun HabitViewModel.renameTextOption(
             textInputRepo.renameOptionValues(
                 uri, context, oldText, newText, habitName = habitName
             )
+            // Rewrite hidden-grouping keys the same way: a hidden combo
+            // ("Iron\nC\nB12") must stay hidden after Iron → Iron 25, so the
+            // stored key is rebuilt line-wise exactly like the log entries.
+            val hiddenAll = _settings.value.textInputHiddenGroupings
+            val hiddenSet = hiddenAll[habitName]
+            if (hiddenSet != null && hiddenSet.isNotEmpty()) {
+                val remapped = hiddenSet.map { grouping ->
+                    if (grouping.contains('\n')) {
+                        grouping.split('\n').joinToString("\n") {
+                            if (it.trim() == oldText) newText else it
+                        }
+                    } else if (grouping.trim() == oldText) newText else grouping
+                }.toSet()
+                if (remapped != hiddenSet) {
+                    val updated = hiddenAll.toMutableMap()
+                    if (remapped.isEmpty()) updated.remove(habitName) else updated[habitName] = remapped
+                    settingsRepo.saveTextInputHiddenGroupings(updated)
+                    _settings.value = _settings.value.copy(textInputHiddenGroupings = updated)
+                }
+            }
             // Carry the description (if any) over to the new option text
             val descriptions = _settings.value.textInputOptionDescriptions.toMutableMap()
             val inner = descriptions[habitName]
@@ -706,6 +726,46 @@ fun HabitViewModel.setTextOptionDescription(
         if (inner.isEmpty()) descriptions.remove(habitName) else descriptions[habitName] = inner
         settingsRepo.saveTextInputOptionDescriptions(descriptions)
         _settings.value = _settings.value.copy(textInputOptionDescriptions = descriptions)
+    }
+}
+
+/**
+ * AI-camera description assist: analyses [imageFile] (a fresh camera capture)
+ * together with the user's [instruction] (e.g. "parse the nutritional data
+ * for these pills") and the descriptions already written for the habit's
+ * OTHER options, producing a description in the established style. The photo
+ * is deleted afterwards — it is only a prompt payload, never stored history.
+ * [onResult] fires on the main thread with the description, or null on failure.
+ */
+fun HabitViewModel.generateOptionDescriptionFromCamera(
+    habitName: String,
+    optionText: String,
+    instruction: String,
+    imageFile: java.io.File,
+    onResult: (String?) -> Unit
+) {
+    viewModelScope.launch {
+        val s = _settings.value
+        val config = com.example.tail.data.meal.VisionConfig(
+            baseUrl = s.mealBaseUrl,
+            apiKey = s.mealApiKey,
+            model = s.mealModel,
+            userSystemPrompt = ""
+        )
+        // Style examples: every described option EXCEPT the one being written
+        // (the current one would bias the LLM toward its old/empty text).
+        val examples = (s.textInputOptionDescriptions[habitName] ?: emptyMap())
+            .filterKeys { it != optionText }
+        val result = try {
+            com.example.tail.data.meal.VisionProcessingService()
+                .describeOptionFromImage(imageFile, config, habitName, optionText, instruction, examples)
+        } catch (e: Exception) {
+            _errorMessage.value = "AI description failed: ${e.message}"
+            null
+        } finally {
+            imageFile.delete()
+        }
+        onResult(result)
     }
 }
 // ── Graph mode ────────────────────────────────────────────────────────────

@@ -443,6 +443,91 @@ class VisionProcessingService {
         }
     }
 
+    // ── Option-description generation (text-input habits) ───────────────
+
+    /**
+     * Generates a private option description for a text-input habit from a
+     * camera photo + a free-form user instruction (e.g. "parse the
+     * nutritional data for these pills").
+     *
+     * The LLM is shown the descriptions already written for the habit's
+     * OTHER options ([exampleDescriptions]) so the new text matches the
+     * user's established format. Returns ONLY the description text, or null
+     * on failure / incomplete config.
+     */
+    suspend fun describeOptionFromImage(
+        imageFile: File,
+        config: VisionConfig,
+        habitName: String,
+        optionText: String,
+        instruction: String,
+        exampleDescriptions: Map<String, String>
+    ): String? = withContext(Dispatchers.IO) {
+        if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
+            Log.w(TAG, "describeOption: LLM config incomplete")
+            return@withContext null
+        }
+        val base64Image = compressAndEncode(imageFile)
+            ?: run {
+                Log.e(TAG, "describeOption: compress/encode failed")
+                return@withContext null
+            }
+
+        val exampleBlock = if (exampleDescriptions.isEmpty()) {
+            "(no existing descriptions for this habit yet — invent a concise, factual format)"
+        } else {
+            exampleDescriptions.entries.take(15).joinToString("\n") { (opt, desc) ->
+                "- \"$opt\" → \"$desc\""
+            }
+        }
+
+        val system = "You write short private descriptions for habit-tracker options. " +
+            "You are given the habit name, the option being described, the user's " +
+            "instruction, a photo of the item, and the descriptions already written " +
+            "for other options of the same habit. Extract the requested information " +
+            "from the photo and write the description in the SAME style, structure " +
+            "and level of detail as the existing examples. Respond with ONLY the " +
+            "description text — no quotes, no preamble, no explanation."
+
+        val userText = "Habit: $habitName\nOption to describe: \"$optionText\"\n" +
+            "User instruction: ${instruction.ifBlank { "Describe this item accurately." }}\n\n" +
+            "Existing descriptions for other options of this habit (match this style):\n" +
+            exampleBlock
+
+        val body = JSONObject().apply {
+            put("model", config.model)
+            put("temperature", 0.2)
+            put("max_tokens", 400)
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "system")
+                    put("content", system)
+                })
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("type", "text")
+                            put("text", userText)
+                        })
+                        put(JSONObject().apply {
+                            put("type", "image_url")
+                            put("image_url", JSONObject().put("url", base64Image))
+                        })
+                    })
+                })
+            })
+        }
+
+        when (val outcome = chatCompletion(buildEndpointUrl(config.baseUrl), body, config)) {
+            is ChatOutcome.Content -> outcome.text.trim().trim('"').ifEmpty { null }
+            else -> {
+                QcDiag.warn("LLM", "describeOption failed: ${(outcome as? ChatOutcome.ErrorNote)?.note ?: "request failed"}")
+                null
+            }
+        }
+    }
+
     // ── Image compression ───────────────────────────────────────────────
 
     /**
