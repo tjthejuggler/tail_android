@@ -122,33 +122,42 @@ class MealLogRepository(private val context: Context) {
     }
 
     /**
-     * Returns the meal group that is still "active" at [at] (default: now) —
-     * i.e. the newest log whose capture-group anchor is within
-     * [MEAL_GROUP_WINDOW_MS]. Captures that land in this window merge into
-     * that meal instead of creating a new one (single meal increment).
+     * Returns the meal group that is "active" at [at] (default: now) —
+     * i.e. the log whose capture-group anchor is nearest to [at] while still
+     * within [MEAL_GROUP_WINDOW_MS] in EITHER direction (back-dating a meal
+     * to the time it was actually eaten must merge with that meal, not the
+     * newest one). Captures that land in this window merge into that meal
+     * instead of creating a new one (single meal increment).
      */
     fun findActiveGroup(
         habitId: String,
         at: Long = System.currentTimeMillis(),
         windowMs: Long = MEAL_GROUP_WINDOW_MS
     ): MealLog? {
-        val recent = loadLogs(habitId).firstOrNull() ?: run {
+        val logs = loadLogs(habitId)
+        if (logs.isEmpty()) {
             QcDiag.log("GROUP", "findActiveGroup('$habitId'): no logs at all → null")
             return null
         }
-        val delta = at - recent.anchorTime()
-        return if (delta <= windowMs) {
+        // Nearest anchor within ±window wins — not just the newest log.
+        val match = logs
+            .map { it to kotlin.math.abs(at - it.anchorTime()) }
+            .filter { (_, delta) -> delta <= windowMs }
+            .minByOrNull { (_, delta) -> delta }
+        return if (match != null) {
+            val (log, delta) = match
             QcDiag.log(
                 "GROUP",
-                "findActiveGroup('$habitId'): ACTIVE group ${QcDiag.short(recent.id)} " +
-                    "'${recent.title}' anchorDeltaMs=$delta ≤ windowMs=$windowMs → merge"
+                "findActiveGroup('$habitId'): ACTIVE group ${QcDiag.short(log.id)} " +
+                    "'${log.title}' |anchorDeltaMs|=$delta ≤ windowMs=$windowMs → merge"
             )
-            recent
+            log
         } else {
+            val newest = logs.first()
             QcDiag.log(
                 "GROUP",
-                "findActiveGroup('$habitId'): newest ${QcDiag.short(recent.id)} too old " +
-                    "(anchorDeltaMs=$delta > windowMs=$windowMs) → null"
+                "findActiveGroup('$habitId'): no anchor within ±windowMs " +
+                    "(newest ${QcDiag.short(newest.id)} anchorDeltaMs=${at - newest.anchorTime()}) → null"
             )
             null
         }
