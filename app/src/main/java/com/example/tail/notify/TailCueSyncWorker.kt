@@ -90,7 +90,9 @@ class TailCueSyncWorker(appContext: Context, params: WorkerParameters) :
                 id = TailCue.askId(cue.id),
                 habitName = "TailCue",
                 type = HabitNotification.TYPE_INFO,
-                title = cue.title,
+                // High-severity cues (e.g. the nightly momentum streak warning)
+                // get a red marker so they stand out in the shade.
+                title = if (cue.severity == "high") "🔴 ${cue.title}" else cue.title,
                 question = if (cue.advice.isBlank()) cue.body
                            else cue.body + "\n\n💡 " + cue.advice,
                 createdAtMillis = System.currentTimeMillis(),

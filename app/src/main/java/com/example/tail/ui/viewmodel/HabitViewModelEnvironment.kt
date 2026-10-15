@@ -324,7 +324,30 @@ fun HabitViewModel.ensureAllEnvironmentMetricHabits() {
             for (metric in missing) {
                 val name = metric.label
                 if (name !in cachedPhoneDb) {
-                    habitsRepo.addHabitToFiles(listOf(uri), context, name)
+                    // A label change (case fix, "Avg" -> "mean", typo fix)
+                    // must reuse the EXISTING habit, not spawn a duplicate:
+                    // rename any legacy-aliased habit to the current label.
+                    val legacy = EnvironmentMetric.legacyLabelIn(metric.key, cachedPhoneDb.keys)
+                    if (legacy != null) {
+                        try {
+                            cachedPhoneDb = habitsRepo.renameHabit(uri, context, legacy, name)
+                            screenHabitCache.clear()
+                            // Re-point settings that still reference the old name
+                            links.remove(legacy)
+                            noPoints.remove(legacy)
+                            _habitScreens.value = _habitScreens.value.map { sc ->
+                                if (legacy in sc.habitNames)
+                                    sc.copy(habitNames = sc.habitNames.map { if (it == legacy) name else it })
+                                else sc
+                            }
+                            Log.i(TAG, "Env habit renamed '$legacy' -> '$name'")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Env habit rename '$legacy' -> '$name' failed: ${e.message}")
+                        }
+                    }
+                    if (name !in cachedPhoneDb) {
+                        habitsRepo.addHabitToFiles(listOf(uri), context, name)
+                    }
                 }
                 links[name] = metric.key
                 noPoints.add(name)

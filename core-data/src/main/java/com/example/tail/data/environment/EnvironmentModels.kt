@@ -266,5 +266,23 @@ enum class EnvironmentMetric(
     companion object {
         fun fromKey(key: String?): EnvironmentMetric? =
             entries.firstOrNull { it.key == key }
+
+        /**
+         * Habit-name spellings used by OLDER app versions, mapped by metric
+         * key. Env habits are created named after [label]; when a label
+         * changes (case fix, "Avg" -> "mean", typo fixes), the backfill
+         * must RENAME the existing legacy habit instead of creating a
+         * duplicate under the new spelling — this table is how it finds it.
+         */
+        private val LEGACY_LABELS: Map<String, List<String>> = mapOf(
+            "temp_max" to listOf("Temperature Max"),
+            "temp_min" to listOf("Temperature Min"),
+            "temp_mean" to listOf("Temperature Avg", "Temperature Mean"),
+            "precipitation" to listOf("Percipitation")
+        )
+
+        /** The first legacy habit name for [key] that exists in [names], or null. */
+        fun legacyLabelIn(key: String, names: Collection<String>): String? =
+            LEGACY_LABELS[key]?.firstOrNull { it in names }
     }
 }
