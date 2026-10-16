@@ -1136,3 +1136,47 @@ async def tailcue_feedback(cid: str, request: Request, api_key: str = Security(v
 def tailcue_take_feedback(take: int = 50, api_key: str = Security(verify_key)):
     """TailCue: consume unconsumed feedback items (marks them consumed)."""
     return {"feedback": _tailcue.take_feedback(take)}
+
+
+# ── Hoot nutrition export (Tail Bridge relay into TailCue) ──────────────────
+
+# Where the relay writes the export so TailCue's ingest_hoot() finds it —
+# the same Syncthing folder Hoot's own SAF export used (HOOT_EXPORT_DIR in
+# TailCue's config; identical default).
+HOOT_RELAY_DIR = os.environ.get("HOOT_EXPORT_DIR", "/home/twain/habitsdb")
+
+
+@app.post("/api/v1/hoot/export", tags=["hoot"])
+async def hoot_export_push(request: Request, api_key: str = Security(verify_key)):
+    """Hoot pushes its daily TailCue export JSON through the bridge.
+
+    The body is stored verbatim as hoot_auto_export_YYYY-MM-DD.json (date
+    taken from the payload's generated_at, else today) in HOOT_RELAY_DIR,
+    exactly where TailCue's ingest_hoot() looks. The phone-side toggle
+    needs no folder configuration — the bridge owns the destination.
+    """
+    raw = await request.body()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty body")
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("not an object")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid JSON: {e}")
+
+    day = str(payload.get("generated_at") or "")[:10]
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        day = datetime.now().strftime("%Y-%m-%d")
+
+    out_dir = Path(HOOT_RELAY_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / f"hoot_auto_export_{day}.json"
+    tmp = target.with_suffix(".json.tmp")
+    tmp.write_bytes(raw)
+    tmp.replace(target)
+    logging.getLogger("tail_bridge.hoot").info(
+        "Hoot export relayed: %s (%d bytes)", target.name, len(raw))
+    return {"ok": True, "file": target.name}

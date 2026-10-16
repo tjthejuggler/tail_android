@@ -82,7 +82,8 @@ internal object CompanionReadEndpoints {
         "value_entries",       // counter/subtyped/timed/dated/sleep daily rows
         "option_descriptions", // /v2/habits/{id}/labels with descriptions
         "change_feed",         // /v2/changes + ContentObserver + broadcast
-        "capability_flags"     // this endpoint
+        "capability_flags",    // this endpoint
+        "bridge_config"        // /v2/bridge_config — Tail Bridge URL+token for companions
     )
 
     // ── Column names ─────────────────────────────────────────────────────────
@@ -131,6 +132,9 @@ internal object CompanionReadEndpoints {
 
     const val COL_LAST_CHANGE_TS = "last_change_ts"
 
+    const val COL_BRIDGE_URL = "bridge_url"
+    const val COL_BRIDGE_TOKEN = "bridge_token"
+
     /** Default projection of the entries endpoint — the union of all row shapes. */
     val ENTRY_COLUMNS = arrayOf(
         COL_ENTRY_ID, COL_HABIT_NAME, COL_ENTRY_TS, COL_VALUE, COL_SUBTYPE, COL_ENTRY_TEXT,
@@ -155,6 +159,46 @@ internal object CompanionReadEndpoints {
     private val TS_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
     // ── Endpoint: capabilities (R6) ──────────────────────────────────────────
+
+    // ── Endpoint: Tail Bridge config (companion relay) ──────────────────────
+
+    /**
+     * One row: [COL_BRIDGE_URL, COL_BRIDGE_TOKEN] — the Tail Bridge server
+     * connection details the app already uses (bridgeUrl / bridgeToken
+     * settings). Lets companion apps (e.g. Hoot's TailCue export) reach the
+     * PC bridge with zero manual configuration. Empty cursor when the
+     * companion kill switch is off or no bridge is configured.
+     */
+    fun queryBridgeConfig(settings: AppSettings?, projection: Array<out String>?): Cursor {
+        val cols = projection ?: arrayOf(COL_BRIDGE_URL, COL_BRIDGE_TOKEN)
+        val cursor = MatrixCursor(cols)
+        if (settings == null || !settings.companionApiEnabled) return cursor
+        // Same resolution rules as BridgeBackupManager: explicit bridgeUrl
+        // first, else derive from the Garmin proxy host; token falls back to
+        // the Garmin app token when no dedicated bridge token is set.
+        val url = settings.bridgeUrl.ifBlank { deriveBridgeUrlFromProxy(settings.garminProxyUrl) }
+        val token = settings.bridgeToken.ifBlank { settings.garminAppToken }
+        if (url.isBlank() || token.isBlank()) return cursor
+        emit(cursor, cols, mapOf(
+            COL_BRIDGE_URL to url,
+            COL_BRIDGE_TOKEN to token
+        ))
+        return cursor
+    }
+
+    /** "http://host:port" from a proxy URL, mirroring HabitViewModelGarmin. */
+    private fun deriveBridgeUrlFromProxy(proxyUrl: String): String {
+        if (proxyUrl.isBlank()) return ""
+        return try {
+            val clean = proxyUrl.trim().trimEnd('/')
+            val uri = java.net.URI(clean)
+            val scheme = uri.scheme ?: "http"
+            val host = uri.host ?: return ""
+            "$scheme://$host:8001"
+        } catch (_: Exception) {
+            ""
+        }
+    }
 
     /** One row: [COL_API_VERSION, COL_MIN_SUPPORTED_VERSION, COL_FEATURES]. */
     fun queryCapabilities(projection: Array<out String>?): Cursor {

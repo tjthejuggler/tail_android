@@ -111,6 +111,7 @@ class HabitsContentProvider : ContentProvider() {
         private const val CODE_V2_ENTRIES = 13
         private const val CODE_V2_LABELS = 14
         private const val CODE_V2_CHANGES = 15
+        private const val CODE_V2_BRIDGE_CONFIG = 16
         private val uriMatcher = UriMatcher(UriMatcher.NO_MATCH).apply {
             addURI(AUTHORITY, PATH_HABITS, CODE_HABITS)
             addURI(AUTHORITY, PATH_TEXT_HABITS, CODE_TEXT_HABITS)
@@ -122,6 +123,7 @@ class HabitsContentProvider : ContentProvider() {
             addURI(AUTHORITY, "v2/habits/*/entries", CODE_V2_ENTRIES)
             addURI(AUTHORITY, "v2/habits/*/labels", CODE_V2_LABELS)
             addURI(AUTHORITY, "v2/changes", CODE_V2_CHANGES)
+            addURI(AUTHORITY, "v2/bridge_config", CODE_V2_BRIDGE_CONFIG)
         }
     }
 
@@ -138,6 +140,8 @@ class HabitsContentProvider : ContentProvider() {
         CODE_TEXT_HABITS -> querySharedTextHabits(projection)
         CODE_TEXT_HABITS_RECENT -> queryRecentTextEntries(uri, projection)
         CODE_V2_CAPABILITIES -> CompanionReadEndpoints.queryCapabilities(projection)
+        CODE_V2_BRIDGE_CONFIG -> CompanionReadEndpoints.queryBridgeConfig(loadSettings(), projection)
+        CODE_V2_BRIDGE_CONFIG -> CompanionReadEndpoints.queryBridgeConfig(loadSettings(), projection)
         CODE_V2_HABITS -> CompanionReadEndpoints.queryV2Habits(loadSettings(), projection)
         CODE_V2_APPS -> CompanionReadEndpoints.queryV2Apps(loadSettings(), projection)
         CODE_V2_ENTRIES -> {
@@ -285,6 +289,8 @@ class HabitsContentProvider : ContentProvider() {
         CODE_TEXT_HABITS -> "vnd.android.cursor.dir/vnd.$AUTHORITY.$PATH_TEXT_HABITS"
         CODE_TEXT_HABITS_RECENT -> "vnd.android.cursor.dir/vnd.$AUTHORITY.text_habits_recent"
         CODE_V2_CAPABILITIES -> "vnd.android.cursor.item/vnd.$AUTHORITY.v2_capabilities"
+        CODE_V2_BRIDGE_CONFIG -> "vnd.android.cursor.item/vnd.$AUTHORITY.v2_bridge_config"
+        CODE_V2_BRIDGE_CONFIG -> "vnd.android.cursor.item/vnd.$AUTHORITY.v2_bridge_config"
         CODE_V2_HABITS -> "vnd.android.cursor.dir/vnd.$AUTHORITY.v2_habits"
         CODE_V2_APPS -> "vnd.android.cursor.dir/vnd.$AUTHORITY.v2_apps"
         CODE_V2_ENTRIES -> "vnd.android.cursor.dir/vnd.$AUTHORITY.v2_entries"
