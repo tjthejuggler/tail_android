@@ -1922,6 +1922,10 @@ internal fun EditModeControlBar(
     onSetComboMembers: (String, Set<String>) -> Unit = { _, _ -> },
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
+    /** Habits with the "characteristics" sub-feature of options enabled. */
+    textInputCharacteristicsHabits: Set<String> = emptySet(),
+    /** Per-habit defined characteristic names (habit → names). */
+    textInputCharacteristics: Map<String, Set<String>> = emptyMap(),
     /** Text-input habits that appear in the system share sheet (ShareTextActivity picker). */
     sharableTextHabits: Set<String> = emptySet(),
     textInputFileUris: Map<String, String>,
@@ -1964,6 +1968,10 @@ internal fun EditModeControlBar(
     onToggleTextInputOptions: (String) -> Unit,
     /** Called when the user taps the Edit button next to the Options toggle. */
     onEditTextInputOptions: (String) -> Unit = {},
+    /** Toggles the "characteristics" sub-feature of options for a habit. */
+    onToggleTextInputCharacteristics: (String) -> Unit = {},
+    /** Opens the characteristics editor popup for the habit. */
+    onEditTextInputCharacteristics: (String) -> Unit = {},
     /** Called when the user toggles the "Sharable" sub-feature for a habit. */
     onToggleSharableText: (String) -> Unit = {},
     onPickTextInputFile: (String) -> Unit,
@@ -2607,7 +2615,11 @@ internal fun EditModeControlBar(
                         onToggleSharableText = onToggleSharableText,
                         onPickTextInputFile = onPickTextInputFile,
                         onCreateTextInputFile = onCreateTextInputFile,
-                        onEditTextInputOptions = onEditTextInputOptions
+                        onEditTextInputOptions = onEditTextInputOptions,
+                        textInputCharacteristicsHabits = textInputCharacteristicsHabits,
+                        textInputCharacteristics = textInputCharacteristics,
+                        onToggleTextInputCharacteristics = onToggleTextInputCharacteristics,
+                        onEditTextInputCharacteristics = onEditTextInputCharacteristics
                     )
 
                     // ── Today's text entries (view/edit) ──────────────────────
@@ -4052,6 +4064,10 @@ internal fun HabitInputModesSection(
     onSetCustomInputAmounts: (String, List<Int>) -> Unit,
     textInputHabits: Set<String>,
     textInputOptionsHabits: Set<String>,
+    /** Habits with the "characteristics" sub-feature of options enabled. */
+    textInputCharacteristicsHabits: Set<String> = emptySet(),
+    /** Per-habit defined characteristic names (habit → names). */
+    textInputCharacteristics: Map<String, Set<String>> = emptyMap(),
     sharableTextHabits: Set<String>,
     textInputFileUris: Map<String, String>,
     onToggleTextInput: (String) -> Unit,
@@ -4061,6 +4077,10 @@ internal fun HabitInputModesSection(
     onCreateTextInputFile: (String) -> Unit = {},
     /** Opens the large past-entries options editor popup for the habit. */
     onEditTextInputOptions: (String) -> Unit = {},
+    /** Toggles the "characteristics" sub-feature of options for a habit. */
+    onToggleTextInputCharacteristics: (String) -> Unit = {},
+    /** Opens the characteristics editor popup for the habit. */
+    onEditTextInputCharacteristics: (String) -> Unit = {},
     /** Habits marked as the "⚡ Combo input" type (batch-input launchers). */
     comboInputHabits: Set<String> = emptySet(),
     /** Called when the user toggles the combo-input type for a habit. */
@@ -4442,6 +4462,51 @@ internal fun HabitInputModesSection(
                     uncheckedTrackColor = Color(0xFF2A2A2A)
                 )
             )
+        }
+
+        // Characteristics sub-sub-toggle — only when options are on.
+        if (isOptions) {
+            Spacer(modifier = Modifier.height(4.dp))
+            val isCharacteristics = selectedHabitName in textInputCharacteristicsHabits
+            val definedCharacteristics = textInputCharacteristics[selectedHabitName]?.sorted() ?: emptyList()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "    Characteristics", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                    Text(
+                        text = if (definedCharacteristics.isEmpty()) {
+                            if (isCharacteristics) "Tag options with named characteristics" else "No tags on options"
+                        } else {
+                            definedCharacteristics.joinToString(" · ")
+                        },
+                        color = Color(0xFF666666), fontSize = 10.sp
+                    )
+                }
+                if (isCharacteristics) {
+                    Button(
+                        onClick = { onEditTextInputCharacteristics(selectedHabitName) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A3A4A)),
+                        modifier = Modifier.height(32.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                    ) {
+                        Text("Edit", fontSize = 11.sp, color = Color(0xFF88DDFF))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Switch(
+                    checked = isCharacteristics,
+                    onCheckedChange = { onToggleTextInputCharacteristics(selectedHabitName) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color(0xFF88DDFF),
+                        checkedTrackColor = Color(0xFF0A3A4A),
+                        uncheckedThumbColor = Color(0xFF666666),
+                        uncheckedTrackColor = Color(0xFF2A2A2A)
+                    )
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(4.dp))

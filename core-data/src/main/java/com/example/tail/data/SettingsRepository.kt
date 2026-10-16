@@ -58,6 +58,12 @@ private val KEY_TEXT_INPUT_OPTION_DESCRIPTIONS = stringPreferencesKey("text_inpu
 // filtered out of the increment popup; history is untouched. Uses the
 // Map<String, Set<String>> codec (see [encodeLinkedHabitsMap]).
 private val KEY_TEXT_INPUT_HIDDEN_GROUPINGS = stringPreferencesKey("text_input_hidden_groupings")
+// "Characteristics" sub-feature of the text-input "options" feature:
+// which habits have it on, their defined characteristic names, and the
+// per-option characteristic assignments (see AppSettings.textInputCharacteristics*).
+private val KEY_TEXT_INPUT_CHARACTERISTICS_HABITS = stringSetPreferencesKey("text_input_characteristics_habits")
+private val KEY_TEXT_INPUT_CHARACTERISTICS = stringPreferencesKey("text_input_characteristics")
+private val KEY_TEXT_INPUT_OPTION_CHARACTERISTICS = stringPreferencesKey("text_input_option_characteristics")
 // Inuit (trivia trainer) integration: master switch + text habits shared with it
 private val KEY_INUIT_INTEGRATION_ENABLED = booleanPreferencesKey("inuit_integration_enabled")
 private val KEY_INUIT_TEXT_HABITS = stringSetPreferencesKey("inuit_text_habits")
@@ -693,6 +699,22 @@ private fun decodeNestedStringMap(raw: String): Map<String, Map<String, String>>
     }.toMap()
 }
 
+// Serialisation helpers for Map<String, Map<String, Set<String>>> (the
+// text-input "characteristics" per-option assignments: habit → option text
+// → set of characteristic names). Reuses the nested-map codec with the set
+// joined by a control char (\u0003) that cannot appear in user-typed text.
+private const val SET_SEP = "\u0003"
+
+private fun encodeNestedStringSetMap(map: Map<String, Map<String, Set<String>>>): String =
+    encodeNestedStringMap(map.mapValues { (_, inner) -> inner.mapValues { (_, set) -> set.joinToString(SET_SEP) } })
+
+private fun decodeNestedStringSetMap(raw: String): Map<String, Map<String, Set<String>>> =
+    decodeNestedStringMap(raw).mapValues { (_, inner) ->
+        inner.mapValues { (_, v) ->
+            if (v.isBlank()) emptySet() else v.split(SET_SEP).filter { it.isNotBlank() }.toSet()
+        }
+    }
+
 // Decodes a nested map whose leaf values are ints (conditional link feed-amount
 // multipliers); entries that fail to parse are dropped.
 private fun decodeNestedIntMap(raw: String): Map<String, Map<String, Int>> =
@@ -1113,6 +1135,9 @@ class SettingsRepository(private val context: Context) {
             valueDisplayLabels = decodeNestedStringMap(prefs[KEY_VALUE_DISPLAY_LABELS] ?: ""),
             textInputOptionDescriptions = decodeNestedStringMap(prefs[KEY_TEXT_INPUT_OPTION_DESCRIPTIONS] ?: ""),
             textInputHiddenGroupings = decodeLinkedHabitsMap(prefs[KEY_TEXT_INPUT_HIDDEN_GROUPINGS] ?: ""),
+            textInputCharacteristicsHabits = prefs[KEY_TEXT_INPUT_CHARACTERISTICS_HABITS] ?: emptySet(),
+            textInputCharacteristics = decodeLinkedHabitsMap(prefs[KEY_TEXT_INPUT_CHARACTERISTICS] ?: ""),
+            textInputOptionCharacteristics = decodeNestedStringSetMap(prefs[KEY_TEXT_INPUT_OPTION_CHARACTERISTICS] ?: ""),
             aiIconsEnabled = prefs[KEY_AI_ICONS_ENABLED] ?: false,
             aiIconsApiKey = prefs[KEY_AI_ICONS_API_KEY] ?: "",
             aiIconsBaseUrl = prefs[KEY_AI_ICONS_BASE_URL] ?: "",
@@ -1402,6 +1427,27 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveTextInputHiddenGroupings(hidden: Map<String, Set<String>>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_TEXT_INPUT_HIDDEN_GROUPINGS] = encodeLinkedHabitsMap(hidden)
+        }
+    }
+
+    /** Saves the set of habits that have the "characteristics" sub-feature enabled. */
+    suspend fun saveTextInputCharacteristicsHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TEXT_INPUT_CHARACTERISTICS_HABITS] = habits
+        }
+    }
+
+    /** Saves the per-habit characteristic name definitions (habit → characteristic names). */
+    suspend fun saveTextInputCharacteristics(characteristics: Map<String, Set<String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TEXT_INPUT_CHARACTERISTICS] = encodeLinkedHabitsMap(characteristics)
+        }
+    }
+
+    /** Saves the per-option characteristic assignments (habit → option text → characteristic names). */
+    suspend fun saveTextInputOptionCharacteristics(assignments: Map<String, Map<String, Set<String>>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TEXT_INPUT_OPTION_CHARACTERISTICS] = encodeNestedStringSetMap(assignments)
         }
     }
 

@@ -1094,6 +1094,34 @@ data class AppSettings(
     val textInputHiddenGroupings: Map<String, Set<String>> = emptyMap(),
 
     /**
+     * Habits that have the "characteristics" sub-feature enabled (a
+     * sub-sub-feature of the "options" sub-feature of text-input habits —
+     * only meaningful when the habit is in BOTH [textInputHabits] and
+     * [textInputOptionsHabits]). When on, each option can carry a set of
+     * named characteristics (defined in [textInputCharacteristics]) shown
+     * as small tag chips in the increment popup, and newly added options
+     * are asked which characteristics apply to them.
+     */
+    val textInputCharacteristicsHabits: Set<String> = emptySet(),
+
+    /**
+     * Maps habit name → the set of characteristic NAMES defined for that
+     * habit (e.g. "vegan", "sweet", "cheap"). Managed from the edit-mode
+     * characteristics editor. Only meaningful when the habit is also in
+     * [textInputCharacteristicsHabits].
+     */
+    val textInputCharacteristics: Map<String, Set<String>> = emptyMap(),
+
+    /**
+     * Maps habit name → (option text → set of characteristic names) for the
+     * "characteristics" sub-feature. Keyed by the option text itself so the
+     * mapping survives option renames only when explicitly remapped (see
+     * renameTextOption). An option absent from the inner map simply has no
+     * characteristics.
+     */
+    val textInputOptionCharacteristics: Map<String, Map<String, Set<String>>> = emptyMap(),
+
+    /**
      * Maps habit name → icon name (without .png extension) for custom icon overrides.
      * When a habit is in this map, its icon is shown from the named drawable instead of
      * the default HABIT_ICON mapping.

@@ -11,6 +11,7 @@ import com.example.tail.ui.viewmodel.deleteTextEntryWithRollForward
 import com.example.tail.ui.viewmodel.incrementHabitWithRollForward
 import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
 import com.example.tail.ui.viewmodel.loadSubtypeTimestampLabels
+import com.example.tail.ui.viewmodel.applyTextOptionCharacteristics
 import com.example.tail.ui.viewmodel.loadTextOptions
 import com.example.tail.ui.viewmodel.saveTextEntries
 import com.example.tail.ui.viewmodel.setTextEntriesForDateWithRollForward
@@ -488,6 +489,16 @@ internal fun TextInputDialogHost(
         recentMovies = state.recentMovies,
         suggestionLoading = state.suggestionLoading,
         loadingMetrics = loadingMetrics,
+        // Characteristics sub-feature (only meaningful when options are on)
+        characteristics = if (state.showOptions &&
+            state.habit.name in settings.textInputCharacteristicsHabits
+        ) {
+            (settings.textInputCharacteristics[state.habit.name] ?: emptySet()).sorted()
+        } else emptyList(),
+        optionCharacteristics = settings.textInputOptionCharacteristics[state.habit.name] ?: emptyMap(),
+        onNewOptionCharacteristics = { chosen ->
+            viewModel.applyTextOptionCharacteristics(state.habit.name, chosen)
+        },
         onConfirm = { entries, hour, minute ->
             val entryTime = java.time.LocalTime.of(hour, minute)
             // Only pass selectedDate if it's not today - for today, use current date

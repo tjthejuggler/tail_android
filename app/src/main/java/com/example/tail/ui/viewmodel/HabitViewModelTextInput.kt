@@ -156,6 +156,8 @@ fun HabitViewModel.toggleTextInput(habitName: String) {
             opts.remove(habitName)
             settingsRepo.saveTextInputOptionsHabits(opts)
             _settings.value = _settings.value.copy(textInputOptionsHabits = opts)
+            // And drop the characteristics sub-feature state with it
+            removeTextInputCharacteristicsState(habitName)
             // Also remove from sharable set — sharable requires text input to be on
             val sharable = _settings.value.sharableTextHabits.toMutableSet()
             sharable.remove(habitName)
@@ -190,6 +192,93 @@ fun HabitViewModel.toggleTextInputOptions(habitName: String) {
         if (habitName in current) current.remove(habitName) else current.add(habitName)
         settingsRepo.saveTextInputOptionsHabits(current)
         _settings.value = _settings.value.copy(textInputOptionsHabits = current)
+        // Turning options OFF also disables the characteristics sub-feature —
+        // it only exists as an extension of the options picker.
+        if (habitName !in current) removeTextInputCharacteristicsState(habitName)
+    }
+}
+
+/** Strips every characteristics-related settings entry for [habitName]. */
+private fun HabitViewModel.removeTextInputCharacteristicsState(habitName: String) {
+    viewModelScope.launch {
+        val s = _settings.value
+        val habits = s.textInputCharacteristicsHabits
+        if (habitName in habits) {
+            val updated = habits - habitName
+            settingsRepo.saveTextInputCharacteristicsHabits(updated)
+            _settings.value = _settings.value.copy(textInputCharacteristicsHabits = updated)
+        }
+        if (s.textInputCharacteristics.containsKey(habitName)) {
+            val updated = s.textInputCharacteristics - habitName
+            settingsRepo.saveTextInputCharacteristics(updated)
+            _settings.value = _settings.value.copy(textInputCharacteristics = updated)
+        }
+        if (s.textInputOptionCharacteristics.containsKey(habitName)) {
+            val updated = s.textInputOptionCharacteristics - habitName
+            settingsRepo.saveTextInputOptionCharacteristics(updated)
+            _settings.value = _settings.value.copy(textInputOptionCharacteristics = updated)
+        }
+    }
+}
+
+/**
+ * Toggles the "characteristics" sub-feature on/off for [habitName].
+ * Only has effect when the habit already has the "options" sub-feature on.
+ */
+fun HabitViewModel.toggleTextInputCharacteristics(habitName: String) {
+    viewModelScope.launch {
+        val current = _settings.value.textInputCharacteristicsHabits.toMutableSet()
+        if (habitName in current) current.remove(habitName) else current.add(habitName)
+        settingsRepo.saveTextInputCharacteristicsHabits(current)
+        _settings.value = _settings.value.copy(textInputCharacteristicsHabits = current)
+    }
+}
+
+/**
+ * Replaces the characteristic name definitions for [habitName] (used by the
+ * edit-mode characteristics editor). Options whose assignments reference a
+ * removed characteristic are cleaned of it in the same write.
+ */
+fun HabitViewModel.setTextInputCharacteristics(habitName: String, names: Set<String>) {
+    viewModelScope.launch {
+        val s = _settings.value
+        val updatedDefs = s.textInputCharacteristics.toMutableMap()
+        if (names.isEmpty()) updatedDefs.remove(habitName) else updatedDefs[habitName] = names
+        settingsRepo.saveTextInputCharacteristics(updatedDefs)
+        _settings.value = _settings.value.copy(textInputCharacteristics = updatedDefs)
+        // Drop assignments that reference a characteristic no longer defined.
+        val inner = s.textInputOptionCharacteristics[habitName] ?: return@launch
+        val cleaned = inner.mapValues { (_, set) -> set intersect names }
+            .filterValues { it.isNotEmpty() }
+        if (cleaned != inner) {
+            val updated = s.textInputOptionCharacteristics.toMutableMap()
+            if (cleaned.isEmpty()) updated.remove(habitName) else updated[habitName] = cleaned
+            settingsRepo.saveTextInputOptionCharacteristics(updated)
+            _settings.value = _settings.value.copy(textInputOptionCharacteristics = updated)
+        }
+    }
+}
+
+/**
+ * Applies a batch of per-option characteristic assignments for [habitName]
+ * (habit → option text → set). An empty set removes the option's entry.
+ * Used both by the characteristics editor and by the increment popup after
+ * the user tags freshly added options.
+ */
+fun HabitViewModel.applyTextOptionCharacteristics(
+    habitName: String,
+    assignments: Map<String, Set<String>>
+) {
+    if (assignments.isEmpty()) return
+    viewModelScope.launch {
+        val all = _settings.value.textInputOptionCharacteristics.toMutableMap()
+        val inner = all[habitName]?.toMutableMap() ?: mutableMapOf()
+        for ((option, set) in assignments) {
+            if (set.isEmpty()) inner.remove(option) else inner[option] = set
+        }
+        if (inner.isEmpty()) all.remove(habitName) else all[habitName] = inner
+        settingsRepo.saveTextInputOptionCharacteristics(all)
+        _settings.value = _settings.value.copy(textInputOptionCharacteristics = all)
     }
 }
 
@@ -670,6 +759,17 @@ fun HabitViewModel.renameTextOption(
                 descriptions[habitName] = newInner
                 settingsRepo.saveTextInputOptionDescriptions(descriptions)
                 _settings.value = _settings.value.copy(textInputOptionDescriptions = descriptions)
+            }
+            // Carry the option's characteristic assignments over the same way
+            val charsAll = _settings.value.textInputOptionCharacteristics.toMutableMap()
+            val charsInner = charsAll[habitName]
+            if (charsInner != null && charsInner.containsKey(oldText)) {
+                val newCharsInner = charsInner.toMutableMap()
+                val set = newCharsInner.remove(oldText)
+                if (set != null && set.isNotEmpty()) newCharsInner[newText] = set
+                if (newCharsInner.isEmpty()) charsAll.remove(habitName) else charsAll[habitName] = newCharsInner
+                settingsRepo.saveTextInputOptionCharacteristics(charsAll)
+                _settings.value = _settings.value.copy(textInputOptionCharacteristics = charsAll)
             }
             HabitsDataChangedBus.emit()
         } catch (e: Exception) {

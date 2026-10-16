@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -82,6 +84,7 @@ import com.example.tail.ui.loading.LoadingMetrics
  * @param onEdit Called when the user edits an existing entry: (oldTimestamp, newText).
  * @param onDelete Called when the user deletes an existing entry: (timestamp).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TextInputDialog(
     habitName: String,
@@ -98,6 +101,12 @@ fun TextInputDialog(
     recentMovies: List<BridgeMovie> = emptyList(),
     suggestionLoading: Boolean = false,
     loadingMetrics: LoadingMetrics? = null,
+    /** Defined characteristic names (characteristics sub-feature); empty = off. */
+    characteristics: List<String> = emptyList(),
+    /** Option text → assigned characteristics, for the tag chips. */
+    optionCharacteristics: Map<String, Set<String>> = emptyMap(),
+    /** Called on OK with characteristics chosen for freshly added options. */
+    onNewOptionCharacteristics: (Map<String, Set<String>>) -> Unit = {},
     onConfirm: (List<String>, Int, Int) -> Unit,
     onDismiss: () -> Unit,
     onEdit: (String, String) -> Unit = { _, _ -> },
@@ -123,6 +132,24 @@ fun TextInputDialog(
     // Search query for the past-options list. Deliberately separate from the
     // entry field so filter text can never be submitted as an entry.
     var searchQuery by remember { mutableStateOf("") }
+
+    // Characteristics sub-feature: characteristics chosen for freshly added
+    // options (option text → set), plus the pending picker popup state.
+    val newOptionCharacteristics = remember { mutableStateMapOf<String, Set<String>>() }
+    var characteristicsPickerFor by remember { mutableStateOf<String?>(null) }
+    val characteristicsPickerSelection = remember { mutableStateMapOf<String, Boolean>() }
+
+    /** Registers a freshly added option; when characteristics exist, asks
+     *  which apply via a popup before the option joins the checked list. */
+    fun addNewOption(text: String) {
+        selectedOptions[text] = true
+        if (characteristics.isNotEmpty()) {
+            characteristicsPickerSelection.clear()
+            optionCharacteristics[text]?.forEach { characteristicsPickerSelection[it] = true }
+            newOptionCharacteristics[text]?.forEach { characteristicsPickerSelection[it] = true }
+            characteristicsPickerFor = text
+        }
+    }
 
     // Time picker state — wheel-based. A movie suggestion may arrive after
     // the dialog opened, carrying the movie's own watch time — that pre-fills
@@ -551,7 +578,7 @@ fun TextInputDialog(
                             onClick = {
                                 val trimmed = inputText.trim()
                                 if (trimmed.isNotEmpty()) {
-                                    selectedOptions[trimmed] = true
+                                    addNewOption(trimmed)
                                     inputText = ""
                                 }
                             },
@@ -666,7 +693,7 @@ fun TextInputDialog(
                                 val trimmedQuery = searchQuery.trim()
                                 if (trimmedQuery.isNotEmpty()) {
                                     TextButton(
-                                        onClick = { selectedOptions[trimmedQuery] = true },
+                                        onClick = { addNewOption(trimmedQuery) },
                                         contentPadding = androidx.compose.foundation.layout.PaddingValues(
                                             start = 0.dp, end = 0.dp, top = 4.dp, bottom = 0.dp
                                         )
@@ -708,13 +735,38 @@ fun TextInputDialog(
                                                 checkmarkColor = Color(0xFF1E1E1E)
                                             )
                                         )
-                                        Text(
-                                            text = if (isChecked && quantity > 1) "$option ×$quantity"
-                                                   else option,
-                                            color = if (isChecked) Color(0xFFFFD700) else Color(0xFFCCCCCC),
-                                            fontSize = 13.sp,
-                                            modifier = Modifier.weight(1f)
-                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = if (isChecked && quantity > 1) "$option ×$quantity"
+                                                       else option,
+                                                color = if (isChecked) Color(0xFFFFD700) else Color(0xFFCCCCCC),
+                                                fontSize = 13.sp
+                                            )
+                                            // Characteristics tag chips — small, different
+                                            // looking text in chips under the option name.
+                                            val chars = (
+                                                newOptionCharacteristics[option]
+                                                    ?: optionCharacteristics[option]
+                                                )?.filter { it in characteristics }?.sorted()
+                                            if (!chars.isNullOrEmpty()) {
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                    chars.forEach { char ->
+                                                        Text(
+                                                            text = char,
+                                                            fontSize = 9.sp,
+                                                            color = Color(0xFF88AACC),
+                                                            modifier = Modifier
+                                                                .background(
+                                                                    Color(0xFF1A2A35),
+                                                                    RoundedCornerShape(8.dp)
+                                                                )
+                                                                .padding(horizontal = 6.dp, vertical = 1.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
                                         // Quantity stepper — logging MULTIPLES of
                                         // one item (e.g. 3 pills) in a single submit
                                         if (isChecked) {
@@ -816,6 +868,14 @@ fun TextInputDialog(
                                 }
                             }
                             if (parts.isNotEmpty()) {
+                                // Persist characteristics chosen for freshly added
+                                // options (the "+" / search-add flows) in one batch.
+                                val chosen = newOptionCharacteristics.entries
+                                    .filter { it.value.isNotEmpty() }
+                                    .associate { it.key to it.value }
+                                if (chosen.isNotEmpty()) {
+                                    onNewOptionCharacteristics(chosen)
+                                }
                                 onConfirm(listOf(parts.joinToString("\n")), selectedHour, selectedMinute)
                             }
                         },
@@ -826,6 +886,78 @@ fun TextInputDialog(
                         )
                     ) {
                         Text("OK", color = Color(0xFFFFAA00))
+                    }
+                }
+            }
+
+            // ── Characteristics picker popup (newly added option) ────────────
+            val pickerOption = characteristicsPickerFor
+            if (pickerOption != null && characteristics.isNotEmpty()) {
+                Dialog(onDismissRequest = {
+                    // Closing without confirming = no characteristics for this option
+                    newOptionCharacteristics[pickerOption] =
+                        characteristicsPickerSelection.filterValues { it }.keys.toSet()
+                    characteristicsPickerFor = null
+                }) {
+                    Column(
+                        modifier = Modifier
+                            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+                            .padding(16.dp)
+                    ) {
+                        Text("Characteristics", color = Color(0xFF88DDFF), fontSize = 14.sp)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = pickerOption,
+                            color = Color(0xFFCCCCCC),
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        characteristics.forEach { char ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        characteristicsPickerSelection[char] =
+                                            !(characteristicsPickerSelection[char] == true)
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = characteristicsPickerSelection[char] == true,
+                                    onCheckedChange = {
+                                        characteristicsPickerSelection[char] = it
+                                    },
+                                    colors = CheckboxDefaults.colors(
+                                        checkedColor = Color(0xFF88DDFF),
+                                        uncheckedColor = Color(0xFF666666),
+                                        checkmarkColor = Color(0xFF1E1E1E)
+                                    )
+                                )
+                                Text(
+                                    text = char,
+                                    color = Color(0xFFCCCCCC),
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Button(
+                                onClick = {
+                                    newOptionCharacteristics[pickerOption] =
+                                        characteristicsPickerSelection.filterValues { it }.keys.toSet()
+                                    characteristicsPickerFor = null
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A3A4A))
+                            ) {
+                                Text("Done", color = Color(0xFF88DDFF), fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             }

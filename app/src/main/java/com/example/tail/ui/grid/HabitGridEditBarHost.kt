@@ -13,6 +13,7 @@ import com.example.tail.ui.viewmodel.setComboHabitMembers
 import com.example.tail.ui.viewmodel.renameHabit
 import com.example.tail.ui.viewmodel.openNotificationListenerSettings
 import com.example.tail.ui.settings.TextInputOptionsEditorDialog
+import com.example.tail.ui.settings.TextInputCharacteristicsEditorDialog
 import com.example.tail.ui.viewmodel.HabitViewModel
 import com.example.tail.ui.viewmodel.deleteScreen
 import com.example.tail.ui.viewmodel.deleteWeightsDay
@@ -33,6 +34,9 @@ import com.example.tail.ui.viewmodel.setEnvironmentHabitMetric
 import com.example.tail.ui.viewmodel.removeMediaShowFromToday
 import com.example.tail.ui.viewmodel.generateOptionDescriptionFromCamera
 import com.example.tail.ui.viewmodel.renameTextOption
+import com.example.tail.ui.viewmodel.toggleTextInputCharacteristics
+import com.example.tail.ui.viewmodel.setTextInputCharacteristics
+import com.example.tail.ui.viewmodel.applyTextOptionCharacteristics
 import com.example.tail.ui.viewmodel.screenIndexForHabit
 import com.example.tail.ui.viewmodel.setBubbleFullScreenMenu
 import com.example.tail.ui.viewmodel.setBubbleMultiTimer
@@ -168,6 +172,10 @@ internal fun EditBarHost(
         }
     }
 
+    // Characteristics editor state (definitions + per-option tagging)
+    var characteristicsEditorHabit by remember { mutableStateOf<String?>(null) }
+    var characteristicsEditorSingles by remember { mutableStateOf<List<String>>(emptyList()) }
+
     EditModeControlBar(
         selectedIndex = selectedEditIndex,
         selectedHabitName = selectedHabitName,
@@ -187,6 +195,8 @@ internal fun EditBarHost(
         comboHabitMembers = settings.comboHabitMembers,
         textInputHabits = settings.textInputHabits,
         textInputOptionsHabits = settings.textInputOptionsHabits,
+        textInputCharacteristicsHabits = settings.textInputCharacteristicsHabits,
+        textInputCharacteristics = settings.textInputCharacteristics,
         sharableTextHabits = settings.sharableTextHabits,
         textInputFileUris = settings.textInputFileUris,
         datedEntryHabits = settings.datedEntryHabits,
@@ -219,6 +229,13 @@ internal fun EditBarHost(
         onEditTextInputOptions = { name ->
             optionsEditorHabit = name
             reloadOptionsEditor(name)
+        },
+        onToggleTextInputCharacteristics = { name -> viewModel.toggleTextInputCharacteristics(name) },
+        onEditTextInputCharacteristics = { name ->
+            characteristicsEditorHabit = name
+            viewModel.loadTextOptionInventory(name) { inventory ->
+                characteristicsEditorSingles = inventory.singles.map { it.first }
+            }
         },
         onToggleSharableText = { name -> viewModel.toggleSharableText(name) },
         onPickTextInputFile = onPickTextInputFile,
@@ -508,6 +525,22 @@ internal fun EditBarHost(
                 viewModel.unhideTextOptionGrouping(editorHabit, grouping)
             },
             onDismiss = { optionsEditorHabit = null }
+        )
+    }
+
+    // ── Characteristics editor popup (definitions + per-option tagging) ──
+    val charsHabit = characteristicsEditorHabit
+    if (charsHabit != null) {
+        TextInputCharacteristicsEditorDialog(
+            habitName = charsHabit,
+            initialCharacteristics = settings.textInputCharacteristics[charsHabit] ?: emptySet(),
+            options = characteristicsEditorSingles,
+            initialAssignments = settings.textInputOptionCharacteristics[charsHabit] ?: emptyMap(),
+            onSaveDefinitions = { names -> viewModel.setTextInputCharacteristics(charsHabit, names) },
+            onApplyAssignments = { assignments ->
+                viewModel.applyTextOptionCharacteristics(charsHabit, assignments)
+            },
+            onDismiss = { characteristicsEditorHabit = null }
         )
     }
 }
