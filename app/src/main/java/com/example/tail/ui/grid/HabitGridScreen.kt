@@ -3106,21 +3106,36 @@ fun HabitGridScreen(
                         // Was timeless — add a new timestamp instead of updating
                         viewModel.timestampRepo.addTimestamp(habitName, selectedDate, newTime)
                     } else {
+                        // Race fix (2026-10-15): the timestamp is written by the
+                        // increment coroutine AFTER the toast captured its own
+                        // nowTime() on the main thread, so quickEditOriginalTime
+                        // can drift from the actually-recorded stamp (the SAF
+                        // persist delays the second clock read), making the
+                        // update below silently no-op. Resolve the REAL
+                        // just-recorded time — the day's latest stamp — at
+                        // confirm time instead of trusting the captured guess.
+                        val actualOldTime = runCatching {
+                            viewModel.timestampRepo.getTimestampsForDay(habitName, selectedDate)
+                                .maxOrNull()
+                        }.getOrNull()?.takeIf { it.isNotBlank() }
+                            ?: quickEditOriginalTime.takeIf { it.isNotBlank() }
                         // Move the WHOLE same-moment group. A multi-increment of
                         // N units is stored as N duplicate time strings; moving
                         // only the last one (updateLastTimestamp) strands the
                         // other N-1 units at the original time, duplicating the
                         // event on the schedule screen.
+                        if (actualOldTime != null) {
                         viewModel.timestampRepo.updateTimestampsAtTime(
-                            habitName, selectedDate, quickEditOriginalTime, newTime
+                            habitName, selectedDate, actualOldTime, newTime
                         )
                         // Movie-bridge habits: move the text-log key(s) too —
                         // the next movie sync reverts store-only re-times.
                         // Text-input habits (movie or ordinary): move the text
                         // key too; no-op when the habit has no text log.
                         viewModel.moveMovieEntryTime(
-                            habitName, selectedDate, quickEditOriginalTime, newTime
+                            habitName, selectedDate, actualOldTime, newTime
                         )
+                        }
                     }
                 }
                 quickEditHabitName = null
