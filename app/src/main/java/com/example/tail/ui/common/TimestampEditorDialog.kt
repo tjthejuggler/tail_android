@@ -945,6 +945,10 @@ private fun MoveDayChooser(
  * Converts to 12-hour format with AM/PM.
  */
 private fun formatTimeDisplay(time: String): String {
+    // Timeless increments carry no time of day — show a plain marker.
+    if (com.example.tail.data.HabitTimestampRepository.isTimelessTime(time)) {
+        return "(timeless)"
+    }
     val parts = time.split(":")
     if (parts.size < 2) return time
     val h = parts[0].toIntOrNull() ?: return time

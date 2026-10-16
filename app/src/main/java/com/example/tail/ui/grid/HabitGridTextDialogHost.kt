@@ -411,7 +411,10 @@ internal fun handlePlainIncrementTap(
                     // Popup-gated increment: the roll-forward confirmation was
                     // submitted — now the lizard shimmer may fire.
                     lizardShimmerGen.intValue++
-                    onShowIncrementToast(habit.name, !isToday)
+                    onShowIncrementToast(
+                        habit.name,
+                        !isToday || habit.name in settings.timelessHabits
+                    )
                 }
             )
         )
@@ -434,7 +437,10 @@ internal fun handlePlainIncrementTap(
                 ).show()
             } catch (_: Exception) { /* overlay best-effort */ }
         }
-        onShowIncrementToast(habit.name, !isToday)
+        onShowIncrementToast(
+            habit.name,
+            !isToday || habit.name in settings.timelessHabits
+        )
     }
 }
 

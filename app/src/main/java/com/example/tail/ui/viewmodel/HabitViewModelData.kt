@@ -1158,10 +1158,15 @@ fun HabitViewModel.incrementHabit(
         // known time; a drifted stamp renders as a phantom text-less card.
         if (recordTimestamp && storedDelta > 0) {
             try {
-                timestampRepo.addTimestamps(
-                    habitName, storedDelta, targetDate,
-                    stampTime ?: com.example.tail.data.HabitTimestampRepository.nowTime()
-                )
+                // Timeless habits still get a per-unit entry in the timestamp
+                // store, but with the timeless sentinel instead of a clock
+                // time — so the increment is visible in the timestamps list
+                // with no time of day (tap the time to give it one later).
+                val stamp = stampTime
+                    ?: if (habitName in _settings.value.timelessHabits)
+                        com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
+                    else com.example.tail.data.HabitTimestampRepository.nowTime()
+                timestampRepo.addTimestamps(habitName, storedDelta, targetDate, stamp)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to record timestamps for '$habitName': ${e.message}")
             }

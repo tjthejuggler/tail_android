@@ -1778,7 +1778,12 @@ fun HabitGridScreen(
                                         incrementToastVersion++
                                         incrementToastHabit = habitName
                                         incrementToastIsTimeless = isTimeless
-                                        incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                                        incrementToastOriginalTime = when {
+                                            !isToday -> ""
+                                            habitName in settings.timelessHabits ->
+                                                com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
+                                            else -> com.example.tail.data.HabitTimestampRepository.nowTime()
+                                        }
                                         val currentVersion = incrementToastVersion
                                         toastScope.launch {
                                             delay(3500)
@@ -2123,14 +2128,22 @@ fun HabitGridScreen(
                     incrementToastHabit = null
                 },
                 onTimeless = {
-                    // Remove the just-recorded timestamps and mark as timeless.
-                    // ALL units of the same-moment group must go (a multi-
-                    // increment is N duplicate time strings), not just the
-                    // last one — otherwise N-1 units linger on the schedule.
+                    // Mark the just-recorded timestamps as timeless. The units
+                    // STAY in the timestamp store — rewritten to the timeless
+                    // sentinel so they show in the timestamps list with no
+                    // time — instead of being deleted. ALL units of the
+                    // same-moment group move together (a multi-increment is
+                    // N duplicate time strings).
                     toastScope.launch {
-                        viewModel.timestampRepo.deleteTimestampsAtTime(
-                            toastHabit, selectedDate, incrementToastOriginalTime
-                        )
+                        if (incrementToastOriginalTime.isNotBlank() &&
+                            incrementToastOriginalTime !=
+                                com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
+                        ) {
+                            viewModel.timestampRepo.updateTimestampsAtTime(
+                                toastHabit, selectedDate, incrementToastOriginalTime,
+                                com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
+                            )
+                        }
                     }
                     incrementToastIsTimeless = true
                 }
@@ -2722,8 +2735,13 @@ fun HabitGridScreen(
                 // Show increment toast with edit-time option (same as normal increment)
                 incrementToastVersion++
                 incrementToastHabit = habit.name
-                incrementToastIsTimeless = !isToday
-                incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                incrementToastIsTimeless = !isToday || habit.name in settings.timelessHabits
+                incrementToastOriginalTime = when {
+                    !isToday -> ""
+                    habit.name in settings.timelessHabits ->
+                        com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
+                    else -> com.example.tail.data.HabitTimestampRepository.nowTime()
+                }
                 val currentVersion = incrementToastVersion
                 toastScope.launch {
                     delay(3500)
@@ -2829,8 +2847,13 @@ fun HabitGridScreen(
             onShowIncrementToast = { habitName, isTimeless ->
                 incrementToastVersion++
                 incrementToastHabit = habitName
-                incrementToastIsTimeless = isTimeless
-                incrementToastOriginalTime = if (isToday) com.example.tail.data.HabitTimestampRepository.nowTime() else ""
+                incrementToastIsTimeless = isTimeless || habitName in settings.timelessHabits
+                incrementToastOriginalTime = when {
+                    !isToday -> ""
+                    habitName in settings.timelessHabits ->
+                        com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
+                    else -> com.example.tail.data.HabitTimestampRepository.nowTime()
+                }
                 val currentVersion = incrementToastVersion
                 toastScope.launch {
                     delay(3500)
@@ -3103,8 +3126,26 @@ fun HabitGridScreen(
             onConfirm = { newTime ->
                 timestampScope.launch {
                     if (quickEditWasTimeless) {
-                        // Was timeless — add a new timestamp instead of updating
-                        viewModel.timestampRepo.addTimestamp(habitName, selectedDate, newTime)
+                        // Was timeless. Timeless increments now live in the
+                        // store as the timeless sentinel: re-time that group
+                        // in place (ALL its units move together). Only when
+                        // NO sentinel exists — e.g. a past-day increment that
+                        // recorded no stamp at all — does a new timestamp get
+                        // added for the chosen time.
+                        val timelessTime =
+                            com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
+                        val hasSentinel = runCatching {
+                            viewModel.timestampRepo
+                                .getTimestampsForDay(habitName, selectedDate)
+                                .contains(timelessTime)
+                        }.getOrDefault(false)
+                        if (hasSentinel) {
+                            viewModel.timestampRepo.updateTimestampsAtTime(
+                                habitName, selectedDate, timelessTime, newTime
+                            )
+                        } else {
+                            viewModel.timestampRepo.addTimestamp(habitName, selectedDate, newTime)
+                        }
                     } else {
                         // Race fix (2026-10-15): the timestamp is written by the
                         // increment coroutine AFTER the toast captured its own

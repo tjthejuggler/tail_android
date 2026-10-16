@@ -462,8 +462,13 @@ class PcEventQueueProcessor(private val context: Context) {
             habitsRepo.incrementHabitSlotsForDate(habitsUri, context, increments, event.date)
         }
 
-        if (appliedAny && event.habit !in settings.timelessHabits) {
-            val time = event.startTime ?: HabitTimestampRepository.nowTime()
+        if (appliedAny) {
+            // Timeless habits record the timeless sentinel (no time of day)
+            // so the increment still shows in the timestamps list.
+            val time = when {
+                event.habit in settings.timelessHabits -> HabitTimestampRepository.TIMELESS_TIME
+                else -> event.startTime ?: HabitTimestampRepository.nowTime()
+            }
             try {
                 tsRepo.addTimestamp(event.habit, event.date, time)
                 // Timer sessions contribute their minutes AT this timestamp,
@@ -546,7 +551,18 @@ class PcEventQueueProcessor(private val context: Context) {
             if (event.minutes > 0) {
                 applyDeltas[minutesKey(event.habit)] = event.minutes
             }
-            if (event.habit !in settings.timelessHabits) {
+            if (event.habit in settings.timelessHabits) {
+                // Timeless: record the sentinel (visible in the timestamps
+                // list, no time of day). No per-timestamp minutes — a
+                // timeless session has no moment for them to anchor to.
+                try {
+                    tsRepo.addTimestamp(
+                        event.habit, event.date, HabitTimestampRepository.TIMELESS_TIME
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to record corrected timestamp: ${e.message}")
+                }
+            } else {
                 val time = event.startTime ?: HabitTimestampRepository.nowTime()
                 try {
                     tsRepo.addTimestamp(event.habit, event.date, time)

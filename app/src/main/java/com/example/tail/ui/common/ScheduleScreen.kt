@@ -309,7 +309,10 @@ fun ScheduleTimelineScreen(
                 days[dateKey]?.takeIf { it.isNotEmpty() }?.let { habit to it }
             }
             .flatMap { (habit, times) ->
-                times.groupBy { it }.map { (time, group) ->
+                // Timeless increments have no time of day — they carry the
+                // timeless sentinel and do not belong on the clock timeline.
+                times.filter { !HabitTimestampRepository.isTimelessTime(it) }
+                    .groupBy { it }.map { (time, group) ->
                     ScheduleEvent(
                         habitName = habit,
                         time = time,

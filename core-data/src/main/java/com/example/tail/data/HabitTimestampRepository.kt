@@ -92,6 +92,19 @@ class HabitTimestampRepository(private val context: Context) {
         fun nowTime(): String = LocalTime.now().format(TIME_FMT)
 
         /**
+         * Sentinel time-of-day stored for TIMELESS increments (habits in the
+         * timeless set): the unit IS recorded in the timestamp store so it
+         * shows up in the timestamps list, but carries no time of day. The
+         * dashes sort lexicographically before every "HH:mm:ss" string, so
+         * timeless groups render first in day lists. Consumers that parse
+         * times must skip (or default) on this value — [isTimelessTime].
+         */
+        const val TIMELESS_TIME = "--:--:--"
+
+        /** True when [time] is the timeless sentinel (see [TIMELESS_TIME]). */
+        fun isTimelessTime(time: String): Boolean = time == TIMELESS_TIME
+
+        /**
          * Process-wide counter bumped after every successful write to the
          * timestamp file. UI that reads counts through the snapshot cache
          * (e.g. the edit-mode "Timestamps (N)" label) collects this to
