@@ -1235,7 +1235,7 @@ internal fun TextIconPickerSection(
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = input,
-                onValueChange = { if (it.codePointCount(0, it.length) <= 2) input = it },
+                onValueChange = { if (it.codePointCount(0, it.length) <= 3) input = it },
                 placeholder = { Text("A, 🧘, ♟…", fontSize = 11.sp) },
                 singleLine = true,
                 modifier = Modifier.weight(1f),
