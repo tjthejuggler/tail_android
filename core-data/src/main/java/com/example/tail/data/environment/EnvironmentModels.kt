@@ -284,5 +284,30 @@ enum class EnvironmentMetric(
         /** The first legacy habit name for [key] that exists in [names], or null. */
         fun legacyLabelIn(key: String, names: Collection<String>): String? =
             LEGACY_LABELS[key]?.firstOrNull { it in names }
+
+        /**
+         * Static old-spelling → current-label renames (mirrors TailCue's
+         * `_CANONICAL_ENV`). Used by the one-time migration that folds legacy
+         * habit spellings onto the canonical ones in the habits DB and in
+         * every settings key that stores habit names.
+         */
+        val legacyRenames: Map<String, String> = LEGACY_LABELS.entries.flatMap { (key, olds) ->
+            val canonical = fromKey(key)!!.label
+            olds.map { it to canonical }
+        }.toMap()
+
+        /**
+         * Canonicalizes an environment habit name (case-insensitive alias
+         * fold, same rule as TailCue's `canonical_env_name`): any casing of a
+         * metric label or a legacy spelling maps to the CURRENT label;
+         * unknown names pass through unchanged. One physical quantity → one
+         * habit, regardless of how it was spelled historically.
+         */
+        fun canonicalEnvLabel(name: String): String {
+            val k = name.trim().lowercase()
+            entries.firstOrNull { it.label.lowercase() == k }?.let { return it.label }
+            legacyRenames.entries.firstOrNull { it.key.lowercase() == k }?.let { return it.value }
+            return name
+        }
     }
 }

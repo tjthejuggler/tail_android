@@ -5,9 +5,11 @@ import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -158,6 +160,35 @@ class EnvironmentBacklogWorker(appContext: Context, params: WorkerParameters) :
             }
             Log.i(TAG, "location '$loc.label' done: +$stored stored")
         }
+
+        // Kp gap-fill: the range path skips Kp (NOAA only serves ~7 days of
+        // 3-hourly values), so already-captured recent days can be missing
+        // it. One feed fetch fills every gap in the window; sync the squares.
+        val kpFilled = envRepo.backfillRecentKp()
+        if (kpFilled.isNotEmpty() && settings.fileUri.isNotEmpty() &&
+            settings.environmentHabitMetrics.isNotEmpty()
+        ) {
+            val db = habitsRepo.loadDatabase(
+                android.net.Uri.parse(settings.fileUri), applicationContext
+            ).toMutableMap()
+            var changed = false
+            for ((_, snap) in kpFilled) {
+                for ((habit, metricKey) in settings.environmentHabitMetrics) {
+                    if (metricKey != "kp_max" || habit !in db) continue
+                    val v = snap.kpIndexMax?.let { Math.round(it * 10.0).toInt() } ?: continue
+                    val entries = (db[habit] ?: mutableMapOf()).toMutableMap()
+                    if (entries[snap.date] != v) {
+                        entries[snap.date] = v
+                        db[habit] = entries
+                        changed = true
+                    }
+                }
+            }
+            if (changed) habitsRepo.persistDatabase(
+                android.net.Uri.parse(settings.fileUri), applicationContext, db
+            )
+        }
+        Log.i(TAG, "kp gap-fill: ${kpFilled.size} day(s)")
         prefs.edit()
             .putBoolean("running", false)
             .putString("lastMessage", "Background backlog finished — $totalWindows window(s)")
@@ -185,6 +216,28 @@ class EnvironmentBacklogWorker(appContext: Context, params: WorkerParameters) :
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
                 WORK_NAME, ExistingWorkPolicy.REPLACE, request
+            )
+        }
+
+        /**
+         * Daily self-heal: the same gap-resuming backlog run as a PERIODIC
+         * job (KEEP policy — re-launches never reset the clock). Days
+         * already captured are skipped in O(1) via
+         * [EnvironmentRepository.needsFetch], so a normal day costs a
+         * handful of prefs reads and one range request for the new day.
+         * This guarantees the env habits can never silently stall again
+         * just because the app wasn't opened on the right screen, or a
+         * transient failure was never retried.
+         */
+        fun scheduleDaily(context: Context) {
+            val request = PeriodicWorkRequestBuilder<EnvironmentBacklogWorker>(1, TimeUnit.DAYS)
+                .setConstraints(
+                    Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+                )
+                .setInputData(workDataOf(KEY_REPAIR to false))
+                .build()
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                WORK_NAME + "_daily", ExistingPeriodicWorkPolicy.KEEP, request
             )
         }
     }

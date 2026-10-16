@@ -148,6 +148,13 @@ class MainActivity : ComponentActivity() {
         // went stale while movie/PC-widget sync kept working. 2026-09-26.
         com.example.tail.notify.GarminSyncWorker.schedule(applicationContext)
 
+        // Daily environment self-heal: gap-resuming backlog run that captures
+        // any day the in-app flow missed (app not opened, network flake,
+        // settings-restore dropping the master switch — which silently
+        // stalled the env habits for 11 days, 2026-10-05 → 2026-10-16).
+        // KEEP policy; already-captured days cost nothing.
+        com.example.tail.notify.EnvironmentBacklogWorker.scheduleDaily(applicationContext)
+
         val debugPrefs = DebugPreferences(applicationContext)
         val debugNoteRepo = DebugNoteRepository(applicationContext, debugPrefs)
 

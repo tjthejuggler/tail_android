@@ -355,6 +355,59 @@ class EnvironmentRepository(private val context: Context) {
             pollenRagweedMax = a.pollenRagweedMax ?: base.pollenRagweedMax
         )
 
+    /**
+     * Fills the Kp value for already-captured snapshots of the last
+     * [windowDays] days that are still missing it (the RANGE capture path
+     * skips Kp by design; the NOAA 3-hourly feed only serves ~7 days back).
+     * ONE feed fetch, then per-day max merge. Returns the updated snapshots
+     * (keyed by date) so callers can re-sync the linked habit squares;
+     * empty when there was nothing to fill or the feed failed.
+     */
+    suspend fun backfillRecentKp(windowDays: Long = 30): Map<String, EnvironmentSnapshot> {
+        val cutoff = LocalDate.now().minusDays(windowDays)
+        val todo = getAllSnapshots().values.filter {
+            runCatching { LocalDate.parse(it.date) }.getOrNull()?.isAfter(cutoff) == true &&
+                it.kpIndexMax == null
+        }
+        if (todo.isEmpty()) return emptyMap()
+        val dates = todo.mapNotNull { runCatching { LocalDate.parse(it.date) }.getOrNull() }
+        val kp = runCatching { EnvironmentApis.fetchKpMaxRange(dates) }.getOrDefault(emptyMap())
+        if (kp.isEmpty()) return emptyMap()
+        val updated = todo.mapNotNull { snap ->
+            val d = runCatching { LocalDate.parse(snap.date) }.getOrNull() ?: return@mapNotNull null
+            val v = kp[d] ?: return@mapNotNull null
+            val merged = snap.copy(kpIndexMax = v)
+            save(merged)
+            merged
+        }
+        Log.i(TAG, "kp backfill: ${updated.size} day(s) filled")
+        return updated.associateBy { it.date }
+    }
+
+    /**
+     * Applies a learned water-hardness value to EVERY stored snapshot with
+     * the same location label that has no water value yet. Called when the
+     * LLM resolver (or the user) learns a location's ppm, so the value
+     * back-fills across the whole stay at that place, not just the viewed
+     * day. Returns the updated snapshots (keyed by date) for habit re-sync.
+     */
+    fun applyWaterHardnessToLabel(label: String, ppm: Double): Map<String, EnvironmentSnapshot> {
+        if (label.isBlank()) return emptyMap()
+        val updated = mutableListOf<EnvironmentSnapshot>()
+        for (snap in getAllSnapshots().values) {
+            if (snap.locationLabel != label || snap.waterHardnessPpm != null) continue
+            val merged = snap.copy(
+                waterHardnessPpm = ppm,
+                waterHardnessSource = "location-memory"
+            )
+            updated += merged
+        }
+        if (updated.isEmpty()) return emptyMap()
+        saveAll(updated)
+        Log.i(TAG, "water backfill: ${updated.size} day(s) at '$label' set to $ppm ppm")
+        return updated.associateBy { it.date }
+    }
+
     // ── Persistence ─────────────────────────────────────────────────────────
 
     /** Saves one snapshot as its own tiny prefs key (no blob rewrite, no cross-instance cache). */

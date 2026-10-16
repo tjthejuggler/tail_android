@@ -60,6 +60,14 @@ fun HabitViewModel.initEnvironmentCapture() {
         // case where an init-time capture was skipped by the anti-wipe gate
         // because the DB was still loading.
         launch { resyncEnvironmentHabits() }
+        // Kp gap-fill on launch: the range/backlog capture path skips Kp by
+        // design (NOAA only serves ~7 days of 3-hourly values), so recent
+        // snapshots can be missing it. One feed fetch fills the gaps and the
+        // squares are re-synced below by the resync.
+        launch {
+            val filled = environmentRepo.backfillRecentKp()
+            if (filled.isNotEmpty()) syncEnvironmentHabits(filled)
+        }
         // Backfill: one habit square per environment metric option on the
         // env screen (only for metrics the user hasn't already made).
         launch { ensureAllEnvironmentMetricHabits() }
@@ -102,6 +110,7 @@ fun HabitViewModel.resyncEnvironmentHabits() {
             return@launch
         }
         awaitSettingsLoaded()
+        canonicalizeEnvironmentHabitNames()
         val snaps = environmentRepo.getAllSnapshots()
         if (snaps.isEmpty()) return@launch
         syncEnvironmentHabits(snaps)
@@ -148,7 +157,12 @@ fun HabitViewModel.refreshEnvironment(date: LocalDate = _selectedDate.value, aut
                 resolveWaterHardnessViaLlm(label)?.let { ppm ->
                     environmentRepo.setWaterHardnessForLocation(label, ppm)
                     environmentRepo.setWaterHardnessForDate(date, ppm)
+                    // Back-fill the learned value onto every stored day at
+                    // this location that still lacks water data, then sync
+                    // those squares too.
+                    val backfilled = environmentRepo.applyWaterHardnessToLabel(label, ppm)
                     snapshot = environmentRepo.getSnapshot(date)
+                    if (backfilled.isNotEmpty()) syncEnvironmentHabits(backfilled)
                 }
             }
             if (_selectedDate.value == date) _envSnapshot.value = snapshot
@@ -256,6 +270,63 @@ internal suspend fun HabitViewModel.syncEnvironmentHabits(
         settingsRepo.saveEnvironmentHabitMetrics(pruned)
         _settings.value = _settings.value.copy(environmentHabitMetrics = pruned)
         Log.i(TAG, "Environment sync: pruned ${staleLinks.size} stale link(s): $staleLinks")
+    }
+}
+
+/**
+ * One-time canonicalization (TailCue parity: `apply_env_canonicalization` +
+ * `_rename_metrics`): folds legacy environment-habit spellings in the habits
+ * DB ("Temperature Max" → "Temperature max", "Temperature Avg" →
+ * "Temperature mean", "Percipitation" → "Precipitation", any casing) onto
+ * the current labels. Date entries are merged — on collision the canonical
+ * habit's value wins unless it is empty/zero, in which case the legacy
+ * value (older real history) is rescued. The legacy key is then removed so
+ * no redundant duplicates remain in the app or the backups. The settings
+ * side (order, screens, no-points, icons, …) is renamed by
+ * [SettingsRepository.migrateEnvironmentHabitNames]; both are guarded by
+ * one idempotency flag.
+ */
+internal suspend fun HabitViewModel.canonicalizeEnvironmentHabitNames() {
+    if (settingsRepo.isEnvHabitsCanonicalized()) return
+    val s = _settings.value
+
+    if (!dbLoaded || s.fileUri.isEmpty()) {
+        // DB unavailable (fresh install?) — still fold the settings keys.
+        settingsRepo.migrateEnvironmentHabitNames()
+        return
+    }
+
+    refreshCachedDbFromDisk(s.fileUri)
+    val db = cachedPhoneDb.toMutableMap()
+    var changed = false
+
+    // canonicalEnvLabel() returns either a CURRENT metric label or the input
+    // unchanged, so any name it actually rewrites is an env habit to fold.
+    for (legacy in db.keys.toList()) {
+        val canonical = EnvironmentMetric.canonicalEnvLabel(legacy)
+        if (canonical == legacy) continue
+        val legacyEntries = db[legacy] ?: continue
+        val canonicalEntries = (db[canonical] ?: mutableMapOf()).toMutableMap()
+        for ((date, v) in legacyEntries) {
+            val keep = canonicalEntries[date]
+            if (keep == null || keep == 0) canonicalEntries[date] = v
+        }
+        db[canonical] = canonicalEntries
+        db.remove(legacy)
+        changed = true
+        Log.i(TAG, "env canonicalize: merged '$legacy' into '$canonical' (${legacyEntries.size} day(s))")
+    }
+
+    // Settings-side rename BEFORE rebuilding the list so screens/order
+    // already reference the canonical names.
+    settingsRepo.migrateEnvironmentHabitNames()
+
+    if (changed) {
+        cachedPhoneDb = db
+        rebuildHabitList()
+        withContext(Dispatchers.IO) {
+            habitsRepo.persistDatabase(Uri.parse(s.fileUri), context, db)
+        }
     }
 }
 

@@ -983,7 +983,15 @@ class BackupManager(
         settingsRepo.saveCompanionApiEnabled(s.companionApiEnabled)
         settingsRepo.saveCompanionReadHabits(s.companionReadHabits.toSet())
         settingsRepo.saveConditionalLinkFeedMinutes(s.conditionalLinkFeedMinutes)
-        settingsRepo.saveEnvironmentEnabled(s.environmentEnabled)
+        // Restore guard: a backup made BEFORE environmentEnabled existed
+        // serialises the model default (false) — restoring it would flip the
+        // master switch off and silently stall every env habit (exactly what
+        // happened 2026-10-05 → 2026-10-16). Only restore the switch when the
+        // backup explicitly had it ON, or when there are no env links (so a
+        // real "disabled" backup still restores as disabled).
+        if (s.environmentEnabled || s.environmentHabitMetrics.isEmpty()) {
+            settingsRepo.saveEnvironmentEnabled(s.environmentEnabled)
+        }
         settingsRepo.saveEnvironmentWaterMemoryEnabled(s.environmentWaterMemoryEnabled)
         settingsRepo.saveEnvironmentTemperatureUnit(s.environmentTemperatureUnit)
         settingsRepo.saveAutoBackupLastDate(s.autoBackupLastDate)

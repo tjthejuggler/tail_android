@@ -133,6 +133,8 @@ private val KEY_HIDDEN_SCREENS = stringSetPreferencesKey("hidden_screens")
 private val KEY_DISABLED_HABITS = stringSetPreferencesKey("disabled_habits")
 // No-points habits (set of habit names)
 private val KEY_NO_POINTS_HABITS = stringSetPreferencesKey("no_points_habits")
+// One-time fold of legacy environment-habit spellings onto canonical labels
+private val KEY_ENV_HABITS_CANONICALIZED = booleanPreferencesKey("env_habit_names_canonicalized")
 // AI icon generation settings
 private val KEY_AI_ICONS_ENABLED = booleanPreferencesKey("ai_icons_enabled")
 private val KEY_AI_ICONS_API_KEY = stringPreferencesKey("ai_icons_api_key")
@@ -357,24 +359,25 @@ private val HABIT_RENAME_MAP: Map<String, String> = mapOf(
     "Launch Squats Widget"  to "Squats"
 )
 
-/** Replace any old habit name with its new name using [HABIT_RENAME_MAP]. */
-private fun migrateNameStr(name: String): String = HABIT_RENAME_MAP[name] ?: name
+/** Replace any old habit name with its new name using the given rename map. */
+private fun migrateNameStr(name: String, map: Map<String, String> = HABIT_RENAME_MAP): String =
+    map[name] ?: name
 
 /** Migrate a raw `|||`-separated string (used for habit order). */
-private fun migrateDelimitedStr(raw: String, sep: String = "|||"): String {
+private fun migrateDelimitedStr(raw: String, sep: String = "|||", map: Map<String, String> = HABIT_RENAME_MAP): String {
     if (raw.isBlank()) return raw
-    return raw.split(sep).joinToString(sep) { migrateNameStr(it) }
+    return raw.split(sep).joinToString(sep) { migrateNameStr(it, map) }
 }
 
 /** Migrate a raw encoded screens string (id\tname\thabit1|habit2\n…). */
-private fun migrateScreensStr(raw: String): String {
+private fun migrateScreensStr(raw: String, map: Map<String, String> = HABIT_RENAME_MAP): String {
     if (raw.isBlank()) return raw
     return raw.split("\n").joinToString("\n") { line ->
         val parts = line.split("\t", limit = 3)
         if (parts.size < 3) line
         else {
             val habits = parts[2].split(Regex("(?<!\\\\)\\|"))
-                .joinToString("|") { migrateNameStr(it) }
+                .joinToString("|") { migrateNameStr(it, map) }
             "${parts[0]}\t${parts[1]}\t$habits"
         }
     }
@@ -384,28 +387,28 @@ private fun migrateScreensStr(raw: String): String {
  * Migrate a raw KV_SEP/PAIR_SEP-encoded map string — renames keys (habit names)
  * while preserving values. Works for file-URI maps, int maps, long maps, etc.
  */
-private fun migrateKvMapStr(raw: String): String {
+private fun migrateKvMapStr(raw: String, map: Map<String, String> = HABIT_RENAME_MAP): String {
     if (raw.isBlank()) return raw
     return raw.split(PAIR_SEP).joinToString(PAIR_SEP) { pair ->
         val idx = pair.indexOf(KV_SEP)
         if (idx < 0) pair
-        else migrateNameStr(pair.substring(0, idx)) + KV_SEP + pair.substring(idx + 1)
+        else migrateNameStr(pair.substring(0, idx), map) + KV_SEP + pair.substring(idx + 1)
     }
 }
 
 /**
  * Migrate a raw linked-habits map string — renames both keys AND values (linked habit names).
  */
-private fun migrateLinkedHabitsStr(raw: String): String {
+private fun migrateLinkedHabitsStr(raw: String, map: Map<String, String> = HABIT_RENAME_MAP): String {
     if (raw.isBlank()) return raw
     return raw.split(PAIR_SEP).joinToString(PAIR_SEP) { pair ->
         val idx = pair.indexOf(KV_SEP)
         if (idx < 0) pair
         else {
-            val key = migrateNameStr(pair.substring(0, idx))
+            val key = migrateNameStr(pair.substring(0, idx), map)
             val links = pair.substring(idx + 1)
                 .split(Regex("(?<!\\\\),"))
-                .joinToString(",") { migrateNameStr(it) }
+                .joinToString(",") { migrateNameStr(it, map) }
             "$key$KV_SEP$links"
         }
     }
@@ -811,6 +814,99 @@ class SettingsRepository(private val context: Context) {
 
             prefs[KEY_MIGRATION_LAUNCH_RENAME_DONE] = true
             Log.i("SettingsRepo", "Habit rename migration complete.")
+        }
+    }
+
+    /** True once the one-time env-habit-spelling canonicalization has run. */
+    suspend fun isEnvHabitsCanonicalized(): Boolean =
+        context.dataStore.data.first()[KEY_ENV_HABITS_CANONICALIZED] ?: false
+
+    suspend fun markEnvHabitsCanonicalized() {
+        context.dataStore.edit { it[KEY_ENV_HABITS_CANONICALIZED] = true }
+    }
+
+    /**
+     * One-time migration (TailCue parity: `_CANONICAL_ENV` / `_rename_metrics`):
+     * folds legacy environment-habit spellings ("Temperature Max", "Temperature
+     * Avg", "Percipitation", …) onto the current canonical labels in every
+     * DataStore key that stores habit names. The habits-DB merge itself lives
+     * in HabitViewModelEnvironment (it owns the DB); this fixes the settings
+     * side. Idempotent — guarded by [KEY_ENV_HABITS_CANONICALIZED].
+     */
+    suspend fun migrateEnvironmentHabitNames() {
+        val map = com.example.tail.data.environment.EnvironmentMetric.legacyRenames
+        if (map.isEmpty()) return
+        context.dataStore.edit { prefs ->
+            if (prefs[KEY_ENV_HABITS_CANONICALIZED] == true) return@edit
+
+            Log.i("SettingsRepo", "Running env habit-spelling canonicalization…")
+
+            fun migrateStringSet(key: Preferences.Key<Set<String>>) {
+                val current = prefs[key] ?: return
+                val migrated = current.map { migrateNameStr(it, map) }.toSet()
+                if (migrated != current) prefs[key] = migrated
+            }
+            migrateStringSet(KEY_CUSTOM_INPUT)
+            migrateStringSet(KEY_MAX_ONE_HABITS)
+            migrateStringSet(KEY_TEXT_INPUT_HABITS)
+            migrateStringSet(KEY_TEXT_INPUT_OPTIONS_HABITS)
+            migrateStringSet(KEY_SHARABLE_TEXT_HABITS)
+            migrateStringSet(KEY_DATED_ENTRY_HABITS)
+            migrateStringSet(KEY_CONDITIONAL_HABITS)
+            migrateStringSet(KEY_SUBTYPED_HABITS)
+            migrateStringSet(KEY_TIMED_HABITS)
+            migrateStringSet(KEY_TIMELESS_HABITS)
+            migrateStringSet(KEY_VOICE_TRIGGER_HABITS)
+            migrateStringSet(KEY_CUSTOM_POINT_RANGES_HABITS)
+            migrateStringSet(KEY_NO_POINTS_HABITS)
+            migrateStringSet(KEY_DISABLED_HABITS)
+
+            val orderRaw = prefs[KEY_HABIT_ORDER] ?: ""
+            if (orderRaw.isNotEmpty()) {
+                val migrated = migrateDelimitedStr(orderRaw, map = map)
+                if (migrated != orderRaw) prefs[KEY_HABIT_ORDER] = migrated
+            }
+
+            val screensRaw = prefs[KEY_HABIT_SCREENS] ?: ""
+            if (screensRaw.isNotEmpty()) {
+                val migrated = migrateScreensStr(screensRaw, map)
+                if (migrated != screensRaw) prefs[KEY_HABIT_SCREENS] = migrated
+            }
+
+            fun migrateKvKey(key: Preferences.Key<String>) {
+                val raw = prefs[key] ?: return
+                if (raw.isBlank()) return
+                val migrated = migrateKvMapStr(raw, map)
+                if (migrated != raw) prefs[key] = migrated
+            }
+            migrateKvKey(KEY_TEXT_INPUT_FILE_URIS)
+            migrateKvKey(KEY_HABIT_ICONS)
+            migrateKvKey(KEY_DATED_ENTRY_FILE_URIS)
+            migrateKvKey(KEY_DATED_ENTRY_FILE_SIZES)
+            migrateKvKey(KEY_HABIT_DIVIDERS)
+            migrateKvKey(KEY_HABIT_SUBTYPES)
+            migrateKvKey(KEY_SUBTYPE_DATA_FILE_URIS)
+            migrateKvKey(KEY_TIMED_DATA_FILE_URIS)
+            migrateKvKey(KEY_CUSTOM_POINT_RANGES)
+            migrateKvKey(KEY_GRAPH_VALUE_MODE_HABITS)
+            migrateKvKey(KEY_GRAPH_METRIC_SELECTION)
+            migrateKvKey(KEY_HABIT_NOTES)
+            migrateKvKey(KEY_VALUE_DISPLAY_LABELS)
+
+            val linkedRaw = prefs[KEY_CONDITIONAL_LINKED_HABITS] ?: ""
+            if (linkedRaw.isNotBlank()) {
+                val migrated = migrateLinkedHabitsStr(linkedRaw, map)
+                if (migrated != linkedRaw) prefs[KEY_CONDITIONAL_LINKED_HABITS] = migrated
+            }
+
+            val voiceTriggerRaw = prefs[KEY_VOICE_TRIGGER_WORDS] ?: ""
+            if (voiceTriggerRaw.isNotBlank()) {
+                val migrated = migrateLinkedHabitsStr(voiceTriggerRaw, map)
+                if (migrated != voiceTriggerRaw) prefs[KEY_VOICE_TRIGGER_WORDS] = migrated
+            }
+
+            prefs[KEY_ENV_HABITS_CANONICALIZED] = true
+            Log.i("SettingsRepo", "Env habit-spelling canonicalization complete.")
         }
     }
 
@@ -1228,7 +1324,15 @@ class SettingsRepository(private val context: Context) {
             wallpaperDirUri = prefs[KEY_WALLPAPER_DIR_URI] ?: "",
             wallpaperTarget = WallpaperTarget.fromName(prefs[KEY_WALLPAPER_TARGET]),
             wallpaperMetric = WallpaperMetric.fromName(prefs[KEY_WALLPAPER_METRIC]),
-            environmentEnabled = prefs[KEY_ENVIRONMENT_ENABLED] ?: false,
+            // Self-healing default: a settings restore / backup import can
+            // drop the master-switch key even though the user's env-habit
+            // links survive (happened 2026-10-05: capture silently stopped
+            // for 11 days because the key vanished and defaulted to false).
+            // When the key is ABSENT, infer "enabled" from whether any env
+            // habit links exist. An explicit user toggle always writes the
+            // key, so deliberate disabling still wins.
+            environmentEnabled = prefs[KEY_ENVIRONMENT_ENABLED]
+                ?: environmentHabitMetricsRaw.isNotEmpty(),
             environmentWaterMemoryEnabled = prefs[KEY_ENVIRONMENT_WATER_MEMORY] ?: true,
             environmentHabitMetrics = decodeFileUriMap(environmentHabitMetricsRaw),
             environmentTemperatureUnit = prefs[KEY_ENVIRONMENT_TEMP_UNIT] ?: "C"

@@ -387,6 +387,49 @@ object EnvironmentApis {
         }.onFailure { Log.w(TAG, "kp parse failed: ${it.message}") }.getOrNull()
     }
 
+    /**
+     * ONE feed fetch → max Kp per date, for every date in [dates] that the
+     * feed covers (the 3-hourly product serves ~7 days back; dates outside
+     * the window are simply absent from the result). Used by the backlog /
+     * daily self-heal so range-captured days get their Kp without one HTTP
+     * call per day.
+     */
+    suspend fun fetchKpMaxRange(dates: Collection<LocalDate>): Map<LocalDate, Double> =
+        withContext(Dispatchers.IO) {
+            val body = httpGet(
+                "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
+            ) ?: return@withContext emptyMap()
+            val wanted = dates.toHashSet()
+            val out = mutableMapOf<LocalDate, Double>()
+            runCatching {
+                val arr = JSONArray(body)
+                if (arr.length() > 0 && arr.get(0) is JSONObject) {
+                    for (i in 0 until arr.length()) {
+                        val row = arr.getJSONObject(i)
+                        val d = runCatching {
+                            LocalDate.parse(row.optString("time_tag").take(10))
+                        }.getOrNull() ?: continue
+                        if (d !in wanted) continue
+                        val kp = row.optDouble("Kp", Double.NaN)
+                        if (kp.isNaN() || kp < 0) continue
+                        if (kp > (out[d] ?: Double.NEGATIVE_INFINITY)) out[d] = kp
+                    }
+                } else {
+                    for (i in 1 until arr.length()) {
+                        val row = arr.getJSONArray(i)
+                        val d = runCatching {
+                            LocalDate.parse(row.getString(0).take(10))
+                        }.getOrNull() ?: continue
+                        if (d !in wanted) continue
+                        val kp = row.optString(1, "").toDoubleOrNull() ?: continue
+                        if (kp < 0) continue
+                        if (kp > (out[d] ?: Double.NEGATIVE_INFINITY)) out[d] = kp
+                    }
+                }
+            }.onFailure { Log.w(TAG, "kp-range parse failed: ${it.message}") }
+            out
+        }
+
     // ── Orchestrator ───────────────────────────────────────────────────────
 
     /**
