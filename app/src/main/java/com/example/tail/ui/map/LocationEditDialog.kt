@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -147,6 +148,7 @@ fun LocationEditDialog(
                             Image(
                                 painter = painterResource(id = com.example.tail.R.drawable.globe),
                                 contentDescription = "World map timeline",
+                                colorFilter = ColorFilter.tint(Color(0xFF4CD964)),
                                 modifier = Modifier.size(16.dp)
                             )
                         }

@@ -286,15 +286,61 @@ private suspend fun HabitViewModel.computeSuggestions(
                 )
             }
             h.useCustomInput -> {
-                val amount = settings.customInputRecentAmounts[h.name]?.firstOrNull()
-                    ?: settings.customInputAmounts[h.name]?.firstOrNull()
-                    ?: 1
+                val amount = likelyIncrementAmount(
+                    h.name, settings, timestamps[h.name] ?: emptyMap()
+                )
                 out.add(HabitSuggestion(h.name, SuggestionKind.CUSTOM_AMOUNT, amount = amount, reason = reason))
             }
             else -> out.add(HabitSuggestion(h.name, SuggestionKind.PLAIN, amount = 1, reason = reason))
         }
     }
     return out
+}
+
+/**
+ * The most likely single-increment amount for a custom-input habit, derived
+ * from the habit's own history instead of the single most recent entry: for
+ * every day in the suggestion window that has both a stored day total and at
+ * least one timestamp, the implied per-increment amount is dayTotal ÷ stamps.
+ * Amounts accumulate an age-decayed weight (exact divisor days count full,
+ * non-dividing days count a quarter), and the highest-weighted amount wins —
+ * so a one-off outlier (e.g. a random 1400 ml water entry) cannot hijack the
+ * suggestion the way "most recent amount" did. Falls back to the configured
+ * / most-recent amount when there is no usable history.
+ */
+private fun HabitViewModel.likelyIncrementAmount(
+    habitName: String,
+    settings: AppSettings,
+    stampsByDate: Map<String, List<String>>
+): Int {
+    val today = LocalDate.now()
+    val dayTotals = runCatching {
+        cachedPhoneDb[habitName].orEmpty()
+    }.getOrDefault(emptyMap())
+
+    val weights = HashMap<Int, Double>()
+    for ((dateStr, times) in stampsByDate) {
+        val total = dayTotals[dateStr] ?: continue
+        val n = times.size
+        if (n <= 0 || total <= 0) continue
+        val daysAgo = runCatching {
+            Duration.between(LocalDate.parse(dateStr).atStartOfDay(), today.atStartOfDay()).toDays()
+        }.getOrNull() ?: continue
+        if (daysAgo < 0 || daysAgo > SUGGESTION_HISTORY_DAYS) continue
+        val unit = total.toDouble() / n
+        // A day of 900 over 3 stamps is clearly 3×300; 1000 over 3 stamps is
+        // ambiguous — count it, but weakly.
+        val exactness = if (unit == Math.floor(unit)) 1.0 else 0.25
+        val ageWeight = Math.exp(-daysAgo / 21.0)
+        val amount = Math.round(unit).toInt()
+        if (amount > 0) {
+            weights[amount] = (weights[amount] ?: 0.0) + exactness * ageWeight
+        }
+    }
+    return weights.maxByOrNull { it.value }?.key
+        ?: settings.customInputRecentAmounts[habitName]?.firstOrNull()
+        ?: settings.customInputAmounts[habitName]?.firstOrNull()
+        ?: 1
 }
 
 /** [loadTextOptions] wrapped as a suspend fun for the suggestion builder. */

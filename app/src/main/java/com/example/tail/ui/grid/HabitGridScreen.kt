@@ -919,6 +919,10 @@ fun HabitGridScreen(
     var suggestions by remember { mutableStateOf<List<HabitSuggestion>>(emptyList()) }
     var suggestionFlashVisible by remember { mutableStateOf(false) }
     var suggestionsRequested by remember { mutableStateOf(false) }
+    // True between a suggestion-card ✓ tap and the resulting habits-list
+    // update — tells the auto-hide effect to keep the flash open so another
+    // suggestion can be tapped right away.
+    var suggestionConfirming by remember { mutableStateOf(false) }
     // Suggestion card whose "don't suggest anymore" popup is open (null = none)
     var excludePopupSuggestion by remember { mutableStateOf<HabitSuggestion?>(null) }
     // Sleep-suite dialog state (SleepDialogs.kt keeps this composable small)
@@ -1324,16 +1328,23 @@ fun HabitGridScreen(
                                 )
                             }
                         }
-                        // Map view — globe icon replaces the search button
-                        // (search moved to the Settings screen top bar).
+                        // Suggestions — pink lightning bolt; rebuilds and shows
+                        // the increment-suggestion flash (the same one that
+                        // appears on app open). The globe button moved to the
+                        // location popup (LocationEditDialog).
                         IconButton(
-                            onClick = onNavigateToMap,
+                            onClick = {
+                                viewModel.buildHabitSuggestions { built ->
+                                    suggestions = built
+                                    suggestionFlashVisible = built.isNotEmpty()
+                                }
+                            },
                             modifier = Modifier.size(34.dp)
                         ) {
-                            Icon(
-                                Icons.Default.Public,
-                                contentDescription = "Map",
-                                tint = TileVividPink,
+                            Image(
+                                painter = painterResource(id = R.drawable.lightning2_sc48),
+                                contentDescription = "Suggestions",
+                                colorFilter = ColorFilter.tint(TileVividPink),
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -2248,7 +2259,20 @@ fun HabitGridScreen(
             activeScreenIndex != snap.second ||
             editMode || graphMode || scheduleMode ||
             selectedDate != java.time.LocalDate.now()
-        if (changed) suggestionFlashVisible = false
+        if (changed) {
+            if (suggestionConfirming && habits.hashCode() != snap.first &&
+                activeScreenIndex == snap.second && !editMode && !graphMode &&
+                !scheduleMode && selectedDate == java.time.LocalDate.now()
+            ) {
+                // The habits-list change came from a suggestion-card ✓ —
+                // refresh the snapshot instead of hiding, so the flash stays
+                // open for another suggestion tap.
+                suggestionConfirming = false
+                suggestionHideSnapshot = Triple(habits.hashCode(), activeScreenIndex, false)
+            } else {
+                suggestionFlashVisible = false
+            }
+        }
     }
     if (suggestionFlashVisible && !editMode && !graphMode && !scheduleMode) {
         Box(
@@ -2260,6 +2284,9 @@ fun HabitGridScreen(
                 suggestions = suggestions,
                 visible = suggestionFlashVisible,
                 onConfirm = { s ->
+                    // Keep the flash open after this increment (see the
+                    // auto-hide effect above) so another card can be tapped.
+                    suggestionConfirming = true
                     when (s.kind) {
                         SuggestionKind.TEXT -> viewModel.saveTextEntries(
                             s.habitName, listOf(s.text ?: ""), null, java.time.LocalTime.now()
