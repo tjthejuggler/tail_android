@@ -1,6 +1,7 @@
 package com.example.tail.ui.settings
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Typeface
 import android.net.Uri
 import android.util.Log
@@ -347,6 +348,21 @@ fun SettingsScreen(
                         showSearchDialog = true
                     }) {
                         Icon(Icons.Filled.Search, contentDescription = "Search")
+                    }
+                    // TailCue remote webapp (RackNerd VPS, Tailscale IP — reachable
+                    // phone↔VPS directly, no laptop needed). Just opens the browser;
+                    // does not start or manage the service.
+                    IconButton(onClick = {
+                        val intent = Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("http://100.64.91.104:8600")
+                        )
+                        context.startActivity(intent)
+                    }) {
+                        Text(
+                            text = "TC",
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        )
                     }
                 }
             )

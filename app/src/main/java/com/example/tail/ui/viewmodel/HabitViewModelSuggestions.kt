@@ -302,11 +302,15 @@ private suspend fun HabitViewModel.computeSuggestions(
  * from the habit's own history instead of the single most recent entry: for
  * every day in the suggestion window that has both a stored day total and at
  * least one timestamp, the implied per-increment amount is dayTotal ÷ stamps.
- * Amounts accumulate an age-decayed weight (exact divisor days count full,
- * non-dividing days count a quarter), and the highest-weighted amount wins —
- * so a one-off outlier (e.g. a random 1400 ml water entry) cannot hijack the
- * suggestion the way "most recent amount" did. Falls back to the configured
- * / most-recent amount when there is no usable history.
+ * An implied amount only counts when it divides the day total EXACTLY and is
+ * an amount the user actually uses (the habit's quick-amount list united with
+ * its recent amounts). That keeps garbage out: day totals SET as absolute
+ * values by desktop automation (e.g. the water bottle tracker) rarely divide
+ * cleanly into a real amount, and stray quotients never match one. Accepted
+ * amounts accumulate an age-decayed weight and the highest total wins — so a
+ * one-off outlier (e.g. a random 1400 ml water entry) cannot hijack the
+ * suggestion the way "most recent amount" did. Falls back to the most-recent
+ * / configured amount when no day qualifies.
  */
 private fun HabitViewModel.likelyIncrementAmount(
     habitName: String,
@@ -318,6 +322,13 @@ private fun HabitViewModel.likelyIncrementAmount(
         cachedPhoneDb[habitName].orEmpty()
     }.getOrDefault(emptyMap())
 
+    // Amounts the user really uses: quick-amount buttons + recently typed.
+    val knownAmounts = (
+        settings.customInputAmounts[habitName]
+            ?: com.example.tail.data.DEFAULT_CUSTOM_INPUT_AMOUNTS
+        ) + (settings.customInputRecentAmounts[habitName] ?: emptyList())
+    val known = knownAmounts.toSet()
+
     val weights = HashMap<Int, Double>()
     for ((dateStr, times) in stampsByDate) {
         val total = dayTotals[dateStr] ?: continue
@@ -328,13 +339,16 @@ private fun HabitViewModel.likelyIncrementAmount(
         }.getOrNull() ?: continue
         if (daysAgo < 0 || daysAgo > SUGGESTION_HISTORY_DAYS) continue
         val unit = total.toDouble() / n
-        // A day of 900 over 3 stamps is clearly 3×300; 1000 over 3 stamps is
-        // ambiguous — count it, but weakly.
-        val exactness = if (unit == Math.floor(unit)) 1.0 else 0.25
-        val ageWeight = Math.exp(-daysAgo / 21.0)
-        val amount = Math.round(unit).toInt()
-        if (amount > 0) {
-            weights[amount] = (weights[amount] ?: 0.0) + exactness * ageWeight
+        // Only exact, recognizable quotients count. A day of 2700 ml over 3
+        // stamps with 900 in the known set is clearly 3×900; a desktop-set
+        // 2736 over 4 stamps (684) is noise — skip it.
+        if (unit != Math.floor(unit)) continue
+        val amount = unit.toInt()
+        // Skip derived 1s: pre-scale count-era days (total == stamp count)
+        // divide to exactly 1 and would otherwise drown out real amounts.
+        // Genuine +1 habits still get 1 from the recents fallback below.
+        if (amount > 1 && amount in known) {
+            weights[amount] = (weights[amount] ?: 0.0) + Math.exp(-daysAgo / 21.0)
         }
     }
     return weights.maxByOrNull { it.value }?.key
