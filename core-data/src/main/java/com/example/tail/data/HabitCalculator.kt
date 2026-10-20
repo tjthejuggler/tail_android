@@ -109,40 +109,62 @@ fun calculateStreakDisplay(entries: Map<String, Int>, targetDate: LocalDate? = n
     }
     days.sortBy { it.first }
 
-    var i = days.lastIndex
-    var day = days[i].first
     val firstDay = days.first().first
-    // Value at a calendar day: stored value, or 0 for gap days.
-    fun valueAt(d: Long): Int = if (i >= 0 && days[i].first == d) {
-        val v = days[i].second; i--; v
-    } else 0
+    val lastDay = days.last().first
+    // Dense calendar-day count — equivalent to the old expanded map's size.
+    val totalDays = (lastDay - firstDay + 1).toInt()
+
+    // Backwards cursor over the sparse list. Calendar gaps read as 0.
+    // NOTE: the cursor must SKIP entries newer than the requested day
+    // (`days[i].first > d`), not merely test for equality. The previous
+    // version only tested equality, so after re-arming at `days.lastIndex`
+    // and starting at `lastDay - 1` the very first read compared
+    // `lastDay == lastDay - 1` → false → 0, which broke every positive
+    // streak out of its run loop on the first iteration and reported +0.
+    var i = days.lastIndex
+    fun valueAt(d: Long): Int {
+        while (i >= 0 && days[i].first > d) i--
+        return if (i >= 0 && days[i].first == d) {
+            val v = days[i].second
+            i--
+            v
+        } else 0
+    }
 
     // days_since_not_zero: count of leading ZERO calendar days from the most
-    // recent end (gaps are zero days). All-zero history → full day count.
+    // recent end (gaps are zero days).
     var daysSinceNotZero = 0
-    while (true) {
-        if (valueAt(day) != 0) break
+    var d = lastDay
+    while (d >= firstDay) {
+        if (valueAt(d) != 0) break
         daysSinceNotZero++
-        if (day == firstDay) return daysSinceNotZero // all zero — matches sorted.size
-        day--
+        d--
     }
 
-    return if (daysSinceNotZero < 2) {
-        // Currently on a streak — get_days_since_zero_minus: skip the most
-        // recent day, then count consecutive NON-zero days until a zero.
-        var run = 0
-        i = days.lastIndex // re-arm the reader (the loop above consumed entries)
-        var d = days.last().first - 1
-        while (d >= firstDay) {
-            if (valueAt(d) == 0) break
-            run++
-            d--
-        }
-        run
-    } else {
+    // A history with no non-zero day at all is a pure antistreak running from
+    // the habit's first tracked day. The previous version returned this count
+    // as a POSITIVE streak, which made never-done habits (Sunburn, Weights
+    // Triceps, Weights Legs, …) display "+N" instead of "-N".
+    if (daysSinceNotZero == totalDays) return -totalDays
+
+    if (daysSinceNotZero >= 2) {
         // On an antistreak
-        -daysSinceNotZero
+        return -daysSinceNotZero
     }
+
+    // Currently on a streak — get_days_since_zero_minus: skip the most recent
+    // day, then count consecutive NON-zero days until a zero.
+    i = days.lastIndex // re-arm the reader (the loop above consumed entries)
+    var daysSinceZeroMinus = 0
+    d = lastDay - 1
+    while (d >= firstDay) {
+        if (valueAt(d) == 0) return daysSinceZeroMinus
+        daysSinceZeroMinus++
+        d--
+    }
+    // No zero in the remaining history — desktop returns the full calendar-day
+    // count (len(sorted_keys)), not the run length.
+    return totalDays
 }
 
 // ── Inverted binary helpers ──────────────────────────────────────────────────
