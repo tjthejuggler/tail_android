@@ -586,8 +586,24 @@ internal fun HabitViewModel.warmScreenCaches() {
     val key = Pair(dbSnapshot as Any, targetDate)
     if (screenWarmKey == key) return
     screenWarmKey = key
-    viewModelScope.launch(Dispatchers.Default) {
+    // CANCEL THE PREVIOUS PASS (2026-10-19 OOM fix): during the morning sync
+    // storm the DB snapshot changes every few hundred ms, and every change
+    // launched ANOTHER un-cancellable warming pass that kept building full
+    // habit lists (each one tens of MB of transient allocations for
+    // multi-decade histories) before noticing it was stale. Many passes then
+    // ran concurrently on Dispatchers.Default and exhausted the 512 MB heap
+    // — the 05:43–05:54 crash loop. Cancelling the previous job guarantees
+    // at most ONE warming pass is alive at any time.
+    screenWarmJob?.cancel()
+    screenWarmJob = viewModelScope.launch(Dispatchers.Default) {
         for ((idx, screen) in screens.withIndex()) {
+            // Staleness check BEFORE the heavy build, not just after: abort
+            // as soon as the snapshot is superseded instead of allocating a
+            // throwaway habit list first.
+            if (dbSnapshot !== cachedPhoneDb || targetDate != _selectedDate.value) {
+                screenWarmKey = null
+                return@launch
+            }
             if (idx == _activeScreenIndex.value) continue
             if (screen.habitNames.isEmpty()) {
                 screenHabitCache[Pair(idx, targetDate)] = emptyList()

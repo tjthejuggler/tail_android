@@ -539,7 +539,7 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Backup & Recovery",
-                    summary = "Backups · Google Drive · automatic snapshots",
+                    summary = "Backups · Google Drive · snapshots · PC archive",
                     icon = Icons.Filled.Backup,
                     accent = BorderWhiteOrange
                 ) {
@@ -550,6 +550,8 @@ fun SettingsScreen(
                     )
                     SettingsSubSectionDivider()
                     SnapshotRestoreSection(viewModel = viewModel)
+                    SettingsSubSectionDivider()
+                    ResticRestoreSection(viewModel = viewModel)
                 }
             }
         }

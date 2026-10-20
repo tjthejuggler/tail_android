@@ -890,6 +890,12 @@ class HabitViewModel(
     // once per data change instead of on every rebuild.
     internal var screenWarmKey: Pair<Any, LocalDate>? = null
 
+    // The in-flight background warming pass (see warmScreenCaches). Kept so a
+    // new pass can CANCEL the previous one — during rapid DB churn (morning
+    // sync storm) un-cancellable passes used to pile up concurrently and
+    // exhaust the heap (2026-10-19 OOM crash loop).
+    internal var screenWarmJob: kotlinx.coroutines.Job? = null
+
     /** Serializes [rebuildHabitList] runs. Rebuilds are launched from many
      *  asynchronous triggers (screen switches, HabitIncrementBus events,
      *  Garmin/Chess/GitHub syncs, …) and each one publishes the whole habit
@@ -1202,6 +1208,14 @@ class HabitViewModel(
 
     internal val _snapshotStatus = MutableStateFlow<String?>(null)
     val snapshotStatus: StateFlow<String?> = _snapshotStatus.asStateFlow()
+
+    // PC-side restic archive snapshots (disaster-recovery tier behind the
+    // on-phone snapshots). See HabitViewModelBackupRestic.kt.
+    internal val _resticSnapshots = MutableStateFlow<List<ResticSnapshotUi>>(emptyList())
+    val resticSnapshots: StateFlow<List<ResticSnapshotUi>> = _resticSnapshots.asStateFlow()
+
+    internal val _resticStatus = MutableStateFlow<String?>(null)
+    val resticStatus: StateFlow<String?> = _resticStatus.asStateFlow()
 
     // ── Single-habit restore from a backup file ───────────────────────────
     /** Non-null while a restore-from-backup confirmation dialog is showing. */

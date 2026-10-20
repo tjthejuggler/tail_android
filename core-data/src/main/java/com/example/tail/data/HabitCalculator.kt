@@ -87,28 +87,58 @@ private fun expandEntriesToCalendarDays(entries: Map<String, Int>): Map<String, 
  */
 fun calculateStreakDisplay(entries: Map<String, Int>, targetDate: LocalDate? = null): Int {
     if (entries.isEmpty()) return 0
-    // Ensure the target date is present so calendar expansion extends to it.
-    // This mirrors the workaround already used in AppStatsScreen.
-    val entriesWithTarget = if (targetDate != null) {
-        val targetDateStr = dateString(targetDate)
-        if (targetDateStr !in entries) entries + (targetDateStr to 0) else entries
-    } else {
-        entries
+    // EPOCH-DAY WALK (2026-10-19 OOM fix): the old implementation materialised
+    // the FULL dense calendar map (one entry + formatted String per calendar
+    // day of the habit's history) plus two sorted key lists on every call.
+    // With multi-decade back-data (2004→) and concurrent rebuild/screen-warm
+    // passes during the morning sync storm, that exhausted the 512 MB heap
+    // (the 05:43–05:54 OOM crash loop). This version walks the SPARSE entries
+    // by epoch day — calendar gaps still count as zero days, semantics are
+    // bit-for-bit identical, and allocation is O(#stored entries).
+    val days = ArrayList<Pair<Long, Int>>(entries.size + 1) // (epochDay, value), sorted asc
+    for ((k, v) in entries) {
+        val e = parseDate(k)?.toEpochDay() ?: continue
+        days.add(e to v)
     }
-    // Expand sparse map so calendar gaps count as zeros (matching desktop behavior)
-    val expanded = expandEntriesToCalendarDays(entriesWithTarget)
-    val sorted = expanded.keys.sorted().reversed()
+    if (days.isEmpty()) return 0
+    // Ensure the target date is present so the walk extends to it (mirrors
+    // the old "insert target with 0 before expansion" workaround).
+    if (targetDate != null) {
+        val t = targetDate.toEpochDay()
+        if (days.none { it.first == t }) days.add(t to 0)
+    }
+    days.sortBy { it.first }
 
-    // days_since_not_zero: index of first non-zero entry from most recent
-    val daysSinceNotZero = sorted.indexOfFirst { expanded[it] != 0 }
-        .let { if (it == -1) sorted.size else it }
+    var i = days.lastIndex
+    var day = days[i].first
+    val firstDay = days.first().first
+    // Value at a calendar day: stored value, or 0 for gap days.
+    fun valueAt(d: Long): Int = if (i >= 0 && days[i].first == d) {
+        val v = days[i].second; i--; v
+    } else 0
+
+    // days_since_not_zero: count of leading ZERO calendar days from the most
+    // recent end (gaps are zero days). All-zero history → full day count.
+    var daysSinceNotZero = 0
+    while (true) {
+        if (valueAt(day) != 0) break
+        daysSinceNotZero++
+        if (day == firstDay) return daysSinceNotZero // all zero — matches sorted.size
+        day--
+    }
 
     return if (daysSinceNotZero < 2) {
-        // Currently on a streak — use get_days_since_zero_minus:
-        // skip index 0 (most recent), find first zero in the rest
-        val daysSinceZeroMinus = sorted.drop(1).indexOfFirst { expanded[it] == 0 }
-            .let { if (it == -1) sorted.size else it }
-        daysSinceZeroMinus
+        // Currently on a streak — get_days_since_zero_minus: skip the most
+        // recent day, then count consecutive NON-zero days until a zero.
+        var run = 0
+        i = days.lastIndex // re-arm the reader (the loop above consumed entries)
+        var d = days.last().first - 1
+        while (d >= firstDay) {
+            if (valueAt(d) == 0) break
+            run++
+            d--
+        }
+        run
     } else {
         // On an antistreak
         -daysSinceNotZero
@@ -221,17 +251,31 @@ fun calculateInvertedStreakDisplay(invertedEntries: Map<String, Int>): Int {
  * habitsdb.txt has an explicit entry for every calendar day.
  */
 fun calculateLongestStreak(entries: Map<String, Int>): Int {
-    // Expand sparse map so calendar gaps count as zeros (matching desktop behavior)
-    val expanded = expandEntriesToCalendarDays(entries)
+    // EPOCH-DAY WALK (2026-10-19 OOM fix): same desktop semantics (calendar
+    // gaps are zeros) without materialising the dense expanded map + a sorted
+    // copy of it. See calculateStreakDisplay for the OOM background.
+    if (entries.isEmpty()) return 0
+    val days = ArrayList<Pair<Long, Int>>(entries.size)
+    for ((k, v) in entries) {
+        val e = parseDate(k)?.toEpochDay() ?: continue
+        days.add(e to v)
+    }
+    if (days.isEmpty()) return 0
+    days.sortBy { it.first }
     var longest = 0
     var current = 0
-    for ((_, value) in expanded.entries.sortedBy { it.key }) {
-        if (value != 0) {
-            current++
-        } else {
+    var prevEpoch = Long.MIN_VALUE
+    for ((e, v) in days) {
+        if (prevEpoch != Long.MIN_VALUE && e - prevEpoch > 1) {
+            // Calendar gap — every missing day is a zero (streak-breaker).
             longest = maxOf(longest, current)
             current = 0
         }
+        if (v != 0) current++ else {
+            longest = maxOf(longest, current)
+            current = 0
+        }
+        prevEpoch = e
     }
     return maxOf(longest, current)
 }
@@ -297,10 +341,22 @@ fun getAllTimeHighRolling(entries: Map<String, Int>, windowSize: Int): RollingHi
     val firstDate = parseDate(sorted.first().key) ?: return RollingHigh(0.0, "")
     val lastDate = parseDate(sorted.last().key) ?: return RollingHigh(0.0, "")
 
-    // Build a dense array of daily values (calendar-day expanded, missing = 0)
-    val totalDays = (lastDate.toEpochDay() - firstDate.toEpochDay()).toInt() + 1
-    val dailyValues = IntArray(totalDays) { i ->
-        entries[dateString(firstDate.plusDays(i.toLong()))] ?: 0
+    // Build a dense array of daily values (calendar-day expanded, missing = 0).
+    // EPOCH-BUCKETED FILL (2026-10-19 OOM fix): the old dense init allocated a
+    // formatted date String for EVERY calendar day of the habit's history —
+    // for habits with multi-decade back-data (2004→) that is ~8k strings per
+    // call, ×3 window sizes ×N habits ×concurrent rebuild/screen-warm passes,
+    // which is what filled the heap during the morning sync storm. Filling by
+    // epoch-day index parses each STORED key once and allocates no per-day
+    // strings at all; result is identical (missing days stay 0).
+    val firstEpoch = firstDate.toEpochDay()
+    val lastEpoch = lastDate.toEpochDay()
+    val totalDays = (lastEpoch - firstEpoch).toInt() + 1
+    val dailyValues = IntArray(totalDays)
+    for ((k, v) in sorted) {
+        val e = parseDate(k)?.toEpochDay() ?: continue
+        val idx = (e - firstEpoch).toInt()
+        if (idx in dailyValues.indices) dailyValues[idx] = v
     }
 
     // Prefix sums for O(1) window sums

@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import sys
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -55,7 +56,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from fastapi import FastAPI, HTTPException, Request, Security
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -307,6 +308,104 @@ def backup_habits_list(api_key: str = Security(verify_key)):
             "modified": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
         })
     return {"backups": items, "count": len(items)}
+
+
+# ── restic archive snapshots (2026-10-19) ────────────────────────────────────
+# The habitsdb syncthing folder is additionally archived by restic with GFS
+# retention (scripts/backup/restic_habitsdb.sh, run by tail-supervisor every
+# 2 h). Unlike the JSON snapshot store above, restic keeps MONTHS of history
+# (daily/weekly/monthly/yearly) with content dedup, so it is the restore path
+# for "the phone AND the desktop copies are both bad".
+#
+#   GET /api/v1/backup/habitsdb/snapshots           → restic snapshot list
+#   GET /api/v1/backup/habitsdb/restore?snapshot=ID → that snapshot's
+#                                                    habitsdb.txt (restore path)
+#
+# Both shell out to the restic binary with the env from
+# scripts/backup/restic_habitsdb.env; no repo path or password lives here.
+
+RESTIC_ENV_FILE = SCRIPT_DIR.parent / "scripts" / "backup" / "restic_habitsdb.env"
+RESTIC_DUMP_TIMEOUT = 120  # cold-cache chunk fetch can take a while
+
+
+def _restic_env() -> Optional[Dict[str, str]]:
+    """Environment for restic invocations: base env + repo/password vars."""
+    if not RESTIC_ENV_FILE.exists():
+        return None
+    env = dict(os.environ)
+    env["PATH"] = os.path.expanduser("~/.local/bin") + os.pathsep + env.get("PATH", "")
+    try:
+        for line in RESTIC_ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            env[k.strip()] = v.strip()
+    except OSError:
+        return None
+    return env
+
+
+def _run_restic(*args: str, timeout: int = 60):
+    """Run a restic command; returns (returncode, stdout, stderr)."""
+    env = _restic_env()
+    if env is None:
+        return None, None, "restic env file missing"
+    try:
+        proc = subprocess.run(
+            ["restic", *args],
+            capture_output=True, text=True, timeout=timeout, env=env,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except FileNotFoundError:
+        return None, None, "restic binary not found"
+    except subprocess.TimeoutExpired:
+        return None, None, f"restic timed out after {timeout}s"
+
+
+@app.get("/api/v1/backup/habitsdb/snapshots", tags=["backup"])
+def backup_habitsdb_snapshots(api_key: str = Security(verify_key)):
+    """List restic archive snapshots of the habitsdb folder, newest first."""
+    code, out, err = _run_restic("snapshots", "--json", "--tag", "habitsdb")
+    if code is None or code != 0:
+        raise HTTPException(status_code=502, detail=err or "restic snapshots failed")
+    items = []
+    try:
+        for snap in json.loads(out or "[]"):
+            items.append({
+                "id": snap.get("short_id") or snap.get("id", "")[:8],
+                "time": snap.get("time", ""),
+            })
+    except ValueError:
+        raise HTTPException(status_code=502, detail="restic returned malformed JSON")
+    items.sort(key=lambda s: s["time"], reverse=True)
+    return {"snapshots": items, "count": len(items)}
+
+
+@app.get("/api/v1/backup/habitsdb/restore", tags=["backup"])
+def backup_habitsdb_restore(snapshot: str, api_key: str = Security(verify_key)):
+    """
+    Restore path for the restic archive: stream one snapshot's
+    habitsdb.txt out of the repo (restic dump) and return it as JSON —
+    the same document shape the app pushes via POST /backup/habits, so the
+    app applies it through its normal in-app restore confirmation flow.
+    """
+    import re
+    if not re.fullmatch(r"[0-9a-f]{8,64}", snapshot):
+        raise HTTPException(status_code=400, detail="Invalid snapshot id")
+    code, out, err = _run_restic(
+        "dump", snapshot, "/home/twain/habitsdb/habitsdb.txt",
+        timeout=RESTIC_DUMP_TIMEOUT,
+    )
+    if code is None or code != 0:
+        raise HTTPException(status_code=502, detail=err or "restic dump failed")
+    try:
+        doc = json.loads(out)
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Snapshot file is not valid JSON")
+    if not isinstance(doc, dict):
+        raise HTTPException(status_code=502, detail="Snapshot is not a habits DB object")
+    return JSONResponse(content=doc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

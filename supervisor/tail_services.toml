@@ -79,3 +79,20 @@ dir = "tail_bridge"
 cmd = "python movie_watcher.py"
 env_file = "tail_bridge/.env"
 restart_sec = 30
+
+# ── Habits DB backup (restic, deduplicating GFS) ─────────────────────────────
+# Point-in-time complete snapshots of the synced habits DB at incremental
+# cost: restic chunks content-addressably, so the ancient immutable history
+# is stored once and each 2-hourly run adds only the few KB that changed.
+# Retention: 7 daily / 5 weekly / 12 monthly / 3 yearly. Syncthing is
+# replication, NOT backup — this repo (/home/twain/backups, outside every
+# syncthing folder) is the actual point-in-time safety net. See
+# scripts/backup/restic_habitsdb.sh.
+[[service]]
+name = "habitsdb-restic-backup"
+type = "periodic"
+dir = "scripts/backup"
+cmd = "bash restic_habitsdb.sh"
+env_file = "scripts/backup/restic_habitsdb.env"
+interval_min = 120
+delay_sec = 60
