@@ -124,6 +124,8 @@ def health():
         "status": "running",
         "sources": {name: s.description for name, s in _sources.items()},
         "version": "1.0.0",
+        "role": dashboard.ROLE,
+        "device_name": dashboard.DEVICE_NAME,
     }
 
 
@@ -1175,6 +1177,7 @@ dashboard.install(
     queue_event=lambda payload: _pc_widget_queue_event(payload, actor="dashboard"),
     edit_pending=_pc_widget_edit_pending,
     delete_pending=_pc_widget_delete_pending,
+    verify_key=verify_key,
 )
 
 

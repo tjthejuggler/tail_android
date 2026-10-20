@@ -27,15 +27,17 @@ Two extra pieces of plumbing live here:
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
+import urllib.request
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Security
 from fastapi.responses import FileResponse
 
 import ipaddress
@@ -56,10 +58,37 @@ WIDGET_HISTORY_MAX = 500
 
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
+# Deployment role: "full" (laptop — movies + PC widget + everything) or
+# "remote" (always-on server — device-independent features only: garmin,
+# tailcue, backups, chess). Set via TAIL_BRIDGE_ROLE in tail_bridge/.env.
+ROLE = os.environ.get("TAIL_BRIDGE_ROLE", "full")
+DEVICE_NAME = os.environ.get("TAIL_BRIDGE_DEVICE_NAME",
+                             "laptop" if ROLE == "full" else "server")
+# Cross-link targets (shown in the dashboard header):
+TAILCUE_APP_URL = os.environ.get("TAILCUE_APP_URL", "")
+# The other bridge (laptop ↔ remote server) — health-probed for the
+# devices panel so each dashboard shows whether the peer bridge is up.
+PEER_BRIDGE_URL = os.environ.get("PEER_BRIDGE_URL", "").rstrip("/")
+
+# How long after its last contact each device still counts as "connected".
+# Phone: TailCueSyncWorker polls every 15 min (+ bubble long-poll) → 45 min.
+# PC widget: polls continuously while running → 5 min.
+# TailCue server: pushes warnings every 6 h + heartbeat each worker tick → 8 h.
+DEVICE_ONLINE_SEC: Dict[str, int] = {
+    "phone": 45 * 60,
+    "pc": 5 * 60,
+    "tailcue": 8 * 3600,
+}
+
 _started_at = time.time()
 _activity: deque = deque(maxlen=ACTIVITY_MAX)
 _last_seen: Dict[str, float] = {}
 _last_request: Dict[str, str] = {}
+
+# Cached peer-bridge health probe (never block the snapshot on the network).
+_peer_probe: Dict[str, Any] = {"at": 0.0, "result": None}
+_PEER_PROBE_TTL = 30.0
+_PEER_PROBE_TIMEOUT = 3.0
 
 _history: List[Dict[str, Any]] = []
 _history_lock = threading.Lock()
@@ -81,10 +110,18 @@ def _read_json(path: Path) -> dict:
 
 
 def _actor_of(client: str, path: str) -> str:
-    """Classify a request by origin: dashboard / pc (loopback) / phone (LAN)."""
+    """Classify a request by origin.
+
+    dashboard → the web UI itself; tailcue → the TailCue server (identified
+    by its endpoint family, works for both loopback and remote origins);
+    pc → loopback callers (bubble widget / local tools); phone → the Android
+    app (LAN / Tailscale).
+    """
     if (path == "/" or path.startswith("/dashboard")
             or path.startswith("/api/v1/dashboard") or path == "/favicon.ico"):
         return "dashboard"
+    if path.startswith("/api/v1/tailcue/"):
+        return "tailcue"
     if client in _LOOPBACK:
         return "pc"
     return "phone"
@@ -220,6 +257,46 @@ def widget_history_entries(limit: int = 100) -> list:
 
 # ── snapshot builder ──────────────────────────────────────────────────────────
 
+def _peer_health_cached() -> Optional[dict]:
+    """Peer-bridge /health probe, cached for _PEER_PROBE_TTL seconds."""
+    if not PEER_BRIDGE_URL:
+        return None
+    now = time.time()
+    if now - _peer_probe["at"] < _PEER_PROBE_TTL and _peer_probe["result"] is not None:
+        return _peer_probe["result"]
+    result: Dict[str, Any]
+    try:
+        req = urllib.request.Request(PEER_BRIDGE_URL + "/health",
+                                     headers={"User-Agent": "tail-bridge-peer-probe"})
+        with urllib.request.urlopen(req, timeout=_PEER_PROBE_TIMEOUT) as resp:
+            body = json.loads(resp.read().decode("utf-8", "replace"))
+        result = {"online": True, "status": body.get("status", "?"),
+                  "version": body.get("version", "?"),
+                  "role": body.get("role", "?"),
+                  "checked_at": _iso(now)}
+    except Exception as exc:  # noqa: BLE001 — any failure just means "offline"
+        result = {"online": False, "error": str(exc)[:200],
+                  "checked_at": _iso(now)}
+    _peer_probe["at"] = now
+    _peer_probe["result"] = result
+    return result
+
+
+def _device_entry(now: float, device_id: str, label: str) -> dict:
+    """One devices-panel row: last contact + connected/not for a known device."""
+    info = _client_info(now, device_id)
+    threshold = DEVICE_ONLINE_SEC.get(device_id, 30 * 60)
+    return {
+        "id": device_id,
+        "label": label,
+        "last_seen": info["last_seen"],
+        "age_sec": info["age_sec"],
+        "last_request": info["last_request"],
+        "online": info["age_sec"] is not None and info["age_sec"] < threshold,
+        "online_threshold_sec": threshold,
+    }
+
+
 def _client_info(now: float, actor: str) -> dict:
     ts = _last_seen.get(actor)
     return {
@@ -268,6 +345,25 @@ def _build_snapshot(version: str,
     with _history_lock:
         history = list(_history[-60:])
 
+    devices = [
+        _device_entry(now, "phone", "Android app (phone)"),
+        _device_entry(now, "pc",
+                      "PC bubble widget / local tools"
+                      if ROLE == "full" else "Local tools"),
+        _device_entry(now, "tailcue", "TailCue server"),
+    ]
+    peer = _peer_health_cached()
+    if peer is not None:
+        devices.append({
+            "id": "peer_bridge",
+            "label": f"Peer bridge ({PEER_BRIDGE_URL})",
+            "last_seen": peer.get("checked_at"),
+            "age_sec": None,
+            "last_request": "/health probe",
+            "online": bool(peer.get("online")),
+            "peer": peer,
+        })
+
     return {
         "server": {
             "status": "running",
@@ -275,11 +371,17 @@ def _build_snapshot(version: str,
             "started_at": _iso(_started_at),
             "uptime_sec": int(now - _started_at),
             "now": _iso(now),
+            "role": ROLE,
+            "device_name": DEVICE_NAME,
+            "tailcue_app_url": TAILCUE_APP_URL,
+            "peer_bridge_url": PEER_BRIDGE_URL,
         },
         "clients": {
             "phone": _client_info(now, "phone"),
             "pc": _client_info(now, "pc"),
+            "tailcue": _client_info(now, "tailcue"),
         },
+        "devices": devices,
         "sources": sources_out,
         "pc_widget": {
             "config": config,
@@ -334,8 +436,13 @@ def install(app: FastAPI,
             chess_service: Callable[[], Any],
             queue_event: Callable[[dict], dict],
             edit_pending: Callable[[str, str, str, str, int], bool],
-            delete_pending: Callable[[str], bool]) -> None:
-    """Attach the dashboard routes + activity middleware to the bridge app."""
+            delete_pending: Callable[[str], bool],
+            verify_key: Optional[Callable[..., Any]] = None) -> None:
+    """Attach the dashboard routes + activity middleware to the bridge app.
+
+    verify_key is the bridge's X-App-Auth dependency (optional — the
+    heartbeat endpoint is only mounted when it is provided).
+    """
 
     _load_history()
     _load_widget_history()
@@ -349,7 +456,10 @@ def install(app: FastAPI,
             client = request.client.host if request.client else ""
             path = request.url.path
             actor = _actor_of(client, path)
-            if actor != "dashboard":
+            # /api/v1/heartbeat names its own device in the body — the handler
+            # records it. Classifying it here too would credit the caller's
+            # network origin (e.g. TailCue on the VPS looks like "phone").
+            if actor != "dashboard" and path != "/api/v1/heartbeat":
                 _activity.append({
                     "ts": _iso(time.time()),
                     "actor": actor,
@@ -372,6 +482,25 @@ def install(app: FastAPI,
     @app.get("/dashboard", include_in_schema=False)
     def dashboard_page():
         return FileResponse(STATIC_DIR / "dashboard.html")
+
+    if verify_key is not None:
+        @app.post("/api/v1/heartbeat", tags=["dashboard"])
+        def heartbeat(request: Request, payload: Dict[str, Any],
+                      _key: Any = Security(verify_key)):
+            """Explicit device heartbeat — records a contact for the devices panel.
+
+            Auth-required (X-App-Auth, same shared secret). Body:
+            {"device": "phone" | "tailcue" | "pc" | any label}. Used by clients
+            that otherwise wouldn't touch the bridge often enough to look
+            "connected" (e.g. TailCue's worker tick every 6 h).
+            """
+            device = str(payload.get("device") or "").strip().lower()
+            if not device:
+                raise HTTPException(status_code=400, detail="'device' is required")
+            now = time.time()
+            _last_seen[device] = now
+            _last_request[device] = "heartbeat"
+            return {"ok": True, "device": device, "at": _iso(now)}
 
     @app.get("/api/v1/dashboard", tags=["dashboard"])
     def dashboard_snapshot(request: Request):

@@ -112,6 +112,7 @@ import com.example.tail.data.backup.GoogleDriveManager
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.ui.viewmodel.saveAiIconSettings
 import com.example.tail.ui.viewmodel.saveBridgeSettings
+import com.example.tail.ui.viewmodel.saveRemoteHostUrl
 import com.example.tail.ui.viewmodel.saveOmdbApiKey
 import com.example.tail.ui.viewmodel.saveVoiceNoteEnabled
 import com.example.tail.ui.viewmodel.saveVoiceNoteFileUri
@@ -1863,6 +1864,46 @@ private fun BridgeSettingsSection(
         }
 
         if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Always-on remote server (e.g. the RackNerd VPS over Tailscale).
+            // When set, Garmin data / TailCue warnings / backups prefer the
+            // remote server and fall back to this PC — they keep working
+            // when the PC is off.
+            var remoteHost by remember(settings.remoteHostUrl) {
+                mutableStateOf(settings.remoteHostUrl)
+            }
+            OutlinedTextField(
+                value = remoteHost,
+                onValueChange = { remoteHost = it },
+                label = { Text("Remote server URL (optional)") },
+                placeholder = { Text("http://tailcue-1.tailc7cd46.ts.net") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row {
+                Button(
+                    onClick = { viewModel.saveRemoteHostUrl(remoteHost) },
+                    enabled = remoteHost.trim() != settings.remoteHostUrl
+                ) { Text("Save Remote Server") }
+                if (settings.remoteHostUrl.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            remoteHost = ""
+                            viewModel.saveRemoteHostUrl("")
+                        }
+                    ) { Text("Clear") }
+                }
+            }
+            if (settings.remoteHostUrl.isNotEmpty()) {
+                Text(
+                    text = "☁ Garmin, TailCue warnings and backups prefer " +
+                           settings.remoteHostUrl + " and fall back to this PC.",
+                    fontSize = 11.sp,
+                    color = Color(0xFF888888)
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
 
             // Auto-connection status

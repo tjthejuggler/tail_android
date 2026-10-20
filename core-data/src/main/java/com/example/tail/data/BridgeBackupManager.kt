@@ -148,7 +148,11 @@ object BridgeBackupManager {
      * failing forever on a stale DNS entry.
      */
     private fun candidates(s: AppSettings): List<String> {
-        val list = ArrayList<String>(3)
+        val list = ArrayList<String>(4)
+        // Always-on remote server FIRST (remoteHostUrl) — backups must keep
+        // flowing when the laptop is off. Falls through to the laptop
+        // candidates below when the server is unreachable.
+        remoteHostCandidates(s).forEach { if (it !in list) list.add(it) }
         s.bridgeUrl.trim().trimEnd('/').takeIf { it.isNotBlank() }?.let { list.add(it) }
         try {
             val clean = s.garminProxyUrl.trim().trimEnd('/')
@@ -177,6 +181,15 @@ object BridgeBackupManager {
     /** Desktop base URL of the last successful push — self-heal memory. */
     @Volatile
     private var lastGoodUrl: String? = null
+
+    /**
+     * Bridge URL(s) derived from the always-on remote host setting, if set.
+     * The remote bridge is the preferred backup destination.
+     */
+    private fun remoteHostCandidates(s: AppSettings): List<String> {
+        val url = remoteBridgeConnectionFrom(s.remoteHostUrl, "x")?.first ?: return emptyList()
+        return listOf(url)
+    }
 
     /**
      * TCP-reachability probe (fast fail on unresolvable hosts). Avoids

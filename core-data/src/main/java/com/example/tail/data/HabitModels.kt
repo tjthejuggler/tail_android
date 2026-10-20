@@ -1539,6 +1539,16 @@ data class AppSettings(
     /** Authentication token for the bridge (X-App-Auth header). */
     val bridgeToken: String = "",
     /**
+     * Base URL of the ALWAYS-ON remote server (e.g. the RackNerd VPS over
+     * Tailscale, "http://tailcue-1.tailc7cd46.ts.net"). When set, the
+     * device-independent features (Garmin data, TailCue cues, backups) are
+     * fetched from / pushed to the remote server's bridge (:8001) and
+     * Garmin proxy (:8000) FIRST, falling back to the laptop — so they keep
+     * working when the laptop is off. Laptop-local features (movies,
+     * PC widget) always use the laptop bridge.
+     */
+    val remoteHostUrl: String = "",
+    /**
      * Text-input habits that are linked to the movie bridge.
      * When such a habit is tapped, the app fetches the latest watched movie
      * from the desktop and pre-fills the text entry for confirmation/editing.

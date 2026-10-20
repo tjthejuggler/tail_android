@@ -165,6 +165,7 @@ private val KEY_GITHUB_METRICS = stringPreferencesKey("github_metrics")
 private val KEY_BRIDGE_ENABLED = booleanPreferencesKey("bridge_enabled")
 private val KEY_BRIDGE_URL = stringPreferencesKey("bridge_url")
 private val KEY_BRIDGE_TOKEN = stringPreferencesKey("bridge_token")
+private val KEY_REMOTE_HOST_URL = stringPreferencesKey("remote_host_url")
 private val KEY_BRIDGE_MOVIE_HABITS = stringSetPreferencesKey("bridge_movie_habits")
 // Movie confirmation flash: "title@lastWatched" markers of prompts already shown/handled
 private val KEY_MOVIE_PROMPT_HANDLED = stringSetPreferencesKey("movie_prompt_handled")
@@ -1272,6 +1273,7 @@ class SettingsRepository(private val context: Context) {
             bridgeEnabled = prefs[KEY_BRIDGE_ENABLED] ?: false,
             bridgeUrl = prefs[KEY_BRIDGE_URL] ?: "",
             bridgeToken = prefs[KEY_BRIDGE_TOKEN] ?: "",
+            remoteHostUrl = prefs[KEY_REMOTE_HOST_URL] ?: "",
             bridgeMovieHabits = prefs[KEY_BRIDGE_MOVIE_HABITS] ?: emptySet(),
             omdbApiKey = prefs[KEY_OMDB_API_KEY] ?: "",
             habitScheduleTimes = decodeFileUriMap(prefs[KEY_HABIT_SCHEDULE_TIMES] ?: ""),
@@ -1391,6 +1393,13 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+
+    /** Saves the always-on remote server host URL (empty = disabled). */
+    suspend fun saveRemoteHostUrl(url: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_REMOTE_HOST_URL] = url.trim()
+        }
+    }
 
     /** Saves the master switch for the in-app stats overlay. */
     suspend fun saveStatsOverlayEnabled(enabled: Boolean) {
@@ -1941,6 +1950,7 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_BRIDGE_ENABLED] = enabled
             prefs[KEY_BRIDGE_URL] = url
             prefs[KEY_BRIDGE_TOKEN] = token
+            prefs[KEY_REMOTE_HOST_URL] = prefs[KEY_REMOTE_HOST_URL] ?: ""
         }
     }
 

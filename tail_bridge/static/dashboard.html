@@ -217,9 +217,11 @@
 <header>
   <h1><span class="paw">🐾</span>Tail Bridge <span style="color:var(--muted);font-weight:400">· PC Dashboard</span></h1>
   <span class="pill" id="serverPill"><span class="dot"></span><span id="serverPillTxt">connecting…</span></span>
+  <span class="pill" id="rolePill" style="color:var(--muted)">—</span>
   <span class="pill" id="uptimePill" style="color:var(--muted)">—</span>
   <div class="spacer"></div>
   <div class="hdr-right">
+    <a id="tailcueLink" href="#" style="display:none;margin-right:14px;font-weight:600">Open TailCue ↗</a>
     <span id="updatedTxt">—</span>
   </div>
 </header>
@@ -242,6 +244,11 @@
       <div class="row"><span class="k">Last seen</span><span class="v" id="phoneSeen">—</span></div>
       <div class="row"><span class="k">Last request</span><span class="v" id="phoneReq">—</span></div>
       <div class="row"><span class="k">Pending queue</span><span class="v" id="phoneQueue">—</span></div>
+    </div>
+    <div class="card conn" id="cardDevices">
+      <div class="top"><span class="emoji">🔌</span><span class="name">Connected devices</span>
+        <span class="state" id="devicesState">…</span></div>
+      <div class="feed scroll" id="devicesList" style="max-height:150px"><div class="empty">No contacts yet.</div></div>
     </div>
     <div class="card conn" id="cardWidget">
       <div class="top"><span class="emoji">🫧</span><span class="name">PC bubble widget</span>
@@ -435,12 +442,45 @@ function renderHeader() {
   $("updatedTxt").textContent = lastFetchOk === true
     ? "updated " + ago(snapshot?.server?.now) : "not updating";
   $("uptimePill").textContent = snapshot ? "⏱ " + fmtUptime(snapshot.server.uptime_sec) : "—";
+  const role = snapshot?.server?.role || "full";
+  $("rolePill").textContent = role === "remote" ? "☁️ remote server" : "💻 laptop";
+  const tcUrl = snapshot?.server?.tailcue_app_url;
+  const tcLink = $("tailcueLink");
+  if (tcUrl) { tcLink.href = tcUrl; tcLink.style.display = ""; }
+  else { tcLink.style.display = "none"; }
 }
 
 function setState(id, on, onTxt, offTxt) {
   const el = $(id);
   el.textContent = on ? onTxt : offTxt;
   el.className = "state " + (on ? "on" : "off");
+}
+
+const DEVICE_EMOJI = { phone: "📱", pc: "🫧", tailcue: "🧠", peer_bridge: "☁️" };
+
+function renderDevices() {
+  const devices = snapshot.devices || [];
+  const list = $("devicesList");
+  if (!devices.length) {
+    list.innerHTML = '<div class="empty">No contacts yet.</div>';
+    return;
+  }
+  list.innerHTML = devices.map((d) => {
+    const icon = DEVICE_EMOJI[d.id] || "🔌";
+    const when = d.last_seen ? ago(d.last_seen) : "never";
+    const detail = d.id === "peer_bridge"
+      ? (d.peer?.online ? (d.peer.role === "remote" ? "remote server bridge" : "laptop bridge")
+                        : esc((d.peer && d.peer.error) || "unreachable"))
+      : (d.last_request || "—");
+    return `<div class="frow" title="${esc(d.label)}">
+      <span class="ts">${icon}</span>
+      <b style="min-width:110px">${esc(d.label.split(" (")[0])}</b>
+      <span class="state ${d.online ? "on" : "off"}">${d.online ? "● connected" : "○ offline"}</span>
+      <span class="path" style="color:var(--muted)">${esc(detail)} · seen ${esc(when)}</span>
+    </div>`;
+  }).join("");
+  const onlineCount = devices.filter((d) => d.online).length;
+  setState("devicesState", true, onlineCount + " online", onlineCount + " online");
 }
 
 function renderConnections() {
@@ -875,6 +915,7 @@ function render() {
   if (!snapshot) return;
   renderHeader();
   renderConnections();
+  renderDevices();
   renderHabits();
   renderPending();
   renderWidgetHistory();

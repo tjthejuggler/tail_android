@@ -55,6 +55,78 @@ systemctl --user daemon-reload
 systemctl --user enable --now tail-bridge.service movie-watcher.service
 ```
 
+## Two Bridges: Laptop (`full`) and VPS (`remote`)
+
+The bridge runs in one of two roles, selected by `TAIL_BRIDGE_ROLE`:
+
+| Role | Where | Sources | Purpose |
+|------|-------|---------|---------|
+| `full` (default) | laptop | movies, garmin, tailcue | Everything, including laptop-local features (movie watching, PC bubble widget) |
+| `remote` | RackNerd VPS (`tailcue-1`, `100.64.91.104`) | garmin, tailcue | Always-on, device-independent work: daily Garmin import, TailCue cue delivery, phone backups |
+
+The `remote` role deliberately **omits the movies source** — movie data only
+exists on the laptop. Everything else is duplicated so the phone keeps working
+when the laptop is off.
+
+The Android app stores an optional **Remote server URL** (`remoteHostUrl`,
+Settings → Bridge). When set, the device-independent paths try the VPS first
+and fall back to the laptop:
+
+* `GarminSyncWorker` → VPS garmin proxy (`:8000`) first, then the configured proxy
+* `TailCueSyncWorker` / `TailCueFeedback` → VPS bridge (`:8001`) first
+* `BridgeBackupManager` → VPS bridge first, then saved/Garmin-derived/LAN URLs
+
+Movies and the PC bubble widget always use the laptop bridge.
+
+### VPS deployment (systemd)
+
+| Unit | Command |
+|------|---------|
+| `tail-bridge-vps.service` | `uvicorn bridge_server:app --host 100.64.91.104 --port 8001` |
+| `garmin-proxy-vps.service` | `uvicorn app:app --host 100.64.91.104 --port 8000` |
+| `garmin-fetch-vps.timer` | `fetch_data.py` every 30 min (OnBootSec=5min) |
+
+Bind uvicorn **directly to the Tailscale IP** — `tailscale serve` routes by
+`Host` header, so raw-IP requests to a served port return `404 page not found`.
+Garmin OAuth tokens live in `~/.garminconnect/garmin_tokens.json` on the VPS
+(copied from the laptop); `fetch_data.py` is token-based and never logs in.
+
+### Laptop: only `tail-supervisor.service` may own port 8001
+
+The laptop has **two** user units that can start the bridge:
+
+| Unit | Enabled at boot? | Owner |
+|------|------------------|-------|
+| `tail-supervisor.service` | **yes** | supervises all six services (bridge, garmin proxy, movie watcher, …) |
+| `tail-bridge.service` | no (legacy) | starts uvicorn alone |
+
+`tail-bridge.service` is a leftover from before the supervisor existed. It is
+`disabled`, so it does not start at boot — but if it is ever started by hand it
+grabs `127.0.0.1:8001` and every supervisor child then dies with
+`[Errno 98] address already in use` (visible as a rising `crash #N` counter in
+`journalctl --user -u tail-supervisor.service`). Worse, the surviving process
+serves **stale code**, so `.env` edits appear to have no effect.
+
+When a config change seems ignored, check for a stray listener first:
+
+```bash
+ss -ltnp | grep ':8001'          # who owns the port?
+systemctl --user is-active tail-bridge.service   # should be: inactive
+```
+
+If `tail-bridge.service` is active, `systemctl --user stop tail-bridge.service`
+and restart the supervisor. To remove the footgun permanently:
+
+```bash
+systemctl --user disable --now tail-bridge.service
+rm ~/.config/systemd/user/tail-bridge.service
+systemctl --user daemon-reload
+```
+
+Note that `systemctl --user stop tail-supervisor.service` does **not** kill an
+already-orphaned uvicorn — the supervisor only stops children it spawned. Kill
+the stray pid explicitly when simulating a laptop-off state.
+
 ## PC Dashboard
 
 The bridge serves a status dashboard on the PC — open
@@ -63,6 +135,17 @@ The bridge serves a status dashboard on the PC — open
 * **Connections** — bridge server status/uptime, when the Android app was
   last seen (and what it last requested), when the PC bubble widget last
   polled.
+* **Devices** — every device that has contacted this bridge recently, with a
+  connected/offline dot, the last request, and how long ago: 📱 phone,
+  🫧 PC widget, 🧠 TailCue server, ☁️ peer bridge. Online thresholds are
+  per-device (`DEVICE_ONLINE_SEC`: phone 45 min, pc 5 min, tailcue 8 h) because
+  their natural polling cadences differ. The peer-bridge row comes from a
+  cached (30 s TTL) `/health` probe of `PEER_BRIDGE_URL`, so each dashboard
+  shows the other bridge's status too.
+* **Role pill + cross-link** — the header shows `💻 laptop` or
+  `☁️ remote server` and, when `TAILCUE_APP_URL` is set, an
+  **Open TailCue ↗** link. The TailCue webapp has the mirror-image
+  **Open TailBridge ↗** link (from `TAILCUE_BRIDGE_APP_URL`).
 * **Android app → PC widget** — which habits are currently toggled ON in the
   app for the PC widget (with `minutes_primary` / divider / inverted /
   no-points badges) and when the phone last pushed the config.
@@ -117,8 +200,9 @@ All endpoints require the `X-App-Auth` header (except `/health`).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Server health (no auth) |
+| GET | `/health` | Server health incl. `role` + `device_name` (no auth) |
 | GET | `/` | PC dashboard UI (no auth) |
+| POST | `/api/v1/heartbeat` | Device presence ping — body `{"device": "phone"\|"tailcue"\|…}` (auth required) |
 | GET | `/api/v1/dashboard` | Aggregated snapshot incl. `pc_widget_history` (private-network clients only, no token) |
 | POST | `/api/v1/dashboard/widget_edit` | Edit a widget event — in place if pending, else queue a `session_edit` correction (no token, private network only) |
 | POST | `/api/v1/dashboard/widget_delete` | Delete a widget event — drop if pending, else queue a `session_delete` correction (no token, private network only) |
@@ -252,6 +336,10 @@ enable the bridge toggle in Settings and it connects automatically.
 |----------|---------|-------------|
 | `ANDROID_PROXY_KEY` | (required) | Shared secret for X-App-Auth (same as Garmin proxy) |
 | `TAIL_BRIDGE_PORT` | `8001` | Server port |
+| `TAIL_BRIDGE_ROLE` | `full` | `full` = laptop (all sources); `remote` = VPS (no movies) |
+| `TAIL_BRIDGE_DEVICE_NAME` | `laptop` / `server` | Shown in `/health` and the dashboard header |
+| `TAILCUE_APP_URL` | (empty) | TailCue webapp URL → renders the **Open TailCue ↗** header link |
+| `PEER_BRIDGE_URL` | (empty) | Other bridge's base URL → adds a peer-bridge row to the devices panel |
 | `KDE_ACTIVITY_DB` | `~/.local/share/.../database` | KDE Activity SQLite path |
 | `MOVIE_POLL_INTERVAL` | `60` | Watcher poll interval (seconds) |
 | `MOVIE_CACHE_FILE` | `./movie_cache.json` | Cache output path |

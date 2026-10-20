@@ -971,6 +971,14 @@ internal fun HabitViewModel.getBridgeConnection(): Pair<String, String>? {
 /** Saves bridge enabled state; URL and token are auto-derived from Garmin settings. */
 
 
+/** Saves the always-on remote server host (empty string clears it). */
+fun HabitViewModel.saveRemoteHostUrl(url: String) {
+    viewModelScope.launch {
+        settingsRepo.saveRemoteHostUrl(url)
+        _settings.value = _settings.value.copy(remoteHostUrl = url.trim())
+    }
+}
+
 /** Saves bridge enabled state; URL and token are auto-derived from Garmin settings. */
 fun HabitViewModel.saveBridgeSettings(enabled: Boolean) {
     viewModelScope.launch {

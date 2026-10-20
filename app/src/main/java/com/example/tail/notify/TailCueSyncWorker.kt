@@ -15,6 +15,7 @@ import com.example.tail.data.HabitNotification
 import com.example.tail.data.NotificationStore
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.bridgeConnectionFrom
+import com.example.tail.data.remoteBridgeConnectionFrom
 import com.example.tail.data.tailcue.TailCue
 import com.example.tail.data.tailcue.TailCueService
 import kotlinx.coroutines.flow.first
@@ -46,21 +47,42 @@ class TailCueSyncWorker(appContext: Context, params: WorkerParameters) :
             return Result.success()
         }
         if (!settings.bridgeEnabled) return Result.success()
-        val conn = bridgeConnectionFrom(settings.garminProxyUrl, settings.garminAppToken)
-            ?: return Result.success()
+        // Remote (always-on server) bridge first, laptop bridge as fallback —
+        // TailCue pushes cues to the remote bridge, so warnings reach the
+        // phone even when the laptop is off.
+        val candidates = buildList {
+            remoteBridgeConnectionFrom(settings.remoteHostUrl, settings.garminAppToken)
+                ?.let { add(it) }
+            bridgeConnectionFrom(settings.garminProxyUrl, settings.garminAppToken)
+                ?.let { add(it) }
+        }
+        if (candidates.isEmpty()) return Result.success()
 
-        val cues = try {
-            TailCueService().fetchPending(conn.first, conn.second)
-        } catch (e: Exception) {
-            Log.w(TAG, "Cue fetch failed: ${e.message}")
-            null
-        } ?: return Result.success() // unreachable — retry next period
+        val service = TailCueService()
+        var conn: Pair<String, String>? = null
+        var cues: List<TailCue>? = null
+        for (c in candidates) {
+            cues = try {
+                service.fetchPending(c.first, c.second)
+            } catch (e: Exception) {
+                Log.w(TAG, "Cue fetch failed on ${c.first}: ${e.message}")
+                null
+            }
+            if (cues != null) {
+                conn = c
+                break
+            }
+        }
+        val bridge = conn ?: return Result.success() // unreachable — retry next period
+        val ack: suspend (String) -> Unit = { id ->
+            service.ack(bridge.first, bridge.second, id) // best-effort
+        }
+        val cueList = cues ?: return Result.success()
 
-        if (cues.isEmpty()) return Result.success()
+        if (cueList.isEmpty()) return Result.success()
 
         val store = NotificationStore(applicationContext)
-        val service = TailCueService()
-        for (cue in cues) {
+        for (cue in cueList) {
             // Special family: the experiment-status mirror (no notification).
             // Store the active experiment so MainActivity can flash a reminder
             // on app open; a "clear" event wipes it. Ack so it doesn't requeue.
@@ -83,7 +105,7 @@ class TailCueSyncWorker(appContext: Context, params: WorkerParameters) :
                 } catch (e: Exception) {
                     Log.w(TAG, "Bad experiment status cue: ${e.message}")
                 }
-                service.ack(conn.first, conn.second, cue.id) // best-effort
+                ack(cue.id)
                 continue
             }
             val ask = HabitNotification(
@@ -100,7 +122,7 @@ class TailCueSyncWorker(appContext: Context, params: WorkerParameters) :
             )
             store.add(ask)
             HabitNotifier.postAsk(applicationContext, ask)
-            service.ack(conn.first, conn.second, cue.id) // best-effort
+            ack(cue.id)
             Log.i(TAG, "Posted TailCue warning '${cue.title}' (${cue.severity})")
         }
         return Result.success()

@@ -10,7 +10,10 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.remoteProxyUrlFrom
 import com.example.tail.data.health.GarminRepository
+import com.example.tail.data.health.DailyValueMap
+import com.example.tail.data.health.GarminType
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
@@ -50,7 +53,11 @@ class GarminSyncWorker(appContext: Context, params: WorkerParameters) :
             return Result.success()
         }
 
-        if (!settings.garminEnabled || settings.garminProxyUrl.isEmpty() ||
+        // A remote host alone is enough — the laptop proxy URL is optional
+        // once the always-on server is configured.
+        val hasAnyProxy = settings.garminProxyUrl.isNotEmpty() ||
+            settings.remoteHostUrl.isNotEmpty()
+        if (!settings.garminEnabled || !hasAnyProxy ||
             settings.garminAppToken.isEmpty()
         ) {
             Log.i(TAG, "Garmin sync skipped: disabled or unconfigured")
@@ -66,15 +73,34 @@ class GarminSyncWorker(appContext: Context, params: WorkerParameters) :
         }
 
         val repo = GarminRepository(applicationContext)
-        val fresh = try {
-            repo.fetchCurrentMonthData(
-                settings.garminProxyUrl,
-                settings.garminAppToken,
-                settings.garminDateOfBirth
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Garmin sync fetch failed (will retry next period): ${e.message}")
-            null
+        // Remote (always-on server) proxy first, laptop proxy as fallback —
+        // Garmin data keeps flowing when the laptop is off. Both serve the
+        // same cache shape.
+        val proxyUrls = buildList {
+            remoteProxyUrlFrom(settings.remoteHostUrl).takeIf { it.isNotBlank() }?.let { add(it) }
+            add(settings.garminProxyUrl)
+        }
+        var fresh: Map<GarminType, DailyValueMap>? = null
+        for (proxyUrl in proxyUrls) {
+            val data = try {
+                repo.fetchCurrentMonthData(
+                    proxyUrl,
+                    settings.garminAppToken,
+                    settings.garminDateOfBirth
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Garmin sync fetch failed on $proxyUrl " +
+                    "(will try next candidate/period): ${e.message}")
+                null
+            }
+            if (data != null && data.isNotEmpty()) {
+                fresh = data
+                break
+            }
+            // null or empty: try the next candidate (an unreachable proxy can
+            // surface as either); only the LAST empty result is treated as
+            // "reachable but nothing published yet".
+            if (data != null && proxyUrl == proxyUrls.last()) fresh = data
         }
         if (fresh == null) return Result.success() // unreachable — retry next period
 

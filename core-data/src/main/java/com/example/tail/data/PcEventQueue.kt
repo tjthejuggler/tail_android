@@ -57,6 +57,43 @@ fun bridgeConnectionFrom(garminProxyUrl: String, garminAppToken: String): Pair<S
     }
 }
 
+/**
+ * Bridge connection on the ALWAYS-ON remote server (see
+ * [com.example.tail.data.AppSettings.remoteHostUrl]), or null when unset.
+ * Device-independent features prefer this so they survive the laptop
+ * being off.
+ */
+fun remoteBridgeConnectionFrom(remoteHostUrl: String, garminAppToken: String): Pair<String, String>? {
+    if (remoteHostUrl.isBlank() || garminAppToken.isEmpty()) return null
+    return try {
+        val clean = remoteHostUrl.trim().trimEnd('/')
+        val uri = java.net.URI(clean)
+        val scheme = uri.scheme ?: "http"
+        val host = uri.host ?: return null
+        "$scheme://$host:$PC_WIDGET_BRIDGE_PORT" to garminAppToken
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/**
+ * Garmin-proxy URL on the remote server (port 8000), or "" when no remote
+ * host is configured. The remote proxy serves the same cache the laptop
+ * proxy serves, fetched on the server's own schedule.
+ */
+fun remoteProxyUrlFrom(remoteHostUrl: String): String {
+    if (remoteHostUrl.isBlank()) return ""
+    return try {
+        val clean = remoteHostUrl.trim().trimEnd('/')
+        val uri = java.net.URI(clean)
+        val scheme = uri.scheme ?: "http"
+        val host = uri.host ?: return ""
+        "$scheme://$host:8000"
+    } catch (e: Exception) {
+        ""
+    }
+}
+
 /** Validated, ready-to-apply event. */
 data class PcHabitEvent(
     val id: String,

@@ -6,6 +6,7 @@ import com.example.tail.data.HabitNotification
 import com.example.tail.data.NotificationStore
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.bridgeConnectionFrom
+import com.example.tail.data.remoteBridgeConnectionFrom
 import com.example.tail.data.tailcue.TailCue
 import com.example.tail.data.tailcue.TailCueService
 import kotlinx.coroutines.Dispatchers
@@ -41,11 +42,19 @@ object TailCueFeedback {
             try {
                 val settings = SettingsRepository(context).settingsFlow.first()
                 if (settings.bridgeEnabled) {
-                    bridgeConnectionFrom(settings.garminProxyUrl, settings.garminAppToken)
-                        ?.let { (url, token) ->
-                            delivered = TailCueService()
-                                .sendFeedback(url, token, cueId, rating, comment)
-                        }
+                    // Remote (always-on server) bridge first, laptop fallback —
+                    // cues live on the remote bridge's store.
+                    val candidates = buildList {
+                        remoteBridgeConnectionFrom(
+                            settings.remoteHostUrl, settings.garminAppToken)?.let { add(it) }
+                        bridgeConnectionFrom(
+                            settings.garminProxyUrl, settings.garminAppToken)?.let { add(it) }
+                    }
+                    for ((url, token) in candidates) {
+                        delivered = TailCueService()
+                            .sendFeedback(url, token, cueId, rating, comment)
+                        if (delivered) break
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Cue feedback failed: ${e.message}")
