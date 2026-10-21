@@ -111,6 +111,7 @@ import com.example.tail.data.backup.BackupManager
 import com.example.tail.data.backup.GoogleDriveManager
 import com.example.tail.data.debug.DebugPreferences
 import com.example.tail.ui.viewmodel.saveAiIconSettings
+import com.example.tail.ui.viewmodel.setChessReadinessVersion
 import com.example.tail.ui.viewmodel.saveBridgeSettings
 import com.example.tail.ui.viewmodel.saveRemoteHostUrl
 import com.example.tail.ui.viewmodel.saveOmdbApiKey
@@ -3254,6 +3255,57 @@ private fun ChessReadinessSettingsSection(
             if (storedHigh > 0) {
                 Text(
                     "Readiness baseline: max($storedHigh, 10) = ${maxOf(storedHigh, 10)}",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            // ── Pre-game engine selector: v3 Survival vs v4 Green Light ─────
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Pre-game readiness engine", fontSize = 14.sp)
+            Text(
+                "v4 (Green Light) is the mission-validated decision layer: " +
+                    "GREEN by default, no test unless validated negative signals " +
+                    "stack (fragmented sleep, very late hour, coffee+Blitz, heavy " +
+                    "Blitz yesterday). Concern 2 → 5-tap reflex gate; concern 3+ → " +
+                    "sized survival battery; override always allowed and logged.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row {
+                Button(
+                    onClick = { viewModel.setChessReadinessVersion("v3") },
+                    enabled = settings.chessReadinessVersion != "v3",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        if (settings.chessReadinessVersion == "v3") "✓ v3 · Survival gate"
+                        else "v3 · Survival gate",
+                        fontSize = 11.sp
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = { viewModel.setChessReadinessVersion("v4") },
+                    enabled = settings.chessReadinessVersion != "v4",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        if (settings.chessReadinessVersion == "v4") "✓ v4 · Green Light"
+                        else "v4 · Green Light",
+                        fontSize = 11.sp
+                    )
+                }
+            }
+            if (settings.chessReadinessVersion == "v4") {
+                Spacer(modifier = Modifier.height(4.dp))
+                val v4events = remember {
+                    com.example.tail.widget.ChessReadinessV4Store.loadEvents(context).size
+                }
+                Text(
+                    "Reflex pass bar: ${com.example.tail.widget.ChessReadinessV4Store.reflexPassMs(context)} ms " +
+                        "median · ${v4events} calibration event${if (v4events == 1) "" else "s"} logged",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.primary
                 )

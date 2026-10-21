@@ -80,6 +80,26 @@ class ChessStatusOverlay(service: android.content.Context) {
         }
     }
 
+    /**
+     * V4 in-session watch (rule #309, warnings only — never forces): games
+     * so far today, score %, current loss streak, plus the cold-open stop
+     * (first 10 ≤40%) and tilt (≥3 losses) advisories. Shown whenever any
+     * games exist today, on every status render.
+     */
+    private fun ChessOverlayDialog.OverlayScope.renderSessionWatch() {
+        val w = try {
+            ChessReadinessV4Engine.sessionWatch(ChessReadinessV4Signals.todayPoints(context))
+        } catch (_: Exception) {
+            null
+        } ?: return
+        spacer(8)
+        keyValue("Games today", "${w.gamesToday} · score %.0f%%".format(w.scorePct))
+        keyValue("Loss streak", "${w.lossStreak}")
+        w.warnings.forEach { warn ->
+            bullet("⚠ ${warn.rule}: ${warn.msg}", 0xFFEF9A9A.toInt())
+        }
+    }
+
     private fun render() {
         val now = System.currentTimeMillis()
         val authorized = ChessPhase2Store.ratedPlayAuthorized(context, now)
@@ -111,6 +131,7 @@ class ChessStatusOverlay(service: android.content.Context) {
 
             stateLabel("RATED PLAY AUTHORIZED", "#22C55E")
             renderFreeplayStatus()
+            renderSessionWatch()
             spacer(10)
 
             val msLeft = ChessPhase2Store.ratedPlayMsRemaining(context, now)
@@ -215,6 +236,7 @@ class ChessStatusOverlay(service: android.content.Context) {
             sessionNetRating()?.let { net ->
                 keyValue("Session net rating", "%+d".format(net))
             }
+            renderSessionWatch()
             keyValue(
                 "Fatigue budget",
                 "${minutesUsed.roundToInt()} / " +

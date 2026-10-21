@@ -243,7 +243,12 @@ fun ChessReadinessStatsScreen(
     // version-owned stats sections (active system expanded, other collapsed).
     var pregameIsV2 by remember { mutableStateOf(ChessReadinessV2Store.isV2(context)) }
     var pregameIsV3 by remember { mutableStateOf(ChessReadinessV2Store.isV3(context)) }
+    var pregameIsV4 by remember { mutableStateOf(ChessReadinessV2Store.isV4(context)) }
     var phase2IsV2 by remember { mutableStateOf(ChessPhase2V2Store.isV2(context)) }
+    // V4 Green Light calibration events (assessment / gate / override log).
+    var v4Events by remember {
+        mutableStateOf<List<com.example.tail.widget.ChessReadinessV4Store.V4Event>>(emptyList())
+    }
 
     // Runs on first composition AND on every resume (via resumeCount).
     // Only raw data is loaded here; every aggregate is derived below so
@@ -344,7 +349,9 @@ fun ChessReadinessStatsScreen(
                 }
             pregameIsV2 = ChessReadinessV2Store.isV2(context)
             pregameIsV3 = ChessReadinessV2Store.isV3(context)
+            pregameIsV4 = ChessReadinessV2Store.isV4(context)
             phase2IsV2 = ChessPhase2V2Store.isV2(context)
+            v4Events = com.example.tail.widget.ChessReadinessV4Store.loadEvents(context)
             loaded = true
         }
     }
@@ -1299,6 +1306,13 @@ fun ChessReadinessStatsScreen(
 
                 // ── V3 system: reflex + survival pre-game gate ───────────
                 // Dedicated section for the v3 chess-readiness system
+                // ── V4 Green Light calibration (renders nothing until the
+                // first v4 event exists).
+                V4GreenLightSection(
+                    events = v4Events,
+                    startExpanded = pregameIsV4
+                )
+
                 // (renders nothing until the first v3 record exists).
                 V3PregameSection(
                     results = v3Results,

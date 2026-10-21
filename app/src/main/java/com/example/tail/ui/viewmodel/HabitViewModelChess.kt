@@ -151,6 +151,21 @@ fun HabitViewModel.setChessReadinessEnabled(enabled: Boolean) {
 }
 
 /**
+ * Switches the PRE-GAME readiness engine: "v3" (reflex + survival gate) or
+ * "v4" — the mission-validated GREEN-LIGHT system (green by default, gates
+ * only when validated negative signals stack; reflex tap-test at concern 2,
+ * sized survival battery at 3+, override always allowed + logged). Also
+ * mirrors the choice into the synchronous store the bubble/overlay read.
+ */
+fun HabitViewModel.setChessReadinessVersion(version: String) {
+    viewModelScope.launch {
+        settingsRepo.saveChessReadinessVersion(version)
+        _settings.value = _settings.value.copy(chessReadinessVersion = version)
+        com.example.tail.widget.ChessReadinessV2Store.saveReadinessVersion(context, version)
+    }
+}
+
+/**
  * Enables or disables the in-app stats overlay (StatsOverlayService) — the
  * always-on-top bar showing today / avg7 / avg30, fed by the same
  * computation as the loading spinner. Toggling starts/stops the service.

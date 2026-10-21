@@ -2176,6 +2176,10 @@ class FloatingBubbleService : Service() {
 
     private fun finishSurvivalRun(verdict: ChessReadinessV3Engine.Verdict) {
         handler.removeCallbacks(survivalTickRunnable)
+        // V4 Green Light: if the armed gate belonged to the v4 flow, its
+        // calibration event is filed from the v4 store's pending context
+        // (the shared v1 history entry below is written either way).
+        val v4Pending = ChessReadinessV4Store.loadPending(this)
         val elapsed = if (survivalRunStartMs > 0)
             android.os.SystemClock.elapsedRealtime() - survivalRunStartMs else 0L
         // Seed the free-play timer with the gate run's duration so the banner
@@ -2200,6 +2204,18 @@ class FloatingBubbleService : Service() {
             // solved-count ratio that decides YELLOW vs RED on a failure.
             enforcedBar = survivalPassAt
         )
+        if (v4Pending != null) {
+            try {
+                ChessReadinessV4Recorder.recordSurvivalOutcome(
+                    context = this,
+                    concern = v4Pending.concern,
+                    signalsJson = v4Pending.signalsJson,
+                    category = "Blitz",
+                    passed = verdict == ChessReadinessV3Engine.Verdict.PASS
+                )
+                ChessReadinessV4Store.clearPending(this)
+            } catch (_: Exception) { /* calibration log only */ }
+        }
         // Verdict POPUP: tells the user the outcome and — unless the run put
         // them in RED (kicked out of chess entirely) — offers continuing the
         // survival drill as free play from the attached banner. RED is
@@ -3030,6 +3046,7 @@ class FloatingBubbleService : Service() {
     // activity is started, so the chess app stays the focused, dominant app;
     // closing a dialog hands focus straight back to it.
     private var chessReadinessV3Overlay: ChessReadinessV3Overlay? = null
+    private var chessReadinessV4Overlay: ChessReadinessV4Overlay? = null
     private var chessStatusOverlay: ChessStatusOverlay? = null
     private var chessPuzzleRushOverlay: ChessPuzzleRushOverlay? = null
     private var chessFreeplayOverlay: ChessFreeplayOverlay? = null
@@ -3046,9 +3063,18 @@ class FloatingBubbleService : Service() {
             chessStatusOverlay = null
             chessReadinessV3Overlay?.dismiss()
             chessReadinessV3Overlay = null
-            chessReadinessV3Overlay = ChessReadinessV3Overlay(this) {
-                armSurvivalPanel()
-            }.also { it.show() }
+            chessReadinessV4Overlay?.dismiss()
+            chessReadinessV4Overlay = null
+            if (ChessReadinessV2Store.isV4(this)) {
+                // V4 Green Light: instant green unless validated signals stack.
+                chessReadinessV4Overlay = ChessReadinessV4Overlay(this) {
+                    armSurvivalPanel()
+                }.also { it.show() }
+            } else {
+                chessReadinessV3Overlay = ChessReadinessV3Overlay(this) {
+                    armSurvivalPanel()
+                }.also { it.show() }
+            }
         } catch (e: Exception) { /* never crash the bubble */ }
     }
 
@@ -3089,10 +3115,12 @@ class FloatingBubbleService : Service() {
     /** Removes any open chess overlay dialog (e.g. when the service dies). */
     private fun dismissChessOverlays() {
         try { chessReadinessV3Overlay?.dismiss() } catch (_: Exception) {}
+        try { chessReadinessV4Overlay?.dismiss() } catch (_: Exception) {}
         try { chessStatusOverlay?.dismiss() } catch (_: Exception) {}
         try { chessPuzzleRushOverlay?.dismiss() } catch (_: Exception) {}
         try { chessFreeplayOverlay?.dismiss() } catch (_: Exception) {}
         chessReadinessV3Overlay = null
+        chessReadinessV4Overlay = null
         chessStatusOverlay = null
         chessPuzzleRushOverlay = null
         chessFreeplayOverlay = null

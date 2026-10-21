@@ -285,6 +285,25 @@ object ChessReadinessSystemChanges {
                 "already held refunded=true +5 by the time it was inspected). Both " +
                 "menus now render an informational '🎟 Freeplay settling… (N " +
                 "refund pending)' row in that state instead of nothing."
+        ),
+        ReadinessSystemChange(
+            at("2026-10-21T13:00:00Z"),
+            "Chess Readiness V4 — the Green Light system",
+            "New selectable pre-game engine (Settings → Chess → 'Pre-game readiness " +
+                "engine'). Green by default: concern 0–1 grants GREEN instantly, no " +
+                "test at all. Only validated signals add concern — prior-night awake " +
+                "min ≥30 (+2) / 20–30 (+1), 23:00–01:00 (+2), after-21:00 Blitz " +
+                "(+1), coffee + Blitz (+1), ≥4 Blitz games yesterday (+1), and HRV " +
+                "≤−15% vs weekly baseline (+1, tiebreaker only when concern is " +
+                "already ≥2). Missing data NEVER gates. Concern 2 = a 5-tap reflex " +
+                "bar (pass at median ≤320 ms, personalized); concern ≥3 = the " +
+                "survival puzzle battery (5 puzzles, 10 at concern 4+). RED is " +
+                "advisory only — an override button always exists and is logged. " +
+                "Every assessment, gate outcome and override is appended to a " +
+                "calibration event log (capped 2000) surfaced in Chess Stats as the " +
+                "Green Light section, and the Chess Status overlay now runs the " +
+                "in-session watch (cold-open first-10 ≤40%, tilt after ≥3 straight " +
+                "losses) with the backing evidence."
         )
     )
 }

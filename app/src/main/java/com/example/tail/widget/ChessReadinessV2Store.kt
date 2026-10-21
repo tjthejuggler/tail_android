@@ -46,6 +46,9 @@ object ChessReadinessV2Store {
     const val VERSION_V2 = "v2"
     const val VERSION_V3 = "v3"
 
+    /** The Green Light system (mission-#1 concern gating; 2026-10-21). */
+    const val VERSION_V4 = "v4"
+
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -53,24 +56,33 @@ object ChessReadinessV2Store {
 
     /**
      * Which readiness engine the chess flow uses. The v1/v2 engines were
-     * retired on 2026-09-07 — v3 (reflex + Puzzle Rush Survival) is the
-     * only pre-game system now; the stored value is ignored.
+     * retired on 2026-09-07. v3 (reflex + Puzzle Rush Survival) is the
+     * default; v4 — the mission-validated GREEN-LIGHT system (green by
+     * default, gates only when validated negative signals stack) — is
+     * selected in Settings → ♟ Chess Readiness and mirrored here for the
+     * synchronous bubble/overlay paths.
      */
-    fun readinessVersion(context: Context): String = VERSION_V3
+    fun readinessVersion(context: Context): String =
+        prefs(context).getString(KEY_VERSION, null)
+            ?.takeIf { it == VERSION_V2 || it == VERSION_V3 || it == VERSION_V4 }
+            ?: VERSION_V3
 
     fun isV2(context: Context): Boolean = readinessVersion(context) == VERSION_V2
 
     fun isV3(context: Context): Boolean = readinessVersion(context) == VERSION_V3
 
+    fun isV4(context: Context): Boolean = readinessVersion(context) == VERSION_V4
+
     /**
      * Mirrored from DataStore by the settings view-model on every change.
-     * Every ACTUAL v1↔v2 switch is appended to the version log so the
+     * Every ACTUAL version switch is appended to the version log so the
      * rating chart can mark which engine was active when.
      */
     fun saveReadinessVersion(context: Context, version: String) {
         val target = when (version) {
             VERSION_V2 -> VERSION_V2
             VERSION_V3 -> VERSION_V3
+            VERSION_V4 -> VERSION_V4
             else -> VERSION_V1
         }
         val previous = readinessVersion(context)

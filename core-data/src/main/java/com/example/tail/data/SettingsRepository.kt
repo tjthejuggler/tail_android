@@ -1339,8 +1339,8 @@ class SettingsRepository(private val context: Context) {
             mediaApps = decodeFileUriMap(prefs[KEY_MEDIA_APPS] ?: ""),
             chessReadinessEnabled = prefs[KEY_CHESS_READINESS_ENABLED] ?: false,
             chessReadinessApp = prefs[KEY_CHESS_READINESS_APP] ?: "",
-            chessReadinessVersion = "v3"
-                ?.takeIf { it == "v2" } ?: "v1",
+            chessReadinessVersion = (prefs[KEY_CHESS_READINESS_VERSION])
+                ?.takeIf { it == "v2" || it == "v3" || it == "v4" } ?: "v3",
             chessPhase2Version = "v4"
                 ?.takeIf { it == "v2" || it == "v3" || it == "v4" } ?: "v1",
             gdriveAutoEnabled = prefs[KEY_GDRIVE_AUTO_ENABLED] ?: false,
@@ -2367,6 +2367,18 @@ class SettingsRepository(private val context: Context) {
     /** Saves the package name of the app associated with Chess Readiness. */
     suspend fun saveChessReadinessApp(packageName: String) {
         context.dataStore.edit { prefs -> prefs[KEY_CHESS_READINESS_APP] = packageName }
+    }
+
+    /**
+     * Saves which PRE-GAME readiness engine the chess flow uses ("v3" —
+     * reflex + survival — or "v4", the mission-validated Green Light
+     * system). Callers must ALSO mirror the value into
+     * [com.example.tail.widget.ChessReadinessV2Store.saveReadinessVersion]
+     * for the synchronous bubble/overlay paths.
+     */
+    suspend fun saveChessReadinessVersion(version: String) {
+        val v = version.takeIf { it == "v3" || it == "v4" } ?: "v3"
+        context.dataStore.edit { prefs -> prefs[KEY_CHESS_READINESS_VERSION] = v }
     }
 
     // ── Google Drive Backup ──────────────────────────────────────────────
