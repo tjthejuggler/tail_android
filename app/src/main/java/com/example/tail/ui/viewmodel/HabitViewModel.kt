@@ -1056,6 +1056,10 @@ class HabitViewModel(
             // in persisted DataStore settings before collecting the flow.
             settingsRepo.migrateHabitNames()
 
+            // One-time migration: convert "Took pills" to the pill-log type
+            // (count-coded dosing) and backfill structured dose history.
+            runPillLogMigration()
+
             // Drop orphaned conditional-link entries (key no longer marked conditional)
             // so they don't surface as phantom "Fed by" sources in edit mode.
             settingsRepo.pruneOrphanedConditionalLinks()

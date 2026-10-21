@@ -1948,6 +1948,10 @@ internal fun EditModeControlBar(
     onToggleConditionalFeedPoints: (String) -> Unit = {},
     subtypedHabits: Set<String>,
     habitSubtypes: Map<String, List<String>>,
+    /** Habits with the pill-log type (count-coded dosing) enabled. */
+    pillLogHabits: Set<String> = emptySet(),
+    /** Called when the user toggles the pill-log type for a habit. */
+    onTogglePillLog: (String) -> Unit = {},
     episodeHabits: Set<String> = emptySet(),
     onToggleEpisode: (String) -> Unit = {},
     allHabitNames: List<String>,
@@ -2589,6 +2593,7 @@ internal fun EditModeControlBar(
                     val isTextInput = selectedHabitName in textInputHabits
                     HabitInputModesSection(
                         selectedHabitName = selectedHabitName,
+                        pillLogHabits = pillLogHabits,
                         habitNotes = habitNotes,
                         onSetHabitNote = onSetHabitNote,
                         maxOneHabits = maxOneHabits,
@@ -3472,6 +3477,34 @@ internal fun EditModeControlBar(
                                 )
                             }
                         },
+                        pillLogContent = {
+                            // ── Pill log (count-coded dosing) toggle ──────────
+                            val isPillLog = selHabitName in pillLogHabits
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(text = "Pill log", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                    Text(
+                                        text = if (isPillLog) "One line = one serving, doses auto-computed"
+                                        else "Count-coded pill dosing",
+                                        color = Color(0xFF888888), fontSize = 10.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = isPillLog,
+                                    onCheckedChange = { onTogglePillLog(selHabitName) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFFBB88FF),
+                                        checkedTrackColor = Color(0xFF3A1A5A),
+                                        uncheckedThumbColor = Color(0xFF888888),
+                                        uncheckedTrackColor = Color(0xFF333333)
+                                    )
+                                )
+                            }
+                        },
                         episodeContent = {
                             // ── Injury (episode) toggle ─────────────────────────
                             val isEpisode = selHabitName in episodeHabits
@@ -4050,6 +4083,9 @@ internal fun HabitInputModesSection(
     selectedHabitName: String,
     habitNotes: Map<String, String>,
     onSetHabitNote: (String, String) -> Unit,
+    /** Habits with the pill-log type (count-coded dosing) enabled — hides
+     *  the plain text-input UI (the pill-log type is self-contained). */
+    pillLogHabits: Set<String> = emptySet(),
     maxOneHabits: Set<String>,
     onToggleMaxOne: (String) -> Unit,
     invertedBinaryHabits: Set<String> = emptySet(),
@@ -4398,8 +4434,11 @@ internal fun HabitInputModesSection(
 
     Spacer(modifier = Modifier.height(6.dp))
 
-    // Text input toggle
-    val isTextInput = selectedHabitName in textInputHabits
+    // Text input toggle — suppressed for pill-log habits: the pill-log type
+    // (Special Habit Types section) is self-contained and manages the text
+    // storage layer itself, so its input-mode UI stays hidden.
+    val isTextInput = selectedHabitName in textInputHabits &&
+        selectedHabitName !in pillLogHabits
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,

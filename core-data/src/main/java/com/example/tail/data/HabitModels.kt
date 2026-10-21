@@ -1239,6 +1239,23 @@ data class AppSettings(
     val subtypedHabits: Set<String> = emptySet(),
 
     /**
+     * Habits that have the "pill log" type enabled (e.g. "Took pills"):
+     * one pill per line, line multiplicity = servings (count-coded dosing).
+     * Tapping opens the pill log dialog instead of the plain text dialog.
+     * The habit stays a text-input habit underneath — the raw free-text log
+     * is the verbatim source of truth; structured per-day servings/doses are
+     * derived additively into an internal sidecar (PillDoseRepository).
+     */
+    val pillLogHabits: Set<String> = emptySet(),
+
+    /**
+     * Pill catalog: pill name (as typed) → per-serving composition
+     * description ("DHA 350mg, EPA 180mg"). Seeds from
+     * [PillLogParser.DEFAULT_CATALOG]; user edits win over re-seeding.
+     */
+    val pillCatalog: Map<String, String> = emptyMap(),
+
+    /**
      * Habits that use EPISODE capture ("Injury (episode)"): one structured
      * record per event, created only on onset, closed by an explicit
      * "Mark resolved" action. Never daily rows — the daily habitsdb value is

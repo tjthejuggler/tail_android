@@ -241,6 +241,11 @@ import com.example.tail.ui.viewmodel.loadSubtypeBreakdown
 import com.example.tail.ui.viewmodel.loadEpisodes
 import com.example.tail.ui.viewmodel.loadSubtypeTimestampLabels
 import com.example.tail.ui.viewmodel.saveSubtypeIncrement
+import com.example.tail.ui.viewmodel.addPillToCatalog
+import com.example.tail.ui.viewmodel.loadPillDay
+import com.example.tail.ui.viewmodel.loadPillOptions
+import com.example.tail.ui.viewmodel.loadPillSuggestions
+import com.example.tail.ui.viewmodel.savePillLines
 import com.example.tail.ui.viewmodel.saveTextEntries
 import com.example.tail.ui.viewmodel.skipPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.moveHabitDayInstances
@@ -912,6 +917,14 @@ fun HabitGridScreen(
     var episodeDialogHabit by remember { mutableStateOf<Habit?>(null) }
     var episodeDialogEpisodes by remember { mutableStateOf<List<com.example.tail.data.InjuryEpisode>>(emptyList()) }
     var subtypeDialogBreakdown by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    // Pill-log dialog state (count-coded dosing habits, e.g. "Took pills")
+    var pillDialogHabit by remember { mutableStateOf<Habit?>(null) }
+    var pillDialogToday by remember { mutableStateOf(com.example.tail.data.PillDayDoses()) }
+    var pillDialogCatalogPills by remember { mutableStateOf<List<String>>(emptyList()) }
+    var pillDialogCatalog by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var pillDialogSuggestions by remember {
+        mutableStateOf<List<com.example.tail.ui.viewmodel.PillSuggestion>>(emptyList())
+    }
     // Weights input dialog state (weights-type habits)
     var weightsDialogHabit by remember { mutableStateOf<Habit?>(null) }
     // Increment-suggestion flash state (SuggestionFlash.kt): built once per
@@ -1674,6 +1687,7 @@ fun HabitGridScreen(
                         mealHabits = settings.mealHabits,
                         weightsHabits = settings.weightsHabits,
                         sleepHabits = settings.sleepHabits,
+                        pillLogHabits = settings.pillLogHabits,
                         bridgeMovieHabits = if (settings.bridgeEnabled) settings.bridgeMovieHabits else emptySet(),
                         chessComHabitLinks = settings.chessComHabitLinks,
                         habitLongPressActions = settings.habitLongPressActions,
@@ -1760,6 +1774,17 @@ fun HabitGridScreen(
                                         episodeDialogEpisodes = episodes
                                         episodeDialogHabit = habit
                                     }
+                                }
+                                // Pill-log type (count-coded dosing): tapping opens
+                                // the pill dialog — one line = one serving.
+                                habit.name in settings.pillLogHabits -> {
+                                    viewModel.loadPillDay(habit.name, selectedDate) { pillDialogToday = it }
+                                    viewModel.loadPillOptions(habit.name) { pills, catalog ->
+                                        pillDialogCatalogPills = pills
+                                        pillDialogCatalog = catalog
+                                    }
+                                    viewModel.loadPillSuggestions(habit.name) { pillDialogSuggestions = it }
+                                    pillDialogHabit = habit
                                 }
                                 habit.name in settings.weightsHabits -> weightsDialogHabit = habit
                                 habit.name in settings.textInputHabits -> {
@@ -2799,6 +2824,31 @@ fun HabitGridScreen(
             viewModel = viewModel,
             lizardShimmerGen = lizardShimmerGen,
             onDismiss = { subtypeDialogHabit = null }
+        )
+    }
+
+    // Pill-log dialog (count-coded dosing)
+    pillDialogHabit?.let { habit ->
+        PillLogDialog(
+            habitName = habit.name,
+            date = selectedDate,
+            catalogPills = pillDialogCatalogPills,
+            existingToday = pillDialogToday,
+            catalog = pillDialogCatalog,
+            suggestions = pillDialogSuggestions,
+            onAddPill = { name, description ->
+                viewModel.addPillToCatalog(name, description) {
+                    viewModel.loadPillOptions(habit.name) { pills, catalog ->
+                        pillDialogCatalogPills = pills
+                        pillDialogCatalog = catalog
+                    }
+                }
+            },
+            onConfirm = { lines ->
+                viewModel.savePillLines(habit.name, selectedDate, lines)
+                pillDialogHabit = null
+            },
+            onDismiss = { pillDialogHabit = null }
         )
     }
 
@@ -4020,6 +4070,8 @@ internal fun HabitGrid(
     weightsHabits: Set<String> = emptySet(),
     /** Sleep-suite habits (sleep/wake dialog on tap, 😴 corner badge). */
     sleepHabits: Set<String> = emptySet(),
+    /** Pill-log habits (count-coded dosing dialog on tap, 💊 corner badge). */
+    pillLogHabits: Set<String> = emptySet(),
     /** Movie-bridge-linked habits (auto-filled from the tail_bridge watcher). */
     bridgeMovieHabits: Set<String> = emptySet(),
     /** Map of habit name → chess.com time control for chess.com-linked habits. */
@@ -4133,6 +4185,8 @@ internal fun HabitGrid(
                         habit.name in chessComHabitLinks -> HabitSpecialBadge.CHESS
                         habit.name in weightsHabits -> HabitSpecialBadge.WEIGHTS
                         habit.name in sleepHabits -> HabitSpecialBadge.SLEEP
+                        habit.name in pillLogHabits -> HabitSpecialBadge.PILL
+                        habit.name in pillLogHabits -> HabitSpecialBadge.PILL
                         else -> null
                     }
                     HabitButton(

@@ -11,6 +11,7 @@ import com.example.tail.data.GitHubMetric
 import com.example.tail.ui.viewmodel.invertHabit
 import com.example.tail.ui.viewmodel.setComboHabitMembers
 import com.example.tail.ui.viewmodel.renameHabit
+import com.example.tail.ui.viewmodel.togglePillLog
 import com.example.tail.ui.viewmodel.openNotificationListenerSettings
 import com.example.tail.ui.settings.TextInputOptionsEditorDialog
 import com.example.tail.ui.settings.TextInputCharacteristicsEditorDialog
@@ -210,6 +211,8 @@ internal fun EditBarHost(
         conditionalFeedPointsHabits = settings.conditionalFeedPointsHabits,
         subtypedHabits = settings.subtypedHabits,
         habitSubtypes = settings.habitSubtypes,
+        pillLogHabits = settings.pillLogHabits,
+        onTogglePillLog = { name -> viewModel.togglePillLog(name) },
         allHabitNames = viewModel.getAllHabitNames(),
         rollForwardHabits = settings.rollForwardHabits,
         rollForwardManualDates = settings.rollForwardManualDates,

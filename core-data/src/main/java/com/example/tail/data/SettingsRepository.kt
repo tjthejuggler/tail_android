@@ -117,6 +117,14 @@ private val KEY_EPISODE_FILE_URIS = stringPreferencesKey("episode_file_uris")
 private val KEY_INJURY_EPISODE_MIGRATED = booleanPreferencesKey("injury_episode_migrated")
 // Subtyped habit type keys
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
+// Pill log habit type keys (count-coded dosing for "Took pills")
+private val KEY_PILL_LOG_HABITS = stringSetPreferencesKey("pill_log_habits")
+// Pill catalog: name → composition description, stored with the KV codec
+private val KEY_PILL_CATALOG = stringPreferencesKey("pill_catalog")
+// One-time Took-pills → pill-log migration + dose backfill flag.
+// (v2: the first run raced ViewModel init's default settings and no-opped;
+// the renamed key forces a correct re-run on devices already flagged v1.)
+private val KEY_MIGRATION_PILL_LOG_DONE = booleanPreferencesKey("migration_pill_log_v2_done")
 private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
 // Sleep habit type keys (sleep-time / wake-time suite)
 private val KEY_SLEEP_HABITS = stringSetPreferencesKey("sleep_habits")
@@ -1217,6 +1225,8 @@ class SettingsRepository(private val context: Context) {
             episodeFileUris = decodeFileUriMap(prefs[KEY_EPISODE_FILE_URIS] ?: ""),
             injuryEpisodeMigrated = prefs[KEY_INJURY_EPISODE_MIGRATED] ?: false,
             subtypedHabits = prefs[KEY_SUBTYPED_HABITS] ?: emptySet(),
+            pillLogHabits = prefs[KEY_PILL_LOG_HABITS] ?: emptySet(),
+            pillCatalog = decodeFileUriMap(prefs[KEY_PILL_CATALOG] ?: ""),
             habitSubtypes = decodeSubtypesMap(habitSubtypesRaw),
             subtypeDataFileUris = decodeFileUriMap(subtypeDataFileUrisRaw),
             sleepHabits = prefs[KEY_SLEEP_HABITS] ?: emptySet(),
@@ -1706,6 +1716,24 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that have the "subtyped" type enabled. */
     suspend fun saveSubtypedHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_SUBTYPED_HABITS] = habits }
+    }
+
+    /** Saves the set of habits that have the "pill log" type enabled. */
+    suspend fun savePillLogHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_PILL_LOG_HABITS] = habits }
+    }
+
+    /** Saves the pill catalog (pill name → composition description). */
+    suspend fun savePillCatalog(catalog: Map<String, String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_PILL_CATALOG] = encodeFileUriMap(catalog) }
+    }
+
+    /** True once the one-time Took-pills → pill-log migration has run. */
+    suspend fun isPillLogMigrationDone(): Boolean =
+        context.dataStore.data.first()[KEY_MIGRATION_PILL_LOG_DONE] ?: false
+
+    suspend fun markPillLogMigrationDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_PILL_LOG_DONE] = true }
     }
 
     /** Episode habit type ("Injury (episode)") — type set, per-habit episode file URIs, migration flag. */
