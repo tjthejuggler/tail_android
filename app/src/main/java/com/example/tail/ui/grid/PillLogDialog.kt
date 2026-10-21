@@ -68,23 +68,11 @@ fun PillLogDialog(
     var showAddPill by remember { mutableStateOf(false) }
     val newPillName = remember { mutableStateOf("") }
     val newPillDesc = remember { mutableStateOf("") }
-    // Double-tap guard (spec item 3): non-blocking, default accept.
-    var guardPill by remember { mutableStateOf<String?>(null) }
-    var lastAddAt by remember { mutableStateOf(0L) }
-    var lastAddedPill by remember { mutableStateOf<String?>(null) }
-
     val totalPending = pending.values.sum()
 
+    /** Repeated same-day servings are deliberate re-dosing — no confirmation. */
     fun addServing(pill: String) {
-        val now = System.currentTimeMillis()
-        if (lastAddedPill == pill && now - lastAddAt < 120_000) {
-            guardPill = pill
-            lastAddAt = now
-            return
-        }
         pending[pill] = (pending[pill] ?: 0) + 1
-        lastAddedPill = pill
-        lastAddAt = now
     }
 
     /** Applies a suggestion's counts on top of anything already pending. */
@@ -278,28 +266,6 @@ fun PillLogDialog(
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = TextStyle(fontSize = 12.sp)
                 )
-
-                // Double-tap guard banner (non-blocking)
-                guardPill?.let { pill ->
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Surface(color = Color(0xFF332200), shape = MaterialTheme.shapes.small) {
-                        Column(modifier = Modifier.padding(6.dp)) {
-                            Text(
-                                "Second serving of $pill today?",
-                                fontSize = 11.sp, color = Color(0xFFFFDD88)
-                            )
-                            Row {
-                                TextButton(onClick = {
-                                    pending[pill] = (pending[pill] ?: 0) + 1
-                                    guardPill = null
-                                }) { Text("Yes, add", fontSize = 10.sp) }
-                                TextButton(onClick = { guardPill = null }) {
-                                    Text("No", fontSize = 10.sp)
-                                }
-                            }
-                        }
-                    }
-                }
 
                 if (totalPending > 0) {
                     Spacer(modifier = Modifier.height(4.dp))

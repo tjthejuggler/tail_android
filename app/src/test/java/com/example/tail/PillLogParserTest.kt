@@ -54,6 +54,23 @@ class PillLogParserTest {
     }
 
     @Test
+    fun `D3 25µg K2 20µg historical line is a catalog pill with both doses`() {
+        val pill = "D3 25µg, K2 20µg"
+        val day = PillLogParser.parseDay(listOf(pill, pill), catalog)
+        assertEquals(2, day.servings[pill])
+        assertEquals(50.0, doseOf(day, pill, "D3"), 0.001)
+        assertEquals(40.0, doseOf(day, pill, "K2"), 0.001)
+        assertTrue(day.unmatched.isEmpty())
+    }
+
+    @Test
+    fun `greek mu variant dose tokens parse to mcg`() {
+        val t = PillLogParser.typedDose("D3 25\u03BCg")
+        assertEquals("mcg", t?.unit)
+        assertEquals(25.0, t?.amount ?: -1.0, 0.001)
+    }
+
+    @Test
     fun `bare unknown line yields presence only without error`() {
         val day = PillLogParser.parseDay(listOf("Some exotic herb"), catalog)
         assertTrue(day.unmatched.contains("Some exotic herb"))

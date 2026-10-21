@@ -51,24 +51,32 @@ object PillLogParser {
     val DEFAULT_CATALOG: Map<String, String> = linkedMapOf(
         "Omega-3 Sunday Natural" to "DHA 350mg, EPA 180mg",
         "B Complex Nature Love" to "B1 40mg, B2 15mg, B3 110mg, B5 100mg, B6 20mg, B7 400mcg, B9 400mcg, B12 500mcg",
+        "B12" to "B12",
         "Calcium, Magnesium, Zinc, D3, K2, Copper, Boron" to
             "Calcium 500mg, Magnesium 200mg, Zinc 5mg, D3 20mcg, K2 200mcg, Copper 1mg, Boron 0.6mg",
-        "Vitamin D3" to "D3 20mcg",
-        "Vitamin K2" to "K2 200mcg",
-        "Calcium" to "Calcium 500mg",
-        "Magnesium" to "Magnesium 200mg",
+        "D3 25µg, K2 20µg" to "D3 25mcg, K2 20mcg",
+        "Magnesium Glycinate 150mg" to "Magnesium Glycinate 150mg",
         "Zinc" to "Zinc 5mg",
-        "Boron" to "Boron 0.6mg",
-        "Copper" to "Copper 1mg",
         "Creatine 3g" to "Creatine 3g",
-        "Creatine" to "Creatine 3g",
         "Glutamine 10g" to "Glutamine 10g",
-        "Glutamine" to "Glutamine 10g",
         "Iron 18mg" to "Iron 18mg",
-        "Iron" to "Iron 18mg",
         "C 1g" to "Vitamin C 1g",
         "Spirulina 4g" to "Spirulina 4g",
-        "Ashwagandha" to "Ashwagandha"
+        "Ashwagandha" to "Ashwagandha",
+        "Galantamine" to "Galantamine",
+        "Alkaline Drops" to "Alkaline Drops"
+    )
+
+    /**
+     * Catalog keys that early default catalogs seeded into persisted settings
+     * and that turned out to be duplicates or pills never taken standalone
+     * ("Creatine" vs "Creatine 3g", solo "Calcium"/"Copper"/"Boron" that only
+     * exist inside the mineral stack, …). Migration/merge scrub them so they
+     * stop cluttering the pill list; user-added custom pills are kept.
+     */
+    val LEGACY_REMOVED_CATALOG_KEYS: Set<String> = setOf(
+        "Vitamin D3", "Vitamin K2", "Calcium", "Magnesium", "Boron", "Copper",
+        "Creatine", "Glutamine", "Iron"
     )
 
     /** Extra aliases: short user spelling → canonical catalog name. */
@@ -81,20 +89,19 @@ object PillLogParser {
         "mineral stack" to "Calcium, Magnesium, Zinc, D3, K2, Copper, Boron",
         "calcium magnesium zinc d3 k2 copper boron" to
             "Calcium, Magnesium, Zinc, D3, K2, Copper, Boron",
-        "vitamin c" to "C 1g",
-        "vitamin d" to "Vitamin D3"
+        "vitamin c" to "C 1g"
     )
 
     // ── Token patterns ─────────────────────────────────────────────────────
 
-    /** "40mg", "0.6mg", "400µg", "400mcg", "3g", "1g", "500mcg" … */
+    /** "40mg", "0.6mg", "400µg", "400μg" (either mu), "400mcg", "3g", "1g" … */
     private val DOSE_TOKEN = Regex(
-        """(\d+(?:[.,]\d+)?)\s*(µg|mcg|mg|g)\b""", RegexOption.IGNORE_CASE
+        """(\d+(?:[.,]\d+)?)\s*(µg|μg|mcg|mg|g)\b""", RegexOption.IGNORE_CASE
     )
 
     /** Composition item: "<name> <amount>[<unit>]" in a catalog description. */
     private val NUTRIENT_TOKEN = Regex(
-        """([A-Za-z][A-Za-z0-9\-]*)\s+(\d+(?:[.,]\d+)?)\s*(µg|mcg|mg|g)?"""
+        """([A-Za-z][A-Za-z0-9\-]*)\s+(\d+(?:[.,]\d+)?)\s*(µg|μg|mcg|mg|g)?"""
     )
 
     // ── Normalisation ──────────────────────────────────────────────────────
@@ -121,7 +128,7 @@ object PillLogParser {
         for (part in description.split(',', ';')) {
             val m = NUTRIENT_TOKEN.find(part) ?: continue
             val amount = m.groupValues[2].replace(',', '.').toDoubleOrNull() ?: continue
-            val unit = m.groupValues[3].lowercase().let { if (it == "µg") "mcg" else it }
+            val unit = m.groupValues[3].lowercase().let { if (it == "µg" || it == "μg") "mcg" else it }
             out.add(PillNutrient(name = m.groupValues[1], amount = amount, unit = unit))
         }
         return out
@@ -163,7 +170,7 @@ object PillLogParser {
     fun typedDose(line: String): PillNutrient? {
         val m = DOSE_TOKEN.find(line) ?: return null
         val amount = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return null
-        val unit = m.groupValues[2].lowercase().let { if (it == "µg") "mcg" else it }
+        val unit = m.groupValues[2].lowercase().let { if (it == "µg" || it == "μg") "mcg" else it }
         val before = line.substring(0, m.range.first).trim().trimEnd(',', '-')
         val name = before.takeLastIfWord() ?: ""
         return PillNutrient(
@@ -173,9 +180,30 @@ object PillLogParser {
         )
     }
 
+    /**
+     * ALL typed dose tokens of a line, each attributed to the word before it
+     * ("D3 25µg, K2 20µg" → [D3 25 mcg, K2 20 mcg]). Empty when none.
+     */
+    fun typedDoses(line: String): List<PillNutrient> {
+        val out = mutableListOf<PillNutrient>()
+        var cursor = 0
+        for (m in DOSE_TOKEN.findAll(line)) {
+            val amount = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: continue
+            val unit = m.groupValues[2].lowercase().let { if (it == "µg" || it == "μg") "mcg" else it }
+            val before = line.substring(cursor, m.range.first).trim().trimEnd(',', '-')
+            cursor = m.range.last + 1
+            val name = before.takeLastIfWord() ?: ""
+            out.add(PillNutrient(name.ifBlank { "Dose" }, amount, unit))
+        }
+        return out
+    }
+
     private fun String.takeLastIfWord(): String? {
         val words = this.split(Regex("\\s+")).filter { it.isNotBlank() }
-        return words.lastOrNull()?.filter { it.isLetter() || it == '-' }?.takeIf { it.length >= 2 }
+        // Keep digits so names like "D3", "K2", "B12" survive extraction.
+        return words.lastOrNull()
+            ?.filter { it.isLetterOrDigit() || it == '-' }
+            ?.takeIf { it.length >= 2 && it.any { c -> c.isLetter() } }
     }
 
     // ── Day parsing ────────────────────────────────────────────────────────
@@ -202,19 +230,24 @@ object PillLogParser {
             if (line.isEmpty()) continue
             val pill = matchPill(line, catalog)
             if (pill == null) {
-                // Unknown + typed token → still a dose line for its typed name
-                val typed = typedDose(line)
-                if (typed != null) {
-                    addDose(doseAcc, typed.name, typed.amount, typed.unit, line)
+                // Unknown + typed tokens → still dose lines under their typed names
+                val typed = typedDoses(line)
+                if (typed.isNotEmpty()) {
+                    for (t in typed) addDose(doseAcc, t.name, t.amount, t.unit, line)
                 } else {
                     unmatched.add(line)
                 }
                 continue
             }
             servings[pill] = (servings[pill] ?: 0) + 1
-            val typed = typedDose(line)
-            if (typed != null) {
-                addDose(doseAcc, pill, typed.amount, typed.unit, null, nutrientName = typed.name)
+            // Typed dose tokens override the catalog default; ALL tokens are
+            // extracted so composite lines ("D3 25µg, K2 20µg") keep every
+            // nutrient even when they also match a catalog pill.
+            val typed = typedDoses(line)
+            if (typed.isNotEmpty()) {
+                for (t in typed) {
+                    addDose(doseAcc, pill, t.amount, t.unit, null, nutrientName = t.name)
+                }
             } else {
                 for (nutrient in parseDescription(catalog[pill] ?: "")) {
                     addDose(doseAcc, pill, nutrient.amount, nutrient.unit, null, nutrientName = nutrient.name)

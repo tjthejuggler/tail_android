@@ -123,8 +123,9 @@ private val KEY_PILL_LOG_HABITS = stringSetPreferencesKey("pill_log_habits")
 private val KEY_PILL_CATALOG = stringPreferencesKey("pill_catalog")
 // One-time Took-pills → pill-log migration + dose backfill flag.
 // (v2: the first run raced ViewModel init's default settings and no-opped;
-// the renamed key forces a correct re-run on devices already flagged v1.)
-private val KEY_MIGRATION_PILL_LOG_DONE = booleanPreferencesKey("migration_pill_log_v2_done")
+// the renamed key forces a correct re-run on devices already flagged v1/v2 —
+// v3: D3/K2 entry + µ/μg fix; v4: catalog dedup + Magnesium Glycinate/B12.)
+private val KEY_MIGRATION_PILL_LOG_DONE = booleanPreferencesKey("migration_pill_log_v4_done")
 private val KEY_HABIT_SUBTYPES = stringPreferencesKey("habit_subtypes")
 // Sleep habit type keys (sleep-time / wake-time suite)
 private val KEY_SLEEP_HABITS = stringSetPreferencesKey("sleep_habits")

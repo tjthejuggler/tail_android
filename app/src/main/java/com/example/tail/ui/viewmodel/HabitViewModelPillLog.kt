@@ -45,9 +45,11 @@ fun HabitViewModel.savePillLines(
                 time = if (date == LocalDate.now()) entryClock else null,
                 habitName = habitName
             )
-            // One increment per pill line (count-coded semantics).
+            // A whole pill submission is ONE habit event: all lines share the
+            // single timestamp and the habit gains exactly 1 point. Pill
+            // counts/doses live in the structured sidecar, not the points.
             incrementHabit(
-                habitName, clean.size,
+                habitName, 1,
                 recordTimestamp = true,
                 date = date,
                 stampTime = stampTime
@@ -83,7 +85,8 @@ fun HabitViewModel.loadPillDay(
 
 /** Catalog = persisted user settings overlaid on the defaults. */
 fun HabitViewModel.effectivePillCatalog(): Map<String, String> =
-    PillLogParser.DEFAULT_CATALOG + _settings.value.pillCatalog
+    PillLogParser.DEFAULT_CATALOG +
+        _settings.value.pillCatalog.filterKeys { it !in PillLogParser.LEGACY_REMOVED_CATALOG_KEYS }
 
 /**
  * Pill picker options: catalog pill names ordered by historical usage
@@ -226,8 +229,11 @@ fun HabitViewModel.runPillLogMigration() {
                 changedSettings = true
             }
 
-            // Seed catalog: defaults win only for keys the user hasn't set.
-            val catalog = PillLogParser.DEFAULT_CATALOG + s.pillCatalog
+            // Seed catalog: defaults win for keys the user hasn't set; legacy
+            // duplicate/standalone-only keys seeded by earlier versions are
+            // scrubbed (user-added custom pills survive).
+            val catalog = PillLogParser.DEFAULT_CATALOG +
+                s.pillCatalog.filterKeys { it !in PillLogParser.LEGACY_REMOVED_CATALOG_KEYS }
             if (catalog != s.pillCatalog) changedSettings = true
 
             if (changedSettings) {
