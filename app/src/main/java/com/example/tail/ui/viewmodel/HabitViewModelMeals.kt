@@ -20,6 +20,7 @@ import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconGeneratorService
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
+import com.example.tail.data.ai.llmFallbackEndpoint
 import com.example.tail.data.chess.ChessComRepository
 import com.example.tail.data.movie.BridgeMovie
 import com.example.tail.data.chess.ChessComType
@@ -455,15 +456,17 @@ fun HabitViewModel.processVoiceMeal(
             _mealVoiceStatus.value = "🎤 Parsing \"${transcript.take(60)}\"…"
             val s = _settings.value
             var fd: com.example.tail.data.meal.FoodData? = null
-            if (s.mealEnabled && s.mealApiKey.isNotBlank() &&
+            val fallback = s.llmFallbackEndpoint()
+            val primaryReady = s.mealApiKey.isNotBlank() &&
                 s.mealBaseUrl.isNotBlank() && s.mealModel.isNotBlank()
-            ) {
+            if (s.mealEnabled && (primaryReady || fallback != null)) {
                 try {
                     val config = com.example.tail.data.meal.VisionConfig(
                         baseUrl = s.mealBaseUrl,
                         apiKey = s.mealApiKey,
                         model = s.mealModel,
-                        userSystemPrompt = s.mealSystemPrompt
+                        userSystemPrompt = s.mealSystemPrompt,
+                        fallback = fallback
                     )
                     fd = com.example.tail.data.meal.VisionProcessingService()
                         .processMealText(transcript, config)
@@ -727,10 +730,14 @@ fun HabitViewModel.triggerVisionProcessing() {
  */
 fun HabitViewModel.testVisionEndpoint() {
     val s = _settings.value
-    if (s.mealBaseUrl.isBlank() || s.mealApiKey.isBlank() || s.mealModel.isBlank()) {
+    val fallback = s.llmFallbackEndpoint()
+    val primaryReady = s.mealBaseUrl.isNotBlank() && s.mealApiKey.isNotBlank() &&
+        s.mealModel.isNotBlank()
+    if (!primaryReady && fallback == null) {
         _mealTestState.value = HabitViewModel.MealTestState(
             isSuccess = false,
-            message = "Please fill in Base URL, API Key, and Model Name first."
+            message = "Please fill in Base URL, API Key, and Model Name first " +
+                "(or configure the emergency backup LLM)."
         )
         return
     }
@@ -752,7 +759,8 @@ fun HabitViewModel.testVisionEndpoint() {
                 baseUrl = s.mealBaseUrl,
                 apiKey = s.mealApiKey,
                 model = s.mealModel,
-                userSystemPrompt = s.mealSystemPrompt
+                userSystemPrompt = s.mealSystemPrompt,
+                fallback = fallback
             )
 
             val service = com.example.tail.data.meal.VisionProcessingService()

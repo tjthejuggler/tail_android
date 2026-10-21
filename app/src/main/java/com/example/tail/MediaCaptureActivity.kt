@@ -83,6 +83,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.ai.llmFallbackEndpoint
 import com.example.tail.ipc.SpotifyDetector
 import com.example.tail.data.meal.Macronutrients
 import com.example.tail.data.meal.MealLog
@@ -902,9 +903,10 @@ class MediaCaptureActivity : ComponentActivity() {
             return
         }
 
-        if (!settings.mealEnabled || settings.mealApiKey.isBlank() ||
-            settings.mealBaseUrl.isBlank() || settings.mealModel.isBlank()
-        ) {
+        val fallback = settings.llmFallbackEndpoint()
+        val primaryReady = settings.mealApiKey.isNotBlank() &&
+            settings.mealBaseUrl.isNotBlank() && settings.mealModel.isNotBlank()
+        if (!settings.mealEnabled || (!primaryReady && fallback == null)) {
             Log.w(TAG, "Meal engine not configured — cannot teach")
             val queueRepo = VisionQueueRepository(this@MediaCaptureActivity)
             queueRepo.enqueue(relativePath, targetHabit)
@@ -930,7 +932,8 @@ class MediaCaptureActivity : ComponentActivity() {
             baseUrl = settings.mealBaseUrl,
             apiKey = settings.mealApiKey,
             model = settings.mealModel,
-            userSystemPrompt = settings.mealSystemPrompt
+            userSystemPrompt = settings.mealSystemPrompt,
+            fallback = fallback
         )
 
         val imageFile = File(filesDir, relativePath)
@@ -1125,9 +1128,10 @@ class MediaCaptureActivity : ComponentActivity() {
             return
         }
 
-        if (!settings.mealEnabled || settings.mealApiKey.isBlank() ||
-            settings.mealBaseUrl.isBlank() || settings.mealModel.isBlank()
-        ) {
+        val fallback = settings.llmFallbackEndpoint()
+        val primaryReady = settings.mealApiKey.isNotBlank() &&
+            settings.mealBaseUrl.isNotBlank() && settings.mealModel.isNotBlank()
+        if (!settings.mealEnabled || (!primaryReady && fallback == null)) {
             Log.w(TAG, "Meal engine not configured — enqueuing for background processing")
             queueRepo.enqueue(relativePath, targetHabit)
             VisionProcessingWorker.enqueue(this@MediaCaptureActivity)
@@ -1144,7 +1148,8 @@ class MediaCaptureActivity : ComponentActivity() {
             baseUrl = settings.mealBaseUrl,
             apiKey = settings.mealApiKey,
             model = settings.mealModel,
-            userSystemPrompt = settings.mealSystemPrompt
+            userSystemPrompt = settings.mealSystemPrompt,
+            fallback = fallback
         )
 
         // ── Deterministic meal routing ─────────────────────────────────────
@@ -1537,8 +1542,11 @@ class MediaCaptureActivity : ComponentActivity() {
                 // Best-effort nutrition parse of the user's description
                 // (voice memo / typed text). Null on any failure — the
                 // card is still created with the raw description.
-                val fd = if (settings.mealEnabled && settings.mealApiKey.isNotBlank() &&
-                    settings.mealBaseUrl.isNotBlank() && settings.mealModel.isNotBlank() &&
+                val correctionFallback = settings.llmFallbackEndpoint()
+                val correctionPrimaryReady = settings.mealApiKey.isNotBlank() &&
+                    settings.mealBaseUrl.isNotBlank() && settings.mealModel.isNotBlank()
+                val fd = if (settings.mealEnabled &&
+                    (correctionPrimaryReady || correctionFallback != null) &&
                     st.description.isNotBlank()
                 ) {
                     try {
@@ -1548,7 +1556,8 @@ class MediaCaptureActivity : ComponentActivity() {
                                 baseUrl = settings.mealBaseUrl,
                                 apiKey = settings.mealApiKey,
                                 model = settings.mealModel,
-                                userSystemPrompt = settings.mealSystemPrompt
+                                userSystemPrompt = settings.mealSystemPrompt,
+                                fallback = correctionFallback
                             )
                         )
                     } catch (e: Exception) {

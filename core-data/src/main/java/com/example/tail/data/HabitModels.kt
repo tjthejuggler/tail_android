@@ -1696,6 +1696,23 @@ data class AppSettings(
     val aiAssistantApiKey: String = "",
     /** Model name used by the AI Assistant (e.g. "glm-4.6"). */
     val aiAssistantModel: String = "",
+
+    // ── Emergency backup LLM ────────────────────────────────────────────
+    /**
+     * Master switch for the emergency backup LLM. When ON, every feature that
+     * calls an LLM (AI Assistant chat, meal vision, meal text parsing, image
+     * teaching, option descriptions, water-hardness lookup) retries against
+     * [llmFallbackBaseUrl] / [llmFallbackModel] — but ONLY after its own
+     * primary endpoint has actually failed. A healthy primary is never
+     * bypassed.
+     */
+    val llmFallbackEnabled: Boolean = true,
+    /** Base URL of the backup endpoint (default: the ppq.ai gateway). */
+    val llmFallbackBaseUrl: String = "https://api.ppq.ai",
+    /** API key (Bearer token) for the backup endpoint. Empty = backup unusable. */
+    val llmFallbackApiKey: String = "",
+    /** Model name for the backup endpoint (default: DeepSeek V4.1 Flash). */
+    val llmFallbackModel: String = "deepseek-ai/DeepSeek-V4.1-Flash-1017",
     /** Habits excluded from the day timeline (retrospective hour-by-hour view). */
     val timelineExcludedHabits: Set<String> = emptySet(),
     /**

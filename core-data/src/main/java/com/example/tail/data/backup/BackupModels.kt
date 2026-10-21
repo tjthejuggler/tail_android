@@ -236,6 +236,11 @@ data class SettingsSection(
     val aiAssistantBaseUrl: String = "",
     val aiAssistantApiKey: String = "",
     val aiAssistantModel: String = "",
+    // Emergency backup LLM (used only when a feature's primary endpoint fails)
+    val llmFallbackEnabled: Boolean = true,
+    val llmFallbackBaseUrl: String = "",
+    val llmFallbackApiKey: String = "",
+    val llmFallbackModel: String = "",
     // Stats overlay / floating bubble service settings
     val statsOverlayEnabled: Boolean = false,
     val bubbleFullScreenApps: List<String> = emptyList(),

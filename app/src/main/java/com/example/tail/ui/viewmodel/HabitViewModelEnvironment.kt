@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.example.tail.data.AppSettings
 import com.example.tail.data.HabitScreen
+import com.example.tail.data.ai.llmFallbackEndpoint
 import com.example.tail.data.environment.EnvironmentMetric
 import com.example.tail.data.environment.EnvironmentSnapshot
 import com.example.tail.data.environment.WaterHardnessLlm
@@ -186,7 +187,8 @@ internal suspend fun HabitViewModel.resolveWaterHardnessViaLlm(label: String): D
     val config = WaterHardnessLlm.Config(
         baseUrl = s.aiAssistantBaseUrl,
         apiKey = s.aiAssistantApiKey,
-        model = s.aiAssistantModel
+        model = s.aiAssistantModel,
+        fallback = s.llmFallbackEndpoint()
     )
     if (!config.isConfigured) return null
     return WaterHardnessLlm.lookup(config, label)

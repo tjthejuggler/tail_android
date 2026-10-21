@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.util.Log
+import com.example.tail.data.ai.LlmEndpoint
+import com.example.tail.data.ai.llmCandidateEndpoints
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -19,16 +21,35 @@ import java.time.format.DateTimeFormatter
 
 private const val TAG = "VisionProcessing"
 
-/** Configuration passed to [VisionProcessingService] for each inference call. */
+/**
+ * Configuration passed to [VisionProcessingService] for each inference call.
+ *
+ * @param fallback Emergency backup endpoint. It is contacted ONLY after the
+ *        primary ([baseUrl]/[apiKey]/[model]) has actually failed — network
+ *        error, 429 after retries, 5xx, 4xx, or an empty/unparseable answer —
+ *        or when the primary is not configured at all. A healthy primary is
+ *        never bypassed.
+ */
 data class VisionConfig(
     val baseUrl: String,
     val apiKey: String,
     val model: String,
-    val userSystemPrompt: String
+    val userSystemPrompt: String,
+    val fallback: com.example.tail.data.ai.LlmEndpoint? = null
 )
 
 /** Maximum dimension (px) for the long edge of a compressed image. */
 private const val MAX_IMAGE_DIMENSION = 1024
+
+/**
+ * True when at least one usable endpoint exists: a fully configured primary
+ * OR a configured emergency backup. Callers use this instead of checking the
+ * primary fields directly, so a feature still works when only the backup is
+ * set up.
+ */
+private val VisionConfig.hasAnyEndpoint: Boolean
+    get() = (baseUrl.isNotBlank() && model.isNotBlank() && apiKey.isNotBlank()) ||
+        (fallback?.isConfigured == true)
 
 /**
  * Calls an OpenAI-compatible multimodal chat-completions API with an image
@@ -75,14 +96,13 @@ class VisionProcessingService {
                 "processImage start: mode=$mode file=${imageFile.name}(" +
                     "${imageFile.length()}B) model=${config.model}"
             )
-            if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
-                QcDiag.error("LLM", "processImage abort: LLM config incomplete (key/url/model blank)")
+            if (!config.hasAnyEndpoint) {
+                QcDiag.error("LLM", "processImage abort: no LLM endpoint (primary and backup both unusable)")
                 Log.w(TAG, "Cannot process: LLM config incomplete")
                 return@withContext null
             }
 
-            val fullUrl = buildEndpointUrl(config.baseUrl)
-            Log.i(TAG, "Processing image via $fullUrl model=${config.model}")
+            Log.i(TAG, "Processing image via ${config.candidateEndpoints().joinToString { it.label() }}")
 
             // 1. Compress / resize the image
             val base64Image = compressAndEncode(imageFile)
@@ -96,11 +116,13 @@ class VisionProcessingService {
                     return@withContext null
                 }
 
-            // 2. Build the request body (OpenAI chat completions format with vision)
-            val requestBody = buildRequestBody(base64Image, config, memoryPrompt, habitPrompt)
-
-            // 3. Execute the HTTP call with retry on 429 / 5xx
-            when (val outcome = chatCompletion(fullUrl, requestBody, config)) {
+            // 2+3. Execute the HTTP call with retry on 429 / 5xx. The request
+            // body is rebuilt per endpoint so the model name always matches
+            // the endpoint actually being called (primary vs emergency backup).
+            val outcome = chatCompletionWithFallback(config) { endpoint ->
+                buildRequestBody(base64Image, config, endpoint, memoryPrompt, habitPrompt)
+            }
+            when (outcome) {
                 is ChatOutcome.Content -> parseVisionResult(outcome.text).also { parsed ->
                     QcDiag.log(
                         "LLM",
@@ -152,14 +174,17 @@ class VisionProcessingService {
         imageFile: File? = null
     ): FoodData? =
         withContext(Dispatchers.IO) {
-            if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
-                Log.w(TAG, "Cannot process meal text: LLM config incomplete")
+            if (!config.hasAnyEndpoint) {
+                Log.w(TAG, "Cannot process meal text: no LLM endpoint configured")
                 return@withContext null
             }
             if (transcript.isBlank()) return@withContext null
 
-            val fullUrl = buildEndpointUrl(config.baseUrl)
-            Log.i(TAG, "Processing meal description text via $fullUrl model=${config.model}")
+            Log.i(
+                TAG,
+                "Processing meal description text via " +
+                    config.candidateEndpoints().joinToString { it.label() }
+            )
 
             // Optional attached photo: sent together with the transcript so
             // the LLM can combine what it SEES with what the user SAID.
@@ -195,9 +220,8 @@ class VisionProcessingService {
             // standardized/branded meals instead of guessing. Guarded by host
             // because other OpenAI-compatible endpoints reject unknown request
             // parameters with a 400.
-            val withWebSearch = supportsServerSideWebSearch(config.baseUrl)
-            fun buildBody(search: Boolean): JSONObject = JSONObject().apply {
-                put("model", config.model)
+            fun buildBody(endpoint: LlmEndpoint, search: Boolean): JSONObject = JSONObject().apply {
+                put("model", endpoint.model)
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply {
                         put("role", "system")
@@ -212,16 +236,14 @@ class VisionProcessingService {
                 // Multi-food descriptions produce long JSON — 700 truncated
                 // responses mid-object and made parsing fail.
                 put("max_tokens", 4096)
-                applyGlmThinkingOverride(config.model)
+                applyGlmThinkingOverride(endpoint.model)
                 if (search) put("tools", buildWebSearchTool())
             }
 
-            var outcome = chatCompletion(fullUrl, buildBody(withWebSearch), config)
-            if (withWebSearch && outcome is ChatOutcome.ErrorNote) {
-                // Endpoint rejected the web_search tool (4xx) — retry once
-                // without it so the parse still succeeds from model knowledge.
-                Log.w(TAG, "web_search tool rejected, retrying without it: ${outcome.note.take(120)}")
-                outcome = chatCompletion(fullUrl, buildBody(false), config)
+            val outcome = chatCompletionWithFallback(config) { endpoint ->
+                // The web_search tool is only offered to hosts known to
+                // support it; the backup gateway never gets it.
+                buildBody(endpoint, supportsServerSideWebSearch(endpoint.baseUrl))
             }
 
             when (outcome) {
@@ -254,13 +276,16 @@ class VisionProcessingService {
         habitPrompt: String
     ): TeachingResult? =
         withContext(Dispatchers.IO) {
-            if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
-                Log.w(TAG, "Cannot teach: LLM config incomplete")
+            if (!config.hasAnyEndpoint) {
+                Log.w(TAG, "Cannot teach: no LLM endpoint configured")
                 return@withContext null
             }
 
-            val fullUrl = buildEndpointUrl(config.baseUrl)
-            Log.i(TAG, "Teaching image association via $fullUrl model=${config.model}")
+            Log.i(
+                TAG,
+                "Teaching image association via " +
+                    config.candidateEndpoints().joinToString { it.label() }
+            )
 
             val base64Image = compressAndEncode(imageFile)
                 ?: run {
@@ -268,14 +293,78 @@ class VisionProcessingService {
                     return@withContext null
                 }
 
-            val requestBody = buildTeachingRequestBody(base64Image, transcript, config, habitPrompt)
-
-            when (val outcome = chatCompletion(fullUrl, requestBody, config)) {
+            val outcome = chatCompletionWithFallback(config) { endpoint ->
+                buildTeachingRequestBody(base64Image, transcript, config, endpoint, habitPrompt)
+            }
+            when (outcome) {
                 is ChatOutcome.Content -> parseTeachingResult(outcome.text)
                 is ChatOutcome.ErrorNote -> TeachingResult(understood = false, notes = outcome.note)
                 ChatOutcome.NetworkFailure -> null
             }
         }
+
+    // ── Endpoint resolution (primary → emergency backup) ─────────────────
+
+    /**
+     * The endpoints to try, in order. The primary comes first and is the ONLY
+     * one tried when it is healthy; the emergency backup is appended strictly
+     * as a last resort. A blank/unconfigured primary is skipped entirely, so a
+     * user who only filled in the backup still gets working LLM features.
+     */
+    private fun VisionConfig.candidateEndpoints(): List<LlmEndpoint> = llmCandidateEndpoints(
+        primary = if (baseUrl.isNotBlank() && model.isNotBlank() && apiKey.isNotBlank()) {
+            LlmEndpoint(baseUrl, apiKey, model)
+        } else null,
+        backup = fallback
+    )
+
+    /**
+     * Runs [chatCompletion] against the primary endpoint and, ONLY if that
+     * fails, against the emergency backup. [buildBody] is invoked per endpoint
+     * so the request always carries the model name of the endpoint being hit.
+     *
+     * The backup is never contacted when the primary succeeded, and never in
+     * parallel — a healthy primary is never bypassed.
+     */
+    private suspend fun chatCompletionWithFallback(
+        config: VisionConfig,
+        buildBody: (LlmEndpoint) -> JSONObject
+    ): ChatOutcome {
+        val endpoints = config.candidateEndpoints()
+        if (endpoints.isEmpty()) {
+            return ChatOutcome.ErrorNote("No LLM endpoint configured")
+        }
+
+        var lastOutcome: ChatOutcome = ChatOutcome.ErrorNote("Not attempted")
+        for ((index, endpoint) in endpoints.withIndex()) {
+            val isBackup = index > 0
+            if (isBackup) {
+                QcDiag.warn(
+                    "LLM",
+                    "primary endpoint failed (${(lastOutcome as? ChatOutcome.ErrorNote)?.note?.take(160) ?: "network failure"}) " +
+                        "— switching to EMERGENCY BACKUP ${endpoint.label()}"
+                )
+                Log.w(TAG, "Primary LLM failed — falling back to ${endpoint.label()}")
+            }
+            val outcome = chatCompletion(endpoint, buildBody(endpoint))
+            if (outcome is ChatOutcome.Content) {
+                if (isBackup) {
+                    QcDiag.log("LLM", "EMERGENCY BACKUP succeeded: ${endpoint.label()}")
+                }
+                return outcome
+            }
+            lastOutcome = outcome
+        }
+
+        // Every endpoint failed — report the LAST failure (the backup's), but
+        // make it obvious that the primary was tried first.
+        val note = (lastOutcome as? ChatOutcome.ErrorNote)?.note ?: "request failed"
+        return if (endpoints.size > 1) {
+            ChatOutcome.ErrorNote("Primary and emergency backup both failed. Last error: $note")
+        } else {
+            lastOutcome
+        }
+    }
 
     // ── Shared chat-completion retry loop ────────────────────────────────
 
@@ -295,15 +384,14 @@ class VisionProcessingService {
      * and [processTeaching].
      */
     private suspend fun chatCompletion(
-        fullUrl: String,
-        requestBody: JSONObject,
-        config: VisionConfig
+        endpoint: LlmEndpoint,
+        requestBody: JSONObject
     ): ChatOutcome {
         val maxRetries = 3
         var lastHttpResult: HttpResult = HttpResult.OtherError(0, "Not attempted")
 
         for (attempt in 1..maxRetries) {
-            val result = executeHttpCall(fullUrl, requestBody, config)
+            val result = executeHttpCall(endpoint, requestBody)
             when (result) {
                 is HttpResult.Success -> {
                     val content = extractAssistantContent(result.content)
@@ -384,14 +472,13 @@ class VisionProcessingService {
      * a sealed [HttpResult]. The caller is responsible for retry logic.
      */
     private fun executeHttpCall(
-        fullUrl: String,
-        requestBody: JSONObject,
-        config: VisionConfig
+        endpoint: LlmEndpoint,
+        requestBody: JSONObject
     ): HttpResult {
-        val connection = (URL(fullUrl).openConnection() as HttpURLConnection).apply {
+        val connection = (URL(endpoint.chatCompletionsUrl()).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer ${config.apiKey}")
+            setRequestProperty("Authorization", "Bearer ${endpoint.apiKey}")
             connectTimeout = 30_000
             readTimeout = 120_000
             doOutput = true
@@ -425,24 +512,6 @@ class VisionProcessingService {
         }
     }
 
-    // ── URL building ────────────────────────────────────────────────────
-
-    /**
-     * Builds the full chat-completions endpoint URL.
-     * If baseUrl already ends with /chat/completions, use it as-is.
-     * If it ends with a version path like /v1, /v2, /v4, etc., append /chat/completions.
-     * Otherwise append /v1/chat/completions.
-     */
-    private fun buildEndpointUrl(baseUrl: String): String {
-        val trimmed = baseUrl.trimEnd('/')
-        val versionPattern = Regex("""/v\d+$""")
-        return when {
-            trimmed.endsWith("/chat/completions") -> trimmed
-            versionPattern.containsMatchIn(trimmed) -> "$trimmed/chat/completions"
-            else -> "$trimmed/v1/chat/completions"
-        }
-    }
-
     // ── Option-description generation (text-input habits) ───────────────
 
     /**
@@ -463,8 +532,8 @@ class VisionProcessingService {
         instruction: String,
         exampleDescriptions: Map<String, String>
     ): String? = withContext(Dispatchers.IO) {
-        if (config.apiKey.isBlank() || config.baseUrl.isBlank() || config.model.isBlank()) {
-            Log.w(TAG, "describeOption: LLM config incomplete")
+        if (!config.hasAnyEndpoint) {
+            Log.w(TAG, "describeOption: no LLM endpoint configured")
             return@withContext null
         }
         val base64Image = compressAndEncode(imageFile)
@@ -494,8 +563,8 @@ class VisionProcessingService {
             "Existing descriptions for other options of this habit (match this style):\n" +
             exampleBlock
 
-        val body = JSONObject().apply {
-            put("model", config.model)
+        fun buildBody(endpoint: LlmEndpoint): JSONObject = JSONObject().apply {
+            put("model", endpoint.model)
             put("temperature", 0.2)
             put("max_tokens", 400)
             put("messages", JSONArray().apply {
@@ -519,7 +588,7 @@ class VisionProcessingService {
             })
         }
 
-        when (val outcome = chatCompletion(buildEndpointUrl(config.baseUrl), body, config)) {
+        when (val outcome = chatCompletionWithFallback(config) { buildBody(it) }) {
             is ChatOutcome.Content -> outcome.text.trim().trim('"').ifEmpty { null }
             else -> {
                 QcDiag.warn("LLM", "describeOption failed: ${(outcome as? ChatOutcome.ErrorNote)?.note ?: "request failed"}")
@@ -584,6 +653,7 @@ class VisionProcessingService {
     private fun buildRequestBody(
         base64Image: String,
         config: VisionConfig,
+        endpoint: LlmEndpoint,
         memoryPrompt: String? = null,
         habitPrompt: String? = null
     ): JSONObject {
@@ -608,7 +678,7 @@ class VisionProcessingService {
         }
 
         return JSONObject().apply {
-            put("model", config.model)
+            put("model", endpoint.model)
             put("messages", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "system")
@@ -621,7 +691,7 @@ class VisionProcessingService {
             })
             put("temperature", 0.2)
             put("max_tokens", 4096)
-            applyGlmThinkingOverride(config.model)
+            applyGlmThinkingOverride(endpoint.model)
         }
     }
 
@@ -745,6 +815,7 @@ class VisionProcessingService {
         base64Image: String,
         transcript: String,
         config: VisionConfig,
+        endpoint: LlmEndpoint,
         habitPrompt: String
     ): JSONObject {
         val systemPrompt = buildString {
@@ -794,7 +865,7 @@ class VisionProcessingService {
         }
 
         return JSONObject().apply {
-            put("model", config.model)
+            put("model", endpoint.model)
             put("messages", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "system")
@@ -807,7 +878,7 @@ class VisionProcessingService {
             })
             put("temperature", 0.2)
             put("max_tokens", 4096)
-            applyGlmThinkingOverride(config.model)
+            applyGlmThinkingOverride(endpoint.model)
         }
     }
 

@@ -297,6 +297,11 @@ private val KEY_WEIGHTS_RECENT_EXERCISES = stringPreferencesKey("weights_recent_
 private val KEY_AI_ASSISTANT_BASE_URL = stringPreferencesKey("ai_assistant_base_url")
 private val KEY_AI_ASSISTANT_API_KEY = stringPreferencesKey("ai_assistant_api_key")
 private val KEY_AI_ASSISTANT_MODEL = stringPreferencesKey("ai_assistant_model")
+// Emergency backup LLM — used ONLY when a feature's primary endpoint fails.
+private val KEY_LLM_FALLBACK_ENABLED = booleanPreferencesKey("llm_fallback_enabled")
+private val KEY_LLM_FALLBACK_BASE_URL = stringPreferencesKey("llm_fallback_base_url")
+private val KEY_LLM_FALLBACK_API_KEY = stringPreferencesKey("llm_fallback_api_key")
+private val KEY_LLM_FALLBACK_MODEL = stringPreferencesKey("llm_fallback_model")
 private val KEY_TIMELINE_EXCLUDED_HABITS = stringSetPreferencesKey("timeline_excluded_habits")
 private val KEY_CAMERA_HABITS = stringSetPreferencesKey("camera_habits")
 // App link keys — stored as "app_link_key\x00label|||app_link_key\x00label" pairs
@@ -1297,6 +1302,15 @@ class SettingsRepository(private val context: Context) {
             aiAssistantBaseUrl = prefs[KEY_AI_ASSISTANT_BASE_URL] ?: "",
             aiAssistantApiKey = prefs[KEY_AI_ASSISTANT_API_KEY] ?: "",
             aiAssistantModel = prefs[KEY_AI_ASSISTANT_MODEL] ?: "",
+            // Emergency backup LLM. Defaults come from LlmFallbackDefaults so a
+            // fresh install already points at the shipped ppq.ai endpoint; the
+            // key stays empty until the user pastes one.
+            llmFallbackEnabled = prefs[KEY_LLM_FALLBACK_ENABLED] ?: true,
+            llmFallbackBaseUrl = prefs[KEY_LLM_FALLBACK_BASE_URL]
+                ?: com.example.tail.data.ai.LlmFallbackDefaults.BASE_URL,
+            llmFallbackApiKey = prefs[KEY_LLM_FALLBACK_API_KEY] ?: "",
+            llmFallbackModel = prefs[KEY_LLM_FALLBACK_MODEL]
+                ?: com.example.tail.data.ai.LlmFallbackDefaults.MODEL,
             timelineExcludedHabits = prefs[KEY_TIMELINE_EXCLUDED_HABITS] ?: emptySet(),
             cameraHabits = prefs[KEY_CAMERA_HABITS] ?: emptySet(),
             appLinks = decodeFileUriMap(prefs[KEY_APP_LINKS] ?: ""),
@@ -2187,6 +2201,24 @@ class SettingsRepository(private val context: Context) {
             prefs[KEY_AI_ASSISTANT_BASE_URL] = baseUrl
             prefs[KEY_AI_ASSISTANT_API_KEY] = apiKey
             prefs[KEY_AI_ASSISTANT_MODEL] = model
+        }
+    }
+
+    /**
+     * Saves the emergency backup LLM configuration. The backup is only ever
+     * contacted after a feature's own primary endpoint has failed.
+     */
+    suspend fun saveLlmFallbackSettings(
+        enabled: Boolean,
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_LLM_FALLBACK_ENABLED] = enabled
+            prefs[KEY_LLM_FALLBACK_BASE_URL] = baseUrl
+            prefs[KEY_LLM_FALLBACK_API_KEY] = apiKey
+            prefs[KEY_LLM_FALLBACK_MODEL] = model
         }
     }
 

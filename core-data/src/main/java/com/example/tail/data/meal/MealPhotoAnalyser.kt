@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.ai.llmFallbackEndpoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -72,9 +73,10 @@ object MealPhotoAnalyser {
                 Log.e(TAG, "Failed to load settings", e)
                 return@withContext MealPhotoAnalysis(relPath, null, "Settings unavailable")
             }
-            if (!s.mealEnabled || s.mealApiKey.isBlank() ||
-                s.mealBaseUrl.isBlank() || s.mealModel.isBlank()
-            ) {
+            val fallback = s.llmFallbackEndpoint()
+            val primaryReady = s.mealApiKey.isNotBlank() &&
+                s.mealBaseUrl.isNotBlank() && s.mealModel.isNotBlank()
+            if (!s.mealEnabled || (!primaryReady && fallback == null)) {
                 return@withContext MealPhotoAnalysis(
                     relPath, null, "AI not configured (Settings → Meal Engine)"
                 )
@@ -84,7 +86,8 @@ object MealPhotoAnalyser {
                 baseUrl = s.mealBaseUrl,
                 apiKey = s.mealApiKey,
                 model = s.mealModel,
-                userSystemPrompt = s.mealSystemPrompt
+                userSystemPrompt = s.mealSystemPrompt,
+                fallback = fallback
             )
             val result = try {
                 VisionProcessingService().processImage(file, config)
@@ -136,9 +139,10 @@ object MealPhotoAnalyser {
             Log.e(TAG, "Failed to load settings", e)
             return@withContext MealVoiceAnalysis(null, "Settings unavailable")
         }
-        if (!s.mealEnabled || s.mealApiKey.isBlank() ||
-            s.mealBaseUrl.isBlank() || s.mealModel.isBlank()
-        ) {
+        val fallback = s.llmFallbackEndpoint()
+        val primaryReady = s.mealApiKey.isNotBlank() &&
+            s.mealBaseUrl.isNotBlank() && s.mealModel.isNotBlank()
+        if (!s.mealEnabled || (!primaryReady && fallback == null)) {
             return@withContext MealVoiceAnalysis(null, "AI not configured (Settings → Meal Engine)")
         }
 
@@ -146,7 +150,8 @@ object MealPhotoAnalyser {
             baseUrl = s.mealBaseUrl,
             apiKey = s.mealApiKey,
             model = s.mealModel,
-            userSystemPrompt = s.mealSystemPrompt
+            userSystemPrompt = s.mealSystemPrompt,
+            fallback = fallback
         )
         val imageFile = imageRelPath?.takeIf { it.isNotBlank() }
             ?.let { MealLogRepository(context).resolveImage(it) }

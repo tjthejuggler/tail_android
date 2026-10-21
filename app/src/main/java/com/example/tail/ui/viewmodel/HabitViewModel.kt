@@ -14,6 +14,7 @@ import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconGeneratorService
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
+import com.example.tail.data.ai.llmFallbackEndpoint
 import com.example.tail.data.BridgeClient
 import com.example.tail.data.movie.BridgeMovie
 import com.example.tail.data.InjuryEpisode
@@ -4318,7 +4319,8 @@ class HabitViewModel(
                 com.example.tail.data.ai.AiAssistantConfig(
                     baseUrl = s.aiAssistantBaseUrl,
                     apiKey = s.aiAssistantApiKey,
-                    model = s.aiAssistantModel
+                    model = s.aiAssistantModel,
+                    fallback = s.llmFallbackEndpoint()
                 )
             },
             fileUriProvider = { _settings.value.fileUri.takeIf { it.isNotEmpty() } },

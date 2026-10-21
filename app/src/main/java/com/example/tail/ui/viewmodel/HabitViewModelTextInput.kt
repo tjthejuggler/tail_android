@@ -18,6 +18,7 @@ import com.example.tail.data.AiIcon
 import com.example.tail.data.AiIconGeneratorService
 import com.example.tail.data.AiIconRepository
 import com.example.tail.data.AppSettings
+import com.example.tail.data.ai.llmFallbackEndpoint
 import com.example.tail.data.BridgeClient
 import com.example.tail.data.movie.BridgeMovie
 import com.example.tail.data.chess.ChessComRepository
@@ -850,7 +851,8 @@ fun HabitViewModel.generateOptionDescriptionFromCamera(
             baseUrl = s.mealBaseUrl,
             apiKey = s.mealApiKey,
             model = s.mealModel,
-            userSystemPrompt = ""
+            userSystemPrompt = "",
+            fallback = s.llmFallbackEndpoint()
         )
         // Style examples: every described option EXCEPT the one being written
         // (the current one would bias the LLM toward its old/empty text).

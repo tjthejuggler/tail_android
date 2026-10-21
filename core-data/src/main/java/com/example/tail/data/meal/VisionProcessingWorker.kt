@@ -13,6 +13,7 @@ import androidx.work.WorkerParameters
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SettingsRepository
+import com.example.tail.data.ai.llmFallbackEndpoint
 import kotlinx.coroutines.flow.first
 import java.io.File
 import java.time.Instant
@@ -105,10 +106,12 @@ class VisionProcessingWorker(
         )
         QcDiag.log("WORKER", QcDiag.mismatchHints(settings))
 
-        // Check if meal engine is configured
-        if (!settings.mealEnabled || settings.mealApiKey.isBlank() ||
-            settings.mealBaseUrl.isBlank() || settings.mealModel.isBlank()
-        ) {
+        // Check if meal engine is configured. A configured emergency backup
+        // endpoint is enough on its own — the primary is then simply skipped.
+        val fallback = settings.llmFallbackEndpoint()
+        val primaryReady = settings.mealApiKey.isNotBlank() &&
+            settings.mealBaseUrl.isNotBlank() && settings.mealModel.isNotBlank()
+        if (!settings.mealEnabled || (!primaryReady && fallback == null)) {
             QcDiag.warn(
                 "WORKER",
                 "SKIP whole pass: meal engine not configured — ${queueRepo.pendingCount()} " +
@@ -116,7 +119,8 @@ class VisionProcessingWorker(
                     "mealEnabled=${settings.mealEnabled} " +
                     "baseUrlSet=${settings.mealBaseUrl.isNotBlank()} " +
                     "apiKeySet=${settings.mealApiKey.isNotBlank()} " +
-                    "modelSet=${settings.mealModel.isNotBlank()}"
+                    "modelSet=${settings.mealModel.isNotBlank()} " +
+                    "backupSet=${fallback != null}"
             )
             Log.w(TAG, "Meal engine not configured — skipping ${queueRepo.pendingCount()} items")
             return Result.success()
@@ -126,7 +130,8 @@ class VisionProcessingWorker(
             baseUrl = settings.mealBaseUrl,
             apiKey = settings.mealApiKey,
             model = settings.mealModel,
-            userSystemPrompt = settings.mealSystemPrompt
+            userSystemPrompt = settings.mealSystemPrompt,
+            fallback = fallback
         )
 
         // Single camera-eligible habit ⇒ every untargeted capture is

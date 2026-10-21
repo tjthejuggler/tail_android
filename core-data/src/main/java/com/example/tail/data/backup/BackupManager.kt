@@ -971,6 +971,12 @@ class BackupManager(
             apiKey = s.aiAssistantApiKey,
             model = s.aiAssistantModel
         )
+        settingsRepo.saveLlmFallbackSettings(
+            enabled = s.llmFallbackEnabled,
+            baseUrl = s.llmFallbackBaseUrl,
+            apiKey = s.llmFallbackApiKey,
+            model = s.llmFallbackModel
+        )
         settingsRepo.saveStatsOverlayEnabled(s.statsOverlayEnabled)
         settingsRepo.saveBubbleFullScreenApps(s.bubbleFullScreenApps.toSet())
         settingsRepo.saveBubbleMultiTimerApps(s.bubbleMultiTimerApps.toSet())
@@ -1432,6 +1438,10 @@ class BackupManager(
         aiAssistantBaseUrl = s.aiAssistantBaseUrl,
         aiAssistantApiKey = s.aiAssistantApiKey,
         aiAssistantModel = s.aiAssistantModel,
+        llmFallbackEnabled = s.llmFallbackEnabled,
+        llmFallbackBaseUrl = s.llmFallbackBaseUrl,
+        llmFallbackApiKey = s.llmFallbackApiKey,
+        llmFallbackModel = s.llmFallbackModel,
         statsOverlayEnabled = s.statsOverlayEnabled,
         bubbleFullScreenApps = s.bubbleFullScreenApps.toList(),
         bubbleMultiTimerApps = s.bubbleMultiTimerApps.toList(),

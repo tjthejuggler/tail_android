@@ -33,14 +33,37 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import com.example.tail.data.location.LocationRepository
 
-/** Endpoint configuration for the AI Assistant (OpenAI-compatible chat completions). */
+/**
+ * Endpoint configuration for the AI Assistant (OpenAI-compatible chat
+ * completions).
+ *
+ * @param fallback Emergency backup endpoint, contacted ONLY after the primary
+ *        ([baseUrl]/[apiKey]/[model]) has actually failed — or when the
+ *        primary is not configured at all. A healthy primary is never
+ *        bypassed.
+ */
 data class AiAssistantConfig(
     val baseUrl: String,
     val apiKey: String,
-    val model: String
+    val model: String,
+    val fallback: LlmEndpoint? = null
 ) {
-    val isConfigured: Boolean
+    /** True when the primary endpoint has everything it needs. */
+    val isPrimaryConfigured: Boolean
         get() = baseUrl.isNotBlank() && model.isNotBlank()
+
+    /** True when at least one usable endpoint exists (primary or backup). */
+    val isConfigured: Boolean
+        get() = isPrimaryConfigured || (fallback?.isConfigured == true)
+
+    /**
+     * Endpoints to try, in order: primary first, emergency backup last. A
+     * blank primary is skipped so a backup-only setup still works.
+     */
+    fun candidateEndpoints(): List<LlmEndpoint> = llmCandidateEndpoints(
+        primary = if (isPrimaryConfigured) LlmEndpoint(baseUrl, apiKey, model) else null,
+        backup = fallback
+    )
 }
 
 /**
@@ -352,7 +375,9 @@ class AiAssistantController(
 
         for (round in 0 until MAX_TOOL_ROUNDS) {
             val responseBody = withContext(Dispatchers.IO) {
-                callChatEndpoint(config, requestBody(config, conversation))
+                callChatEndpointWithFallback(config) { endpoint ->
+                    requestBody(endpoint, conversation)
+                }
             }
             val choiceObj = responseBody.getJSONArray("choices").getJSONObject(0)
             val finishReason = choiceObj.optString("finish_reason", "")
@@ -996,9 +1021,9 @@ class AiAssistantController(
         )
     }
 
-    private fun requestBody(config: AiAssistantConfig, messages: JSONArray): JSONObject =
+    private fun requestBody(endpoint: LlmEndpoint, messages: JSONArray): JSONObject =
         JSONObject().apply {
-            put("model", config.model)
+            put("model", endpoint.model)
             put("messages", messages)
             put("tools", toolDefinitions())
             put("tool_choice", "auto")
@@ -1018,23 +1043,66 @@ class AiAssistantController(
 
     /** Minimal request (no tools) used by the connection test. */
     private fun pingEndpoint(config: AiAssistantConfig): String {
-        val body = JSONObject().apply {
-            put("model", config.model)
-            put("messages", JSONArray().apply {
-                put(messageJson("user", "Reply with the single word: pong"))
-            })
-            put("max_tokens", 10)
+        val response = callChatEndpointWithFallback(config) { endpoint ->
+            JSONObject().apply {
+                put("model", endpoint.model)
+                put("messages", JSONArray().apply {
+                    put(messageJson("user", "Reply with the single word: pong"))
+                })
+                put("max_tokens", 10)
+            }
         }
-        val response = callChatEndpoint(config, body)
         return response.getJSONArray("choices").getJSONObject(0)
             .getJSONObject("message").optString("content")
     }
 
-    private fun callChatEndpoint(config: AiAssistantConfig, body: JSONObject): JSONObject {
-        val connection = (URL(buildEndpointUrl(config.baseUrl)).openConnection() as HttpURLConnection).apply {
+    /**
+     * Calls the primary endpoint and, ONLY if it fails, the emergency backup.
+     * [buildBody] is invoked per endpoint so the request always carries the
+     * model name of the endpoint actually being called.
+     *
+     * The backup is never contacted when the primary succeeded, and never in
+     * parallel — a healthy primary is never bypassed.
+     */
+    private fun callChatEndpointWithFallback(
+        config: AiAssistantConfig,
+        buildBody: (LlmEndpoint) -> JSONObject
+    ): JSONObject {
+        val endpoints = config.candidateEndpoints()
+        if (endpoints.isEmpty()) {
+            throw IllegalStateException("No LLM endpoint configured")
+        }
+        var lastError: Exception? = null
+        for ((index, endpoint) in endpoints.withIndex()) {
+            try {
+                return callChatEndpoint(endpoint, buildBody(endpoint))
+            } catch (e: Exception) {
+                lastError = e
+                if (index == 0 && endpoints.size > 1) {
+                    Log.w(
+                        TAG,
+                        "Primary LLM failed (${e.message?.take(160)}) — " +
+                            "switching to EMERGENCY BACKUP ${endpoint.label()}"
+                    )
+                }
+            }
+        }
+        throw IllegalStateException(
+            if (endpoints.size > 1) {
+                "Primary and emergency backup both failed. Last error: " +
+                    (lastError?.message ?: lastError?.javaClass?.simpleName ?: "unknown")
+            } else {
+                lastError?.message ?: lastError?.javaClass?.simpleName ?: "request failed"
+            },
+            lastError
+        )
+    }
+
+    private fun callChatEndpoint(endpoint: LlmEndpoint, body: JSONObject): JSONObject {
+        val connection = (URL(endpoint.chatCompletionsUrl()).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer ${config.apiKey}")
+            setRequestProperty("Authorization", "Bearer ${endpoint.apiKey}")
             connectTimeout = 30_000
             readTimeout = 120_000
             doOutput = true
@@ -1051,17 +1119,6 @@ class AiAssistantController(
             return JSONObject(text)
         } finally {
             connection.disconnect()
-        }
-    }
-
-    /** Same URL-building convention as the meal vision engine. */
-    private fun buildEndpointUrl(baseUrl: String): String {
-        val trimmed = baseUrl.trim().trimEnd('/')
-        val versionPattern = Regex("""/v\d+$""")
-        return when {
-            trimmed.endsWith("/chat/completions") -> trimmed
-            versionPattern.containsMatchIn(trimmed) -> "$trimmed/chat/completions"
-            else -> "$trimmed/v1/chat/completions"
         }
     }
 

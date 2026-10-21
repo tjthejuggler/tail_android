@@ -518,7 +518,7 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Habit Features",
-                    summary = "AI icons · meal engine · AI assistant · vision memory · advice banner",
+                    summary = "AI icons · meal engine · AI assistant · backup LLM · vision memory · advice banner",
                     icon = Icons.Filled.AutoAwesome,
                     accent = BorderWhiteRed
                 ) {
@@ -527,6 +527,8 @@ fun SettingsScreen(
                     MealSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     AiAssistantSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    LlmFallbackSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     VisionMemorySection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()

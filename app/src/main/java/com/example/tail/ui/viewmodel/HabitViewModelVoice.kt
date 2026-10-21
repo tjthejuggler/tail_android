@@ -278,6 +278,30 @@ fun HabitViewModel.saveAiAssistantSettings(baseUrl: String, apiKey: String, mode
 }
 
 /**
+ * Saves the EMERGENCY BACKUP LLM configuration. The backup is only ever
+ * contacted after the primary endpoint of a feature has actually failed.
+ */
+fun HabitViewModel.saveLlmFallbackSettings(
+    enabled: Boolean,
+    baseUrl: String,
+    apiKey: String,
+    model: String
+) {
+    viewModelScope.launch {
+        val cleanUrl = baseUrl.trim().trimEnd('/')
+        val cleanKey = apiKey.trim()
+        val cleanModel = model.trim()
+        settingsRepo.saveLlmFallbackSettings(enabled, cleanUrl, cleanKey, cleanModel)
+        _settings.value = _settings.value.copy(
+            llmFallbackEnabled = enabled,
+            llmFallbackBaseUrl = cleanUrl,
+            llmFallbackApiKey = cleanKey,
+            llmFallbackModel = cleanModel
+        )
+    }
+}
+
+/**
  * Reloads the whole database from disk. Called after the AI Assistant
  * (or any external writer) modified habitsdb.txt / the timestamp store.
  */
