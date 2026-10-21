@@ -360,8 +360,6 @@
 "use strict";
 
 const REFRESH_MS = 5000;
-const PHONE_ONLINE_SEC = 90;    // long-poll cycle ≈ 50 s + retry slack
-const WIDGET_ONLINE_SEC = 180;  // widget config poll cadence
 
 let snapshot = null;
 let lastFetchOk = null;
@@ -448,6 +446,18 @@ function renderHeader() {
   const tcLink = $("tailcueLink");
   if (tcUrl) { tcLink.href = tcUrl; tcLink.style.display = ""; }
   else { tcLink.style.display = "none"; }
+
+}
+
+/* Symmetric dashboards: every bridge renders the same merged view. Peer
+   data (from the other bridge's snapshot) is folded into each section and
+   tagged with the peer's device name. */
+function peerName() {
+  return (snapshot.peer && snapshot.peer.device_name) || "peer bridge";
+}
+function peerWidget() {
+  const p = snapshot.peer;
+  return (p && p.online && p.pc_widget) ? p.pc_widget : null;
 }
 
 function setState(id, on, onTxt, offTxt) {
@@ -459,14 +469,23 @@ function setState(id, on, onTxt, offTxt) {
 const DEVICE_EMOJI = { phone: "📱", pc: "🫧", tailcue: "🧠", peer_bridge: "☁️" };
 
 function renderDevices() {
-  const devices = snapshot.devices || [];
+  // Merge the remote (peer) bridge's devices into one single view.
+  const devices = [...(snapshot.devices || [])];
+  const peer = snapshot.peer;
+  if (peer && peer.online && Array.isArray(peer.devices)) {
+    for (const pd of peer.devices) {
+      devices.push({ ...pd, id: "remote_" + (pd.id || Math.random()),
+                     label: (pd.label || pd.id || "?") + " · " + peerName() });
+    }
+  }
   const list = $("devicesList");
   if (!devices.length) {
     list.innerHTML = '<div class="empty">No contacts yet.</div>';
     return;
   }
   list.innerHTML = devices.map((d) => {
-    const icon = DEVICE_EMOJI[d.id] || "🔌";
+    const icon = DEVICE_EMOJI[d.id]
+      || (String(d.id).startsWith("remote_") ? "☁️" : "🔌");
     const when = d.last_seen ? ago(d.last_seen) : "never";
     const detail = d.id === "peer_bridge"
       ? (d.peer?.online ? (d.peer.role === "remote" ? "remote server bridge" : "laptop bridge")
@@ -493,14 +512,18 @@ function renderConnections() {
   $("srvSources").textContent = srcNames + " (" + snapshot.sources.length + ")";
   setState("srvState", true, "● running", "○ stopped");
 
-  const ph = c.phone, phOn = ph.age_sec != null && ph.age_sec < PHONE_ONLINE_SEC;
+  const devOnline = (id) => (snapshot.devices || []).some((d) => d.id === id && d.online);
+  const ph = c.phone, phOn = devOnline("phone");
   $("phoneSeen").textContent = ph.last_seen ? ago(ph.last_seen) : "never";
   $("phoneReq").textContent = ph.last_request || "—";
   $("phoneReq").title = ph.last_request || "";
-  $("phoneQueue").textContent = snapshot.pc_widget.pending_count + " event(s)";
+  const pw = peerWidget();
+  const peerPend = (pw && pw.pending_count) || 0;
+  $("phoneQueue").textContent =
+    (snapshot.pc_widget.pending_count + peerPend) + " event(s)";
   setState("phoneState", phOn, "● connected", "○ not seen");
 
-  const pc = c.pc, pcOn = pc.age_sec != null && pc.age_sec < WIDGET_ONLINE_SEC;
+  const pc = c.pc, pcOn = devOnline("pc");
   $("widgetSeen").textContent = pc.last_seen ? ago(pc.last_seen) : "never";
   $("widgetReq").textContent = pc.last_request || "—";
   $("widgetReq").title = pc.last_request || "";
@@ -509,10 +532,16 @@ function renderConnections() {
 }
 
 function renderHabits() {
-  const cfg = snapshot.pc_widget.config;
+  let cfg = snapshot.pc_widget.config || {};
+  let from = "";
+  const pw = peerWidget();
+  if (!(cfg.habits || []).length && pw && pw.config && (pw.config.habits || []).length) {
+    cfg = pw.config;
+    from = " (via " + peerName() + ")";
+  }
   const habits = cfg.habits || [];
   $("configUpdated").textContent = cfg.updated_at
-    ? "Last pushed by the phone " + ago(cfg.updated_at) + " (" + cfg.updated_at + ")"
+    ? "Last pushed by the phone " + ago(cfg.updated_at) + " (" + cfg.updated_at + ")" + from
     : "The phone has not pushed a widget config yet.";
   $("habitsCount").textContent = habits.length || "";
   if (!habits.length) {
@@ -544,7 +573,10 @@ function editBtn(id) {
 }
 
 function renderPending() {
-  const ev = snapshot.pc_widget.pending_events || [];
+  const own = (snapshot.pc_widget.pending_events || []).map((e) => ({ ...e, _local: true }));
+  const pw = peerWidget();
+  const peer = ((pw && pw.pending_events) || []).map((e) => ({ ...e, _local: false }));
+  const ev = own.concat(peer);
   $("pendingCount").textContent = ev.length || "";
   if (!ev.length) {
     $("pendingList").innerHTML =
@@ -559,13 +591,19 @@ function renderPending() {
         <span class="chip kind">${esc(e.kind)}</span>
         ${e.minutes ? `<span class="chip min">${esc(e.minutes)}m</span>` : ""}
         <span class="dim mono">${esc(e.start)}–${esc(e.end)}</span></span>
-      ${editableKind(e.kind) ? editBtn(e.id) : ""}
-      <span class="ms mono" title="${esc(e.id)}">${esc(String(e.id).slice(3, 13))}…</span>
+      ${(e._local && editableKind(e.kind)) ? editBtn(e.id) : ""}
+      ${e._local ? "" : `<span class="chip">☁ ${esc(peerName())}</span>`}
     </div>`).join("");
 }
 
 function renderWidgetHistory() {
-  const hist = snapshot.pc_widget_history || [];
+  const own = (snapshot.pc_widget_history || []).map((e) => ({ ...e, _local: true }));
+  const peerHist = ((snapshot.peer && snapshot.peer.online
+                     && snapshot.peer.pc_widget_history) || [])
+    .map((e) => ({ ...e, _local: false }));
+  const hist = own.concat(peerHist)
+    .sort((a, b) => ((b.date || "") + (b.start || ""))
+      .localeCompare((a.date || "") + (a.start || "")));
   $("widgetHistCount").textContent = hist.length || "";
   if (!hist.length) {
     $("widgetHistList").innerHTML =
@@ -588,8 +626,8 @@ function renderWidgetHistory() {
       <span class="path"><b>${esc(e.habit)}</b>
         <span class="chip kind">${esc(e.kind)}</span>${corr}${mins}
         <span class="dim mono">${esc(e.start)}–${esc(e.end)}</span>
-        ${state}${corrected}</span>
-      ${(editableKind(e.kind) && e.correction !== "deleted") ? editBtn(e.id) : ""}
+        ${state}${corrected}${e._local ? "" : ` <span class="chip">☁ ${esc(peerName())}</span>`}</span>
+      ${(e._local && editableKind(e.kind) && e.correction !== "deleted") ? editBtn(e.id) : ""}
     </div>`;
   }).join("");
 }

@@ -70,6 +70,10 @@ TAILCUE_APP_URL = os.environ.get("TAILCUE_APP_URL", "")
 # devices panel so each dashboard shows whether the peer bridge is up.
 PEER_BRIDGE_URL = os.environ.get("PEER_BRIDGE_URL", "").rstrip("/")
 
+# User-Agent the peer probe sends. Also the discriminator the activity
+# middleware uses so peer probes are never misclassified as "phone".
+PEER_PROBE_UA = "tail-bridge-peer-probe"
+
 # How long after its last contact each device still counts as "connected".
 # Phone: TailCueSyncWorker polls every 15 min (+ bubble long-poll) → 45 min.
 # PC widget: polls continuously while running → 5 min.
@@ -85,10 +89,10 @@ _activity: deque = deque(maxlen=ACTIVITY_MAX)
 _last_seen: Dict[str, float] = {}
 _last_request: Dict[str, str] = {}
 
-# Cached peer-bridge health probe (never block the snapshot on the network).
+# Cached peer-bridge snapshot probe (never block the snapshot on the network).
 _peer_probe: Dict[str, Any] = {"at": 0.0, "result": None}
 _PEER_PROBE_TTL = 30.0
-_PEER_PROBE_TIMEOUT = 3.0
+_PEER_PROBE_TIMEOUT = 8.0
 
 _history: List[Dict[str, Any]] = []
 _history_lock = threading.Lock()
@@ -109,7 +113,7 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
-def _actor_of(client: str, path: str) -> str:
+def _actor_of(client: str, path: str, user_agent: str = "") -> str:
     """Classify a request by origin.
 
     dashboard → the web UI itself; tailcue → the TailCue server (identified
@@ -120,6 +124,8 @@ def _actor_of(client: str, path: str) -> str:
     if (path == "/" or path.startswith("/dashboard")
             or path.startswith("/api/v1/dashboard") or path == "/favicon.ico"):
         return "dashboard"
+    if PEER_PROBE_UA in user_agent:
+        return "peer_bridge"
     if path.startswith("/api/v1/tailcue/"):
         return "tailcue"
     if client in _LOOPBACK:
@@ -257,23 +263,53 @@ def widget_history_entries(limit: int = 100) -> list:
 
 # ── snapshot builder ──────────────────────────────────────────────────────────
 
-def _peer_health_cached() -> Optional[dict]:
-    """Peer-bridge /health probe, cached for _PEER_PROBE_TTL seconds."""
+def _peer_health_cached(cache_only: bool = False) -> Optional[dict]:
+    """Peer-bridge snapshot probe, cached for _PEER_PROBE_TTL seconds."""
     if not PEER_BRIDGE_URL:
         return None
     now = time.time()
+    # cache_only: answering a peer probe must never trigger a fresh probe
+    # back to the peer (probe -> snapshot -> probe -> ... nesting, which
+    # used to blow the timeout); serve whatever is cached, stale or absent.
+    if cache_only:
+        return _peer_probe["result"]
     if now - _peer_probe["at"] < _PEER_PROBE_TTL and _peer_probe["result"] is not None:
         return _peer_probe["result"]
     result: Dict[str, Any]
     try:
-        req = urllib.request.Request(PEER_BRIDGE_URL + "/health",
-                                     headers={"User-Agent": "tail-bridge-peer-probe"})
-        with urllib.request.urlopen(req, timeout=_PEER_PROBE_TIMEOUT) as resp:
-            body = json.loads(resp.read().decode("utf-8", "replace"))
-        result = {"online": True, "status": body.get("status", "?"),
-                  "version": body.get("version", "?"),
-                  "role": body.get("role", "?"),
-                  "checked_at": _iso(now)}
+        # Full peer snapshot (devices + sources) so the laptop dashboard can
+        # merge the remote bridge into one single view; falls back to plain
+        # /health on peers that predate the aggregated endpoint.
+        headers = {"User-Agent": PEER_PROBE_UA}
+        body: Dict[str, Any]
+        try:
+            req = urllib.request.Request(PEER_BRIDGE_URL + "/api/v1/dashboard",
+                                         headers=headers)
+            with urllib.request.urlopen(req, timeout=_PEER_PROBE_TIMEOUT) as resp:
+                body = json.loads(resp.read().decode("utf-8", "replace"))
+            server = body.get("server") or {}
+            result = {"online": True, "status": server.get("status", "?"),
+                      "version": server.get("version", "?"),
+                      "role": server.get("role", "?"),
+                      "device_name": server.get("device_name", "?"),
+                      "devices": [d for d in (body.get("devices") or [])
+                                  if isinstance(d, dict)
+                                  and d.get("id") != "peer_bridge"],
+                      "sources": [{"name": s.get("name"), "health": s.get("health")}
+                                  for s in (body.get("sources") or [])
+                                  if isinstance(s, dict)],
+                      "pc_widget": body.get("pc_widget") or {},
+                      "pc_widget_history": (body.get("pc_widget_history") or [])[:100],
+                      "checked_at": _iso(now)}
+        except Exception:  # noqa: BLE001 - older peer: plain /health only
+            req = urllib.request.Request(PEER_BRIDGE_URL + "/health",
+                                         headers=headers)
+            with urllib.request.urlopen(req, timeout=_PEER_PROBE_TIMEOUT) as resp:
+                body = json.loads(resp.read().decode("utf-8", "replace"))
+            result = {"online": True, "status": body.get("status", "?"),
+                      "version": body.get("version", "?"),
+                      "role": body.get("role", "?"),
+                      "checked_at": _iso(now)}
     except Exception as exc:  # noqa: BLE001 — any failure just means "offline"
         result = {"online": False, "error": str(exc)[:200],
                   "checked_at": _iso(now)}
@@ -310,7 +346,8 @@ def _build_snapshot(version: str,
                     get_sources: Callable[[], Dict[str, Any]],
                     get_pending_events: Callable[[], list],
                     config_path: Path,
-                    chess_service: Callable[[], Any]) -> dict:
+                    chess_service: Callable[[], Any],
+                    peer_cache_only: bool = False) -> dict:
     now = time.time()
 
     sources_out = []
@@ -345,14 +382,14 @@ def _build_snapshot(version: str,
     with _history_lock:
         history = list(_history[-60:])
 
-    devices = [
-        _device_entry(now, "phone", "Android app (phone)"),
-        _device_entry(now, "pc",
-                      "PC bubble widget / local tools"
-                      if ROLE == "full" else "Local tools"),
-        _device_entry(now, "tailcue", "TailCue server"),
-    ]
-    peer = _peer_health_cached()
+    # The "pc" row only exists where local tools actually run. On a
+    # remote-role bridge no loopback client ever appears, so the row would
+    # sit permanently (and misleadingly) offline - hide it there.
+    devices = [_device_entry(now, "phone", "Android app (phone)")]
+    if ROLE == "full":
+        devices.append(_device_entry(now, "pc", "PC bubble widget / local tools"))
+    devices.append(_device_entry(now, "tailcue", "TailCue server"))
+    peer = _peer_health_cached(cache_only=peer_cache_only)
     if peer is not None:
         devices.append({
             "id": "peer_bridge",
@@ -365,6 +402,7 @@ def _build_snapshot(version: str,
         })
 
     return {
+        "peer": peer,
         "server": {
             "status": "running",
             "version": version,
@@ -455,11 +493,13 @@ def install(app: FastAPI,
         try:
             client = request.client.host if request.client else ""
             path = request.url.path
-            actor = _actor_of(client, path)
+            actor = _actor_of(client, path,
+                              request.headers.get("user-agent", ""))
             # /api/v1/heartbeat names its own device in the body — the handler
             # records it. Classifying it here too would credit the caller's
             # network origin (e.g. TailCue on the VPS looks like "phone").
-            if actor != "dashboard" and path != "/api/v1/heartbeat":
+            if (actor != "dashboard" and actor != "peer_bridge"
+                    and path != "/api/v1/heartbeat"):
                 _activity.append({
                     "ts": _iso(time.time()),
                     "actor": actor,
@@ -477,11 +517,13 @@ def install(app: FastAPI,
 
     @app.get("/", include_in_schema=False)
     def index():
-        return FileResponse(STATIC_DIR / "dashboard.html")
+        return FileResponse(STATIC_DIR / "dashboard.html",
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/dashboard", include_in_schema=False)
     def dashboard_page():
-        return FileResponse(STATIC_DIR / "dashboard.html")
+        return FileResponse(STATIC_DIR / "dashboard.html",
+                            headers={"Cache-Control": "no-store"})
 
     if verify_key is not None:
         @app.post("/api/v1/heartbeat", tags=["dashboard"])
@@ -512,8 +554,12 @@ def install(app: FastAPI,
         reachable from arbitrary public addresses.
         """
         _require_private(request)
+        # Peer probes get cache-only peer data so two bridges polling each
+        # other never nest blocking probes.
+        ua = request.headers.get("user-agent", "")
         return _build_snapshot(version, get_sources, get_pending_events,
-                               config_path, chess_service)
+                               config_path, chess_service,
+                               peer_cache_only=PEER_PROBE_UA in ua)
 
     # ── PC-widget event editor (the dashboard replacement for the bubble
     # widget's old right-click "Today's history" dialog) ─────────────────
