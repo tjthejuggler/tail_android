@@ -678,9 +678,15 @@ fun GraphsPanel(
                             val envMetric = settings.environmentHabitMetrics[point.habitName]
                                 ?.let { com.example.tail.data.environment.EnvironmentMetric.fromKey(it) }
                             val envF = settings.environmentTemperatureUnit == "F"
+                            val puMetric = settings.phoneUsageHabitMetrics[point.habitName]
+                                ?.let { com.example.tail.data.phoneusage.PhoneUsageMetric.fromKey(it) }
                             val valueText: String = if (envMetric != null) {
                                 // Environment metrics store ×10 (215 = 21.5 °C)
                                 envMetric.formatTenths(point.value, envF)
+                            } else if (puMetric == com.example.tail.data.phoneusage.PhoneUsageMetric.FIRST_UNLOCK ||
+                                       puMetric == com.example.tail.data.phoneusage.PhoneUsageMetric.LAST_USAGE) {
+                                // Clock-time metrics: minutes-since-midnight → HH:mm
+                                com.example.tail.data.phoneusage.formatMinutesAsClock(point.value.toInt())
                             } else if (garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
                                        garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE) {
                                 String.format("%.2f", point.value / 100.0)

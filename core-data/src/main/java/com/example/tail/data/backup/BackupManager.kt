@@ -450,6 +450,7 @@ class BackupManager(
         val names = listOf(
             "tail_chess_readiness", "tail_chess_phase2",
             "tail_environment_prefs", // environment habit snapshots + water memory
+            "tail_phone_usage_prefs", // phone-usage habit daily snapshots
             // 2026-10 completeness audit: remaining user-data prefs stores
             "tail_chess_freeplay",      // freeplay ticket ledger / grant weeks
             "tail_chess_pending_games", // pending-game tracking state
@@ -933,6 +934,7 @@ class BackupManager(
         settingsRepo.saveAutoBackupFolderUri(s.autoBackupFolderUri)
         settingsRepo.saveMapStatsHabits(s.mapStatsHabits.toSet())
         settingsRepo.saveEnvironmentHabitMetrics(s.environmentHabitMetrics)
+        settingsRepo.savePhoneUsageHabitMetrics(s.phoneUsageHabitMetrics)
         settingsRepo.saveMapStatsShowTextHabits(s.mapStatsShowTextHabits.toSet())
         settingsRepo.saveMapMainHabit(s.mapMainHabit?.takeIf { it.isNotEmpty() })
         settingsRepo.saveMapHideZeroDays(s.mapHideZeroDays)
@@ -1405,6 +1407,7 @@ class BackupManager(
         autoBackupFolderUri = s.autoBackupFolderUri,
         mapStatsHabits = s.mapStatsHabits.toList(),
         environmentHabitMetrics = s.environmentHabitMetrics,
+        phoneUsageHabitMetrics = s.phoneUsageHabitMetrics,
         mapStatsShowTextHabits = s.mapStatsShowTextHabits.toList(),
         mapMainHabit = s.mapMainHabit,
         mapHideZeroDays = s.mapHideZeroDays,

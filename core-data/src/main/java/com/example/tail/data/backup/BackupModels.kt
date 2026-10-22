@@ -175,6 +175,9 @@ data class SettingsSection(
      *  otherwise a restore's noPointsHabits list can no longer match the
      *  environment habits the sync keeps writing to. */
     val environmentHabitMetrics: Map<String, String> = emptyMap(),
+    /** Phone-usage metric links (habitName -> metricKey); same restore-criticality
+     *  rationale as environmentHabitMetrics. */
+    val phoneUsageHabitMetrics: Map<String, String> = emptyMap(),
     val mapMainHabit: String? = null,
     val mapHideZeroDays: Boolean = false,
     val mapBeginDate: String = "",

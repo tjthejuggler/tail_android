@@ -275,6 +275,26 @@ class HabitViewModel(
     /** True while the full-history backlog worker is running. */
     internal val _envBacklogRunning = MutableStateFlow(false)
 
+    // ── Phone usage habit state (logic in HabitViewModelPhoneUsage.kt) ────
+    /** Repository for daily phone-usage (UsageStats) snapshots. */
+    val phoneUsageRepo = com.example.tail.data.phoneusage.PhoneUsageRepository(context)
+    /** Snapshot for [_selectedDate]; null when none stored (or feature off). */
+    internal val _puSnapshot =
+        MutableStateFlow<com.example.tail.data.phoneusage.PhoneUsageSnapshot?>(null)
+    val puSnapshot: StateFlow<com.example.tail.data.phoneusage.PhoneUsageSnapshot?> =
+        _puSnapshot.asStateFlow()
+    /** Bumped on every snapshot write so observers can reload cheaply. */
+    internal val _puVersion = MutableStateFlow(0)
+    val puVersion: StateFlow<Int> = _puVersion.asStateFlow()
+    /** True when the Usage access special permission is granted. */
+    val phoneUsageHasAccess: Boolean get() = phoneUsageRepo.hasUsageAccess()
+    /** One-line status for the settings UI (backfill progress, result). */
+    internal val _puStatus = MutableStateFlow("")
+    val puStatus: StateFlow<String> = _puStatus.asStateFlow()
+    /** True while a manual backfill is running. */
+    internal val _puBackfilling = MutableStateFlow(false)
+    val puBackfilling: StateFlow<Boolean> = _puBackfilling.asStateFlow()
+
     /** Repository for sleep-suite records (internal storage). */
     val sleepDataRepo = SleepDataRepository(context)
 
@@ -1050,6 +1070,10 @@ class HabitViewModel(
         // Environment habit: register date/location capture hooks (no-op
         // until the feature is enabled in Settings → Environment).
         initEnvironmentCapture()
+
+        // Phone usage habit: register date-capture hooks (no-op until the
+        // feature is enabled in Settings → Phone Usage).
+        initPhoneUsageCapture()
 
         viewModelScope.launch {
             // One-time migration: rename legacy "Launch … Widget" habit names

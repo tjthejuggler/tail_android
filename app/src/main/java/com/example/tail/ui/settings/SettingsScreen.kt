@@ -441,6 +441,8 @@ fun SettingsScreen(
                     SettingsSubSectionDivider()
                     EnvironmentSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
+                    PhoneUsageSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
                     PackCrashSettingsSection()
                 }
             }

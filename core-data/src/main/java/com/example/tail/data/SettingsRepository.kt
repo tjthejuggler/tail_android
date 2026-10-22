@@ -216,6 +216,11 @@ private val KEY_MAP_HIDE_ZERO_DAYS = booleanPreferencesKey("map_hide_zero_days")
 private val KEY_MAP_BEGIN_DATE = stringPreferencesKey("map_begin_date")
 // Chess Readiness feature (Phase 1 diagnostic over the floating bubble)
 private val KEY_CHESS_READINESS_ENABLED = booleanPreferencesKey("chess_readiness_enabled")
+// Phone usage habit keys (UsageStats-derived screen metrics)
+private val KEY_PHONE_USAGE_ENABLED = booleanPreferencesKey("phone_usage_enabled")
+// habit name → PhoneUsageMetric.key (phone usage habit-type links)
+private val KEY_PHONE_USAGE_HABIT_METRICS = stringPreferencesKey("phone_usage_habit_metrics")
+
 // Environment habit keys (weather / air / pollen / Kp / water hardness)
 private val KEY_ENVIRONMENT_ENABLED = booleanPreferencesKey("environment_enabled")
 private val KEY_ENVIRONMENT_WATER_MEMORY = booleanPreferencesKey("environment_water_memory_enabled")
@@ -1182,6 +1187,7 @@ class SettingsRepository(private val context: Context) {
         val customInputRecentAmountsRaw = prefs[KEY_CUSTOM_INPUT_RECENT_AMOUNTS] ?: ""
         val garminHabitLinksRaw = prefs[KEY_GARMIN_HABIT_LINKS] ?: ""
         val environmentHabitMetricsRaw = prefs[KEY_ENVIRONMENT_HABIT_METRICS] ?: ""
+        val phoneUsageHabitMetricsRaw = prefs[KEY_PHONE_USAGE_HABIT_METRICS] ?: ""
         val githubRepoUrlsRaw = prefs[KEY_GITHUB_REPO_URLS] ?: ""
         val githubMetricsRaw = prefs[KEY_GITHUB_METRICS] ?: ""
         val customPointRangesRaw = prefs[KEY_CUSTOM_POINT_RANGES] ?: ""
@@ -1367,8 +1373,23 @@ class SettingsRepository(private val context: Context) {
                 ?: environmentHabitMetricsRaw.isNotEmpty(),
             environmentWaterMemoryEnabled = prefs[KEY_ENVIRONMENT_WATER_MEMORY] ?: true,
             environmentHabitMetrics = decodeFileUriMap(environmentHabitMetricsRaw),
-            environmentTemperatureUnit = prefs[KEY_ENVIRONMENT_TEMP_UNIT] ?: "C"
+            environmentTemperatureUnit = prefs[KEY_ENVIRONMENT_TEMP_UNIT] ?: "C",
+            phoneUsageEnabled = prefs[KEY_PHONE_USAGE_ENABLED]
+                ?: phoneUsageHabitMetricsRaw.isNotEmpty(),
+            phoneUsageHabitMetrics = decodeFileUriMap(phoneUsageHabitMetricsRaw)
         )
+    }
+
+    /** Saves the phone-usage master switch. */
+    suspend fun savePhoneUsageEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_PHONE_USAGE_ENABLED] = enabled }
+    }
+
+    /** Saves the habit name → PhoneUsageMetric key links. */
+    suspend fun savePhoneUsageHabitMetrics(links: Map<String, String>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_PHONE_USAGE_HABIT_METRICS] = encodeFileUriMap(links)
+        }
     }
 
     /** Saves the environment temperature unit ("C" or "F"). */

@@ -2027,7 +2027,22 @@ data class AppSettings(
      * "F". Storage is always in the chosen unit at ×10 precision, so
      * switching re-syncs history.
      */
-    val environmentTemperatureUnit: String = "C"
+    val environmentTemperatureUnit: String = "C",
+
+    // ── Phone usage habit settings ──────────────────────────────────────────
+    /**
+     * Master switch for the phone-usage habit family. When enabled, the app
+     * aggregates a daily UsageStats snapshot (screen minutes, unlocks, session
+     * stats…) on-device; requires the "Usage access" special permission.
+     */
+    val phoneUsageEnabled: Boolean = false,
+    /**
+     * Maps habit name → [com.example.tail.data.phoneusage.PhoneUsageMetric]
+     * key. A phone-usage-linked habit's daily stored value IS the linked
+     * metric, written automatically from the day's snapshot — the same model
+     * as [environmentHabitMetrics], so graphs work natively.
+     */
+    val phoneUsageHabitMetrics: Map<String, String> = emptyMap()
 )
 
 /** Fallback source for minutes-primary habits: no fallback on 0-minute days. */

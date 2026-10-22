@@ -32,6 +32,7 @@ import com.example.tail.ui.viewmodel.openUsageAccessSettings
 import com.example.tail.ui.viewmodel.reapplyGarminHistoryForHabit
 import com.example.tail.ui.viewmodel.removeHabitAppAssociation
 import com.example.tail.ui.viewmodel.setEnvironmentHabitMetric
+import com.example.tail.ui.viewmodel.setPhoneUsageHabitMetric
 import com.example.tail.ui.viewmodel.removeMediaShowFromToday
 import com.example.tail.ui.viewmodel.generateOptionDescriptionFromCamera
 import com.example.tail.ui.viewmodel.renameTextOption
@@ -338,6 +339,10 @@ internal fun EditBarHost(
         environmentHabitMetrics = settings.environmentHabitMetrics,
         environmentUseFahrenheit = settings.environmentTemperatureUnit == "F",
         onSetEnvironmentMetric = { name, metric -> viewModel.setEnvironmentHabitMetric(name, metric) },
+        phoneUsageEnabled = settings.phoneUsageEnabled,
+        phoneUsageHabitMetrics = settings.phoneUsageHabitMetrics,
+        phoneUsageHasAccess = viewModel.phoneUsageHasAccess,
+        onSetPhoneUsageMetric = { name, metric -> viewModel.setPhoneUsageHabitMetric(name, metric) },
         garminDateOfBirth = settings.garminDateOfBirth,
         githubContent = {
             if (settings.githubEnabled && selectedHabitName != null) {

@@ -155,6 +155,10 @@ class MainActivity : ComponentActivity() {
         // KEEP policy; already-captured days cost nothing.
         com.example.tail.notify.EnvironmentBacklogWorker.scheduleDaily(applicationContext)
 
+        // Phone usage: ~4 h UsageStats aggregation (limited ~7-day event
+        // history means days are lost without frequent runs). KEEP policy.
+        com.example.tail.notify.PhoneUsageWorker.schedule(applicationContext)
+
         val debugPrefs = DebugPreferences(applicationContext)
         val debugNoteRepo = DebugNoteRepository(applicationContext, debugPrefs)
 

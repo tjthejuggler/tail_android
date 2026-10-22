@@ -2081,6 +2081,11 @@ internal fun EditModeControlBar(
     environmentHabitMetrics: Map<String, String> = emptyMap(),
     environmentUseFahrenheit: Boolean = false,
     onSetEnvironmentMetric: (String, String?) -> Unit = { _, _ -> },
+    // ── Phone usage habit type ───────────────────────────────────────────────
+    phoneUsageEnabled: Boolean = false,
+    phoneUsageHabitMetrics: Map<String, String> = emptyMap(),
+    phoneUsageHasAccess: Boolean = false,
+    onSetPhoneUsageMetric: (String, String?) -> Unit = { _, _ -> },
     // ── GitHub Integration (rendered by caller, like movieBridgeContent) ──
     githubContent: @Composable () -> Unit = {},
     movieBridgeContent: @Composable () -> Unit = {},
@@ -3571,6 +3576,15 @@ internal fun EditModeControlBar(
                                 links = environmentHabitMetrics,
                                 environmentEnabled = environmentCaptureEnabled,
                                 onSetMetric = onSetEnvironmentMetric
+                            )
+                        },
+                        phoneUsageContent = {
+                            PhoneUsageLinkToggleSection(
+                                selectedHabitName = selHabitName,
+                                links = phoneUsageHabitMetrics,
+                                phoneUsageEnabled = phoneUsageEnabled,
+                                hasUsageAccess = phoneUsageHasAccess,
+                                onSetMetric = onSetPhoneUsageMetric
                             )
                         },
                         githubContent = githubContent,
