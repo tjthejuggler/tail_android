@@ -207,6 +207,15 @@
   .mbtns button.primary { background: var(--accent); color: #0b0e13; border: none; }
   .mbtns button.danger { color: var(--red); border-color: rgba(248,113,113,.4); }
   #mMsg { color: var(--amber); font-size: 12px; margin-top: 8px; min-height: 15px; }
+  /* cline agent live feed */
+  .cline-log {
+    background: var(--card2); border: 1px solid var(--border); border-radius: 9px;
+    padding: 10px 12px; font: 11.5px/1.45 var(--mono); color: #aeb8c9;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+    max-height: 260px; overflow-y: auto; margin: 8px 0 0;
+  }
+  .cline-log::-webkit-scrollbar { width: 8px; }
+  .cline-log::-webkit-scrollbar-thumb { background: #2a3242; border-radius: 4px; }
   .section-note { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
   footer { text-align: center; color: var(--muted); font-size: 11.5px; margin-top: 6px; }
   a { color: var(--accent); text-decoration: none; }
@@ -284,6 +293,15 @@
       the phone applies on its next poll.
     </div>
     <div class="feed scroll" id="widgetHistList"><div class="empty">No widget events recorded yet.</div></div>
+  </div>
+
+  <!-- cline agent live feed (packd on the remote machine) -->
+  <div class="card" id="clineCard" style="display:none">
+    <h2>🤖 Cline agent · live feed<span class="count" id="clineState"></span></h2>
+    <div class="section-note" style="margin:0 0 8px" id="clineNote"></div>
+    <div id="clineActive"></div>
+    <pre class="cline-log" id="clineLog" style="display:none"></pre>
+    <div class="feed scroll" id="clineRecent" style="margin-top:10px"></div>
   </div>
 
   <!-- activity + history -->
@@ -764,6 +782,50 @@ document.addEventListener("click", (e) => {
   if (btn) openEditor(btn.dataset.edit);
 });
 
+function renderCline() {
+  const mine = snapshot.cline || {};
+  const peer = (snapshot.peer && snapshot.peer.online && snapshot.peer.cline) || {};
+  const c = mine.available ? { ...mine, _here: true }
+    : peer.available ? { ...peer, _here: false } : null;
+  const card = $("clineCard");
+  if (!c) { card.style.display = "none"; return; }
+  card.style.display = "";
+  const where = c._here ? "this machine" : peerName() + " (remote VPS)";
+  const procs = c.processes || [];
+  const active = c.active;
+  const agentRunning = !!active && (active.status === "queued" || active.status === "running");
+  $("clineState").textContent = agentRunning ? "running" : "";
+  $("clineNote").innerHTML =
+    (agentRunning ? '<span class="chip warn">● agent running</span>'
+                  : '<span class="chip phone">○ idle</span>') +
+    ` <span class="dim">packd Cline jobs on ${esc(where)}</span>` +
+    (procs.length
+      ? ` · <span class="mono" title="${esc(procs[0].cmd)}">pid ${esc(procs[0].pid)} · up ${fmtUptime(procs[0].elapsed_sec)}</span>`
+      : "");
+  const act = $("clineActive"), log = $("clineLog");
+  if (active) {
+    act.innerHTML = `
+      <div class="frow"><b>${esc(active.project || "?")}</b>
+        <span class="chip kind">${esc(active.status)}</span>
+        <span class="dim">started ${esc(ago(active.created))}</span></div>
+      <div style="font-size:12.5px;margin:4px 0 0">${esc(active.instruction || "")}</div>`;
+    log.style.display = "";
+    log.textContent = active.log_tail || "(no agent output yet…)";
+    log.scrollTop = log.scrollHeight;
+  } else {
+    act.innerHTML = '<div class="empty">No active pack job — the Cline CLI is not running right now.</div>';
+    log.style.display = "none";
+  }
+  const rec = c.recent || [];
+  $("clineRecent").innerHTML = rec.length ? rec.map((j) => `
+    <div class="frow">
+      <span class="ts">${hhmmss(j.created)}</span>
+      <b>${esc(j.project || "?")}</b>
+      <span class="chip ${j.status === "done" ? "phone" : (j.status === "failed" ? "warn" : "kind")}">${esc(j.status)}</span>
+      <span class="path dim" title="${esc(j.summary || "")}">${esc((j.summary || "").slice(0, 140))}</span>
+    </div>`).join("") : "";
+}
+
 function renderActivity() {
   const act = snapshot.activity || [];
   $("activityCount").textContent = act.length || "";
@@ -983,6 +1045,7 @@ function render() {
   renderMovies();
   renderGarmin();
   renderChess();
+  renderCline();
 }
 
 /* first paint */

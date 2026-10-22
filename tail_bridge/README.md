@@ -156,6 +156,13 @@ The bridge serves a status dashboard on the PC — open
   (`~/.config/tail_bridge/pc_widget_history.json`), separate from the
   other histories, with synced/pending state and edited/deleted badges.
   Every session/tap row has ✎ edit and delete buttons.
+* **Cline agent · live feed** — what the headless Cline CLI agent (packd,
+  the Pack app's build backend on the VPS) is doing right now: the active
+  job's project/instruction, its streaming agent-output log (tail, updates
+  live while Cline runs), the live `cline --json` process (pid + uptime),
+  and the 5 most recent pack jobs with status/summary. Hidden when neither
+  this bridge nor its peer can see a packd jobs DB (`PACKD_JOBS_DB`,
+  default `/srv/packd/jobs.db`, read-only).
 * **Live activity** — every API request since server start (who, what, how
   long). Requests are classified by origin: loopback → PC, LAN → phone.
 * **History** — a persistent, restart-surviving "what did what when" log

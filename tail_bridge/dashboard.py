@@ -29,6 +29,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
+import subprocess
 import threading
 import time
 import urllib.request
@@ -57,6 +59,78 @@ WIDGET_HISTORY_PATH = STATE_DIR / "pc_widget_history.json"
 WIDGET_HISTORY_MAX = 500
 
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+# ── Cline agent live feed ─────────────────────────────────────────────────────
+# The Pack app's backend (packd) runs on the same VPS as the remote-role
+# bridge. It executes a headless Cline CLI agent on other codebases and
+# streams the agent output into its jobs.db (one row per job). The snapshot
+# below reads that DB read-only (never holds packd's write lock) and lists
+# any live `cline --json` process, so the dashboard can show what the agent
+# is doing right now.
+PACKD_JOBS_DB = Path(os.environ.get("PACKD_JOBS_DB", "/srv/packd/jobs.db"))
+_ACTIVE_STATUSES = {"queued", "running", "deploying"}
+
+
+def _cline_processes() -> list:
+    """Live `cline` processes on this machine (pid, uptime, command)."""
+    try:
+        out = subprocess.run(["ps", "-eo", "pid,etimes,args"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return []
+    procs = []
+    for ln in (out.splitlines() or [])[1:]:
+        if "cline" not in ln or "--json" not in ln:
+            continue
+        parts = ln.strip().split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            procs.append({"pid": int(parts[0]), "elapsed_sec": int(parts[1]),
+                          "cmd": parts[2][:250]})
+        except ValueError:
+            continue
+    return procs
+
+
+def _cline_snapshot() -> dict:
+    """Best-effort view of packd jobs + live Cline processes. Never raises."""
+    if not PACKD_JOBS_DB.exists():
+        return {"available": False}
+    try:
+        con = sqlite3.connect(f"file:{PACKD_JOBS_DB}?mode=ro", uri=True,
+                              timeout=3)
+        jobs = []
+        for (raw,) in con.execute("SELECT json FROM jobs"):
+            try:
+                j = json.loads(raw)
+                if isinstance(j, dict):
+                    jobs.append(j)
+            except ValueError:
+                continue
+        con.close()
+    except Exception:
+        return {"available": False}
+    jobs.sort(key=lambda j: j.get("created") or 0, reverse=True)
+    active = next((j for j in jobs if j.get("status") in _ACTIVE_STATUSES), None)
+    recent = [{"id": j.get("id"), "project": j.get("project"),
+               "status": j.get("status"),
+               "created": _iso(j["created"]) if j.get("created") else None,
+               "summary": (j.get("summary") or "")[:300]}
+              for j in jobs[:5]]
+    active_out = None
+    if active:
+        active_out = {
+            "id": active.get("id"),
+            "project": active.get("project"),
+            "instruction": (active.get("instruction") or "")[:400],
+            "status": active.get("status"),
+            "created": _iso(active["created"]) if active.get("created") else None,
+            "log_tail": (active.get("log") or "")[-4000:],
+        }
+    return {"available": True, "db": str(PACKD_JOBS_DB),
+            "processes": _cline_processes(), "active": active_out,
+            "recent": recent}
 
 # Deployment role: "full" (laptop — movies + PC widget + everything) or
 # "remote" (always-on server — device-independent features only: garmin,
@@ -300,6 +374,7 @@ def _peer_health_cached(cache_only: bool = False) -> Optional[dict]:
                                   if isinstance(s, dict)],
                       "pc_widget": body.get("pc_widget") or {},
                       "pc_widget_history": (body.get("pc_widget_history") or [])[:100],
+                      "cline": body.get("cline") or {},
                       "checked_at": _iso(now)}
         except Exception:  # noqa: BLE001 - older peer: plain /health only
             req = urllib.request.Request(PEER_BRIDGE_URL + "/health",
@@ -430,6 +505,7 @@ def _build_snapshot(version: str,
         "history": history,
         "pc_widget_history": widget_history_entries(100),
         "activity": list(_activity)[-40:],
+        "cline": _cline_snapshot(),
     }
 
 
