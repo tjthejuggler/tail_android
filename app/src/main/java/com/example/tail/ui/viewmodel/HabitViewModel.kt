@@ -3359,16 +3359,12 @@ class HabitViewModel(
         // at the moment the game started (approved → full Phase 2 audit,
         // otherwise → unapproved in the compliance stats).
         try {
-            // Bridge credentials are auto-derived from the Garmin settings
-            // (same as movies/PC-widget) — no separate configuration exists.
-            val bridgeConn = getBridgeConnection()
+            // Bridge chain is remote-first (racknerd → local PC), derived
+            // from the same settings as every other bridge feature.
             val summary = ChessDeferredGameReconciler.reconcilePending(
                 context, s.chessComUsername,
-                bridge = bridgeConn?.let {
-                    com.example.tail.widget.ChessAnalysisFetcher.BridgeCredentials(
-                        url = it.first, token = it.second
-                    )
-                }
+                bridge = com.example.tail.widget.ChessAnalysisFetcher
+                    .bridgeCandidates(s)
             )
             if (summary.resolved > 0) {
                 Log.i(

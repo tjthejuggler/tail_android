@@ -101,6 +101,13 @@ class ChessGuardService : AccessibilityService() {
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
 
         val pkg = event.packageName?.toString() ?: return
+        // Our OWN overlay windows (readiness wizard, status overlay, bubble
+        // menus) also fire TYPE_WINDOW_STATE_CHANGED when they take focus.
+        // Treating those as "user left chess" ends the stint, resets the
+        // once-per-stint flags, and the UsageStats poll then re-fires the
+        // entry notice — an overlay show/hide FLASHING LOOP (user report
+        // 2026-10-22). Our windows must be invisible to the guard.
+        if (pkg == applicationContext.packageName) return
         val chessPkg = ChessReadinessStore.chessPackage(applicationContext)
         if (chessPkg.isBlank()) return
 

@@ -551,11 +551,20 @@ function renderConnections() {
   $("srvSources").textContent = srcNames + " (" + snapshot.sources.length + ")";
   setState("srvState", true, "● running", "○ stopped");
 
-  const devOnline = (id) => (snapshot.devices || []).some((d) => d.id === id && d.online);
+  // The server already folds peer-bridge sightings into snapshot.devices
+  // (via_peer), so these cards stay accurate on bridges the device never
+  // talks to directly (e.g. the PC widget on the remote bridge).
+  const devRow = (id) => (snapshot.devices || []).find((d) => d.id === id) || {};
+  const devOnline = (id) => !!devRow(id).online;
+  const mergedInfo = (id, local) => ({
+    last_seen: devRow(id).last_seen || local.last_seen,
+    last_request: devRow(id).last_request || local.last_request,
+  });
   const ph = c.phone, phOn = devOnline("phone");
-  $("phoneSeen").textContent = ph.last_seen ? ago(ph.last_seen) : "never";
-  $("phoneReq").textContent = ph.last_request || "—";
-  $("phoneReq").title = ph.last_request || "";
+  const phi = mergedInfo("phone", ph);
+  $("phoneSeen").textContent = phi.last_seen ? ago(phi.last_seen) : "never";
+  $("phoneReq").textContent = phi.last_request || "—";
+  $("phoneReq").title = phi.last_request || "";
   const pw = peerWidget();
   const peerPend = (pw && pw.pending_count) || 0;
   $("phoneQueue").textContent =
@@ -563,9 +572,10 @@ function renderConnections() {
   setState("phoneState", phOn, "● connected", "○ not seen");
 
   const pc = c.pc, pcOn = devOnline("pc");
-  $("widgetSeen").textContent = pc.last_seen ? ago(pc.last_seen) : "never";
-  $("widgetReq").textContent = pc.last_request || "—";
-  $("widgetReq").title = pc.last_request || "";
+  const pci = mergedInfo("pc", pc);
+  $("widgetSeen").textContent = pci.last_seen ? ago(pci.last_seen) : "never";
+  $("widgetReq").textContent = pci.last_request || "—";
+  $("widgetReq").title = pci.last_request || "";
   $("widgetHabits").textContent = (snapshot.pc_widget.config.habits || []).length + " habit(s)";
   setState("widgetState", pcOn, "● active", "○ idle");
 }

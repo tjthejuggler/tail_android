@@ -476,6 +476,37 @@ def _build_snapshot(version: str,
             "peer": peer,
         })
 
+        # Server-side fold of the peer's device rows: the Connected devices
+        # panel must be accurate on BOTH bridges. A device that only talks to
+        # the peer (e.g. the PC bubble widget, which always uses the laptop
+        # bridge) must still show as connected here — even if the client-side
+        # merge in dashboard.html sees a partial or stale peer list. Rows that
+        # exist locally get their online flag OR-ed with the peer's; rows the
+        # peer saw but this bridge never did are appended (via_peer=True).
+        if peer.get("online"):
+            by_id = {d["id"]: d for d in devices}
+            for pd in (peer.get("devices") or []):
+                if not isinstance(pd, dict):
+                    continue
+                pid = pd.get("id")
+                if not pid or pid == "peer_bridge":
+                    continue
+                row = by_id.get(pid)
+                if row is None:
+                    merged = {**pd, "via_peer": True}
+                    devices.append(merged)
+                    by_id[pid] = merged
+                elif pd.get("online"):
+                    row["online"] = True
+                    # Keep whichever sighting is fresher for last-seen display.
+                    pl, rl = pd.get("last_seen"), row.get("last_seen")
+                    if pl and (not rl or str(pl) > str(rl)):
+                        row["last_seen"] = pl
+                        row["age_sec"] = pd.get("age_sec")
+                        row["last_request"] = (
+                            f"{pd.get('last_request') or '—'} (via peer)")
+                        row["via_peer"] = True
+
     return {
         "peer": peer,
         "server": {

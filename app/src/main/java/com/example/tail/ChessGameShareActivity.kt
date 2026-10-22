@@ -138,14 +138,9 @@ class ChessGameShareActivity : ComponentActivity() {
                     ChessDeferredGameReconciler.reconcilePending(
                         this@ChessGameShareActivity, username, chessService,
                         excludeGameId = gameId,
-                        // Auto-derived from Garmin settings, like every other
-                        // bridge feature.
-                        bridge =
-                            com.example.tail.data.bridgeConnectionFrom(
-                                s.garminProxyUrl, s.garminAppToken
-                            )?.let { (url, token) ->
-                                ChessAnalysisFetcher.BridgeCredentials(url = url, token = token)
-                            }
+                        // Remote-first chain (racknerd bridge → local PC),
+                        // so analysis survives the local computer being off.
+                        bridge = ChessAnalysisFetcher.bridgeCandidates(s)
                     )
                 }
             } catch (_: Exception) { /* best-effort */ }
@@ -183,16 +178,11 @@ class ChessGameShareActivity : ComponentActivity() {
     private suspend fun runAudit(emit: (Ui) -> Unit) {
         val settings = settingsRepo.settingsFlow.first()
         val username = settings.chessComUsername.trim()
-        // Bridge credentials for the v3 desktop-Stockfish analysis,
-        // auto-derived from the Garmin settings exactly like the movie and
-        // PC-widget features (null when unconfigured → the audit falls back
-        // to engine-less rules).
-        val bridge =
-            com.example.tail.data.bridgeConnectionFrom(
-                settings.garminProxyUrl, settings.garminAppToken
-            )?.let { (url, token) ->
-                ChessAnalysisFetcher.BridgeCredentials(url = url, token = token)
-            }
+        // Bridge credentials for the v3 desktop-Stockfish analysis —
+        // REMOTE-FIRST (always-on racknerd bridge, then the local PC),
+        // so sharing keeps working while the local computer is offline.
+        // Null when unconfigured → the audit falls back to engine-less rules.
+        val bridge = ChessAnalysisFetcher.bridgeCandidates(settings)
         if (username.isEmpty()) {
             emit(
                 Ui.Message(
@@ -351,11 +341,7 @@ class ChessGameShareActivity : ComponentActivity() {
         }
         val settings = settingsRepo.settingsFlow.first()
         val username = settings.chessComUsername.trim()
-        val bridge = com.example.tail.data.bridgeConnectionFrom(
-            settings.garminProxyUrl, settings.garminAppToken
-        )?.let { (url, token) ->
-            ChessAnalysisFetcher.BridgeCredentials(url = url, token = token)
-        }
+        val bridge = ChessAnalysisFetcher.bridgeCandidates(settings)
         val reaudited = ChessDeferredGameReconciler.reauditV3(
             this, username, game, bridge
         )

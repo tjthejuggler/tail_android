@@ -42,8 +42,57 @@ object ChessAnalysisFetcher {
     /** Fresh Stockfish analysis can take a while on a long game. */
     const val READ_TIMEOUT_MS = 90_000
 
-    /** Bridge credentials, resolved by the caller from app settings. */
-    data class BridgeCredentials(val url: String, val token: String)
+    /**
+     * Bridge credentials, resolved by the caller from app settings. May
+     * carry [alternates] — bridges tried IN ORDER when this one is
+     * unreachable (the remote-first chain: always-on racknerd bridge
+     * first, the local PC bridge as fallback, user rule 2026-10-22).
+     */
+    data class BridgeCredentials(
+        val url: String,
+        val token: String,
+        val alternates: List<BridgeCredentials> = emptyList()
+    )
+
+    /** Flattens a credentials chain into an ordered, de-duplicated list. */
+    private fun chainOf(c: BridgeCredentials?): List<BridgeCredentials> {
+        val out = ArrayList<BridgeCredentials>()
+        fun walk(x: BridgeCredentials?) {
+            if (x == null || out.any { it.url == x.url }) return
+            out.add(x)
+            x.alternates.forEach { walk(it) }
+        }
+        walk(c)
+        return out
+    }
+
+    /**
+     * Builds the REMOTE-FIRST bridge chain from app settings: the
+     * always-on remote server ([AppSettings.remoteHostUrl], port 8001)
+     * first, then the local PC bridge ([AppSettings.garminProxyUrl]).
+     * Chess game analysis must keep working when the local computer is
+     * completely offline (user rule, 2026-10-22).
+     */
+    suspend fun bridgeCandidates(
+        settings: com.example.tail.data.AppSettings
+    ): BridgeCredentials? {
+        val remote = com.example.tail.data.remoteBridgeConnectionFrom(
+            settings.remoteHostUrl, settings.garminAppToken
+        )
+        val local = com.example.tail.data.bridgeConnectionFrom(
+            settings.garminProxyUrl, settings.garminAppToken
+        )
+        val primary = remote ?: local ?: return null
+        val alt = (local to remote).let { (a, b) ->
+            listOfNotNull(a, b).filter { it.first != primary.first }
+                .map { (url, token) -> BridgeCredentials(url, token) }
+        }
+        return BridgeCredentials(
+            url = primary.first,
+            token = primary.second,
+            alternates = alt
+        )
+    }
 
     /** Per-side stats the analysis service returns. */
     data class SideStats(
@@ -88,36 +137,46 @@ object ChessAnalysisFetcher {
             put("username", username)
             put("depth", LIVE_DEPTH)
         }
-        // One automatic retry — a transient Wi-Fi/LAN blip or the PC
-        // waking from suspend should not cost the audit its engine data.
+        // REMOTE-FIRST CHAIN: try each bridge in order (always-on remote
+        // server first, local PC as fallback). The per-bridge automatic
+        // retry (transient Wi-Fi/LAN blip, PC waking from suspend) only
+        // runs when there is a single candidate — with a chain, the next
+        // bridge IS the retry.
+        val chain = chainOf(credentials)
         var resp: JSONObject? = null
         var lastException: Exception? = null
-        for (attempt in 1..2) {
-            try {
-                resp = client.post(
-                    bridgeUrl = credentials.url,
-                    token = credentials.token,
-                    path = "chess_analysis/analyze",
-                    body = body,
-                    readTimeoutMs = READ_TIMEOUT_MS
-                )
-                lastException = null
-            } catch (e: Exception) {
-                lastException = e
+        outer@ for (cred in chain) {
+            val attempts = if (chain.size == 1) 2 else 1
+            for (attempt in 1..attempts) {
+                try {
+                    resp = client.post(
+                        bridgeUrl = cred.url,
+                        token = cred.token,
+                        path = "chess_analysis/analyze",
+                        body = body,
+                        readTimeoutMs = READ_TIMEOUT_MS
+                    )
+                    lastException = null
+                } catch (e: Exception) {
+                    lastException = e
+                }
+                if (resp != null) break@outer
+                if (attempt < attempts) {
+                    Log.w(TAG, "Analysis attempt 1 on ${cred.url} failed, retrying…")
+                    try { kotlinx.coroutines.delay(1_500) } catch (_: Exception) {}
+                }
             }
-            if (resp != null) break
-            if (attempt == 1) {
-                Log.w(TAG, "Analysis attempt 1 failed, retrying once…")
-                try { kotlinx.coroutines.delay(1_500) } catch (_: Exception) {}
-            }
+            Log.w(TAG, "Bridge ${cred.url} unreachable — trying next in chain…")
         }
         lastException?.let {
-            lastError = "Connection failed: ${it.message ?: it.javaClass.simpleName}"
+            lastError = "Connection failed (all bridges): " +
+                "${it.message ?: it.javaClass.simpleName}"
             Log.w(TAG, "Analysis fetch failed (falling back): $lastError")
             return null
         }
         if (resp == null) {
-            lastError = "Bridge unreachable (HTTP error) at ${credentials.url}"
+            lastError = "Bridge unreachable (HTTP error): " +
+                chain.joinToString { it.url }
             Log.w(TAG, "Analysis fetch failed (falling back): $lastError")
             return null
         }
