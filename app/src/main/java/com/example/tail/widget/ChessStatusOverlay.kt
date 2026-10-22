@@ -88,7 +88,10 @@ class ChessStatusOverlay(service: android.content.Context) {
      */
     private fun ChessOverlayDialog.OverlayScope.renderSessionWatch() {
         val w = try {
-            ChessReadinessV4Engine.sessionWatch(ChessReadinessV4Signals.todayPoints(context))
+            ChessReadinessV4Engine.sessionWatch(
+                ChessReadinessV4Signals.todayGames(context),
+                ChessReadinessV4Signals.blitzRolling10(context)
+            )
         } catch (_: Exception) {
             null
         } ?: return

@@ -96,7 +96,8 @@ class ChessReadinessV4Overlay(
                         inputs, System.currentTimeMillis()
                     )
                     watch = ChessReadinessV4Engine.sessionWatch(
-                        ChessReadinessV4Signals.todayPoints(context)
+                        ChessReadinessV4Signals.todayGames(context),
+                        ChessReadinessV4Signals.blitzRolling10(context)
                     )
                     phase = Phase.ASSESS
                 }

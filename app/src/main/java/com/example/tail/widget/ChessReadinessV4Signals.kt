@@ -134,20 +134,46 @@ object ChessReadinessV4Signals {
                 category = category
             )
         }
+    
+        /**
+         * Dev#38: the last 10 rated Blitz results ACROSS days (newest last) —
+         * the rolling first-10 equivalent for the micro-session era where Blitz
+         * days hold only 1–2 games.
+         */
+        fun blitzRolling10(context: Context): List<Boolean> = try {
+            ChessReadinessLogStore.loadGames(context)
+                .filter { it.rated && it.type.equals("BLITZ", ignoreCase = true) }
+                .sortedBy { it.endTimeMs }
+                .takeLast(10)
+                .map { it.won }
+        } catch (_: Exception) {
+            emptyList()
+        }
 
     /**
-     * Today's game points for the in-session watch (win = 1, else 0 — the
-     * phone log distinguishes win/not-win). Ordered by end time. Empty when
-     * no games exist today (the watch then returns null → no warnings).
+     * Today's rated games for the in-session stop-rule watch, tagged with
+     * their time-control category (win/not-win — the phone log does not
+     * separate draws). Ordered by end time. Empty when no games exist today
+     * (the watch then returns null → no warnings).
      */
-    fun todayPoints(context: Context): List<Double> = try {
+    fun todayGames(context: Context): List<ChessReadinessV4Engine.SessionGame> = try {
         val zone = java.time.ZoneId.systemDefault()
         val today = java.time.Instant.ofEpochMilli(System.currentTimeMillis())
             .atZone(zone).toLocalDate().toString()
         ChessReadinessLogStore.loadGames(context)
-            .filter { ChessReadinessV4Engine.dayKey(it.endTimeMs, zone) == today }
+            .filter { ChessReadinessV4Engine.dayKey(it.endTimeMs, zone) == today && it.rated }
             .sortedBy { it.endTimeMs }
-            .map { if (it.won) 1.0 else 0.0 }
+            .map {
+                ChessReadinessV4Engine.SessionGame(
+                    category = when (it.type.lowercase()) {
+                        "blitz" -> "Blitz"
+                        "bullet" -> "Bullet"
+                        "rapid" -> "Rapid"
+                        else -> "Chess960"
+                    },
+                    won = it.won
+                )
+            }
     } catch (_: Exception) {
         emptyList()
     }

@@ -261,9 +261,12 @@ object ChessReadinessV4Engine {
      */
     fun syntheticCcrs(passed: Boolean): Int = if (passed) 85 else 45
 
-    // ── In-session watch (rule #309 — never forces) ────────────────────────
+    // ── In-session stop-rule watch (never forces — display only) ───────────
 
-    /** Live today-session stats + cold-open/tilt stop warnings. */
+    /** One rated game today, tagged with its time-control category. */
+    data class SessionGame(val category: String, val won: Boolean)
+
+    /** Live today-session stats + cold-open/hot/tilt warnings. */
     data class SessionWatch(
         val gamesToday: Int,
         /** Score % across today's games (win = 1, draw/loss = 0 in the phone log). */
@@ -275,37 +278,113 @@ object ChessReadinessV4Engine {
     data class SessionWarning(val rule: String, val msg: String, val evidence: String)
 
     /**
-     * Cold-open stop: exactly 10 games in and ≤40% score. Tilt watch:
-     * ≥3 consecutive losses. Both are WARNINGS — nothing is ever forced.
+     * The two era-stable in-session rules (TailCue discovery set #34251,
+     * #34566, #34266, #33825/#34026, #33827, #34249), refined per format:
+     *
+     *  1. COLD-OPEN (per category, at exactly 10 games): ≤40% score → the
+     *     expected −8…−18 Elo is ALREADY SUNK — stopping after a cold open
+     *     saves nothing on average (stop −14.0 vs continue −11.5, p=0.56),
+     *     so this is YELLOW info, never "abort". The only evidence-backed
+     *     response is Bullet-specific: 2+ Rapid warm-up games. ≥60% at 10
+     *     games → HOT (+9…+38 Elo days) — worth extending deliberately.
+     *  2. TILT (per category): Blitz flags at 2 straight losses (next-game
+     *     50.6%→40.5%, n=37); Chess960 only at 4+ (nothing at 1–3);
+     *     Bullet and Rapid NEVER flag (tilt measurably absent — 52.4% after
+     *     3-loss streaks; Rapid score RISES after streaks). False-positive
+     *     nagging in those formats is the "vague alert" failure mode.
+     *
+     * Deliberately excluded: volume caps (dose-flat, KW p=0.98, #34249).
      */
-    fun sessionWatch(points: List<Double>): SessionWatch? {
-        if (points.isEmpty()) return null
-        var streak = 0
-        for (p in points.asReversed()) {
-            if (p <= 0.0) streak++ else break
-        }
-        val first10 = points.take(10)
-        val cold = first10.size == 10 && first10.sum() <= 4.0
+    fun sessionWatch(
+        games: List<SessionGame>,
+        /** Last 10 rated Blitz results across days (dev#38 micro-session twin). */
+        blitzRolling10: List<Boolean> = emptyList()
+    ): SessionWatch? {
+        if (games.isEmpty()) return null
         val warnings = buildList {
-            if (cold) add(
-                SessionWarning(
-                    "cold-open stop",
-                    "First 10 games ≤40% — sessions like this cost −7.6 to −22 Elo. Consider stopping.",
-                    "ship-rule #309; backtests #15"
+            games.groupBy { it.category }.forEach { (cat, catGames) ->
+                // 0. Session-position cliffs (TailCue dev#31): Rapid game-2
+                //    dip (#25480: game 1 55.7% → game 2 41.0%, then recovery)
+                //    and the Chess960 game-5+ fade (#21868) — taper prompts.
+                if (cat == "Rapid" && catGames.size == 2 && !catGames[1].won) add(
+                    SessionWarning(
+                        "Rapid game-2 cliff",
+                        "Rapid game 2 lost — score historically dips here (55.7%→41.0%) " +
+                            "and recovers after; consider a short pause before game 3.",
+                        "#25480 game-index curve; dev#31"
+                    )
                 )
-            )
-            if (streak >= 3) add(
-                SessionWarning(
-                    "tilt watch",
-                    "$streak losses in a row — tilt dip risk (37% vs 64% next-game score after 3).",
-                    "thread #5383"
+                if (cat == "Chess960" && catGames.size == 5) add(
+                    SessionWarning(
+                        "Chess960 game-5 fade",
+                        "5 Chess960 games in — the game-5+ fade begins; consider tapering.",
+                        "#21868 in-session game-5 cliff; dev#31"
+                    )
                 )
-            )
+                // 1. Cold-open / hot classifier at exactly 10 games.
+                if (catGames.size == 10) {
+                    val scorePct = 100.0 * catGames.count { it.won } / 10
+                    if (scorePct <= 40.0) add(
+                        SessionWarning(
+                            "$cat cold-open",
+                            "$cat first 10 at ${scorePct.toInt()}% — the −8…−18 Elo is sunk; " +
+                                "stopping saves nothing on average. " +
+                                if (cat == "Bullet")
+                                    "Optional reset: 2+ Rapid warm-up games (validated for Bullet)."
+                                else "Play on or stop as you judge — no abort signal.",
+                            "#33825/#34026 (stop saves nothing); Bullet reset #33827/#33491"
+                        )
+                    ) else if (scorePct >= 60.0) add(
+                        SessionWarning(
+                            "$cat hot",
+                            "$cat first 10 at ${scorePct.toInt()}% — hot days run +9…+38 Elo; " +
+                                "worth extending the session deliberately.",
+                            "#34251 era-stable cold/hot split"
+                        )
+                    )
+                }
+                // 2. Per-format tilt counters (trailing streak in this category).
+                var streak = 0
+                for (g in catGames.asReversed()) {
+                    if (!g.won) streak++ else break
+                }
+                val flagAt = when (cat) {
+                    "Blitz" -> 2    // 50.6% → 40.5% next-game (n=37 — underpowered; watch drift)
+                    "Chess960" -> 4 // nothing at 1–3; collapse only at 4+
+                    else -> null    // Bullet/Rapid: no tilt flag, ever
+                }
+                // Blitz cold-open equivalent when today holds only 1–2 games
+                // (dev#38: 2026 Blitz days rarely reach a first-10 window).
+                if (cat == "Blitz" && catGames.size < 10 && blitzRolling10.size == 10) {
+                    val roll = 100.0 * blitzRolling10.count { it } / 10
+                    if (roll <= 40.0) add(
+                        SessionWarning(
+                            "Blitz rolling-10 cold",
+                            "Last 10 Blitz games (across days) at ${roll.toInt()}% — the " +
+                                "micro-session equivalent of a cold open (≤40%).",
+                            "dev#38 / #25682 pooled rolling-10 window"
+                        )
+                    )
+                }
+                if (flagAt != null && streak >= flagAt) add(
+                    SessionWarning(
+                        "$cat tilt",
+                        "$streak straight $cat losses — next-game dip risk" +
+                            if (cat == "Blitz") " (50.6%→40.5%, n=37 — thin stratum)"
+                            else " (39.9% vs 42.4% at 4+, n=469)",
+                        "#34566/#34247 (Blitz 2-loss); #34266/#34566 (Chess960 4+)"
+                    )
+                )
+            }
+        }
+        var streakAll = 0
+        for (g in games.asReversed()) {
+            if (!g.won) streakAll++ else break
         }
         return SessionWatch(
-            gamesToday = points.size,
-            scorePct = 100.0 * points.sum() / points.size,
-            lossStreak = streak,
+            gamesToday = games.size,
+            scorePct = 100.0 * games.count { it.won } / games.size,
+            lossStreak = streakAll,
             warnings = warnings
         )
     }
