@@ -469,36 +469,57 @@ function setState(id, on, onTxt, offTxt) {
 const DEVICE_EMOJI = { phone: "📱", pc: "🫧", tailcue: "🧠", peer_bridge: "☁️" };
 
 function renderDevices() {
-  // Merge the remote (peer) bridge's devices into one single view.
-  const devices = [...(snapshot.devices || [])];
+  // ONE dashboard, same on every device: each real device appears exactly
+  // once. Its contacts on this bridge and on the peer bridge are folded
+  // into a single row — the freshest last-seen wins for online/offline and
+  // the detail line shows which bridge(s) saw it, so a phone that talks to
+  // both bridges is still one "Android app" row.
+  const here = (snapshot.server && snapshot.server.device_name) || "this bridge";
+  const byId = new Map();
+  for (const d of (snapshot.devices || [])) byId.set(d.id, { ...d, _here: d });
   const peer = snapshot.peer;
   if (peer && peer.online && Array.isArray(peer.devices)) {
     for (const pd of peer.devices) {
-      devices.push({ ...pd, id: "remote_" + (pd.id || Math.random()),
-                     label: (pd.label || pd.id || "?") + " · " + peerName() });
+      const row = byId.get(pd.id);
+      if (row) row._peer = pd;
+      else byId.set(pd.id, { ...pd, _here: null });
     }
   }
   const list = $("devicesList");
-  if (!devices.length) {
+  if (!byId.size) {
     list.innerHTML = '<div class="empty">No contacts yet.</div>';
     return;
   }
-  list.innerHTML = devices.map((d) => {
-    const icon = DEVICE_EMOJI[d.id]
-      || (String(d.id).startsWith("remote_") ? "☁️" : "🔌");
-    const when = d.last_seen ? ago(d.last_seen) : "never";
+  list.innerHTML = [...byId.values()].map((d) => {
+    const icon = DEVICE_EMOJI[d.id] || "🔌";
+    const h = d._here, p = d._peer;
+    const via = [];
+    if (h && h.last_seen) via.push(`${esc(here)} ${esc(ago(h.last_seen))}`);
+    else if (h) via.push(`${esc(here)} never`);
+    if (p && p.last_seen) via.push(`${esc(peerName())} ${esc(ago(p.last_seen))}`);
+    else if (p) via.push(`${esc(peerName())} never`);
+    const seenTs = Math.max(
+      (h && h.last_seen ? Date.parse(h.last_seen) : 0) || 0,
+      (p && p.last_seen ? Date.parse(p.last_seen) : 0) || 0);
+    const freshest = (seenTs && h && p)
+      ? (Date.parse(h.last_seen || 0) >= Date.parse(p.last_seen || 0) ? h : p)
+      : (h || p);
+    const when = seenTs ? ago(new Date(seenTs).toISOString()) : "never";
+    const online = !!(h && h.online) || !!(p && p.online);
     const detail = d.id === "peer_bridge"
       ? (d.peer?.online ? (d.peer.role === "remote" ? "remote server bridge" : "laptop bridge")
                         : esc((d.peer && d.peer.error) || "unreachable"))
-      : (d.last_request || "—");
+      : (via.length ? via.join(" · ")
+          : esc(freshest && freshest.last_request || "—"));
     return `<div class="frow" title="${esc(d.label)}">
       <span class="ts">${icon}</span>
       <b style="min-width:110px">${esc(d.label.split(" (")[0])}</b>
-      <span class="state ${d.online ? "on" : "off"}">${d.online ? "● connected" : "○ offline"}</span>
-      <span class="path" style="color:var(--muted)">${esc(detail)} · seen ${esc(when)}</span>
+      <span class="state ${online ? "on" : "off"}">${online ? "● connected" : "○ offline"}</span>
+      <span class="path" style="color:var(--muted)">${detail} · seen ${esc(when)}</span>
     </div>`;
   }).join("");
-  const onlineCount = devices.filter((d) => d.online).length;
+  const onlineCount = [...byId.values()]
+    .filter((d) => (d._here && d._here.online) || (d._peer && d._peer.online)).length;
   setState("devicesState", true, onlineCount + " online", onlineCount + " online");
 }
 
