@@ -425,7 +425,7 @@ fun SettingsScreen(
             item {
                 SettingsCategory(
                     title = "Integrations",
-                    summary = "GitHub · Garmin · Tail Bridge · Inuit",
+                    summary = "GitHub · Garmin · Tail Bridge · Inuit · Pack",
                     icon = Icons.Filled.Extension,
                     accent = BorderGreen
                 ) {
@@ -440,6 +440,8 @@ fun SettingsScreen(
                     CompanionApiSettingsSection(viewModel = viewModel, settings = settings)
                     SettingsSubSectionDivider()
                     EnvironmentSettingsSection(viewModel = viewModel, settings = settings)
+                    SettingsSubSectionDivider()
+                    PackCrashSettingsSection()
                 }
             }
 

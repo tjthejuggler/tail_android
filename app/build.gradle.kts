@@ -16,6 +16,19 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Pack (packd) server defaults for the crash-reporter — read from the
+        // gitignored pack_secrets.properties at the repo root when present
+        // (copy it from the pack project), overridable in Settings → Integrations.
+        val lp = mutableMapOf<String, String>()
+        val lpf = rootProject.file("pack_secrets.properties")
+        if (lpf.exists()) lpf.readLines().forEach { l ->
+            val i = l.indexOf('=')
+            if (i > 0 && !l.startsWith("#")) lp[l.substring(0, i).trim()] = l.substring(i + 1).trim()
+        }
+        fun prop(k: String, d: String): String = (lp[k] ?: d).replace("\"", "")
+        buildConfigField("String", "PACK_SERVER", "\"${prop("PACK_SERVER", "http://100.64.91.104:8610")}\"")
+        buildConfigField("String", "PACK_TOKEN", "\"${prop("PACK_TOKEN", "")}\"")
     }
 
     buildTypes {
@@ -36,6 +49,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     testOptions {

@@ -22,6 +22,18 @@ class TailApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Crash-to-Pack reporter: flush any pending crash reports from the
+        // previous session FIRST — before anything else runs — so the report
+        // reaches Pack (as a fix job) before the app has a chance to crash
+        // again. Then install the handler that captures new crashes.
+        try {
+            com.example.tail.crash.PackCrashReporter.submitPendingAsync(this)
+            com.example.tail.crash.PackCrashReporter.install(this)
+        } catch (t: Throwable) {
+            Log.e("PackCrash", "reporter init failed", t)
+        }
+
         try {
             QcDiag.attach(this)
         } catch (t: Throwable) {
