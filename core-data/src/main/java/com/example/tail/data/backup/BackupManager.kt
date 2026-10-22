@@ -380,6 +380,16 @@ class BackupManager(
         }
     }
 
+    /**
+     * Total raw-bytes budget for meal photos embedded as base64 in a backup.
+     * 2026-10-22: meal_images grew to ~195 MB (68 full-res photos); embedding
+     * all of them ballooned the in-memory bundle past the 512 MB heap limit
+     * and OOM-crashed the app every time the daily Drive backup fired at
+     * startup. Newest photos are prioritized; older ones are skipped (the
+     * originals stay on disk in files/meal_images).
+     */
+    private val MEAL_IMAGES_MAX_TOTAL_BYTES = 32L * 1024 * 1024
+
     /** Snapshots meal logs (raw JSON per file) and meal photos (base64). */
     private fun readMealSection(): MealSection {
         val logs = mutableMapOf<String, String>()
@@ -398,12 +408,31 @@ class BackupManager(
         val images = mutableMapOf<String, String>()
         val imagesDir = File(context.filesDir, "meal_images")
         if (imagesDir.isDirectory) {
-            imagesDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jpg") }?.forEach { f ->
+            // Newest photos first so the budget is spent on recent meals.
+            val files = imagesDir.listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".jpg") }
+                ?.sortedByDescending { it.lastModified() }
+                ?: emptyList()
+            var budget = MEAL_IMAGES_MAX_TOTAL_BYTES
+            var skipped = 0
+            for (f in files) {
+                if (f.length() > budget) {
+                    skipped++
+                    continue
+                }
                 try {
                     images[f.name] = Base64.encodeToString(f.readBytes(), Base64.NO_WRAP)
+                    budget -= f.length()
                 } catch (e: Exception) {
                     Log.w(TAG, "meal image read failed for '${f.name}': ${e.message}")
                 }
+            }
+            if (skipped > 0) {
+                Log.w(
+                    TAG,
+                    "meal images: skipped $skipped photo(s) beyond the " +
+                        "${MEAL_IMAGES_MAX_TOTAL_BYTES / (1024 * 1024)} MB backup budget"
+                )
             }
         }
         return MealSection(logs = logs, images = images)

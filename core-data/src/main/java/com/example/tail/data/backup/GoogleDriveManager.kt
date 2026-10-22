@@ -232,6 +232,7 @@ class GoogleDriveManager(
                     }
                 )
             )
+            purgeStaleTempFiles()
             val tmp = File(context.cacheDir, "gdrive_upload_${System.currentTimeMillis()}.json")
             try {
                 // Stage the JSON to disk (memory-flat serialization).
@@ -317,6 +318,21 @@ class GoogleDriveManager(
                 runCatching { tmp.delete() }
             }
         }
+
+    /**
+     * Deletes leftover `gdrive_upload_*` / `gdrive_restore_*` temp files from
+     * previous runs. A crash mid-upload (e.g. the 2026-10-22 OOM) skips the
+     * `finally` cleanup and can strand a ~275 MB file in cacheDir forever.
+     */
+    private fun purgeStaleTempFiles() {
+        runCatching {
+            context.cacheDir.listFiles { f ->
+                f.name.startsWith("gdrive_upload_") || f.name.startsWith("gdrive_restore_")
+            }?.forEach { f ->
+                if (!f.delete()) Log.w(TAG, "Could not delete stale temp file ${f.name}")
+            }
+        }
+    }
 
     /** Lists Tail backups in Drive (newest first). */
     suspend fun listBackups(): Result<List<GDriveBackupEntry>> = withContext(Dispatchers.IO) {
