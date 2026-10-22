@@ -26,6 +26,20 @@ val INJURY_TYPES = listOf(
     "other" to "Other"
 )
 
+/** Illness type options for the "Sick" episode habit (dev#22: 0–3 severity). */
+val ILLNESS_TYPES = listOf(
+    "cold" to "Cold",
+    "flu" to "Flu",
+    "gastro" to "Gastro",
+    "headache" to "Headache",
+    "allergy" to "Allergy",
+    "other" to "Other"
+)
+
+/** True when this episode habit is the illness variant (no body part, 0–3 severity). */
+fun isIllnessEpisodeHabit(habitName: String): Boolean =
+    habitName.equals("Sick", ignoreCase = true)
+
 /** Body-part options (machine key → display label). */
 val INJURY_BODY_PARTS = listOf(
     "upper_leg" to "Upper leg",
@@ -57,15 +71,19 @@ fun InjuryEpisodeDialog(
     habitName: String,
     openEpisode: InjuryEpisode?,
     viewModel: HabitViewModel,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Illness variant ("Sick" type): cold/flu/… picker, 0–3 severity, no body part. */
+    illness: Boolean = false
 ) {
     val isUpdate = openEpisode != null
+    val isIllness = illness
+    val defaultType = if (isIllness) "cold" else "pulled_muscle"
 
-    var type by remember { mutableStateOf(openEpisode?.type ?: "pulled_muscle") }
+    var type by remember { mutableStateOf(openEpisode?.type?.takeIf { it != "pulled_muscle" || !isIllness } ?: defaultType) }
     var bodyPart by remember { mutableStateOf(openEpisode?.bodyPart ?: "upper_leg") }
     var bodyPartDetail by remember { mutableStateOf(openEpisode?.bodyPartDetail ?: "") }
     var side by remember { mutableStateOf(openEpisode?.side ?: "left") }
-    var severity by remember { mutableStateOf(openEpisode?.severity?.toFloat() ?: 3f) }
+    var severity by remember { mutableStateOf(openEpisode?.severity?.toFloat() ?: if (isIllness) 1f else 3f) }
     var severityKnown by remember { mutableStateOf(openEpisode?.severity != null) }
     var note by remember { mutableStateOf(openEpisode?.note ?: "") }
     var showResolve by remember { mutableStateOf(false) }
@@ -86,39 +104,54 @@ fun InjuryEpisodeDialog(
                 }
 
                 Text("Type", fontSize = 13.sp)
-                ChipFlow(INJURY_TYPES, type) { type = it }
+                ChipFlow(if (isIllness) ILLNESS_TYPES else INJURY_TYPES, type) { type = it }
                 Spacer(Modifier.height(8.dp))
 
-                Text("Body part", fontSize = 13.sp)
-                ChipFlow(INJURY_BODY_PARTS, bodyPart) { bodyPart = it }
-                if (bodyPart == "other") {
-                    OutlinedTextField(
-                        value = bodyPartDetail,
-                        onValueChange = { bodyPartDetail = it },
-                        label = { Text("Which part?") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                if (!isIllness) {
+                    Text("Body part", fontSize = 13.sp)
+                    ChipFlow(INJURY_BODY_PARTS, bodyPart) { bodyPart = it }
+                    if (bodyPart == "other") {
+                        OutlinedTextField(
+                            value = bodyPartDetail,
+                            onValueChange = { bodyPartDetail = it },
+                            label = { Text("Which part?") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    Text("Side", fontSize = 13.sp)
+                    ChipFlow(INJURY_SIDES, side) { side = it }
+                    Spacer(Modifier.height(8.dp))
                 }
-                Spacer(Modifier.height(8.dp))
-
-                Text("Side", fontSize = 13.sp)
-                ChipFlow(INJURY_SIDES, side) { side = it }
-                Spacer(Modifier.height(8.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Severity (1–10)", fontSize = 13.sp)
+                    Text(
+                        if (isIllness) "Severity (0–3)" else "Severity (1–10)",
+                        fontSize = 13.sp
+                    )
                     Spacer(Modifier.width(8.dp))
                     Checkbox(checked = severityKnown, onCheckedChange = { severityKnown = it })
                     Text(if (severityKnown) "${severity.toInt()}" else "unknown", fontSize = 13.sp)
                 }
                 if (severityKnown) {
-                    Slider(
-                        value = severity,
-                        onValueChange = { severity = it },
-                        valueRange = 1f..10f,
-                        steps = 8
-                    )
+                    if (isIllness) {
+                        // Illness severity saturates fast — 0–3 (dev#22).
+                        Slider(
+                            value = severity,
+                            onValueChange = { severity = it },
+                            valueRange = 0f..3f,
+                            steps = 2
+                        )
+                    } else {
+                        Slider(
+                            value = severity,
+                            onValueChange = { severity = it },
+                            valueRange = 1f..10f,
+                            steps = 8
+                        )
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
 
@@ -136,23 +169,29 @@ fun InjuryEpisodeDialog(
                     var daySeverity by remember(openEpisode.id) {
                         mutableStateOf(
                             (openEpisode.severityByDay?.get(LocalDate.now().toString())
-                                ?: openEpisode.severity ?: 3).toFloat()
+                                ?: openEpisode.severity
+                                ?: if (isIllness) 1 else 3).toFloat()
                         )
                     }
                     HorizontalDivider()
                     Spacer(Modifier.height(8.dp))
-                    Text("How does it feel TODAY? (1–10)", fontSize = 13.sp)
+                    Text(
+                        if (isIllness) "How does it feel TODAY? (0–3)" else "How does it feel TODAY? (1–10)",
+                        fontSize = 13.sp
+                    )
                     Slider(
                         value = daySeverity,
                         onValueChange = { daySeverity = it },
-                        valueRange = 1f..10f,
-                        steps = 8
+                        valueRange = if (isIllness) 0f..3f else 1f..10f,
+                        steps = if (isIllness) 2 else 8
                     )
                     OutlinedButton(
                         onClick = {
                             viewModel.recordEpisodeDaySeverity(
                                 habitName, openEpisode.id,
-                                LocalDate.now(), daySeverity.toInt().coerceIn(1, 10)
+                                LocalDate.now(),
+                                if (isIllness) daySeverity.toInt().coerceIn(0, 3)
+                                else daySeverity.toInt().coerceIn(1, 10)
                             )
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -185,14 +224,22 @@ fun InjuryEpisodeDialog(
         },
         confirmButton = {
             if (!showResolve) TextButton(onClick = {
-                val sev = if (severityKnown) severity.toInt().coerceIn(1, 10) else null
+                val sev = if (severityKnown) {
+                    if (isIllness) severity.toInt().coerceIn(0, 3)
+                    else severity.toInt().coerceIn(1, 10)
+                } else null
+                // Illness episodes carry no body-part taxonomy — the fields
+                // are pinned to "na" so the injury schema stays clean.
+                val bp = if (isIllness) "na" else bodyPart
+                val bpd = if (isIllness) "" else bodyPartDetail
+                val sd = if (isIllness) "na" else side
                 if (isUpdate && openEpisode != null) {
                     viewModel.updateInjuryEpisode(
-                        habitName, openEpisode.id, type, bodyPart, bodyPartDetail, side, sev, note
+                        habitName, openEpisode.id, type, bp, bpd, sd, sev, note
                     )
                 } else {
                     viewModel.startInjuryEpisode(
-                        habitName, LocalDate.now(), type, bodyPart, bodyPartDetail, side, sev, note
+                        habitName, LocalDate.now(), type, bp, bpd, sd, sev, note
                     )
                 }
                 onDismiss()

@@ -206,6 +206,14 @@ internal suspend fun HabitViewModel.catchUpAndLoad(uri: Uri) {
             performInjuryEpisodeMigration(uri)
         }
 
+        // ── One-time Sick (illness episode) migration ────────────────────
+        // Converts the legacy daily "Sick" severity log into structured
+        // illness episodes (Sick_episodes.json), rewrites the daily values
+        // as the derived binary flag, and switches the habit's type flags.
+        if (!_settings.value.sickEpisodeMigrated) {
+            performSickEpisodeMigration(uri)
+        }
+
         // ── One-time first-class minutes-slot migration ────────────────
         // Timer features used to write minutes into the generic secondary
         // slot; move them to the dedicated minutes: slot.

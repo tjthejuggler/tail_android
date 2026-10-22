@@ -49,7 +49,9 @@ import java.time.LocalDate
  * Derived pipeline output (backwards compatibility): the ViewModel rewrites
  * the habit's daily habitsdb values to an `injured_today` flag (1 on every
  * day from onset through resolvedDate inclusive — open episodes run to
- * today — 0 elsewhere), so all existing reports keep working. Onset events
+ * today — 0 elsewhere; some historical mirrors carry the per-day SEVERITY
+ * as the value instead — any value > 0 means "in this episode"), so all
+ * existing reports keep working. Onset events
  * for the event-study engine (`event_study`, `event="injury_onset"`) are
  * exactly the `onsetDate` fields of this file.
  */
@@ -210,12 +212,13 @@ data class InjuryEpisode(
     val bodyPartDetail: String = "",
     /** left / right / na. */
     val side: String = "na",
-    /** 1..5 slider; null = unknown (migrated history). */
+    /** Injury: 1..10 slider. Illness ("Sick" habit): 0..3. null = unknown (migrated history). */
     val severity: Int? = null,
     /**
-     * Per-day severity ratings ("yyyy-MM-dd" → 1..5) recorded while the
-     * episode was open — the "how did intensity change over time" series
-     * for the graph. Days without an entry inherit the binary flag only.
+     * Per-day severity ratings ("yyyy-MM-dd" → 1..10 injury / 0..3 illness)
+     * recorded while the episode was open — the "how did intensity change
+     * over time" series for the graph. Days without an entry inherit the
+     * binary flag only.
      */
     val severityByDay: Map<String, Int> = emptyMap(),
     /** Optional free-text note, kept separate from the structured fields. */

@@ -1051,6 +1051,133 @@ internal suspend fun HabitViewModel.performInjuryEpisodeMigration(uri: Uri) {
     }
 }
 
+/**
+ * One-time migration: legacy daily "Sick" habit (per-day severity values
+ * across illness spans) → structured illness EPISODES.
+ *  1. Contiguous non-zero spans → episodes (type "other"; the historical
+ *     per-day values are preserved verbatim in severityByDay — legacy 1–8 scale).
+ *  2. Rewrites the daily habitsdb values as the derived sick_today binary
+ *     flag (1 inside an episode, 0 elsewhere).
+ *  3. Flips the type flags: base episode type + the illness variant.
+ *  4. Writes Sick_episodes.json next to the Injured episodes file (same
+ *     synced folder) so the research pipeline sees illness onsets.
+ */
+internal suspend fun HabitViewModel.performSickEpisodeMigration(uri: Uri) {
+    val habit = "Sick"
+    try {
+        val entries = cachedPhoneDb[habit]
+        if (entries == null || entries.values.all { it == 0 }) {
+            // No illness history — just flip the type flags.
+            settingsRepo.saveSickEpisodeHabits(_settings.value.sickEpisodeHabits + habit)
+            settingsRepo.saveEpisodeHabits(_settings.value.episodeHabits + habit)
+            settingsRepo.saveSickEpisodeMigrated(true)
+            _settings.value = _settings.value.copy(
+                sickEpisodeHabits = _settings.value.sickEpisodeHabits + habit,
+                episodeHabits = _settings.value.episodeHabits + habit,
+                sickEpisodeMigrated = true
+            )
+            Log.i(TAG, "Sick episode migration: no history, type flags switched")
+            return
+        }
+
+        // 1. Contiguous non-zero spans → episodes (severity preserved per-day).
+        val dates = entries.filterValues { it > 0 }.keys.sorted()
+        val spans = mutableListOf<Pair<String, String>>()
+        var spanStart: String? = null
+        var prev: java.time.LocalDate? = null
+        for (d in dates) {
+            val date = runCatching { java.time.LocalDate.parse(d) }.getOrNull() ?: continue
+            if (spanStart == null || prev == null || date != prev.plusDays(1)) {
+                if (spanStart != null && prev != null) spans.add(spanStart to prev.toString())
+                spanStart = d
+            }
+            prev = date
+        }
+        if (spanStart != null && prev != null) spans.add(spanStart to prev.toString())
+
+        // Existing exported episodes (e.g. the desktop-side migration) are
+        // the richer source — keep their severityByDay when the id matches,
+        // so re-running this migration on an already-normalized habitsdb
+        // (whose daily values are now 0/1) cannot downgrade the ratings.
+        val preExisting = com.example.tail.data.EpisodeDataRepository().loadEpisodes(
+            context, habit,
+            com.example.tail.data.EpisodeDataRepository.episodeUriOrNull(
+                _settings.value.episodeFileUris[habit]
+            ) ?: com.example.tail.data.EpisodeDataRepository.episodeUriOrNull(
+                _settings.value.episodeFileUris["Injured"]
+            ) ?: TextInputRepository.textUriOrNull(_settings.value.textInputFileUris["Injured"])
+                ?.let { com.example.tail.data.EpisodeDataRepository().ensureSiblingEpisodeUri(context, it, habit) }
+        ).associateBy { it.id }
+
+        val episodes = spans.map { (onset, last) ->
+            val dayRatings = entries.filterKeys { it >= onset && it <= last && (entries[it] ?: 0) > 0 }
+            val fresh = com.example.tail.data.InjuryEpisode(
+                id = onset,
+                onsetDate = onset,
+                resolvedDate = last,
+                type = "other",
+                bodyPart = "na",
+                bodyPartDetail = "",
+                side = "na",
+                severity = dayRatings[onset], // legacy 1–8 scale onset rating
+                severityByDay = dayRatings,
+                note = "Migrated from legacy daily Sick log"
+            )
+            preExisting[fresh.id]?.let { saved ->
+                if ((saved.severityByDay?.values?.maxOrNull() ?: 0) > (dayRatings.values.maxOrNull() ?: 0)) {
+                    saved.copy(resolvedDate = last)
+                } else fresh
+            } ?: fresh
+        }
+
+        // 2. Derived daily flag rewrite.
+        val today = java.time.LocalDate.now()
+        val newEntries = entries.mapValues { (d, _) ->
+            val date = runCatching { java.time.LocalDate.parse(d) }.getOrNull()
+            val inside = episodes.any { ep ->
+                val on = java.time.LocalDate.parse(ep.onsetDate)
+                val end = ep.resolvedDate?.let { java.time.LocalDate.parse(it) } ?: today
+                date != null && !date.isBefore(on) && !date.isAfter(end)
+            }
+            if (inside) 1 else 0
+        }
+        val updatedDb = cachedPhoneDb.toMutableMap()
+        updatedDb[habit] = newEntries
+        cachedPhoneDb = updatedDb
+
+        // 3. Persist the flag rewrite BEFORE flipping settings.
+        habitsRepo.saveDatabase(uri, context, updatedDb)
+
+        // 4. Episodes file — sibling of the Injured episodes file when possible.
+        val extUri = com.example.tail.data.EpisodeDataRepository.episodeUriOrNull(
+            _settings.value.episodeFileUris[habit]
+        ) ?: com.example.tail.data.EpisodeDataRepository.episodeUriOrNull(
+            _settings.value.episodeFileUris["Injured"]
+        ) ?: TextInputRepository.textUriOrNull(_settings.value.textInputFileUris["Injured"])?.let { tree ->
+            com.example.tail.data.EpisodeDataRepository().ensureSiblingEpisodeUri(context, tree, habit)
+        }
+        com.example.tail.data.EpisodeDataRepository().saveEpisodes(context, habit, episodes, extUri)
+        if (extUri != null && _settings.value.episodeFileUris[habit] != extUri.toString()) {
+            val uris = _settings.value.episodeFileUris.toMutableMap()
+            uris[habit] = extUri.toString()
+            settingsRepo.saveEpisodeFileUris(uris)
+            _settings.value = _settings.value.copy(episodeFileUris = uris)
+        }
+
+        settingsRepo.saveSickEpisodeHabits(_settings.value.sickEpisodeHabits + habit)
+        settingsRepo.saveEpisodeHabits(_settings.value.episodeHabits + habit)
+        settingsRepo.saveSickEpisodeMigrated(true)
+        _settings.value = _settings.value.copy(
+            sickEpisodeHabits = _settings.value.sickEpisodeHabits + habit,
+            episodeHabits = _settings.value.episodeHabits + habit,
+            sickEpisodeMigrated = true
+        )
+        Log.i(TAG, "Sick episode migration complete: ${episodes.size} episode(s), flag rewritten")
+    } catch (e: Exception) {
+        Log.e(TAG, "Sick episode migration failed (will retry next load): ${e.message}")
+    }
+}
+
 /** Settings half of the Injury migration: episode type on, daily-log types off. */
 private suspend fun HabitViewModel.applyInjuryEpisodeSettingsFlip(habit: String) {
     val episode = (_settings.value.episodeHabits + habit)

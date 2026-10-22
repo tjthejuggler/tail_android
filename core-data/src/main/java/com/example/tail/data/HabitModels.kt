@@ -1270,6 +1270,16 @@ data class AppSettings(
     val injuryEpisodeMigrated: Boolean = false,
 
     /**
+     * Episode habits using the ILLNESS variant of the episode dialog
+     * (type picker cold/flu/gastro/…, 0–3 severity, no body part).
+     * A habit literally named "Sick" is treated as a member too.
+     */
+    val sickEpisodeHabits: Set<String> = emptySet(),
+
+    /** One-time migration flag: legacy daily "Sick" habit → illness episodes. */
+    val sickEpisodeMigrated: Boolean = false,
+
+    /**
      * Habits that have the "sleep" type enabled — the sleep-suite suite:
      * each habit is additionally mapped in [sleepHabitVariants] to either
      * SLEEP_TIME (bed time + room temperature + conditions text with

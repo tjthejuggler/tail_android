@@ -239,6 +239,9 @@ import com.example.tail.ui.viewmodel.confirmPendingSubtypeFeed
 import com.example.tail.ui.viewmodel.isMovieBridgeHabit
 import com.example.tail.ui.viewmodel.loadSubtypeBreakdown
 import com.example.tail.ui.viewmodel.loadEpisodes
+import com.example.tail.ui.viewmodel.isSorenessHabit
+import com.example.tail.ui.viewmodel.loadSorenessDay
+import com.example.tail.ui.viewmodel.isIllnessEpisodeHabit
 import com.example.tail.ui.viewmodel.loadSubtypeTimestampLabels
 import com.example.tail.ui.viewmodel.saveSubtypeIncrement
 import com.example.tail.ui.viewmodel.addPillToCatalog
@@ -916,6 +919,10 @@ fun HabitGridScreen(
     // Injury (episode) dialog: habit + loaded episodes (open episode → update mode)
     var episodeDialogHabit by remember { mutableStateOf<Habit?>(null) }
     var episodeDialogEpisodes by remember { mutableStateOf<List<com.example.tail.data.InjuryEpisode>>(emptyList()) }
+
+    // Soreness nightly dialog: today's existing row (null = not logged yet)
+    var sorenessDialogDay by remember { mutableStateOf<com.example.tail.data.SorenessDay?>(null) }
+    var sorenessDialogOpen by remember { mutableStateOf(false) }
     var subtypeDialogBreakdown by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     // Pill-log dialog state (count-coded dosing habits, e.g. "Took pills")
     var pillDialogHabit by remember { mutableStateOf<Habit?>(null) }
@@ -1688,6 +1695,8 @@ fun HabitGridScreen(
                         weightsHabits = settings.weightsHabits,
                         sleepHabits = settings.sleepHabits,
                         pillLogHabits = settings.pillLogHabits,
+                        episodeHabits = settings.episodeHabits,
+                        sickEpisodeHabits = settings.sickEpisodeHabits,
                         bridgeMovieHabits = if (settings.bridgeEnabled) settings.bridgeMovieHabits else emptySet(),
                         chessComHabitLinks = settings.chessComHabitLinks,
                         habitLongPressActions = settings.habitLongPressActions,
@@ -1766,10 +1775,21 @@ fun HabitGridScreen(
                                         subtypeDialogHabit = habit
                                     }
                                 }
+                                // Soreness nightly type (convention: habit named
+                                // "Soreness"): tapping opens the 0–3 per-region
+                                // rating dialog ("Nothing sore" = explicit zero row).
+                                isSorenessHabit(habit.name) -> {
+                                    viewModel.loadSorenessDay(selectedDate) { row ->
+                                        sorenessDialogDay = row
+                                        sorenessDialogOpen = true
+                                    }
+                                }
                                 // Injury (episode) type: tapping opens the episode
                                 // dialog — NEW episode when none is open, "Update
                                 // episode" (severity/note/resolve) while one is.
-                                habit.name in settings.episodeHabits -> {
+                                // "Sick" is always an episode habit (convention).
+                                habit.name in settings.episodeHabits ||
+                                    habit.name.equals("Sick", ignoreCase = true) -> {
                                     viewModel.loadEpisodes(habit.name) { episodes ->
                                         episodeDialogEpisodes = episodes
                                         episodeDialogHabit = habit
@@ -2853,12 +2873,24 @@ fun HabitGridScreen(
     }
 
     // Injury (episode) dialog — create on onset, update/resolve while open.
+    // Illness variant ("Sick" type) when the habit has that toggle.
     episodeDialogHabit?.let { habit ->
         InjuryEpisodeDialog(
             habitName = habit.name,
             openEpisode = episodeDialogEpisodes.lastOrNull { it.resolvedDate == null },
             viewModel = viewModel,
-            onDismiss = { episodeDialogHabit = null }
+            onDismiss = { episodeDialogHabit = null },
+            illness = viewModel.isIllnessEpisodeHabit(habit.name)
+        )
+    }
+
+    // Soreness nightly dialog — 0–3 per region + trained-today.
+    if (sorenessDialogOpen) {
+        SorenessDialog(
+            date = selectedDate,
+            existing = sorenessDialogDay,
+            viewModel = viewModel,
+            onDismiss = { sorenessDialogOpen = false }
         )
     }
 
@@ -4072,6 +4104,10 @@ internal fun HabitGrid(
     sleepHabits: Set<String> = emptySet(),
     /** Pill-log habits (count-coded dosing dialog on tap, 💊 corner badge). */
     pillLogHabits: Set<String> = emptySet(),
+    /** Injury-episode habits (episode dialog on tap, 🤕 corner badge). */
+    episodeHabits: Set<String> = emptySet(),
+    /** Illness-episode habits (Sick variant, 🤒 corner badge). */
+    sickEpisodeHabits: Set<String> = emptySet(),
     /** Movie-bridge-linked habits (auto-filled from the tail_bridge watcher). */
     bridgeMovieHabits: Set<String> = emptySet(),
     /** Map of habit name → chess.com time control for chess.com-linked habits. */
@@ -4178,6 +4214,8 @@ internal fun HabitGrid(
                             com.example.tail.data.LONG_PRESS_APP else effective
                     }
                     // Tiny corner badge for special (integration-linked) habits
+                    val isSickHabit = habit.name in sickEpisodeHabits ||
+                        habit.name.equals("Sick", ignoreCase = true)
                     val specialBadge = when {
                         habit.name in bridgeMovieHabits -> HabitSpecialBadge.MOVIE
                         habit.name in mealHabits -> HabitSpecialBadge.MEAL
@@ -4186,7 +4224,8 @@ internal fun HabitGrid(
                         habit.name in weightsHabits -> HabitSpecialBadge.WEIGHTS
                         habit.name in sleepHabits -> HabitSpecialBadge.SLEEP
                         habit.name in pillLogHabits -> HabitSpecialBadge.PILL
-                        habit.name in pillLogHabits -> HabitSpecialBadge.PILL
+                        isSickHabit -> HabitSpecialBadge.SICK
+                        habit.name in episodeHabits -> HabitSpecialBadge.INJURY
                         else -> null
                     }
                     HabitButton(

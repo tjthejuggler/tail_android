@@ -27,7 +27,11 @@ private val episodeRepo = EpisodeDataRepository()
 private fun HabitViewModel.resolveEpisodeUri(habitName: String): Uri? {
     EpisodeDataRepository.episodeUriOrNull(_settings.value.episodeFileUris[habitName])
         ?.let { return it }
+    // Own text-input tree first; the "Sick" illness habit (which has no
+    // text-input file of its own) falls back to the Injured habit's synced
+    // folder so Sick_episodes.json lands in the same noteVault directory.
     val textUri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
+        ?: TextInputRepository.textUriOrNull(_settings.value.textInputFileUris["Injured"])
         ?: return null
     val sibling = episodeRepo.ensureSiblingEpisodeUri(context, textUri, habitName) ?: return null
     // Persist the discovered sibling so later writes skip the directory scan.
@@ -42,9 +46,21 @@ private fun HabitViewModel.resolveEpisodeUri(habitName: String): Uri? {
     return sibling
 }
 
-/** True when [habitName] has the "Injury (episode)" type enabled. */
+/**
+ * True when [habitName] runs the ILLNESS variant of the episode dialog:
+ * an explicit "Sick (illness episode)" type toggle, or the literal habit
+ * name "Sick" (convention, dev#22).
+ */
+fun HabitViewModel.isIllnessEpisodeHabit(habitName: String): Boolean =
+    habitName in _settings.value.sickEpisodeHabits || habitName.equals("Sick", ignoreCase = true)
+
+/**
+ * True when [habitName] has an episode type enabled (injury or illness
+ * variant). Illness habits are episode habits by definition — onset /
+ * silent continuation / explicit clear, exported to <name>_episodes.json.
+ */
 fun HabitViewModel.isEpisodeHabit(habitName: String): Boolean =
-    habitName in _settings.value.episodeHabits
+    habitName in _settings.value.episodeHabits || isIllnessEpisodeHabit(habitName)
 
 /** Loads all episodes for [habitName], then calls [onLoaded] (oldest onset first). */
 fun HabitViewModel.loadEpisodes(habitName: String, onLoaded: (List<InjuryEpisode>) -> Unit) {
@@ -292,6 +308,50 @@ internal suspend fun HabitViewModel.performEpisodeDailyFlagMaintenance() {
             HabitsDataChangedBus.emit()
         } catch (_: Exception) {
         }
+    }
+}
+
+/**
+ * Toggles the "Sick (illness episode)" variant on/off for [habitName]
+ * (edit-mode control bar). Enabling also enables the base episode type and
+ * clears the same conflicting type flags as [toggleEpisodeHabit]; disabling
+ * only removes the illness variant.
+ */
+fun HabitViewModel.toggleSickEpisodeHabit(habitName: String) {
+    viewModelScope.launch {
+        val sick = _settings.value.sickEpisodeHabits.toMutableSet()
+        if (habitName in sick) {
+            sick.remove(habitName)
+            settingsRepo.saveSickEpisodeHabits(sick)
+            _settings.value = _settings.value.copy(sickEpisodeHabits = sick)
+        } else {
+            sick.add(habitName)
+            // Illness implies the episode type; clear conflicting daily-log
+            // type flags exactly like the base episode toggle.
+            val episode = (_settings.value.episodeHabits + habitName)
+            val textInput = _settings.value.textInputHabits - habitName
+            val textUris = _settings.value.textInputFileUris.toMutableMap().also { it.remove(habitName) }
+            val custom = _settings.value.customInputHabits - habitName
+            val roll = _settings.value.rollForwardHabits - habitName
+            val rollDates = _settings.value.rollForwardManualDates.toMutableMap().also { it.remove(habitName) }
+            settingsRepo.saveSickEpisodeHabits(sick)
+            settingsRepo.saveEpisodeHabits(episode)
+            settingsRepo.saveTextInputHabits(textInput)
+            settingsRepo.saveTextInputFileUris(textUris)
+            settingsRepo.saveCustomInputHabits(custom)
+            settingsRepo.saveRollForwardHabits(roll)
+            settingsRepo.saveRollForwardManualDates(rollDates)
+            _settings.value = _settings.value.copy(
+                sickEpisodeHabits = sick,
+                episodeHabits = episode,
+                textInputHabits = textInput,
+                textInputFileUris = textUris,
+                customInputHabits = custom,
+                rollForwardHabits = roll,
+                rollForwardManualDates = rollDates
+            )
+        }
+        rebuildHabitList()
     }
 }
 

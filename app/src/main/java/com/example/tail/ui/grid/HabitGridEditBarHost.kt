@@ -84,6 +84,7 @@ import com.example.tail.ui.viewmodel.toggleSecondaryValueHabit
 import com.example.tail.ui.viewmodel.toggleSharableText
 import com.example.tail.ui.viewmodel.toggleSubtyped
 import com.example.tail.ui.viewmodel.toggleEpisodeHabit
+import com.example.tail.ui.viewmodel.toggleSickEpisodeHabit
 import com.example.tail.ui.viewmodel.toggleTextInput
 import com.example.tail.ui.viewmodel.toggleTextInputOptions
 import com.example.tail.ui.viewmodel.toggleTimeless
@@ -275,6 +276,8 @@ internal fun EditBarHost(
         onSetSubtypes = { name, types -> viewModel.setHabitSubtypes(name, types) },
         episodeHabits = settings.episodeHabits,
         onToggleEpisode = { name -> viewModel.toggleEpisodeHabit(name) },
+        sickEpisodeHabits = settings.sickEpisodeHabits,
+        onToggleSickEpisode = { name -> viewModel.toggleSickEpisodeHabit(name) },
         sleepHabits = settings.sleepHabits,
         sleepHabitVariants = settings.sleepHabitVariants,
         onSetSleepVariant = { name, variant -> viewModel.setSleepVariant(name, variant) },

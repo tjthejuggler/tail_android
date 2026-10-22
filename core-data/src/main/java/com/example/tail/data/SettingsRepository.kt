@@ -115,6 +115,9 @@ private val KEY_EPISODE_HABITS = stringSetPreferencesKey("episode_habits")
 private val KEY_EPISODE_FILE_URIS = stringPreferencesKey("episode_file_uris")
 // One-time legacy-Injured→episode migration flag
 private val KEY_INJURY_EPISODE_MIGRATED = booleanPreferencesKey("injury_episode_migrated")
+// Illness-episode variant of the episode type ("Sick"); one-time legacy-Sick migration flag
+private val KEY_SICK_EPISODE_HABITS = stringSetPreferencesKey("sick_episode_habits")
+private val KEY_SICK_EPISODE_MIGRATED = booleanPreferencesKey("sick_episode_migrated")
 // Subtyped habit type keys
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 // Pill log habit type keys (count-coded dosing for "Took pills")
@@ -1225,6 +1228,8 @@ class SettingsRepository(private val context: Context) {
             episodeHabits = prefs[KEY_EPISODE_HABITS] ?: emptySet(),
             episodeFileUris = decodeFileUriMap(prefs[KEY_EPISODE_FILE_URIS] ?: ""),
             injuryEpisodeMigrated = prefs[KEY_INJURY_EPISODE_MIGRATED] ?: false,
+            sickEpisodeHabits = prefs[KEY_SICK_EPISODE_HABITS] ?: emptySet(),
+            sickEpisodeMigrated = prefs[KEY_SICK_EPISODE_MIGRATED] ?: false,
             subtypedHabits = prefs[KEY_SUBTYPED_HABITS] ?: emptySet(),
             pillLogHabits = prefs[KEY_PILL_LOG_HABITS] ?: emptySet(),
             pillCatalog = decodeFileUriMap(prefs[KEY_PILL_CATALOG] ?: ""),
@@ -1748,6 +1753,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun saveInjuryEpisodeMigrated(done: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_INJURY_EPISODE_MIGRATED] = done }
+    }
+
+    suspend fun saveSickEpisodeHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_SICK_EPISODE_HABITS] = habits }
+    }
+
+    suspend fun saveSickEpisodeMigrated(done: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_SICK_EPISODE_MIGRATED] = done }
     }
 
     /** Saves the map of habit name → ordered list of subtype names. */

@@ -1742,7 +1742,7 @@ class HabitViewModel(
             }
 
             
-            // Per-day episode severity (1..5) when rated that day
+            // Per-day episode severity (1..10 injury / 0..3 illness) when rated that day
             // (null-safe: episodes deserialized before the field existed
             // can carry a null map despite the load-time sanitizer)
             val episodeSeverity = episodeCache

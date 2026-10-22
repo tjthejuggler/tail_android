@@ -1954,6 +1954,8 @@ internal fun EditModeControlBar(
     onTogglePillLog: (String) -> Unit = {},
     episodeHabits: Set<String> = emptySet(),
     onToggleEpisode: (String) -> Unit = {},
+    sickEpisodeHabits: Set<String> = emptySet(),
+    onToggleSickEpisode: (String) -> Unit = {},
     allHabitNames: List<String>,
     rollForwardHabits: Set<String> = emptySet(),
     rollForwardManualDates: Map<String, Set<String>> = emptyMap(),
@@ -3524,6 +3526,36 @@ internal fun EditModeControlBar(
                                 Switch(
                                     checked = isEpisode,
                                     onCheckedChange = { onToggleEpisode(selHabitName) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFF44DDAA),
+                                        checkedTrackColor = Color(0xFF0A3A2A),
+                                        uncheckedThumbColor = Color(0xFF888888),
+                                        uncheckedTrackColor = Color(0xFF333333)
+                                    )
+                                )
+                            }
+
+                            // ── Sick (illness episode) toggle ────────────────
+                            // Same event grammar as injuries, minus the body-
+                            // part taxonomy: cold/flu/… picker + 0–3 severity.
+                            val isSick = selHabitName in sickEpisodeHabits ||
+                                selHabitName.equals("Sick", ignoreCase = true)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(text = "Sick (illness episode)", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                    Text(
+                                        text = if (isSick) "Episodic: onset, update, clear"
+                                        else "Track illness as dated episodes",
+                                        color = Color(0xFF888888), fontSize = 10.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = isSick,
+                                    onCheckedChange = { onToggleSickEpisode(selHabitName) },
                                     colors = SwitchDefaults.colors(
                                         checkedThumbColor = Color(0xFF44DDAA),
                                         checkedTrackColor = Color(0xFF0A3A2A),
