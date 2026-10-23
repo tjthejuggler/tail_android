@@ -175,7 +175,14 @@ class WeightsRecordsRepository(private val context: Context) {
             // the DB-derived historical day-max (pre-sidecar data).
             val standingWeight = maxOf(old.bestWeightGrams, habitPbWeightGrams)
             val weightPr = grams > 0 && grams > standingWeight
-            val repsPr = reps > 0 && reps > old.bestReps
+            // Reps PR: only counts when the set is done at (or above) the
+            // exercise's current max weight — 15 reps @ 20 kg is NOT a record
+            // if 5 reps @ 25 kg exists. The stored bestReps is only a valid
+            // floor when it was set at (what is now) the max weight or above;
+            // once a heavier weight PR lands, the old lower-weight reps
+            // record stops counting and any set at the new max beats it.
+            val repsFloor = if (old.bestRepsGrams >= standingWeight) old.bestReps else 0
+            val repsPr = reps > 0 && grams >= standingWeight && reps > repsFloor
 
             val updated = if (weightPr || repsPr) {
                 old.copy(
