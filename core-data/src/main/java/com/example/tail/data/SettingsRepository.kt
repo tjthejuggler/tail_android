@@ -178,6 +178,10 @@ private val KEY_BRIDGE_ENABLED = booleanPreferencesKey("bridge_enabled")
 private val KEY_BRIDGE_URL = stringPreferencesKey("bridge_url")
 private val KEY_BRIDGE_TOKEN = stringPreferencesKey("bridge_token")
 private val KEY_REMOTE_HOST_URL = stringPreferencesKey("remote_host_url")
+// Tailscale IP of the always-on racknerd VPS (tailcue-1) — see
+// remoteBridgeConnectionFrom(). Used ONLY as the default when the
+// remote_host_url key has never been written.
+private const val DEFAULT_REMOTE_HOST_URL = "http://100.64.91.104"
 private val KEY_BRIDGE_MOVIE_HABITS = stringSetPreferencesKey("bridge_movie_habits")
 // Movie confirmation flash: "title@lastWatched" markers of prompts already shown/handled
 private val KEY_MOVIE_PROMPT_HANDLED = stringSetPreferencesKey("movie_prompt_handled")
@@ -1300,7 +1304,14 @@ class SettingsRepository(private val context: Context) {
             bridgeEnabled = prefs[KEY_BRIDGE_ENABLED] ?: false,
             bridgeUrl = prefs[KEY_BRIDGE_URL] ?: "",
             bridgeToken = prefs[KEY_BRIDGE_TOKEN] ?: "",
-            remoteHostUrl = prefs[KEY_REMOTE_HOST_URL] ?: "",
+            // One-time default (2026-10-23): the remote always-on host was
+            // never configured on the phone, so remote-first paths (game
+            // analysis via the VPS bridge, TailCue notifications) silently
+            // fell back to the laptop-only chain and died whenever the
+            // laptop was off. Defaulting the ABSENT key only — an explicit
+            // empty string from the settings UI is honored as "disabled".
+            remoteHostUrl = prefs[KEY_REMOTE_HOST_URL]
+                ?: DEFAULT_REMOTE_HOST_URL,
             bridgeMovieHabits = prefs[KEY_BRIDGE_MOVIE_HABITS] ?: emptySet(),
             omdbApiKey = prefs[KEY_OMDB_API_KEY] ?: "",
             habitScheduleTimes = decodeFileUriMap(prefs[KEY_HABIT_SCHEDULE_TIMES] ?: ""),

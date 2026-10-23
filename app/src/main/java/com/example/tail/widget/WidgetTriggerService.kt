@@ -458,10 +458,14 @@ class WidgetTriggerService : Service() {
         if (chessPkg != null &&
             ChessReadinessStore.enforcementEnabledAt(applicationContext) > 0L
         ) {
-            ChessGuardReactions.noteChessForeground(
-                applicationContext,
-                foregroundPkg == chessPkg
-            )
+            // While one of OUR chess overlays is up, never report a stint
+            // END: the overlay's own focus grabs can surface foreign
+            // ACTIVITY_RESUMED events (IME, SystemUI) that would dismiss
+            // the overlay — the flashing-loop bug (2026-10-23).
+            val inChess = foregroundPkg == chessPkg
+            if (inChess || !ChessOverlayPresence.isActive()) {
+                ChessGuardReactions.noteChessForeground(applicationContext, inChess)
+            }
         }
 
         // Our own app coming to the foreground: WITHOUT a running persistent

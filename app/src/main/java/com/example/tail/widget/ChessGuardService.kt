@@ -119,10 +119,14 @@ class ChessGuardService : AccessibilityService() {
             ChessGuardReactions.noteChessForeground(applicationContext, true) {
                 performGlobalAction(GLOBAL_ACTION_HOME)
             }
-        } else {
+        } else if (!ChessOverlayPresence.isActive()) {
             // Any other window on top (launcher, SystemUI, another app)
             // ends the chess stint: re-arms the YELLOW entry warning and
-            // takes a lingering warning overlay down.
+            // takes a lingering warning overlay down — UNLESS one of OUR
+            // chess overlays is up: focusable overlay windows trigger
+            // system window events (Samsung IME, SystemUI) that would
+            // otherwise end the stint and dismiss the overlay itself —
+            // the flashing-loop bug (2026-10-23).
             ChessGuardReactions.noteChessForeground(applicationContext, false)
         }
     }

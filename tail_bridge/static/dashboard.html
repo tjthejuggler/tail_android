@@ -339,7 +339,7 @@
       <div class="section-note" style="margin:0 0 8px" id="chessStatus"></div>
       <div class="scroll" style="overflow-x:auto">
         <table id="chessTable">
-          <thead><tr><th>Game</th><th>Result</th><th>Depth</th><th>Blunders W/B</th><th>When</th></tr></thead>
+          <thead><tr><th>Game</th><th>Result</th><th>Depth</th><th>Blunders W/B</th><th>When</th><th>Analysed on</th></tr></thead>
           <tbody id="chessBody"></tbody>
         </table>
       </div>
@@ -1028,7 +1028,8 @@ function renderChess() {
       ? ' <span class="chip warn">engine binary missing!</span>' : "") +
     ` <span class="dim">${st.analyzed ?? 0} games analysed · last ${esc(lastAt)} · engine
      <span class="mono">${esc(st.stockfish || "?")}</span>
-     ${st.stockfish_ok === false ? "" : "· <span class='chip phone'>ok</span>"}</span>` +
+     ${st.stockfish_ok === false ? "" : "· <span class='chip phone'>ok</span>"}
+     · this bridge runs on <span class="mono">${esc(st.host || "?")}</span></span>` +
     failHtml;
   const rows = ch.recent || [];
   $("chessEmpty").style.display = rows.length ? "none" : "block";
@@ -1039,6 +1040,7 @@ function renderChess() {
       <td class="mono">${esc(g.depth ?? "—")}</td>
       <td class="mono">${esc(g.white_blunders)} / ${esc(g.black_blunders)}</td>
       <td class="mono dim">${esc(g.date || "")}</td>
+      <td><span class="chip ${g.host === "?" || !g.host ? "warn" : "phone"}">${esc(g.host || "unknown")}</span></td>
     </tr>`).join("");
 }
 

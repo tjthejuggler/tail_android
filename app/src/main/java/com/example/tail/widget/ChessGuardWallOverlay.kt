@@ -268,6 +268,7 @@ object ChessGuardWallOverlay {
         val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         return try {
             windowManager.addView(root, params)
+            ChessOverlayPresence.enter()
             wm = windowManager
             appContext = context.applicationContext
             containerView = root
@@ -439,6 +440,7 @@ object ChessGuardWallOverlay {
         val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         return try {
             windowManager.addView(root, params)
+            ChessOverlayPresence.enter()
             warningWm = windowManager
             warningView = root
             warningContext = context.applicationContext
@@ -551,6 +553,7 @@ object ChessGuardWallOverlay {
         val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         return try {
             windowManager.addView(root, params)
+            ChessOverlayPresence.enter()
             testRequiredWm = windowManager
             testRequiredView = root
             true
@@ -564,6 +567,7 @@ object ChessGuardWallOverlay {
         val view = testRequiredView
         testRequiredView = null
         if (view != null) {
+            ChessOverlayPresence.exit()
             try {
                 testRequiredWm?.removeView(view)
             } catch (_: Exception) {
@@ -582,6 +586,7 @@ object ChessGuardWallOverlay {
         warningCountdownView = null
         warningHabitBox = null
         if (view != null) {
+            ChessOverlayPresence.exit()
             try {
                 warningWm?.removeView(view)
             } catch (_: Exception) {
@@ -601,6 +606,7 @@ object ChessGuardWallOverlay {
         countdownView = null
         appContext = null
         if (view != null) {
+            ChessOverlayPresence.exit()
             try {
                 wm?.removeView(view)
             } catch (_: Exception) {

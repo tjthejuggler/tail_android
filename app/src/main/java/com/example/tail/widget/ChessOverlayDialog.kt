@@ -132,6 +132,7 @@ class ChessOverlayDialog(private val context: Context) {
         try {
             windowManager.addView(container, params)
             root = container
+            ChessOverlayPresence.enter()
         } catch (e: Exception) {
             // NOT silent anymore: callers (e.g. the v3 survival verdict
             // popup) now detect this via isShowing() and fall back to a
@@ -153,6 +154,7 @@ class ChessOverlayDialog(private val context: Context) {
 
     /** Removes the overlay window. Safe to call repeatedly. */
     fun dismiss() {
+        val wasShowing = root != null
         root?.let {
             try {
                 windowManager.removeView(it)
@@ -160,6 +162,7 @@ class ChessOverlayDialog(private val context: Context) {
         }
         root = null
         cardColumn = null
+        if (wasShowing) ChessOverlayPresence.exit()
     }
 
     // ──────────────────────────────────────────────────────────────────────

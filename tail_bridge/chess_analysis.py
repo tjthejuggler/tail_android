@@ -43,6 +43,7 @@ import io
 import json
 import math
 import os
+import socket
 import sqlite3
 import subprocess
 import threading
@@ -538,8 +539,16 @@ class ChessAnalysisService:
             " game_id TEXT PRIMARY KEY,"
             " json TEXT NOT NULL,"
             " depth INTEGER,"
-            " analyzed_at REAL NOT NULL)"
+            " analyzed_at REAL NOT NULL,"
+            " host TEXT)"
         )
+        # Migration for pre-2026-10 DBs: analyses got a `host` column so the
+        # dashboard can show WHERE (VPS vs laptop) each game was analysed —
+        # the phone now walks a remote-first bridge chain.
+        try:
+            self._conn.execute("ALTER TABLE analyses ADD COLUMN host TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
         self._conn.commit()
         self._db_lock = threading.Lock()
         self._game_locks: dict[str, threading.Lock] = {}
@@ -566,9 +575,10 @@ class ChessAnalysisService:
     def _store(self, results: dict, game_id: str, depth: int):
         with self._db_lock:
             self._conn.execute(
-                "INSERT OR IGNORE INTO analyses (game_id, json, depth, analyzed_at)"
-                " VALUES (?, ?, ?, ?)",
-                (game_id, json.dumps(results), depth, time.time()),
+                "INSERT OR IGNORE INTO analyses (game_id, json, depth, analyzed_at, host)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (game_id, json.dumps(results), depth, time.time(),
+                 socket.gethostname()),
             )
             self._conn.commit()
 
@@ -657,6 +667,7 @@ class ChessAnalysisService:
         )
         return {
             "analyzed": analyzed,
+            "host": socket.gethostname(),
             "backlog_pending": 0,  # on-demand only; the phone drives what it needs
             "busy_live": busy,
             "last_live_age_sec": last_live_age,
@@ -679,12 +690,12 @@ class ChessAnalysisService:
         """Newest-first analysis history for the dashboard (compact rows)."""
         with self._db_lock:
             rows = self._conn.execute(
-                "SELECT game_id, json, depth, analyzed_at FROM analyses"
+                "SELECT game_id, json, depth, analyzed_at, host FROM analyses"
                 " ORDER BY analyzed_at DESC LIMIT ?",
                 (max(1, min(int(limit), 50)),),
             ).fetchall()
         out = []
-        for game_id, js, depth, analyzed_at in rows:
+        for game_id, js, depth, analyzed_at, host in rows:
             try:
                 data = json.loads(js)
             except Exception:
@@ -693,6 +704,7 @@ class ChessAnalysisService:
             stats = data.get("stats", {})
             out.append({
                 "game_id": game_id,
+                "host": host or "?",
                 "white": meta.get("White", "?"),
                 "black": meta.get("Black", "?"),
                 "result": meta.get("Result", ""),
