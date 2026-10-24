@@ -20,6 +20,10 @@ package com.example.tail.data.chess
  *    inside the window — the gap is REAL no-play time (game end → next
  *    game start), so continuous play keeps the window open indefinitely
  *    and a late-arriving audit can never make it look idle.
+ *  - 2026-10-24: V4 (Green Light) windows NEVER close on idle time — a
+ *    v4-flagged GREEN authorization stays live until a Yellow/Red audit
+ *    revokes it or its 12-hour validity lapses (user rule: idle alone must
+ *    never stop play; only performance-based evidence may).
  *  - 2026-09-25: the idle clock also re-anchors on DRILL activity — a
  *    started/running session of a user-chosen "session-preserving habit"
  *    (puzzles, unrated games, …) produces (start, end) spans that chain
@@ -72,11 +76,16 @@ fun rollingWindowExpiresAt(
     now: Long,
     games: List<Pair<Long, Long>> = emptyList(),
     drills: List<Pair<Long, Long>> = emptyList(),
-    idleCloseMs: Long = RATED_IDLE_CLOSE_MINUTES * 60_000
+    idleCloseMs: Long = RATED_IDLE_CLOSE_MINUTES * 60_000,
+    /** V4 Green Light window: idle time never closes it (user rule 2026-10-24). */
+    v4GreenTest: Boolean = false
 ): Long? {
     val inWindow = audits.filter { it.first in greenTestMs..now }
     // A Yellow/Red audit since the authorization revokes rated play.
     if (inWindow.any { it.second != AUDIT_CONTINUE_RATED }) return null
+    // V4: performance-only stop model — the window is revoked ONLY by an
+    // audit, never by the idle clock.
+    if (v4GreenTest) return Long.MAX_VALUE / 2
     // Chain of window-extending evidence: every clean audit re-anchors
     // the idle clock to its instant, then each played game / drill session
     // whose start was still inside the live window extends the anchor to

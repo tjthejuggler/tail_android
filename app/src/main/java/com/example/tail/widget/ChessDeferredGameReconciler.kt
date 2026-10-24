@@ -129,7 +129,9 @@ object ChessDeferredGameReconciler {
                 .map { it.timestamp to it.outputState },
             gameStartMs,
             games,
-            drills
+            drills,
+            // V4 windows never close on idle (user rule 2026-10-24).
+            v4GreenTest = last.v4
         ) != null
     }
 
@@ -805,5 +807,77 @@ object ChessDeferredGameReconciler {
             resolved = resolved,
             stillPending = stillPending
         )
+    }
+
+    /**
+     * ════════════════════════════════════════════════════════════════════
+     *  AUTOMATIC BACKGROUND AUDIT — no share required (user rule 2026-10-24)
+     * ════════════════════════════════════════════════════════════════════
+     *
+     * The regular chess.com poll sweeps every archive game into the
+     * activity log, but the full Phase 2 audit (with bridge Stockfish
+     * evidence) only ever ran on SHARED games — forcing the user to sit
+     * and share/wait between games. This sweeps the CURRENT month's
+     * archive details and audits every recent rated auditable game that
+     * has no audit yet, exactly as a share would have — in the background,
+     * on the poll cadence. Sharing remains available as the manual
+     * fast-path (and as the required path inside a PIVOT zone when the
+     * automatic analysis could not be obtained).
+     *
+     * @return the outcomes of the audits that ran (callers surface the
+     *         gentle-stop advisory on PIVOT / TERMINATE verdicts)
+     */
+    suspend fun auditUnsharedRecentGames(
+        context: Context,
+        username: String,
+        chessService: ChessComService,
+        bridge: ChessAnalysisFetcher.BridgeCredentials? = null,
+        maxAgeMs: Long = 6L * 60 * 60 * 1000,
+        maxGames: Int = 3
+    ): List<GameOutcome> {
+        if (username.isBlank()) return emptyList()
+        val now = System.currentTimeMillis()
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val outcomes = mutableListOf<GameOutcome>()
+        try {
+            val details = chessService.getGameDetailsForMonth(
+                username, today.year, today.monthValue
+            )
+            val candidates = details
+                .filter { g ->
+                    g.rated &&
+                        (g.rules == "chess" || g.rules == "chess960") &&
+                        g.timeClass != "daily" &&
+                        g.endTime * 1000L in (now - maxAgeMs)..now
+                }
+                .sortedBy { it.endTime }
+                .filter { g ->
+                    try {
+                        ChessPhase2Store.findAuditByGameId(context, g.gameId) == null
+                    } catch (_: Exception) {
+                        false // unreadable store → assume known, stay safe
+                    }
+                }
+                .takeLast(maxGames)
+            for (game in candidates) {
+                try {
+                    outcomes.add(processGame(context, username, game, bridge))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Auto-audit of game ${game.gameId} failed: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Auto-audit sweep failed: ${e.message}")
+        }
+        return outcomes
+    }
+
+    /** [ChessPhase2Engine.OutputState] name of an audit outcome, or null. */
+    fun outcomeStateName(outcome: GameOutcome): String? = when (outcome) {
+        is GameOutcome.Audited -> outcome.result.outputState.name
+        is GameOutcome.AuditedV2 -> outcome.result.outputState.name
+        is GameOutcome.AuditedV3 -> outcome.result.outputState.name
+        else -> null
     }
 }

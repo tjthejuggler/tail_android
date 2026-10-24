@@ -196,7 +196,11 @@ object ChessReadinessV4Recorder {
                 com.example.tail.data.chess.ChessReadinessEngine.ReadinessTest(
                     timestamp = now,
                     ccrs = ChessReadinessV4Engine.syntheticCcrs(passed = true),
-                    state = ChessReadinessV4Engine.stateNameFor(passed = true)
+                    state = ChessReadinessV4Engine.stateNameFor(passed = true),
+                    // Performance-only stop model (user rule 2026-10-24):
+                    // this authorization lasts 12 h and idle never closes
+                    // it — only a bad post-game audit revokes.
+                    v4 = true
                 )
             )
         } else if (gatePassed == false) {
@@ -206,7 +210,8 @@ object ChessReadinessV4Recorder {
                 com.example.tail.data.chess.ChessReadinessEngine.ReadinessTest(
                     timestamp = now,
                     ccrs = ChessReadinessV4Engine.syntheticCcrs(passed = false),
-                    state = ChessReadinessV4Engine.stateNameFor(passed = false)
+                    state = ChessReadinessV4Engine.stateNameFor(passed = false),
+                    v4 = true
                 )
             )
         }

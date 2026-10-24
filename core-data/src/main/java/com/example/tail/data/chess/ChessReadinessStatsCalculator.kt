@@ -61,7 +61,12 @@ data class ReadinessTestRecord(
      * the bubble widget instead of passing a readiness test). Only
      * meaningful on GREEN entries; stats use it to split sessions.
      */
-    val freeplay: Boolean = false
+    val freeplay: Boolean = false,
+    /**
+     * True when this GREEN authorization was granted by the V4 Green Light
+     * engine — idle time never closes its window (user rule 2026-10-24).
+     */
+    val v4: Boolean = false
 )
 
 /** One logged chess.com game with the readiness context at play time. */
@@ -213,6 +218,17 @@ fun readinessContextAt(
         .maxByOrNull { it.timestamp }
         if (latest == null) return Triple(null, false, false)
     val isGreen = latest.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name
+    // V4 Green Light (user rule 2026-10-24): idle never closes the window —
+    // authorized for the full 12-hour validity unless an audit revoked it.
+    if (isGreen && latest.v4) {
+        val withinValidity =
+            timeMs - latest.timestamp <= ChessReadinessEngine.V4_SESSION_VALIDITY_MS
+        val revoked = audits.any {
+            it.first in latest.timestamp..timeMs &&
+                it.second != com.example.tail.data.chess.AUDIT_CONTINUE_RATED
+        }
+        return Triple(latest, withinValidity && !revoked, latest.freeplay)
+    }
     val authorized = isGreen && when {
         audits.isEmpty() && games.isEmpty() ->
             timeMs - latest.timestamp <= ChessReadinessEngine.SESSION_VALIDITY_MS

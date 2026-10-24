@@ -27,7 +27,10 @@ import java.time.ZoneId
  *  - 2    → YELLOW — reflex gate: 5 taps, pass at median ≤ threshold ms
  *           (starting default 320 ms; personalised later from the event log)
  *  - ≥3   → RED-lean — strong advisory + survival gate sized by concern
- *           (5 puzzles at 3, 10 at 4+). Override ALWAYS allowed and logged.
+ *           (8 puzzles at 3, 10 at 4, 12 at 5+ — user rule 2026-10-24:
+ *           the old 5-puzzle battery told us hardly anything; pass bar
+ *           is the strict full target, zero strikes). Override ALWAYS
+ *           allowed and logged.
  *
  * In-session watch (never forces): cold-open stop (first 10 games ≤40%
  * score — the mission's one confirmed ship rule, −7.6…−22 Elo) and tilt
@@ -221,7 +224,16 @@ object ChessReadinessV4Engine {
         )
     }
 
-    /** The gate for a concern score, or null (green = no friction). */
+    /**
+     * The gate for a concern score, or null (green = no friction).
+     *
+     * Survival battery sizing (user rule 2026-10-24): a 5-puzzle battery
+     * was trivially passable even in no shape to play rated games — the
+     * minimum became 8, rising to 10 at concern 4 and 12 at concern 5+.
+     * The pass bar is the FULL target with zero strikes (see the bubble's
+     * startSurvivalRun: v4-armed gates ignore the percentile discount), so
+     * the gate measures sustained accuracy, not luck.
+     */
     fun gateFor(concern: Int, reflexPassMs: Int = DEFAULT_REFLEX_PASS_MS): Gate? = when {
         concern <= GREEN_MAX -> null
         concern == REFLEX_AT -> Gate(
@@ -229,8 +241,14 @@ object ChessReadinessV4Engine {
             why = "a couple of mild flags — 15-second tap test, then play"
         )
         else -> Gate(
-            type = "survival", puzzles = if (concern == SURVIVAL_AT) 5 else 10,
-            why = "several negative state signals stacked — short puzzle battery first"
+            type = "survival",
+            puzzles = when {
+                concern == SURVIVAL_AT -> 8
+                concern == 4 -> 10
+                else -> 12
+            },
+            why = "several negative state signals stacked — puzzle battery first " +
+                "(full target, zero strikes)"
         )
     }
 

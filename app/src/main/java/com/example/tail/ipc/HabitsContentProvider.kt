@@ -92,6 +92,9 @@ class HabitsContentProvider : ContentProvider() {
         val CONTENT_URI: Uri = Uri.parse("content://$AUTHORITY/$PATH_HABITS")
         val TEXT_HABITS_URI: Uri = Uri.parse("content://$AUTHORITY/$PATH_TEXT_HABITS")
         val TEXT_HABITS_RECENT_URI: Uri = Uri.parse("content://$AUTHORITY/$PATH_TEXT_HABITS_RECENT")
+        val V3_WEIGHTS_URI: Uri = Uri.parse("content://$AUTHORITY/v3/weights")
+        val V3_WEIGHTS_PBS_URI: Uri = Uri.parse("content://$AUTHORITY/v3/weights/pbs")
+        val V3_WEIGHTS_RECENT_URI: Uri = Uri.parse("content://$AUTHORITY/v3/weights/recent_exercises")
         val V2_CAPABILITIES_URI: Uri = Uri.parse("content://$AUTHORITY/v2/capabilities")
         val V2_HABITS_URI: Uri = Uri.parse("content://$AUTHORITY/v2/habits")
         val V2_APPS_URI: Uri = Uri.parse("content://$AUTHORITY/v2/apps")
@@ -105,6 +108,9 @@ class HabitsContentProvider : ContentProvider() {
         private const val CODE_HABITS = 1
         private const val CODE_TEXT_HABITS = 2
         private const val CODE_TEXT_HABITS_RECENT = 3
+        private const val CODE_V3_WEIGHTS = 20
+        private const val CODE_V3_WEIGHTS_PBS = 21
+        private const val CODE_V3_WEIGHTS_RECENT = 22
         private const val CODE_V2_CAPABILITIES = 10
         private const val CODE_V2_HABITS = 11
         private const val CODE_V2_APPS = 12
@@ -116,6 +122,9 @@ class HabitsContentProvider : ContentProvider() {
             addURI(AUTHORITY, PATH_HABITS, CODE_HABITS)
             addURI(AUTHORITY, PATH_TEXT_HABITS, CODE_TEXT_HABITS)
             addURI(AUTHORITY, PATH_TEXT_HABITS_RECENT, CODE_TEXT_HABITS_RECENT)
+            addURI(AUTHORITY, "v3/weights", CODE_V3_WEIGHTS)
+            addURI(AUTHORITY, "v3/weights/pbs", CODE_V3_WEIGHTS_PBS)
+            addURI(AUTHORITY, "v3/weights/recent_exercises", CODE_V3_WEIGHTS_RECENT)
             addURI(AUTHORITY, "v2/capabilities", CODE_V2_CAPABILITIES)
             addURI(AUTHORITY, "v2/habits", CODE_V2_HABITS)
             addURI(AUTHORITY, "v2/apps", CODE_V2_APPS)
@@ -139,6 +148,9 @@ class HabitsContentProvider : ContentProvider() {
         CODE_HABITS -> queryHabitList(projection)
         CODE_TEXT_HABITS -> querySharedTextHabits(projection)
         CODE_TEXT_HABITS_RECENT -> queryRecentTextEntries(uri, projection)
+        CODE_V3_WEIGHTS -> CompanionReadEndpoints.queryWeightsHistory(context, loadSettings(), projection)
+        CODE_V3_WEIGHTS_PBS -> CompanionReadEndpoints.queryWeightsPbs(context, loadSettings(), projection)
+        CODE_V3_WEIGHTS_RECENT -> CompanionReadEndpoints.queryWeightsRecentExercises(loadSettings(), projection)
         CODE_V2_CAPABILITIES -> CompanionReadEndpoints.queryCapabilities(projection)
         CODE_V2_BRIDGE_CONFIG -> CompanionReadEndpoints.queryBridgeConfig(loadSettings(), projection)
         CODE_V2_BRIDGE_CONFIG -> CompanionReadEndpoints.queryBridgeConfig(loadSettings(), projection)
@@ -291,6 +303,9 @@ class HabitsContentProvider : ContentProvider() {
         CODE_V2_CAPABILITIES -> "vnd.android.cursor.item/vnd.$AUTHORITY.v2_capabilities"
         CODE_V2_BRIDGE_CONFIG -> "vnd.android.cursor.item/vnd.$AUTHORITY.v2_bridge_config"
         CODE_V2_BRIDGE_CONFIG -> "vnd.android.cursor.item/vnd.$AUTHORITY.v2_bridge_config"
+        CODE_V3_WEIGHTS -> "vnd.android.cursor.dir/vnd.$AUTHORITY.v3_weights"
+        CODE_V3_WEIGHTS_PBS -> "vnd.android.cursor.dir/vnd.$AUTHORITY.v3_weights_pbs"
+        CODE_V3_WEIGHTS_RECENT -> "vnd.android.cursor.dir/vnd.$AUTHORITY.v3_weights_recent_exercises"
         CODE_V2_HABITS -> "vnd.android.cursor.dir/vnd.$AUTHORITY.v2_habits"
         CODE_V2_APPS -> "vnd.android.cursor.dir/vnd.$AUTHORITY.v2_apps"
         CODE_V2_ENTRIES -> "vnd.android.cursor.dir/vnd.$AUTHORITY.v2_entries"

@@ -198,7 +198,7 @@ object ChessEnforcementPolicy {
         // re-anchors the window (a CONTINUE_RATED audit) back to GREEN.
         if (last != null &&
             last.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name &&
-            now - last.timestamp < ChessReadinessEngine.SESSION_VALIDITY_MS
+            now - last.timestamp < ChessReadinessEngine.sessionValidityMs(last)
         ) {
             if (terminateAfterTest) {
                 return Decision.Block(
@@ -218,12 +218,16 @@ object ChessEnforcementPolicy {
             // needing spans use the store-level gate) — back-to-back games
             // keep the session green; 15 idle minutes degrade it to casual
             // yellow.
-            val windowLive = ChessPhase2Engine.rollingWindowExpiresAt(
-                last.timestamp,
-                auditsAfterTest.map { it.timestamp to it.outputState },
-                now,
-                drills = drills
-            ) != null
+            // V4 Green Light (user rule 2026-10-24): idle time NEVER
+            // degrades the session — the window is live until an audit
+            // pulls the brake (handled above) or the 12-hour validity ends.
+            val windowLive = last.v4 ||
+                ChessPhase2Engine.rollingWindowExpiresAt(
+                    last.timestamp,
+                    auditsAfterTest.map { it.timestamp to it.outputState },
+                    now,
+                    drills = drills
+                ) != null
             return Decision.Allow(
                 if (windowLive) Reason.GREEN_SESSION else Reason.YELLOW_SESSION
             )
@@ -318,7 +322,7 @@ object ChessEnforcementPolicy {
         val last = history.maxByOrNull { it.timestamp } ?: return false
         // The downgrade is momentary — once the test's validity lapses the
         // whole session is over and freeplay is offered again as usual.
-        if (now - last.timestamp >= ChessReadinessEngine.SESSION_VALIDITY_MS) return false
+        if (now - last.timestamp >= ChessReadinessEngine.sessionValidityMs(last)) return false
         // A TERMINATE audit blocks everything anyway (including the menu);
         // only the PIVOT downgrade is this gate's business.
         return audits.any {
@@ -356,7 +360,7 @@ object ChessEnforcementPolicy {
             val last = ChessReadinessStore.loadHistory(context)
                 .maxByOrNull { it.timestamp } ?: return false
             val now = System.currentTimeMillis()
-            now - last.timestamp < ChessReadinessEngine.SESSION_VALIDITY_MS &&
+            now - last.timestamp < ChessReadinessEngine.sessionValidityMs(last) &&
                 (last.state == ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name ||
                     last.state == ChessReadinessEngine.ReadinessState.YELLOW_LIGHT.name)
         } catch (_: Exception) {

@@ -272,7 +272,8 @@ object ChessReadinessLogStore {
                     puzzleTimesSec = emptyList(),
                     rushScore = 0, rushStrikes = 0, rushAllTimeHigh = 0,
                     sessionStartedAt = t.timestamp,
-                    freeplay = t.freeplay
+                    freeplay = t.freeplay,
+                    v4 = t.v4
                 )
             ))
             known.add(t.timestamp)
@@ -535,6 +536,7 @@ object ChessReadinessLogStore {
         put("rushAllTimeHigh", t.rushAllTimeHigh)
         put("sessionStartedAt", t.sessionStartedAt)
         if (t.freeplay) put("freeplay", true)
+        if (t.v4) put("v4", true)
     }
 
     private fun decodeTest(o: JSONObject): ReadinessTestRecord? = try {
@@ -558,7 +560,8 @@ object ChessReadinessLogStore {
             rushStrikes = o.optInt("rushStrikes", 0),
             rushAllTimeHigh = o.optInt("rushAllTimeHigh", 0),
             sessionStartedAt = o.optLong("sessionStartedAt", o.getLong("timestamp")),
-            freeplay = o.optBoolean("freeplay", false)
+            freeplay = o.optBoolean("freeplay", false),
+            v4 = o.optBoolean("v4", false)
         )
     } catch (_: Exception) {
         null

@@ -109,6 +109,17 @@ object ChessReadinessEngine {
     /** A Green/Yellow authorization expires after this long (ms). */
     const val SESSION_VALIDITY_MS = 60L * 60 * 1000
 
+    /**
+     * A V4 (Green Light) GREEN authorization lasts this long (ms, 12 h) —
+     * effectively "the rest of the day". V4 sessions are never revoked by
+     * idle time alone (user rule 2026-10-24): a passed test plus good play
+     * keeps rated play authorized; only a bad post-game audit (PIVOT /
+     * TERMINATE) can pull the brake. The re-test cool-down after a V4 pass
+     * stays [COOLDOWN_MS], so a fresh assessment is always available within
+     * the hour without the session itself expiring.
+     */
+    const val V4_SESSION_VALIDITY_MS = 12L * 60 * 60 * 1000
+
     /** Cold-start floor for the Puzzle Rush baseline (new accounts). */
     const val RUSH_BASELINE_FLOOR = 10
 
@@ -401,8 +412,25 @@ object ChessReadinessEngine {
          * The flag exists so stats can split freeplay sessions from
          * readiness-pass sessions for comparison.
          */
-        val freeplay: Boolean = false
+        val freeplay: Boolean = false,
+        /**
+         * True when this GREEN authorization was granted by the V4 Green
+         * Light engine (instant green / passed gate / override, see
+         * ChessReadinessV4Recorder). V4 sessions follow the
+         * performance-only stop model (user rule 2026-10-24): the
+         * authorization lasts [V4_SESSION_VALIDITY_MS] and idle time alone
+         * never closes the rolling rated-play window — only a bad post-game
+         * audit (PIVOT_TO_DRILLS / TERMINATE_SESSION) revokes it.
+         */
+        val v4: Boolean = false
     )
+
+    /**
+     * Authorization validity of a recorded test: V4 Green Light passes use
+     * the extended 12-hour window, everything else the classic 60 minutes.
+     */
+    fun sessionValidityMs(test: ReadinessTest): Long =
+        if (test.v4) V4_SESSION_VALIDITY_MS else SESSION_VALIDITY_MS
 
     /** What the adaptive thresholds were derived from. */
     enum class ThresholdBasis { PERCENTILE, COLD_START }
@@ -624,10 +652,17 @@ object ChessReadinessEngine {
         return if (lastPassed) {
             // Re-test unlocks when the previous authorization EXPIRES — the
             // user may have left before playing; once the pass stops
-            // authorizing play a fresh test is possible.
-            if (timeSinceLast < SESSION_VALIDITY_MS) {
-                val retryAt = lastTest.timestamp + SESSION_VALIDITY_MS
-                val minsRemaining = ((SESSION_VALIDITY_MS - timeSinceLast) / 60000L).toInt() + 1
+            // authorizing play a fresh test is possible. V4 passes keep the
+            // plain 60-minute cool-down (a fresh assessment is always
+            // available within the hour) even though the V4 AUTHORIZATION
+            // itself lasts V4_SESSION_VALIDITY_MS — the two are decoupled
+            // (user rule 2026-10-24: never wall the re-test behind a long
+            // validity).
+            val retestLockMs =
+                if (lastTest.v4) COOLDOWN_MS else SESSION_VALIDITY_MS
+            if (timeSinceLast < retestLockMs) {
+                val retryAt = lastTest.timestamp + retestLockMs
+                val minsRemaining = ((retestLockMs - timeSinceLast) / 60000L).toInt() + 1
                 GateStatus.Blocked(
                     GateError.CooldownActive(
                         "Session still active — a new test unlocks when this one " +

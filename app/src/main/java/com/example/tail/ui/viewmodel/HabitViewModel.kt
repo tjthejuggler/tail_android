@@ -3353,6 +3353,32 @@ class HabitViewModel(
             _chessComSyncStatus.value = "Sync failed: ${e.message?.take(50)}"
         }
 
+        // AUTOMATIC background audit (user rule 2026-10-24): sharing games
+        // is no longer mandatory. Every poll sweeps the recent unshared
+        // rated games from the chess.com archive and runs the full Phase 2
+        // analysis on them — the same "regular automatic lookup" pattern
+        // the chess-coach system uses. Bad results surface as a gentle
+        // stop-advisory notification (ChessStopAdvisor) BEFORE any hard
+        // enforcement kicks in.
+        try {
+            val outcomes = ChessDeferredGameReconciler.auditUnsharedRecentGames(
+                context, s.chessComUsername,
+                chessService = com.example.tail.data.chess.ChessComService(),
+                bridge = com.example.tail.widget.ChessAnalysisFetcher
+                    .bridgeCandidates(s)
+            )
+            outcomes.forEach { outcome ->
+                ChessDeferredGameReconciler.outcomeStateName(outcome)?.let { state ->
+                    com.example.tail.widget.ChessStopAdvisor.advise(context, "auto", state)
+                }
+            }
+            if (outcomes.isNotEmpty()) {
+                Log.i(TAG, "Auto chess audit swept ${outcomes.size} unshared game(s)")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Auto chess audit failed: ${e.message}")
+        }
+
         // Deferred game pipeline: retry shares that were parked because the
         // game wasn't in any chess.com archive yet. Each poll re-fetches
         // them; whatever has appeared is classified by the readiness state

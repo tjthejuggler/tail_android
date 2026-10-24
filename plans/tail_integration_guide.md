@@ -1014,9 +1014,111 @@ the structured labels feature (stable ids + amounts + units) ships.
    `last_change_ts` (Long epoch millis; 0 = nothing recorded yet). Poll on your
    own schedule; when it moved, run an `?after=` incremental pull.
 
-*This guide covers the complete IPC surface of Tail as of 2026-09-19 (Protocol v5).
-The endpoints (ContentProvider v1+v2, BroadcastReceiver, SetValuesReceiver,
-increment announcements, companion change feed) are the only supported
-integration points. Direct file access to `habitsdb_phone.txt` is not
-recommended as it bypasses Tail's atomic read-modify-write logic and risks
-data corruption.*
+---
+
+## Part 12 — Protocol v6 Extension: Weights (Kenga, 2026-10-24)
+
+**Status: implemented.** First consumer: Kenga (gym companion). Two halves:
+a WRITE broadcast that logs a weights set on a Tail weights habit, and three
+READ endpoints (`/v3/weights*`) that expose the full weights history,
+per-exercise PBs and the recent-exercise quick list. Feature-detected via
+the `weights_v3` flag in `/v2/capabilities`.
+
+Implementation: `app/src/main/java/com/example/tail/ipc/WeightsEntryReceiver.kt`
+(write) + `CompanionReadEndpoints.kt` (`queryWeights*` read logic) +
+`HabitsContentProvider.kt` (URI matching).
+
+### Write — `ACTION_LOG_WEIGHTS_ENTRY`
+
+| Property | Value |
+|----------|-------|
+| Action | `com.example.tail.ACTION_LOG_WEIGHTS_ENTRY` |
+| Receiver permission | `com.example.tail.permission.TAIL_INTEGRATION` (signature — same keystore only) |
+| Extra: `EXTRA_HABIT_ID` | `String` — habit name. Must be in `settings.weightsHabits`, else the broadcast is logged and ignored |
+| Extra: `EXTRA_EXERCISE_NAME` | `String` — exercise/machine name (optional; blank = no name sidecar write and no PR check) |
+| Extra: `EXTRA_WEIGHT_GRAMS` | `Int` — set weight in grams (≥ 0) |
+| Extra: `EXTRA_REPS` | `Int` — reps (≥ 0 normally; **negative = correction**, see below) |
+| Extra: `EXTRA_MACHINE` | `Boolean` — `true` = machine slot, `false` = free-weight slot |
+| Extra: `EXTRA_DATE` | `String?` — `yyyy-MM-dd`, defaults to today |
+| Extra: `EXTRA_SOURCE` | `String` — informational sender label (e.g. `"kenga"`); propagated on the `ACTION_HABIT_INCREMENTED` announcement |
+
+Behaviour mirrors the in-app weights dialog (`saveWeightsEntry`), via
+repositories (a receiver cannot touch the ViewModel):
+
+1. **Slot writes** (one atomic read-modify-write under the receiver's mutex):
+   weight slot = day **max-merge** (heaviest set wins), reps slot = day
+   **accumulate**, habit's own count = **+1**.
+2. **Exercise name** — `WeightsExerciseRepository.setExerciseName` for the
+   date/machine slot (powers PB display and graph filters).
+3. **Recent exercises** — move-to-front, capped at 10
+   (`SettingsRepository.saveWeightsRecentExercises`).
+4. **PR check** — `WeightsRecordsRepository.evaluateAndRecord` against the
+   pre-write DB-derived day-max PB (the same join `getWeightsExerciseStats`
+   uses). When a record falls it is persisted; Tail's own gold PR flash lives
+   in the HabitViewModel, so it shows on the NEXT in-app weights save — the
+   sender (Kenga) shows its own PR flash regardless.
+5. **Notifications** — `HabitIncrementBus.emit` (widgets + running UI),
+   `ACTION_HABIT_INCREMENTED` announcement (echo-suppress on `EXTRA_SOURCE`),
+   `ACTION_ENTRY_ADDED` + `/v2/changes` change feed.
+
+**Corrections:** send `EXTRA_REPS = -n` with `EXTRA_WEIGHT_GRAMS = 0` to undo
+n previously-logged reps on that date/slot (Kenga's swipe-to-delete). The
+reps slot and the habit count are decremented with a **minimum clamp of 0**;
+zero-valued keys drop out. Corrections never lower a past PR (records are
+derived, not incremented) and never touch the name/recent sidecars.
+
+```kotlin
+val intent = Intent("com.example.tail.ACTION_LOG_WEIGHTS_ENTRY").apply {
+    setPackage("com.example.tail")
+    putExtra("EXTRA_HABIT_ID", "Gym")
+    putExtra("EXTRA_EXERCISE_NAME", "Bench Press")
+    putExtra("EXTRA_WEIGHT_GRAMS", 82500)
+    putExtra("EXTRA_REPS", 5)
+    putExtra("EXTRA_MACHINE", true)
+    putExtra("EXTRA_DATE", "2026-10-24")       // optional
+    putExtra("EXTRA_SOURCE", context.packageName)
+}
+context.sendBroadcast(intent, "com.example.tail.permission.TAIL_INTEGRATION")
+```
+
+### Read — `/v3/weights*` endpoints
+
+All read-only, same `TAIL_INTEGRATION` read permission and the v2 consent
+model (kill switch `companionApiEnabled`); scope limited to habits in
+`settings.weightsHabits`.
+
+**`content://com.example.tail.provider/v3/weights`** — full day-slot history,
+oldest first. Columns:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `habit_name` | String | weights habit |
+| `date` | String | `yyyy-MM-dd` |
+| `machine_weight_grams` / `machine_reps` | Int | day-max weight / accumulated reps (machine slot) |
+| `free_weight_grams` / `free_reps` | Int | day-max weight / accumulated reps (free slot) |
+| `machine_exercise` / `free_exercise` | String? | per-day exercise name from the sidecar (null when unnamed) |
+
+**`content://com.example.tail.provider/v3/weights/pbs`** — one row per
+(habit, machine, exercise) ever named. Same join as the in-app
+`getWeightsExerciseStats`: day-max weight joined to per-day exercise names,
+case-insensitive, **un-named days skipped**. Columns:
+`habit_name`, `machine` (0/1), `exercise_name`, `best_weight_grams`,
+`best_weight_date`, `best_reps`, `best_reps_date`, `last_weight_grams`,
+`last_reps`, `last_date`.
+
+**`content://com.example.tail.provider/v3/weights/recent_exercises`** — the
+`weightsRecentExercises` quick-choice list of every habit, most recent
+first. Columns: `habit_name`, `exercise_name`.
+
+### Feature detection
+
+`/v2/capabilities` → `features` now contains `"weights_v3"`. Query it before
+using any `/v3/weights*` endpoint or sending the v6 weights broadcast;
+degrade gracefully when absent.
+
+*This guide covers the complete IPC surface of Tail as of 2026-10-24
+(Protocol v6 extension). The endpoints (ContentProvider v1+v2+v3-weights,
+BroadcastReceivers, increment announcements, companion change feed) are the
+only supported integration points. Direct file access to
+`habitsdb_phone.txt` is not recommended as it bypasses Tail's atomic
+read-modify-write logic and risks data corruption.*

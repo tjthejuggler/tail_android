@@ -269,7 +269,24 @@
             </intent-filter>
         </receiver>
 
--------
+        <!--
+            BroadcastReceiver (Protocol v6 extension, Kenga weights): logs a
+            weights-habit set (exercise name, weight grams, reps, machine or
+            free) on a habit in settings.weightsHabits with the exact
+            semantics of the in-app weights input dialog: weight slot
+            max-merge, reps slot accumulate, +1 count, exercise-name sidecar
+            write, recent-exercise quick list and the all-time PR check.
+            Negative EXTRA_REPS is a correction (reps slot decremented, min 0).
+        -->
+        <receiver
+            android:name=".ipc.WeightsEntryReceiver"
+            android:exported="true"
+            android:permission="com.example.tail.permission.TAIL_INTEGRATION">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_LOG_WEIGHTS_ENTRY" />
+            </intent-filter>
+        </receiver>
+
         <!--
             HabitIncrementConfirmActivity: shows a brief confirmation message
             over the lock screen after a voice/smart voice habit increment.

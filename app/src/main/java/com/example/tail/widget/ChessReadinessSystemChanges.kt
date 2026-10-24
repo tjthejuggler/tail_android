@@ -304,6 +304,25 @@ object ChessReadinessSystemChanges {
                 "Green Light section, and the Chess Status overlay now runs the " +
                 "in-session watch (cold-open first-10 ≤40%, tilt after ≥3 straight " +
                 "losses) with the backing evidence."
+        ),
+        ReadinessSystemChange(
+            at("2026-10-24T11:45:00Z"),
+            "V4 Green Light: performance-only stops, automatic analysis, harder survival gate",
+            "Three user rules (2026-10-24). (1) NO IDLE LOCKOUT: a V4 green light " +
+                "authorizes 12 hours and the 15-minute rolling idle window NEVER " +
+                "closes it — after passing a test and playing well, any amount of " +
+                "idle still allows immediate re-test and play. Play is only stopped " +
+                "by performance evidence: a bad Phase 2 audit (PIVOT/TERMINATE) or " +
+                "an unauthorized game. (2) NO MANDATORY SHARING: game analysis now " +
+                "runs AUTOMATICALLY — every 15-minute chess.com poll sweeps recent " +
+                "unshared rated games through the full Phase 2 pipeline. When the " +
+                "analysis flags a bad game, a stop-advisory notification gently " +
+                "recommends stopping BEFORE enforcement; in that warning zone " +
+                "analysis between games is required (the automatic sweep provides " +
+                "it; sharing manually is the fallback). (3) SURVIVAL GATE HARDENED: " +
+                "the pre-game puzzle battery is sized 8 puzzles at concern 3, 10 at " +
+                "4, 12 at 5+ with a strict full-target pass bar (the old 5-question " +
+                "battery told us hardly anything)."
         )
     )
 }

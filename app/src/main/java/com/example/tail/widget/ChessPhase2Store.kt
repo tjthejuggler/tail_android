@@ -272,6 +272,15 @@ object ChessPhase2Store {
     ): Long? {
         val last = ChessReadinessStore.lastTest(context) ?: return null
         if (last.state != ChessReadinessEngine.ReadinessState.GREEN_LIGHT.name) return null
+        // V4 windows never close on idle — revoked only by an audit (rule
+        // 2026-10-24); classic windows follow the 15-minute idle clock.
+        if (last.v4 && now - last.timestamp < ChessReadinessEngine.V4_SESSION_VALIDITY_MS) {
+            val revoked = loadAudits(context).any {
+                it.timestamp > last.timestamp && it.timestamp <= now &&
+                    it.outputState != ChessPhase2Engine.OutputState.CONTINUE_RATED.name
+            }
+            return if (revoked) null else Long.MAX_VALUE / 2
+        }
         return ChessPhase2Engine.rollingWindowExpiresAt(
             last.timestamp,
             loadAudits(context)

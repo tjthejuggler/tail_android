@@ -83,7 +83,8 @@ internal object CompanionReadEndpoints {
         "option_descriptions", // /v2/habits/{id}/labels with descriptions
         "change_feed",         // /v2/changes + ContentObserver + broadcast
         "capability_flags",    // this endpoint
-        "bridge_config"        // /v2/bridge_config — Tail Bridge URL+token for companions
+        "bridge_config",       // /v2/bridge_config — Tail Bridge URL+token for companions
+        "weights_v3"           // /v3/weights* — weights history, PBs, recent exercises
     )
 
     // ── Column names ─────────────────────────────────────────────────────────
@@ -623,5 +624,192 @@ internal object CompanionReadEndpoints {
     /** Adds one row honouring the caller's projection (unknown columns → null). */
     private fun emit(cursor: MatrixCursor, cols: Array<out String>, row: Map<String, Any?>) {
         cursor.addRow(cols.map { row[it] }.toTypedArray())
+    }
+
+    // ── Protocol v6 extension (Kenga): /v3/weights read endpoints ───────────
+
+    const val COL_DATE = "date"
+    const val COL_MACHINE_WEIGHT_GRAMS = "machine_weight_grams"
+    const val COL_MACHINE_REPS = "machine_reps"
+    const val COL_FREE_WEIGHT_GRAMS = "free_weight_grams"
+    const val COL_FREE_REPS = "free_reps"
+    const val COL_MACHINE_EXERCISE = "machine_exercise"
+    const val COL_FREE_EXERCISE = "free_exercise"
+    const val COL_MACHINE = "machine"
+    const val COL_EXERCISE_NAME = "exercise_name"
+    const val COL_BEST_WEIGHT_GRAMS = "best_weight_grams"
+    const val COL_BEST_WEIGHT_DATE = "best_weight_date"
+    const val COL_BEST_REPS = "best_reps"
+    const val COL_BEST_REPS_DATE = "best_reps_date"
+    const val COL_LAST_WEIGHT_GRAMS = "last_weight_grams"
+    const val COL_LAST_REPS = "last_reps"
+    const val COL_LAST_DATE = "last_date"
+
+    private val WEIGHTS_COLUMNS = arrayOf(
+        COL_HABIT_NAME, COL_DATE,
+        COL_MACHINE_WEIGHT_GRAMS, COL_MACHINE_REPS,
+        COL_FREE_WEIGHT_GRAMS, COL_FREE_REPS,
+        COL_MACHINE_EXERCISE, COL_FREE_EXERCISE
+    )
+
+    private val WEIGHTS_PB_COLUMNS = arrayOf(
+        COL_HABIT_NAME, COL_MACHINE, COL_EXERCISE_NAME,
+        COL_BEST_WEIGHT_GRAMS, COL_BEST_WEIGHT_DATE,
+        COL_BEST_REPS, COL_BEST_REPS_DATE,
+        COL_LAST_WEIGHT_GRAMS, COL_LAST_REPS, COL_LAST_DATE
+    )
+
+    private val WEIGHTS_RECENT_COLUMNS = arrayOf(COL_HABIT_NAME, COL_EXERCISE_NAME)
+
+    /** The four weight-slot series of one weights habit from the habits DB. */
+    private fun loadWeightsSlots(
+        context: Context,
+        settings: AppSettings,
+        habitName: String
+    ): Map<String, Map<String, Int>> {
+        if (settings.fileUri.isBlank()) return emptyMap()
+        val db: HabitsDatabase = runBlocking {
+            try {
+                HabitsRepository().loadDatabase(Uri.parse(settings.fileUri), context)
+            } catch (e: Exception) {
+                Log.w(TAG, "weights: habitsdb load failed: ${e.message}")
+                emptyMap()
+            }
+        }
+        return mapOf(
+            "mw" to (db[com.example.tail.data.secondaryValueKey(habitName)].orEmpty()),
+            "mr" to (db[com.example.tail.data.secondaryValueSlotKey(habitName, 2)].orEmpty()),
+            "fw" to (db[com.example.tail.data.secondaryValueSlotKey(habitName, 3)].orEmpty()),
+            "fr" to (db[com.example.tail.data.secondaryValueSlotKey(habitName, 4)].orEmpty())
+        )
+    }
+
+    /**
+     * `/v3/weights` — rows: [WEIGHTS_COLUMNS]. One row per DAY that carries
+     * any weights data, for every habit in `settings.weightsHabits`. The
+     * weight slots hold the day's heaviest set (max-merge), the reps slots
+     * the day's accumulated reps; the exercise columns come from the
+     * per-day exercise-name sidecar (null when the day was never named).
+     * Oldest first.
+     */
+    fun queryWeightsHistory(context: Context?, settings: AppSettings?, projection: Array<out String>?): Cursor {
+        val cols = projection ?: WEIGHTS_COLUMNS
+        val cursor = MatrixCursor(cols)
+        if (context == null || settings == null || !settings.companionApiEnabled) return cursor
+        val namesByHabit: Map<String, Map<String, Map<String, String>>> = runBlocking {
+            try {
+                com.example.tail.data.WeightsExerciseRepository(context).loadAll()
+            } catch (_: Exception) {
+                emptyMap()
+            }
+        }
+        for (habit in settings.weightsHabits.sorted()) {
+            val slots = loadWeightsSlots(context, settings, habit)
+            val namesByDate = namesByHabit[habit].orEmpty()
+            val dates = slots.values.flatMap { it.keys }.distinct().sorted()
+            for (date in dates) {
+                emit(cursor, cols, mapOf(
+                    COL_HABIT_NAME to habit,
+                    COL_DATE to date,
+                    COL_MACHINE_WEIGHT_GRAMS to (slots.getValue("mw")[date] ?: 0),
+                    COL_MACHINE_REPS to (slots.getValue("mr")[date] ?: 0),
+                    COL_FREE_WEIGHT_GRAMS to (slots.getValue("fw")[date] ?: 0),
+                    COL_FREE_REPS to (slots.getValue("fr")[date] ?: 0),
+                    COL_MACHINE_EXERCISE to namesByDate[date]?.get(
+                        com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE
+                    ),
+                    COL_FREE_EXERCISE to namesByDate[date]?.get(
+                        com.example.tail.data.WeightsExerciseRepository.KEY_FREE
+                    )
+                ))
+            }
+        }
+        return cursor
+    }
+
+    /**
+     * `/v3/weights/pbs` — rows: [WEIGHTS_PB_COLUMNS]. One row per
+     * (habit_name, machine, exercise) discovered from the exercise-name
+     * sidecar, computed with the SAME join `getWeightsExerciseStats` uses:
+     * the weight slot's day values filtered to days whose recorded name
+     * matches the exercise (case-insensitive; un-named days are skipped).
+     * best_weight = heaviest day; best_reps = the day with the most
+     * accumulated reps; last_* = the most recent matching day.
+     */
+    fun queryWeightsPbs(context: Context?, settings: AppSettings?, projection: Array<out String>?): Cursor {
+        val cols = projection ?: WEIGHTS_PB_COLUMNS
+        val cursor = MatrixCursor(cols)
+        if (context == null || settings == null || !settings.companionApiEnabled) return cursor
+        val namesByHabit: Map<String, Map<String, Map<String, String>>> = runBlocking {
+            try {
+                com.example.tail.data.WeightsExerciseRepository(context).loadAll()
+            } catch (_: Exception) {
+                emptyMap()
+            }
+        }
+        for (habit in settings.weightsHabits.sorted()) {
+            val slots = loadWeightsSlots(context, settings, habit)
+            val namesByDate = namesByHabit[habit].orEmpty()
+            for (typeKey in listOf(
+                com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE,
+                com.example.tail.data.WeightsExerciseRepository.KEY_FREE
+            )) {
+                val machine = typeKey == com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE
+                val weightSlot = slots.getValue(if (machine) "mw" else "fw")
+                val repsSlot = slots.getValue(if (machine) "mr" else "fr")
+                // Distinct exercise names ever recorded for this habit/slot.
+                val exercises = namesByDate.values.mapNotNull { it[typeKey] }.distinctBy { it.lowercase() }.sorted()
+                for (exercise in exercises) {
+                    var bestW = 0; var bestWDate: String? = null
+                    var bestR = 0; var bestRDate: String? = null
+                    var lastW = 0; var lastR = 0; var lastDate: String? = null
+                    for ((date, grams) in weightSlot) {
+                        val named = namesByDate[date]?.get(typeKey) ?: continue
+                        if (!named.equals(exercise, ignoreCase = true)) continue
+                        val dayReps = repsSlot[date] ?: 0
+                        if (grams <= 0 && dayReps <= 0) continue
+                        if (lastDate == null || date > lastDate) {
+                            lastW = grams; lastR = dayReps; lastDate = date
+                        }
+                        if (grams > bestW) { bestW = grams; bestWDate = date }
+                        if (dayReps > bestR) { bestR = dayReps; bestRDate = date }
+                    }
+                    if (lastDate == null) continue // never logged under this name
+                    emit(cursor, cols, mapOf(
+                        COL_HABIT_NAME to habit,
+                        COL_MACHINE to if (machine) 1 else 0,
+                        COL_EXERCISE_NAME to exercise,
+                        COL_BEST_WEIGHT_GRAMS to bestW,
+                        COL_BEST_WEIGHT_DATE to bestWDate,
+                        COL_BEST_REPS to bestR,
+                        COL_BEST_REPS_DATE to bestRDate,
+                        COL_LAST_WEIGHT_GRAMS to lastW,
+                        COL_LAST_REPS to lastR,
+                        COL_LAST_DATE to lastDate
+                    ))
+                }
+            }
+        }
+        return cursor
+    }
+
+    /**
+     * `/v3/weights/recent_exercises` — rows: [WEIGHTS_RECENT_COLUMNS]. The
+     * `weightsRecentExercises` quick-choice list of every habit (most
+     * recent first), exactly as the in-app weights dialog shows it.
+     */
+    fun queryWeightsRecentExercises(settings: AppSettings?, projection: Array<out String>?): Cursor {
+        val cols = projection ?: WEIGHTS_RECENT_COLUMNS
+        val cursor = MatrixCursor(cols)
+        if (settings == null || !settings.companionApiEnabled) return cursor
+        for ((habit, exercises) in settings.weightsRecentExercises.toSortedMap()) {
+            for (exercise in exercises) {
+                emit(cursor, cols, mapOf(
+                    COL_HABIT_NAME to habit,
+                    COL_EXERCISE_NAME to exercise
+                ))
+            }
+        }
+        return cursor
     }
 }

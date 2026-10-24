@@ -2047,6 +2047,13 @@ class FloatingBubbleService : Service() {
         val past = ChessReadinessV3Store.loadResults(this).map { it.puzzlesPassed }
         survivalPctTarget = ChessReadinessV3Engine.percentileTarget(past)
         survivalPassAt = ChessReadinessV3Engine.effectivePassTarget(survivalTarget, past)
+        // V4-armed gates use the FULL target as the pass bar — no
+        // percentile discount (user rule 2026-10-24: 5 easy puzzles proved
+        // meaningless, so the battery is longer AND the bar is strict:
+        // every puzzle, zero strikes).
+        if (ChessReadinessV4Store.loadPending(this) != null) {
+            survivalPassAt = survivalTarget
+        }
         showSurvivalPanel(armed = false)
     }
 

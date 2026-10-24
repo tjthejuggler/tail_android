@@ -105,7 +105,9 @@ object ChessReadinessStore {
                     // SPECIAL GREEN provenance — absent on legacy records.
                     specialGreen = o.optBoolean("specialGreen", false),
                     // WEEKLY FREEPLAY provenance — absent on legacy records.
-                    freeplay = o.optBoolean("freeplay", false)
+                    freeplay = o.optBoolean("freeplay", false),
+                    // V4 Green Light provenance — absent on legacy records.
+                    v4 = o.optBoolean("v4", false)
                 )
             }
         } catch (_: Exception) {
@@ -130,6 +132,7 @@ object ChessReadinessStore {
                 it.pRush?.let { v -> put("pRush", v) }
                 if (it.specialGreen) put("specialGreen", true)
                 if (it.freeplay) put("freeplay", true)
+                if (it.v4) put("v4", true)
             })
         }
         prefs(context).edit().putString(KEY_HISTORY, arr.toString()).apply()
