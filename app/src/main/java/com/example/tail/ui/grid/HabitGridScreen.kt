@@ -1697,6 +1697,7 @@ fun HabitGridScreen(
                         pillLogHabits = settings.pillLogHabits,
                         episodeHabits = settings.episodeHabits,
                         sickEpisodeHabits = settings.sickEpisodeHabits,
+                        comboInputHabits = settings.comboInputHabits,
                         bridgeMovieHabits = if (settings.bridgeEnabled) settings.bridgeMovieHabits else emptySet(),
                         chessComHabitLinks = settings.chessComHabitLinks,
                         habitLongPressActions = settings.habitLongPressActions,
@@ -4108,6 +4109,8 @@ internal fun HabitGrid(
     episodeHabits: Set<String> = emptySet(),
     /** Illness-episode habits (Sick variant, 🤒 corner badge). */
     sickEpisodeHabits: Set<String> = emptySet(),
+    /** Habits marked as the "⚡ Combo input" type (batch-input launchers). */
+    comboInputHabits: Set<String> = emptySet(),
     /** Movie-bridge-linked habits (auto-filled from the tail_bridge watcher). */
     bridgeMovieHabits: Set<String> = emptySet(),
     /** Map of habit name → chess.com time control for chess.com-linked habits. */
@@ -4254,6 +4257,7 @@ internal fun HabitGrid(
                             habit.name in habitAppAssociations,
                         hasLongPressUrl = effectiveAction == com.example.tail.data.LONG_PRESS_URL,
                         specialBadge = specialBadge,
+                        isComboInput = habit.name in comboInputHabits,
                         shimmerAlpha = cellShimmer
                     )
                 }

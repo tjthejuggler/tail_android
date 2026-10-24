@@ -147,6 +147,13 @@ fun HabitButton(
     hasLongPressUrl: Boolean = false,
     /** Tiny corner icon identifying a special (integration-linked) habit. */
     specialBadge: HabitSpecialBadge? = null,
+    /**
+     * True when this cell is a "⚡ Combo input" launcher habit — a pure
+     * input convenience, not a tracked habit. Such tiles hide their streak
+     * numbers (meaningless for an untracked habit) and show a small ⚡
+     * badge identifying the combo type.
+     */
+    isComboInput: Boolean = false,
     /** True while this habit should pulse (e.g. jumped to from global search). */
     isHighlighted: Boolean = false,
     /**
@@ -388,17 +395,21 @@ fun HabitButton(
                 }
             )
     ) {
-        // Top-left: all-time high day (formatted for Garmin distance habits)
-        Text(
-            text = highDayText,
-            color = Color.White,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            style = tightTextStyle,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 1.dp, top = 0.dp)
-        )
+        // Top-left: all-time high day (formatted for Garmin distance habits).
+        // Suppressed on combo-input tiles — the habit is untracked, so the
+        // number is always a meaningless 0.
+        if (!isComboInput) {
+            Text(
+                text = highDayText,
+                color = Color.White,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 1.dp, top = 0.dp)
+            )
+        }
 
         // Top-right corner stack: disabled mark / mode indicator / long-press arrow,
         // with the special-habit badge (if any) rendered directly beneath.
@@ -481,6 +492,16 @@ fun HabitButton(
                 )
                 null -> {}
             }
+            // Combo-input launcher marker: small ⚡ beneath the badge stack
+            if (isComboInput) {
+                Text(
+                    text = "⚡",
+                    color = Color(0xFFFFE066),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    style = tightTextStyle
+                )
+            }
             // Inverted-binary type marker: small ⊘ beneath the badge stack
             if (habit.invertedBinary) {
                 Text(
@@ -539,29 +560,33 @@ fun HabitButton(
             )
         }
 
-        // Bottom-left: streak/antistreak
-        Text(
-            text = streakText,
-            color = if (habit.currentStreak >= 0) Color(0xFF80FF80) else Color(0xFFFF8080),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            style = tightTextStyle,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 1.dp, bottom = 0.dp)
-        )
+        // Streak numbers are meaningless for a combo-input launcher (it is
+        // never tracked), so they are suppressed on its tile.
+        if (!isComboInput) {
+            // Bottom-left: streak/antistreak
+            Text(
+                text = streakText,
+                color = if (habit.currentStreak >= 0) Color(0xFF80FF80) else Color(0xFFFF8080),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 1.dp, bottom = 0.dp)
+            )
 
-        // Bottom-right: longest streak
-        Text(
-            text = habit.longestStreak.toString(),
-            color = Color(0xFFADD8E6),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            style = tightTextStyle,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 1.dp, bottom = 0.dp)
-        )
+            // Bottom-right: longest streak
+            Text(
+                text = habit.longestStreak.toString(),
+                color = Color(0xFFADD8E6),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                style = tightTextStyle,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 1.dp, bottom = 0.dp)
+            )
+        }
     }
 }
 
