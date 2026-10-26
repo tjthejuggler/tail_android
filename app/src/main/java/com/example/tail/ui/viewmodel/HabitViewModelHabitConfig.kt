@@ -160,6 +160,27 @@ internal fun HabitViewModel.customRangePointsForInput(habitName: String, rawValu
 }
 
 /**
+ * Writes the RAW ("true") value of a custom-point-range habit into its
+ * `secondary_value:<habitName>` slot on [dateStr], returning the updated DB.
+ * The primary key keeps only the computed points tier; the true value is
+ * preserved in the secondary slot (same storage contract as divide-by habits),
+ * so toggling ranges off can always restore the original history.
+ */
+internal fun HabitViewModel.writeCustomRangeTrueValue(
+    db: Map<String, Map<String, Int>>,
+    habitName: String,
+    dateStr: String,
+    trueValue: Int
+): Map<String, Map<String, Int>> {
+    val secKey = com.example.tail.data.secondaryValueKey(habitName)
+    val secEntries = db[secKey]?.toMutableMap() ?: mutableMapOf()
+    secEntries[dateStr] = trueValue
+    val updated = db.toMutableMap()
+    updated[secKey] = secEntries.toSortedMap()
+    return updated
+}
+
+/**
  * Sets the count for [habitName] on the currently selected date to an absolute [newCount].
  * [newCount] is the raw value to store. Clamps to >= 0. Persists to the DB file.
  * For habits with custom point ranges enabled, [newCount] is treated as the raw input
@@ -289,6 +310,12 @@ fun HabitViewModel.setHabitCountForDate(habitName: String, newCount: Int, date: 
         updatedDb = updatedDb.toMutableMap()
         updatedDb[habitName] = habitEntries
     }
+
+    // Custom point ranges: also persist the RAW input as the day's true value
+    // in the secondary slot (the points tier stays in the primary key).
+    updatedDb = if (rangePoints != null) {
+        writeCustomRangeTrueValue(updatedDb, habitName, dateStr, clamped)
+    } else updatedDb
 
     cachedPhoneDb = updatedDb
 
@@ -477,6 +504,12 @@ fun HabitViewModel.setHabitCountWithRollForward(
         updatedDb[habitName] = habitEntries
     }
     
+    // Custom point ranges: also persist the RAW input as the day's true value
+    // in the secondary slot (the points tier stays in the primary key).
+    updatedDb = if (rangePoints != null) {
+        writeCustomRangeTrueValue(updatedDb, habitName, dateStr, clamped)
+    } else updatedDb
+
     cachedPhoneDb = updatedDb
 
     // Step 3: full rebuild + disk write in background
@@ -2496,6 +2529,12 @@ fun HabitViewModel.toggleTimelineExcluded(habitName: String) {
  * Toggles custom point ranges on/off for [habitName].
  * When enabled, the habit's points are calculated based on which range
  * the "true value" or "garmin value" falls into.
+ *
+ * NON-DESTRUCTIVE model (mirrors the divide-by contract): enabling ranges also
+ * enables the Secondary Value feature, so the habit gets a "true value" input
+ * alongside its points. The true values are preserved under
+ * `secondary_value:<habitName>`; the primary key stores only the points tier.
+ * Disabling ranges restores the true values back into the primary key.
  */
 fun HabitViewModel.toggleCustomPointRanges(habitName: String) {
     val current = _settings.value.customPointRangesHabits.toMutableSet()
@@ -2510,6 +2549,7 @@ fun HabitViewModel.toggleCustomPointRanges(habitName: String) {
         viewModelScope.launch {
             settingsRepo.saveCustomPointRangesHabits(current)
             settingsRepo.saveCustomPointRanges(ranges)
+            restoreHabitTrueValuesFromSecondary(habitName)
         }
     } else {
         current.add(habitName)
@@ -2517,13 +2557,20 @@ fun HabitViewModel.toggleCustomPointRanges(habitName: String) {
         if (habitName !in ranges) {
             ranges[habitName] = List(7) { com.example.tail.data.PointRange() }
         }
+        // Auto-enable Secondary Value so the habit gets a true-value input,
+        // exactly like divide-by habits (the UI gate is secondaryValueHabits).
+        val secValHabits = _settings.value.secondaryValueHabits.toMutableSet()
+        val secValChanged = habitName !in secValHabits
+        if (secValChanged) secValHabits.add(habitName)
         _settings.value = _settings.value.copy(
             customPointRangesHabits = current,
-            customPointRanges = ranges
+            customPointRanges = ranges,
+            secondaryValueHabits = secValHabits
         )
         viewModelScope.launch {
             settingsRepo.saveCustomPointRangesHabits(current)
             settingsRepo.saveCustomPointRanges(ranges)
+            if (secValChanged) settingsRepo.saveSecondaryValueHabits(secValHabits)
             recalculateHabitPointsForCustomRanges(habitName)
         }
     }
@@ -2559,12 +2606,30 @@ fun HabitViewModel.setCustomPointRanges(habitName: String, ranges: List<com.exam
 /**
  * Recalculates all historical entries for [habitName] based on custom point ranges.
  * This is called when custom point ranges are enabled or modified.
+ *
+ * NON-DESTRUCTIVE: the true value source is (in priority order)
+ * 1. the `secondary_value:<habitName>` slot (the canonical true-value store),
+ * 2. the cached Garmin monthly data for Garmin-linked habits,
+ * 3. the primary key itself (first-time migration: the pre-ranges history IS
+ *    the true history).
+ * The true values are always (re)written to the secondary slot before the
+ * primary key is replaced with the computed points tier, so no information is
+ * ever lost.
  */
 
 
 /**
  * Recalculates all historical entries for [habitName] based on custom point ranges.
  * This is called when custom point ranges are enabled or modified.
+ *
+ * NON-DESTRUCTIVE: the true value source is (in priority order)
+ * 1. the `secondary_value:<habitName>` slot (the canonical true-value store),
+ * 2. the cached Garmin monthly data for Garmin-linked habits,
+ * 3. the primary key itself (first-time migration: the pre-ranges history IS
+ *    the true history).
+ * The true values are always (re)written to the secondary slot before the
+ * primary key is replaced with the computed points tier, so no information is
+ * ever lost.
  */
 internal suspend fun HabitViewModel.recalculateHabitPointsForCustomRanges(habitName: String) {
     val settings = _settings.value
@@ -2584,25 +2649,29 @@ internal suspend fun HabitViewModel.recalculateHabitPointsForCustomRanges(habitN
     val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
     if (habitEntries.isEmpty()) return
 
+    val secKey = com.example.tail.data.secondaryValueKey(habitName)
+    val secEntries = db[secKey]?.toMutableMap() ?: mutableMapOf()
     val isGarminLinked = habitName in settings.garminHabitLinks
-    val isDivider = (settings.habitDividers[habitName] ?: 1) > 1
 
     for ((dateStr, rawCount) in habitEntries) {
         val trueValue: Int = when {
+            secEntries.isNotEmpty() && secEntries.containsKey(dateStr) -> secEntries[dateStr]!!
             isGarminLinked -> {
                 val garminType = com.example.tail.data.health.GarminType.fromKey(settings.garminHabitLinks[habitName]!!)
                 val monthlyData = _garminMonthlyData.value[garminType]
                 monthlyData?.get(dateStr) ?: rawCount
             }
-            isDivider -> rawCount
             else -> rawCount
         }
 
-        val newPoints = com.example.tail.data.calculatePointsFromRanges(trueValue, ranges)
-        habitEntries[dateStr] = newPoints
+        // Preserve the true value in the secondary slot…
+        secEntries[dateStr] = trueValue
+        // …and store only the points tier in the primary key.
+        habitEntries[dateStr] = com.example.tail.data.calculatePointsFromRanges(trueValue, ranges)
     }
 
     db[habitName] = habitEntries.toSortedMap()
+    db[secKey] = secEntries.toSortedMap()
 
     habitsRepo.saveDatabase(
         android.net.Uri.parse(uri),
@@ -2611,6 +2680,56 @@ internal suspend fun HabitViewModel.recalculateHabitPointsForCustomRanges(habitN
     )
 
     cachedPhoneDb = db
+    rebuildHabitList()
+}
+
+/**
+ * Restores a habit's primary history from its `secondary_value:<habitName>`
+ * slot after custom point ranges are disabled. The secondary slot is then
+ * removed (its data was duplicated back into the primary key), and the
+ * auto-enabled Secondary Value membership is dropped. No-op when no secondary
+ * slot exists.
+ */
+internal suspend fun HabitViewModel.restoreHabitTrueValuesFromSecondary(habitName: String) {
+    val uri = _settings.value.fileUri
+    if (uri.isEmpty()) return
+
+    val loadResult = habitsRepo.loadDatabaseResult(
+        android.net.Uri.parse(uri),
+        context
+    )
+    if (loadResult !is com.example.tail.data.HabitsLoadResult.Success) return
+
+    val db = loadResult.db.toMutableMap()
+    val secKey = com.example.tail.data.secondaryValueKey(habitName)
+    val secEntries = db[secKey] ?: return
+
+    val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
+    for ((dateStr, trueValue) in secEntries) {
+        habitEntries[dateStr] = trueValue
+    }
+    db[habitName] = habitEntries.toSortedMap()
+    db.remove(secKey)
+
+    habitsRepo.saveDatabase(
+        android.net.Uri.parse(uri),
+        context,
+        db
+    )
+
+    cachedPhoneDb = db
+
+    // Drop the Secondary Value membership that was auto-enabled with the
+    // ranges toggle — but only if the secondary slot we just consumed was the
+    // one we created (i.e. it existed). Leave it when the user enabled
+    // Secondary Value independently (no slot consumed → early return above).
+    val secValHabits = _settings.value.secondaryValueHabits.toMutableSet()
+    if (habitName in secValHabits) {
+        secValHabits.remove(habitName)
+        settingsRepo.saveSecondaryValueHabits(secValHabits)
+        _settings.value = _settings.value.copy(secondaryValueHabits = secValHabits)
+    }
+
     rebuildHabitList()
 }
 

@@ -4354,7 +4354,12 @@ class HabitViewModel(
     val chessAnalysisTestStatus: kotlinx.coroutines.flow.StateFlow<String> =
         _chessAnalysisTestStatus
 
-    val locationDataVersion: Int
+    /**
+     * Observable location-store version. Collect as state (collectAsState)
+     * so any label/coords/secondary change recomposes dependents — a plain
+     * Int getter here was read once per composition and never updated.
+     */
+    val locationDataVersion: kotlinx.coroutines.flow.StateFlow<Long>
         get() = locationRepo.dataVersion
 
     // ── Secondary locations ─────────────────────────────────────────────────

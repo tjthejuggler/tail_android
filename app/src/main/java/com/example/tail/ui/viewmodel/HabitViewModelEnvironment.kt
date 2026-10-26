@@ -242,18 +242,43 @@ internal suspend fun HabitViewModel.syncEnvironmentHabits(
             continue
         }
         val habitData = mutableDb[habitName]!!.toMutableMap()
+        // Custom point ranges: the primary key holds the points tier and the
+        // RAW metric value lives in the secondary slot (same contract as
+        // manual entry — see recalculateHabitPointsForCustomRanges).
+        val secKey = com.example.tail.data.secondaryValueKey(habitName)
+        val usesRanges = habitName in s.customPointRangesHabits
+        val ranges = s.customPointRanges[habitName]
+        var secData: MutableMap<String, Int>? = null
+        if (usesRanges && ranges != null) {
+            secData = mutableDb[secKey]?.toMutableMap() ?: mutableMapOf()
+        }
 
         for ((dateStr, snap) in snapshotsByDate) {
             // Stored value = metric ×10 in the configured unit (215 = 21.5 °C);
             // decimals preserved for graphs, rounded only at display sites.
             val newValue = metric.scaledValue(snap, useFahrenheit)
                 ?: continue // no data → leave the day untouched
-            if (habitData[dateStr] != newValue) {
+            if (secData != null) {
+                // Preserve the raw metric value in the secondary slot…
+                if (secData[dateStr] != newValue) {
+                    secData[dateStr] = newValue
+                    dbChanged = true
+                }
+                // …and store only the points tier in the primary key.
+                val tier = com.example.tail.data.calculatePointsFromRanges(newValue, ranges!!)
+                if (habitData[dateStr] != tier) {
+                    habitData[dateStr] = tier
+                    dbChanged = true
+                }
+            } else if (habitData[dateStr] != newValue) {
                 habitData[dateStr] = newValue
                 dbChanged = true
             }
         }
         mutableDb[habitName] = habitData
+        if (secData != null && secData.isNotEmpty()) {
+            mutableDb[secKey] = secData.toSortedMap()
+        }
     }
 
     if (dbChanged) {

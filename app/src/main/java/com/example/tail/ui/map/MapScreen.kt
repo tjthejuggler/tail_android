@@ -277,7 +277,7 @@ fun MapScreen(
     var dotColorsByDate by remember { mutableStateOf<Map<LocalDate, Color?>>(emptyMap()) }
     // Secondary locations per date — logged each time the app is opened.
     var secondaryByDate by remember { mutableStateOf<Map<LocalDate, List<SecondaryLocation>>>(emptyMap()) }
-    val locationVersion = viewModel.locationDataVersion
+    val locationVersion by viewModel.locationDataVersion.collectAsState()
     LaunchedEffect(locationVersion, settings.mapMainHabit, settings.mapHideZeroDays) {
         val (coords, countries, colors, secondaries) = withContext(Dispatchers.Default) {
             // Single SharedPrefs read + single JSON parse → O(N) instead of

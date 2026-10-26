@@ -28,6 +28,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -140,7 +141,7 @@ fun MapStatsScreen(
     var popup by remember { mutableStateOf<PeriodPopup?>(null) }
     var selectedChart by remember { mutableStateOf<String?>(null) }
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
-    val locationVersion = viewModel.locationDataVersion
+    val locationVersion by viewModel.locationDataVersion.collectAsState()
 
     LaunchedEffect(locationVersion) {
         stats = withContext(Dispatchers.Default) {

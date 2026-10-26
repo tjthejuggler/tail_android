@@ -265,10 +265,14 @@ class LocationRepository(private val context: Context) {
      * Monotonically increasing counter, bumped each time a location label or
      * coords entry is added/changed. Lets observers (e.g. the map screen
      * cache) cheaply detect "data changed since I built my cache".
+     *
+     * Exposed as a [kotlinx.coroutines.flow.MutableStateFlow] (same pattern
+     * as HabitTimestampRepository.dataVersion) so Compose screens can
+     * collectAsState() it — a plain Int read once during composition never
+     * triggered recomposition, which made secondary-location removals in the
+     * day-locations dialog look like they did nothing.
      */
-    @Volatile
-    var dataVersion: Int = 0
-        private set
+    val dataVersion = kotlinx.coroutines.flow.MutableStateFlow(0L)
 
     /**
      * Fetches today's location if it hasn't been recorded yet.
@@ -640,7 +644,7 @@ class LocationRepository(private val context: Context) {
         val set = loadIgnoredCountries().toMutableSet()
         if (set.add(name.trim())) {
             saveIgnoredCountries(set)
-            dataVersion++
+            dataVersion.value++
         }
     }
 
@@ -649,7 +653,7 @@ class LocationRepository(private val context: Context) {
         val set = loadIgnoredCountries().toMutableSet()
         if (set.remove(name.trim())) {
             saveIgnoredCountries(set)
-            dataVersion++
+            dataVersion.value++
         }
     }
 
@@ -891,7 +895,7 @@ class LocationRepository(private val context: Context) {
         val obj = JSONObject(map as Map<*, *>)
         prefs.edit().putString(KEY_LOCATIONS, obj.toString()).apply()
         cachedLocationMap = map
-        dataVersion++
+        dataVersion.value++
         Log.d(TAG, "Saved location for $date: $label")
     }
 
@@ -927,7 +931,7 @@ class LocationRepository(private val context: Context) {
         val obj = JSONObject(map as Map<*, *>)
         prefs.edit().putString(KEY_COORDS, obj.toString()).apply()
         cachedCoordsMap = map
-        dataVersion++
+        dataVersion.value++
         Log.d(TAG, "Saved coords for $date: $lat, $lon")
     }
 
@@ -937,7 +941,7 @@ class LocationRepository(private val context: Context) {
             val obj = JSONObject(map as Map<*, *>)
             prefs.edit().putString(KEY_LOCATIONS, obj.toString()).apply()
             cachedLocationMap = map
-            dataVersion++
+            dataVersion.value++
             Log.d(TAG, "Removed location for $date")
         }
     }
@@ -948,7 +952,7 @@ class LocationRepository(private val context: Context) {
             val obj = JSONObject(map as Map<*, *>)
             prefs.edit().putString(KEY_COORDS, obj.toString()).apply()
             cachedCoordsMap = map
-            dataVersion++
+            dataVersion.value++
             Log.d(TAG, "Removed coords for $date")
         }
     }
@@ -1046,7 +1050,7 @@ class LocationRepository(private val context: Context) {
         map[today.toString()] = combined.toString()
         prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
         cachedSecondaryMap = map
-        dataVersion++
+        dataVersion.value++
         Log.d(TAG, "Logged secondary location for $today: $label ($lat, $lon) at ${timeMinutes}min")
     }
 
@@ -1128,7 +1132,7 @@ class LocationRepository(private val context: Context) {
         map[date.toString()] = combined.toString()
         prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
         cachedSecondaryMap = map
-        dataVersion++
+        dataVersion.value++
         Log.d(TAG, "Added manual secondary location for $date: $label (${coords.first}, ${coords.second}) at ${timeMinutes}min")
         return label
     }
@@ -1150,7 +1154,7 @@ class LocationRepository(private val context: Context) {
         }
         prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
         cachedSecondaryMap = map
-        dataVersion++
+        dataVersion.value++
         Log.d(TAG, "Removed secondary location #$index for $date")
     }
 
@@ -1169,7 +1173,7 @@ class LocationRepository(private val context: Context) {
         map[date.toString()] = arr.toString()
         prefs.edit().putString(KEY_SECONDARY_LOCATIONS, JSONObject(map as Map<*, *>).toString()).apply()
         cachedSecondaryMap = map
-        dataVersion++
+        dataVersion.value++
         Log.d(TAG, "Updated secondary location #$index time to ${newTimeMinutes}min for $date")
     }
 

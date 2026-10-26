@@ -911,8 +911,12 @@ fun HabitViewModel.incrementHabit(
     if (rangePoints != null) {
         newCount = rangePoints
         dbDelta = newCount - currentStored
-        // If the tier didn't actually change, bail out early
-        if (dbDelta == 0) return
+        // If the tier didn't actually change, bail out early — unless the raw
+        // true value itself changed (it still goes to the secondary slot).
+        if (dbDelta == 0) {
+            val currentSec = cachedPhoneDb[com.example.tail.data.secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+            if (currentSec == amount) return
+        }
     } else {
         val rawNewCount = currentStored + amount
         // If this habit has the "1 max" cap, clamp to 1
@@ -950,6 +954,12 @@ fun HabitViewModel.incrementHabit(
     } else null
     
     var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, dbDelta, targetDate)
+
+    // Custom point ranges: the entered amount is the day's RAW true value —
+    // persist it into the secondary slot alongside the points tier.
+    if (rangePoints != null) {
+        updatedDb = writeCustomRangeTrueValue(updatedDb, habitName, dateStr, amount)
+    }
     
     // Step 2b: Track this date as manually set for roll forward habits
     if (habitName in _settings.value.rollForwardHabits) {
@@ -1275,7 +1285,12 @@ fun HabitViewModel.incrementHabitWithRollForward(
     if (rangePoints != null) {
         newCount = rangePoints
         dbDelta = newCount - currentStored
-        if (dbDelta == 0) return
+        // If the tier didn't change, bail out early — unless the raw true
+        // value itself changed (it still goes to the secondary slot).
+        if (dbDelta == 0) {
+            val currentSec = cachedPhoneDb[com.example.tail.data.secondaryValueKey(habitName)]?.get(dateStr) ?: 0
+            if (currentSec == amount) return
+        }
     } else {
         val rawNewCount = currentStored + amount
         newCount = if (habitName in _settings.value.maxOneHabits) rawNewCount.coerceAtMost(1) else rawNewCount
@@ -1299,6 +1314,12 @@ fun HabitViewModel.incrementHabitWithRollForward(
 
     // Step 2: update in-memory cache
     var updatedDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, dbDelta, _selectedDate.value)
+
+    // Custom point ranges: the entered amount is the day's RAW true value —
+    // persist it into the secondary slot alongside the points tier.
+    if (rangePoints != null) {
+        updatedDb = writeCustomRangeTrueValue(updatedDb, habitName, dateStr, amount)
+    }
     
     // Step 2b: Track this date as manually set for roll forward habits
     if (habitName in _settings.value.rollForwardHabits) {

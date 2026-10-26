@@ -874,6 +874,23 @@ fun HabitGridScreen(
         }
     }
 
+    // Returning from the world-map screen (which hides the system bars for
+    // immersive mode) can leave the window's insets in their hidden state —
+    // the whole grid then laid out shifted up under the status bar. Force
+    // the bars visible every time this screen (re)enters composition so the
+    // status-bar insets are reported again and the date selector sits below
+    // the system bar as usual. Idempotent when bars are already shown.
+    DisposableEffect(Unit) {
+        val window = activity?.window
+        val insetsController = window?.let {
+            androidx.core.view.WindowInsetsControllerCompat(it, it.decorView)
+        }
+        insetsController?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        insetsController?.systemBarsBehavior =
+            androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+        onDispose { }
+    }
+
     // Schedule timeline refresh counter — bumped when the timestamp editor
     // (opened from a schedule event) closes, so the timeline reloads.
     var scheduleRefresh by remember { mutableIntStateOf(0) }
@@ -1410,6 +1427,15 @@ fun HabitGridScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(16.dp)
+                    // The whole strip is the touch target. The clickable used
+                    // to live on the Text itself, which is offset -10dp up
+                    // out of this 16dp band (its hit area mostly sat under
+                    // the TopAppBar, which stole the taps) — that's why the
+                    // popup often needed several clicks to open.
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { showLocationEditDialog = true }
                     // ghostGlassSquares keeps the background lattice visible
                     // through the strip (matches the top bar / tab row panels)
                     // instead of showing the Scaffold's plain black container.
@@ -1448,10 +1474,6 @@ fun HabitGridScreen(
                         // Nudge the glyphs up into the gap so the visual text
                         // clears the tab row below.
                         .offset(y = (-10).dp)
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) { showLocationEditDialog = true }
                         .padding(horizontal = 4.dp)
                 )
             }
