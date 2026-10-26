@@ -1630,11 +1630,32 @@ fun HabitGridScreen(
                             if (scheduleDetailsBlock == block) {
                                 val from = block.firstTime
                                 val to = block.lastTime
-                                scheduleDetailsTexts = entries
-                                    .filter { (fullTs, text) ->
-                                        text.isNotBlank() && fullTs.takeLast(8) in from..to
+                                // Blank-filtered day entries, sorted by key.
+                                val day = entries
+                                    .filter { it.second.isNotBlank() }
+                                    .sortedBy { it.first }
+                                val seed = day.filter { (fullTs, _) ->
+                                    fullTs.takeLast(8) in from..to
+                                }
+                                val texts = seed.map { it.second }.toMutableList()
+                                // Multi-line submissions (e.g. a pill-log dose)
+                                // store each line as its OWN entry, offset +1s
+                                // past the single increment stamp the block is
+                                // keyed on — pull in that consecutive run so
+                                // every pill of the dose is listed, not just
+                                // the first line.
+                                if (seed.isNotEmpty()) {
+                                    val tsFmt = java.time.format.DateTimeFormatter
+                                        .ofPattern("yyyy-MM-dd HH:mm:ss")
+                                    val byKey = day.associateBy { it.first }
+                                    var cursor = java.time.LocalDateTime
+                                        .parse(seed.last().first, tsFmt)
+                                    while (true) {
+                                        cursor = cursor.plusSeconds(1)
+                                        texts += byKey[cursor.format(tsFmt)]?.second ?: break
                                     }
-                                    .map { it.second }
+                                }
+                                scheduleDetailsTexts = texts
                             }
                         }
                     },
