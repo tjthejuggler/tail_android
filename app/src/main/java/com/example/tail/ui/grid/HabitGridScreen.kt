@@ -1210,6 +1210,7 @@ fun HabitGridScreen(
     ) {
     Scaffold(
         topBar = {
+            Box {
             // NOTE: the offset must live on the title/actions CONTENT, never on
             // the TopAppBar modifier itself — ghostGlassSquares panels must not
             // shift, or the neighbouring panels' lattice tiling overlaps/gaps
@@ -1400,6 +1401,28 @@ fun HabitGridScreen(
                     }
                 }
             )
+            // ── Location-strip hit band ──────────────────────────────────────
+            // The location label's glyphs are nudged -10dp up OUT of the 16dp
+            // strip below, so they visually paint across the bottom edge of
+            // this top bar. Taps aimed at the visible text therefore landed
+            // on the (non-clickable) TopAppBar and did nothing — the popup
+            // only opened when a tap happened to hit the tiny strip itself.
+            // This invisible band overlays the bottom of the top bar and
+            // opens the same dialog, so the whole area where the label
+            // appears (and then some) is a reliable touch target. The action
+            // icons sit above this band (their row is offset -12dp), so
+            // their taps are unaffected.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(30.dp)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { showLocationEditDialog = true }
+            )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
