@@ -115,4 +115,41 @@ class TextOptionScorerTest {
         val order = TextOptionScorer.orderOptions(log, LocalTime.of(8, 0), today)
         assertEquals(listOf("Iron\nB12", "Iron"), order)
     }
+
+    @Test
+    fun `pill-tuned scoring ranks a recent few-day regimen above a long-retired one`() {
+        val log = buildMap {
+            // Current regimen: last 5 mornings, ~07:30.
+            for (d in 1..5L) put(ts(d, 7, 30), "New regimen")
+            // Retired regimen: 70 mornings long ago.
+            for (d in 20..89L) put(ts(d, 7, 45), "Old regimen")
+        }
+        val order = TextOptionScorer.orderOptions(
+            log, LocalTime.of(7, 40), today,
+            halfLifeDays = 4.0, floorWeight = 0.02, timeWindowMinutes = 210
+        )
+        assertEquals("New regimen", order.first())
+        // The old regimen is NOT discredited out of the list.
+        assert(order.contains("Old regimen"))
+    }
+
+    @Test
+    fun `pill-tuned scoring uses rough time-of-day period not exact times`() {
+        val log = buildMap {
+            // Same period (morning) but very different exact times.
+            for (d in 1..4L) put(ts(d, 5, 50), "Morning regimen")
+            // Equally recent, but a different period.
+            for (d in 1..4L) put(ts(d, 22, 0), "Night regimen")
+        }
+        val morning = TextOptionScorer.orderOptions(
+            log, LocalTime.of(9, 0), today,
+            halfLifeDays = 4.0, floorWeight = 0.02, timeWindowMinutes = 210
+        )
+        assertEquals("Morning regimen", morning.first())
+        val night = TextOptionScorer.orderOptions(
+            log, LocalTime.of(23, 0), today,
+            halfLifeDays = 4.0, floorWeight = 0.02, timeWindowMinutes = 210
+        )
+        assertEquals("Night regimen", night.first())
+    }
 }

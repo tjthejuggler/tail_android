@@ -127,8 +127,12 @@ data class PillSuggestion(
 /**
  * Most-likely-next suggestions for the pill dialog: the habit's past log
  * entries (single lines AND multi-line groupings taken together) ranked by
- * the shared TextOptionScorer — recency-weighted frequency plus time-of-day
- * affinity — exactly like the old text-input options picker.
+ * the shared TextOptionScorer with PILL-TUNED parameters:
+ *  - a short (~4-day) recency half-life so the regimen actually taken over
+ *    the last few days dominates a months-old one;
+ *  - a small floor weight so long-retired groupings stay listed, just ranked low;
+ *  - a wide (~3.5 h) circular time-of-day window so "rough period of the
+ *    day" (e.g. mornings) — not exact clock times — drives the affinity boost.
  */
 fun HabitViewModel.loadPillSuggestions(
     habitName: String,
@@ -138,7 +142,12 @@ fun HabitViewModel.loadPillSuggestions(
         val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         val log = textInputRepo.loadTextLog(uri, context, habitName)
         val suggestions = com.example.tail.data.TextOptionScorer
-            .orderOptions(log, java.time.LocalTime.now())
+            .orderOptions(
+                log, java.time.LocalTime.now(),
+                halfLifeDays = PILL_HALF_LIFE_DAYS,
+                floorWeight = PILL_FLOOR_WEIGHT,
+                timeWindowMinutes = PILL_TIME_WINDOW_MINUTES
+            )
             .take(8)
             .map { option ->
                 val counts = LinkedHashMap<String, Int>()
@@ -153,6 +162,15 @@ fun HabitViewModel.loadPillSuggestions(
         onResult(suggestions)
     }
 }
+
+/** Pill-specific recency decay: regimen from the last few days dominates. */
+private const val PILL_HALF_LIFE_DAYS = 4.0
+
+/** Small constant mass for pre-history groupings: listed, never on top. */
+private const val PILL_FLOOR_WEIGHT = 0.02
+
+/** Rough-period time-of-day window half-width (±3.5 h, circular). */
+private const val PILL_TIME_WINDOW_MINUTES = 210
 
 /** Adds a new pill to the persisted catalog (user catalog wins over defaults). */
 fun HabitViewModel.addPillToCatalog(name: String, description: String, onDone: () -> Unit = {}) {

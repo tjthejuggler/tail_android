@@ -698,10 +698,24 @@ object TextOptionScorer {
      * Orders the log's unique values most-likely-first for the given [now]
      * clock time. [today] is injectable for tests. Malformed timestamp keys
      * are skipped; an empty log yields an empty list.
+     *
+     * [halfLifeDays], [floorWeight] and [timeWindowMinutes] tune the scoring:
+     * a shorter half-life makes RECENT usage dominate the frequency term
+     * (e.g. pill suggestions, where the current few-day regimen should beat a
+     * months-old one), while [floorWeight] keeps older options alive with a
+     * small constant mass so they stay listed but ranked low. A wider
+     * [timeWindowMinutes] treats time-of-day affinity as a rough period match
+     * rather than a tight window.
      */
-    fun orderOptions(log: Map<String, String>, now: LocalTime, today: LocalDate = LocalDate.now()): List<String> {
+    fun orderOptions(
+        log: Map<String, String>,
+        now: LocalTime,
+        today: LocalDate = LocalDate.now(),
+        halfLifeDays: Double = HALF_LIFE_DAYS,
+        floorWeight: Double = Math.exp(-HISTORY_DAYS / HALF_LIFE_DAYS),
+        timeWindowMinutes: Int = TIME_WINDOW_MINUTES
+    ): List<String> {
         val nowMinutes = now.hour * 60 + now.minute
-        val floorWeight = Math.exp(-HISTORY_DAYS / HALF_LIFE_DAYS)
 
         data class Occ(val minutesOfDay: Int, val weight: Double)
 
@@ -712,7 +726,7 @@ object TextOptionScorer {
             val daysAgo = java.time.temporal.ChronoUnit.DAYS.between(dt.toLocalDate(), today)
             if (daysAgo < 0) continue // future keys are ignored
             val weight = if (daysAgo > HISTORY_DAYS) floorWeight
-            else Math.exp(-daysAgo / HALF_LIFE_DAYS)
+            else maxOf(Math.exp(-daysAgo / halfLifeDays), floorWeight)
             totalWeightAll += weight
             byOption.getOrPut(text) { mutableListOf() }
                 .add(Occ(dt.hour * 60 + dt.minute, weight))
@@ -725,8 +739,8 @@ object TextOptionScorer {
             for (o in occs) {
                 var dist = kotlin.math.abs(nowMinutes - o.minutesOfDay)
                 if (dist > 720) dist = 1440 - dist // circular across midnight
-                if (dist <= TIME_WINDOW_MINUTES) {
-                    windowed += o.weight * (1.0 - dist.toDouble() / TIME_WINDOW_MINUTES)
+                if (dist <= timeWindowMinutes) {
+                    windowed += o.weight * (1.0 - dist.toDouble() / timeWindowMinutes)
                 }
             }
             val share = total / totalWeightAll.coerceAtLeast(1e-9)
