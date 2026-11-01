@@ -294,33 +294,12 @@ fun HabitViewModel.loadMealLogs(habitName: String) {
 
 
 /**
- * A tap on a meal habit card: merge-or-increment. When no meal group is
- * active (nothing logged within the group window), a placeholder card is
- * created and the habit incremented (with timestamp) — so EVERY tap
- * yields a card. An active group simply reopens the meal screen.
+ * A tap on a meal habit card now ONLY opens the meal input screen — no
+ * placeholder card and no increment happen on the tap itself. The meal
+ * (and its habit increment) is created when the user actually commits
+ * content: parsed text (processVoiceMeal), quick log (addManualMealLog),
+ * or quick capture (photo/voice pipelines).
  */
-fun HabitViewModel.recordMealTap(habitName: String, date: LocalDate = LocalDate.now()) {
-    viewModelScope.launch(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        val at = if (date == LocalDate.now()) now
-        else date.atTime(java.time.LocalTime.now())
-            .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-        if (mealLogRepo.findActiveGroup(habitName, at) == null) {
-            val log = com.example.tail.data.meal.MealLog(
-                id = UUID.randomUUID().toString(),
-                habitId = habitName,
-                timestamp = at,
-                title = "Meal",
-                isManual = true,
-                countedIncrement = true,
-                groupStartTimestamp = at
-            )
-            mealLogRepo.addLog(log)
-            recordMealIncrement(habitName, at)
-        }
-        refreshMealFlows(habitName)
-    }
-}
 
 /**
  * Adds a manual meal log entry (no photo, no LLM call). Records the

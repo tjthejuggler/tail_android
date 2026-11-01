@@ -205,7 +205,6 @@ import kotlinx.coroutines.withContext
 internal fun MealDialogHost(
     habitName: String,
     viewModel: HabitViewModel,
-    incrementAlreadyDone: Boolean,
     selectedDate: java.time.LocalDate,
     focusLogId: String?,
     onDismiss: () -> Unit
@@ -214,7 +213,6 @@ internal fun MealDialogHost(
         habitName = habitName,
         viewModel = viewModel,
         onDismiss = onDismiss,
-        incrementAlreadyDone = incrementAlreadyDone,
         selectedDate = selectedDate,
         focusLogId = focusLogId
     )

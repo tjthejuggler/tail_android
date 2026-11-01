@@ -260,7 +260,6 @@ import com.example.tail.ui.viewmodel.prepareMoviePrompt
 import com.example.tail.ui.viewmodel.previewHabitRestore
 import com.example.tail.ui.viewmodel.previewMaxOneAffectedDays
 import com.example.tail.ui.viewmodel.previewMaxOneRestorableDays
-import com.example.tail.ui.viewmodel.recordMealTap
 import com.example.tail.ui.viewmodel.recordRecentIncrementAmount
 import com.example.tail.ui.viewmodel.checkRecordNotificationTotal
 import com.example.tail.ui.viewmodel.fetchLocationCandidates
@@ -1004,8 +1003,6 @@ fun HabitGridScreen(
 
     // Meal detail dialog state: non-null habit name when the meal panel is open
     var mealDialogHabit by remember { mutableStateOf<String?>(null) }
-    // True when the dialog was opened by tapping the habit (increment already happened)
-    var mealDialogFromTap by remember { mutableStateOf(false) }
     // Non-null meal log id when the panel should auto-open that meal's editor
     // (set by the timestamp editor's pencil action for meal habits).
     var mealDialogFocusLogId by remember { mutableStateOf<String?>(null) }
@@ -1821,12 +1818,11 @@ fun HabitGridScreen(
                                     }
                                 }
                                 habit.name in settings.mealHabits -> {
-                                    // Meal tap = merge-or-increment: ALWAYS yields a
-                                    // card (placeholder until details are added) and
-                                    // opens the meal screen. No increment toast —
-                                    // the time is edited on the meal card itself.
-                                    viewModel.recordMealTap(habit.name, selectedDate)
-                                    mealDialogFromTap = true
+                                    // Meal tap just opens the input screen — no card
+                                    // and no increment yet. The meal is created (and
+                                    // the habit incremented) only when content is
+                                    // actually committed: parsed text, quick log, or
+                                    // quick capture (photo/voice).
                                     mealDialogHabit = habit.name
                                 }
                                 habit.name in settings.sleepHabits -> {
@@ -1947,7 +1943,6 @@ fun HabitGridScreen(
                                     }
                                     com.example.tail.data.LONG_PRESS_DETAILS -> {
                                         // Open the meal details dialog
-                                        mealDialogFromTap = false
                                         mealDialogHabit = habit.name
                                     }
                                     com.example.tail.data.LONG_PRESS_URL -> {
@@ -2129,7 +2124,6 @@ fun HabitGridScreen(
                         onSetConditionalLinks = { name -> conditionalLinksPickerHabit = name },
                         onBackfillConditional = { name -> conditionalBackfillHabit = name },
                         onOpenMealDetails = { name ->
-                            mealDialogFromTap = false
                             mealDialogHabit = name
                         },
                         onPickLongPressUrlApp = { name -> longPressUrlAppPickerHabit = name },
@@ -2773,7 +2767,6 @@ fun HabitGridScreen(
                     null
                 }
                 timestampEditorHabitName = null
-                mealDialogFromTap = false
                 mealDialogFocusLogId = focus?.id
                 mealDialogHabit = habitName
             },
@@ -2994,7 +2987,6 @@ fun HabitGridScreen(
         MealDialogHost(
             habitName = habitName,
             viewModel = viewModel,
-            incrementAlreadyDone = mealDialogFromTap,
             selectedDate = selectedDate,
             focusLogId = mealDialogFocusLogId,
             onDismiss = {

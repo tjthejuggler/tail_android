@@ -115,7 +115,6 @@ fun MealDetailDialog(
     habitName: String,
     viewModel: HabitViewModel,
     onDismiss: () -> Unit,
-    incrementAlreadyDone: Boolean = false,
     /** Only meal logs from this date are shown in the history feed. */
     selectedDate: LocalDate = LocalDate.now(),
     /**
@@ -320,10 +319,7 @@ fun MealDetailDialog(
             if (showQuickLog) {
                 ManualEntrySection(
                     onAdd = { title, calories ->
-                        viewModel.addManualMealLog(
-                            habitName, title, calories,
-                            skipIncrement = incrementAlreadyDone
-                        )
+                        viewModel.addManualMealLog(habitName, title, calories)
                     }
                 )
             }
