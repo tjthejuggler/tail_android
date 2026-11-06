@@ -60,6 +60,9 @@ import com.example.tail.ui.viewmodel.setValueDisplayLabel
 import com.example.tail.ui.viewmodel.setVoiceTriggerIncrement
 import com.example.tail.ui.viewmodel.setVoiceTriggerWords
 import com.example.tail.ui.viewmodel.setWeightsDayValues
+import com.example.tail.ui.viewmodel.saveWeightsEntry
+import com.example.tail.ui.viewmodel.updateWeightsSet
+import com.example.tail.ui.viewmodel.deleteWeightsSet
 import com.example.tail.ui.viewmodel.setWidgetTimerPrimaryValue
 import com.example.tail.ui.viewmodel.toggleBridgeMovieHabit
 import com.example.tail.ui.viewmodel.toggleCameraHabit
@@ -289,6 +292,22 @@ internal fun EditBarHost(
         weightsDayValues = selectedHabitName
             ?.takeIf { it in settings.weightsHabits }
             ?.let { viewModel.getWeightsDayValues(it) },
+        weightsSetEdit = selectedHabitName
+            ?.takeIf { it in settings.weightsHabits }
+            ?.let { name ->
+                WeightsSetEditHandles(
+                    daySets = viewModel.getWeightsDaySets(name),
+                    onAddSet = { grams, reps, machine, exercise ->
+                        viewModel.saveWeightsEntry(name, grams, reps, machine, exercise)
+                    },
+                    onUpdateSet = { time, set ->
+                        viewModel.updateWeightsSet(name, time, set)
+                    },
+                    onDeleteSet = { time ->
+                        viewModel.deleteWeightsSet(name, time)
+                    }
+                )
+            } ?: WeightsSetEditHandles(),
         weightsUnit = settings.graphWeightUnit,
         onSetWeightsDayValues = { name, values, exerciseName ->
             viewModel.setWeightsDayValues(name, values, exerciseName)

@@ -1,6 +1,7 @@
 package com.example.tail.ui.grid
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -47,6 +48,14 @@ fun WeightsInputDialog(
     defaultUnit: String = WEIGHT_UNIT_KG,
     /** Previously used exercise/machine names on this habit, most recent first. */
     recentExercises: List<String> = emptyList(),
+    /** Pre-fill (editing an existing set): weight in grams (0 = empty). */
+    initialWeightGrams: Int = 0,
+    /** Pre-fill (editing an existing set): reps (0 = empty). */
+    initialReps: Int = 0,
+    /** Pre-fill (editing an existing set): machine/free toggle. */
+    initialMachine: Boolean = true,
+    /** Pre-fill (editing an existing set): exercise name; null = most recent. */
+    initialExerciseName: String? = null,
     /**
      * Looks up the PB + most-recent set for the currently typed exercise on
      * the currently selected type (machine/free). Recomputed as the name or
@@ -57,11 +66,17 @@ fun WeightsInputDialog(
     onDismiss: () -> Unit
 ) {
     var unit by remember { mutableStateOf(if (defaultUnit == WEIGHT_UNIT_LB) WEIGHT_UNIT_LB else WEIGHT_UNIT_KG) }
-    var machine by remember { mutableStateOf(true) }
+    var machine by remember { mutableStateOf(initialMachine) }
     // Auto-fill with the most recently used exercise name for quick repeat sets
-    var exerciseName by remember { mutableStateOf(recentExercises.firstOrNull() ?: "") }
-    var weightText by remember { mutableStateOf("") }
-    var repsText by remember { mutableStateOf("") }
+    var exerciseName by remember { mutableStateOf(initialExerciseName ?: recentExercises.firstOrNull() ?: "") }
+    // Whole grams render without a decimal, others with one.
+    fun initialGramsToText(grams: Int): String {
+        if (grams <= 0) return ""
+        val tenths = gramsToDisplayTenths(grams, unit)
+        return if (tenths % 10 == 0) (tenths / 10).toString() else formatWeightTenths(tenths)
+    }
+    var weightText by remember { mutableStateOf(initialGramsToText(initialWeightGrams)) }
+    var repsText by remember { mutableStateOf(if (initialReps > 0) initialReps.toString() else "") }
 
     // Accept digits with a decimal separator (',' normalized to '.' on parse)
     val weight = weightText.replace(',', '.').toDoubleOrNull() ?: 0.0
@@ -474,6 +489,187 @@ fun WeightsDayEditorDialog(
             },
             dismissButton = {
                 TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+/**
+ * Per-set day editor for weights habits: lists EVERY set logged on the day
+ * (each popup submission is its own entry), lets the user edit one via the
+ * same [WeightsInputDialog] popup (pre-filled), delete a single set (removes
+ * its increment + timestamp + slot share), or add a new set.
+ */
+@Composable
+fun WeightsSetsDayEditorDialog(
+    habitName: String,
+    sets: List<com.example.tail.data.WeightsSet>,
+    unit: String,
+    /** Previously used exercise/machine names on this habit, most recent first. */
+    recentExercises: List<String> = emptyList(),
+    /** Label for the day's legacy aggregated entry (days logged before
+     *  per-set recording existed) — rendered as one editable row. */
+    legacyEntry: String? = null,
+    /** Open the legacy aggregated editor (the row above). */
+    onOpenLegacyEditor: () -> Unit = {},
+    /** Log a NEW set (same path as the grid popup: slot writes + increment). */
+    onAddSet: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String) -> Unit,
+    /** Replace the set stamped [time]. */
+    onUpdateSet: (time: String, set: com.example.tail.data.WeightsSet) -> Unit,
+    /** Remove the set stamped [time] (its increment + timestamp go too). */
+    onDeleteSet: (time: String) -> Unit,
+    /** Remove ALL weights data for the day. */
+    onDeleteDay: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    // null = list view; a WeightsSet = editing that set; ADD_NEW = adding one
+    val addNewSentinel = "__add_new__"
+    var editing by remember { mutableStateOf<String?>(null) }
+    var confirmDeleteDay by remember { mutableStateOf(false) }
+    var confirmDeleteSet by remember { mutableStateOf<String?>(null) }
+
+    fun weightLabel(grams: Int): String {
+        if (grams <= 0) return ""
+        val tenths = gramsToDisplayTenths(grams, unit)
+        return if (tenths % 10 == 0) "${tenths / 10} $unit" else formatWeightTenths(tenths) + " $unit"
+    }
+
+    val editSet = sets.firstOrNull { it.time == editing && editing != addNewSentinel }
+    if (editing != null && (editSet != null || editing == addNewSentinel)) {
+        WeightsInputDialog(
+            habitName = habitName,
+            defaultUnit = unit,
+            recentExercises = recentExercises,
+            initialWeightGrams = editSet?.weightGrams ?: 0,
+            initialReps = editSet?.reps ?: 0,
+            initialMachine = editSet?.machine ?: true,
+            initialExerciseName = editSet?.exercise,
+            onConfirm = { grams, reps, machine, name ->
+                if (editing == addNewSentinel) onAddSet(grams, reps, machine, name)
+                else onUpdateSet(editing!!, com.example.tail.data.WeightsSet(machine, name, grams, reps, editing!!))
+                editing = null
+            },
+            onDismiss = { editing = null }
+        )
+        return
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = "🏋️ $habitName — sets", fontSize = 16.sp) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                if (legacyEntry != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = legacyEntry,
+                            fontSize = 12.sp,
+                            color = Color(0xFF999966),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onOpenLegacyEditor() }
+                        )
+                        TextButton(
+                            onClick = onOpenLegacyEditor,
+                            contentPadding = PaddingValues(horizontal = 6.dp)
+                        ) { Text("Edit", fontSize = 11.sp) }
+                    }
+                }
+                if (sets.isEmpty() && legacyEntry == null) {
+                    Text("No sets recorded for this day.", fontSize = 12.sp, color = Color(0xFF888888))
+                } else sets.forEach { set ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = buildString {
+                                append(set.time)
+                                append("  ")
+                                append(if (set.machine) "Machine" else "Free")
+                                if (set.weightGrams > 0) append("  ${weightLabel(set.weightGrams)}")
+                                if (set.reps > 0) append(" ×${set.reps}")
+                                if (set.exercise.isNotBlank()) append("  (${set.exercise})")
+                            },
+                            fontSize = 12.sp,
+                            color = Color(0xFFCCCCCC),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { editing = set.time }
+                        )
+                        TextButton(
+                            onClick = { editing = set.time },
+                            contentPadding = PaddingValues(horizontal = 6.dp)
+                        ) { Text("Edit", fontSize = 11.sp) }
+                        TextButton(
+                            onClick = { confirmDeleteSet = set.time },
+                            contentPadding = PaddingValues(horizontal = 6.dp)
+                        ) { Text("✕", fontSize = 11.sp, color = Color(0xFFCC6666)) }
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row {
+                    TextButton(onClick = { editing = addNewSentinel }) {
+                        Text("+ Add set", fontSize = 12.sp, color = Color(0xFF88DD88))
+                    }
+                    TextButton(onClick = { confirmDeleteDay = true }) {
+                        Text("Delete day", color = Color(0xFFCC6666), fontSize = 12.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        }
+    )
+
+    if (confirmDeleteSet != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteSet = null },
+            title = { Text("Delete set?", fontSize = 15.sp) },
+            text = { Text("Removes this set, its increment and its timestamp.", fontSize = 12.sp) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteSet(confirmDeleteSet!!)
+                        confirmDeleteSet = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF662222))
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteSet = null }) { Text("Cancel") }
+            }
+        )
+    }
+    if (confirmDeleteDay) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteDay = false },
+            title = { Text("Delete weights data?", fontSize = 15.sp) },
+            text = {
+                Text(
+                    "Removes ALL of this day's sets, the day's increments and their timestamps.",
+                    fontSize = 12.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteDay()
+                        confirmDeleteDay = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF662222))
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteDay = false }) { Text("Cancel") }
             }
         )
     }

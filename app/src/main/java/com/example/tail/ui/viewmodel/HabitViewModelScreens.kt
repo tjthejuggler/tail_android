@@ -1962,6 +1962,11 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             weightsExerciseRepo.renameHabit(oldName, newName)
             _weightsExerciseNames.value = weightsExerciseRepo.loadAll()
 
+            // Rename in the per-set weights sidecar so the individual set
+            // records (edit-mode list, timestamp badges) survive too
+            weightsSetsRepo.renameHabit(oldName, newName)
+            _weightsSets.value = weightsSetsRepo.loadAll()
+
             // Rename in the all-time records sidecar so the PR history
             // (weight/reps records + their dates/locations) survives too
             weightsRecordsRepo.renameHabit(oldName, newName)

@@ -104,8 +104,14 @@ fun TimestampEditorDialog(
     minutesByTime: Map<String, Int> = emptyMap(),
     /** Subtype label per timestamp (`"HH:mm:ss" -> "chinups ×5"`) for
      *  subtyped habits — makes it obvious WHICH pullup variant each logged
-     *  time was. Empty for non-subtyped habits. */
+     *  time was. Empty for non-subtyped habits. For weights habits this map
+     *  carries the per-set labels ("Machine · 60 kg ×8 (Bench Press)"). */
     subtypeLabelsByTime: Map<String, String> = emptyMap(),
+    /** True for weights habits — the pencil opens the weights-set popup for
+     *  the set logged at that time (via [onEditWeightsSet]). */
+    isWeightsHabit: Boolean = false,
+    /** Open the weights-set editor popup for the set logged at [time]. */
+    onEditWeightsSet: (time: String) -> Unit = { _ -> },
     /** Re-time every increment at [oldTime] to [newTime]. */
     onUpdateTimeGroup: (oldTime: String, newTime: String) -> Unit,
     /** Delete every increment at [time]. */
@@ -291,6 +297,10 @@ fun TimestampEditorDialog(
                                     onStartEditInfo = {
                                         if (isMealHabit) {
                                             onEditMeal(group.time)
+                                        } else if (isWeightsHabit && subtypeLabelsByTime.containsKey(group.time)) {
+                                            // Weights habits: edit the SET logged at this
+                                            // time with the familiar weights popup.
+                                            onEditWeightsSet(group.time)
                                         } else {
                                             editingCard = group.time
                                         }

@@ -1625,6 +1625,26 @@ fun HabitViewModel.saveWeightsEntry(
     // together in one write).
     incrementHabit(habitName, 1)
 
+    // Per-set record: every popup submission is ONE set, stored separately so
+    // the edit UI can list/edit each set individually (the DB slots above stay
+    // the day-aggregated source for graphs, PBs and the companion API). The
+    // set is stamped "now"; it pairs with the increment's timestamp via the
+    // nearest-second match used by the timestamp-editor labels.
+    viewModelScope.launch {
+        weightsSetsRepo.addSet(
+            habitName, logDate,
+            com.example.tail.data.WeightsSet(
+                machine = machine,
+                exercise = trimmedExercise,
+                weightGrams = weightGrams,
+                reps = reps,
+                time = java.time.LocalTime.now()
+                    .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+            )
+        )
+        loadWeightsSets()
+    }
+
     // incrementHabit early-returns WITHOUT persisting when the count
     // cannot change (max-1 cap already at 1, unchanged point tier). In
     // that case persist the slot writes ourselves so they are not lost.
@@ -1874,7 +1894,11 @@ fun HabitViewModel.setWeightsDayValues(habitName: String, values: WeightsDayValu
                 weightsExerciseRepo.setExerciseName(habitName, _selectedDate.value, false, exerciseName)
             }
         }
+        // The aggregated overwrite REPLACES the day's per-set records — the
+        // slots are now hand-set, not derived from a set list.
+        weightsSetsRepo.removeDay(habitName, _selectedDate.value)
         loadWeightsExerciseNames()
+        loadWeightsSets()
     }
 }
 
@@ -1911,10 +1935,13 @@ fun HabitViewModel.deleteWeightsDay(habitName: String) {
         if (entries.isEmpty()) updatedDb.remove(key) else updatedDb[key] = entries
     }
 
-    // Drop the day's exercise-name records too — the day no longer exists
+    // Drop the day's exercise-name records AND per-set log too — the day no
+    // longer exists.
     viewModelScope.launch {
         weightsExerciseRepo.removeDay(habitName, _selectedDate.value)
+        weightsSetsRepo.removeDay(habitName, _selectedDate.value)
         loadWeightsExerciseNames()
+        loadWeightsSets()
     }
 
     // Remove the day's increment (count)
@@ -1935,6 +1962,183 @@ fun HabitViewModel.deleteWeightsDay(habitName: String) {
         } catch (e: Exception) {
             _errorMessage.value = "Failed to delete weights day: ${e.message}"
         }
+    }
+}
+
+// ── Per-set weights editing (weights_sets.json sidecar) ───────────────
+
+/**
+ * Rewrites the day's four aggregated DB slots from the current per-set list
+ * (weight slots = the day's max, reps slots = the day's total — the same
+ * shape applyWeightsSlotsToDb produces) and persists the DB. Must run AFTER
+ * _weightsSets was refreshed from the sidecar.
+ */
+private fun HabitViewModel.recomputeWeightsSlotsFromSets(
+    habitName: String,
+    date: java.time.LocalDate
+) {
+    val uriString = _settings.value.fileUri
+    if (uriString.isEmpty()) return
+    val dateStr = com.example.tail.data.dateString(date)
+    val sets = _weightsSets.value[habitName]?.get(dateStr) ?: emptyList()
+    val machineSets = sets.filter { it.machine }
+    val freeSets = sets.filter { !it.machine }
+    val updatedDb = cachedPhoneDb.toMutableMap()
+    fun setSlot(key: String, value: Int) {
+        val entries = updatedDb[key]?.toMutableMap() ?: mutableMapOf()
+        if (value > 0) entries[dateStr] = value else entries.remove(dateStr)
+        if (entries.isEmpty()) updatedDb.remove(key) else updatedDb[key] = entries.toSortedMap()
+    }
+    setSlot(com.example.tail.data.secondaryValueKey(habitName), machineSets.maxOfOrNull { it.weightGrams } ?: 0)
+    setSlot(com.example.tail.data.secondaryValueSlotKey(habitName, 2), machineSets.sumOf { it.reps })
+    setSlot(com.example.tail.data.secondaryValueSlotKey(habitName, 3), freeSets.maxOfOrNull { it.weightGrams } ?: 0)
+    setSlot(com.example.tail.data.secondaryValueSlotKey(habitName, 4), freeSets.sumOf { it.reps })
+    cachedPhoneDb = updatedDb
+    viewModelScope.launch {
+        rebuildHabitList()
+        try {
+            habitsRepo.persistDatabase(Uri.parse(uriString), context, updatedDb)
+            HabitsDataChangedBus.emit()
+        } catch (e: Exception) {
+            _errorMessage.value = "Failed to save weights set: ${e.message}"
+        }
+    }
+}
+
+/** Keeps the day's per-type exercise-name sidecar in step with the set list. */
+private suspend fun HabitViewModel.syncWeightsDayNamesFromSets(
+    habitName: String,
+    date: java.time.LocalDate
+) {
+    val dateStr = com.example.tail.data.dateString(date)
+    val sets = _weightsSets.value[habitName]?.get(dateStr) ?: emptyList()
+    sets.lastOrNull { it.machine }?.exercise?.takeIf { it.isNotBlank() }?.let {
+        weightsExerciseRepo.setExerciseName(habitName, date, true, it)
+    }
+    sets.lastOrNull { !it.machine }?.exercise?.takeIf { it.isNotBlank() }?.let {
+        weightsExerciseRepo.setExerciseName(habitName, date, false, it)
+    }
+    loadWeightsExerciseNames()
+    loadWeightsSets()
+}
+
+/**
+ * Replaces the set stamped [time] (the selected date) with [newSet], then
+ * recomputes the day's aggregated slots from the set list. The increment the
+ * set belongs to is untouched (edits don't change the count).
+ */
+fun HabitViewModel.updateWeightsSet(habitName: String, time: String, newSet: com.example.tail.data.WeightsSet) {
+    viewModelScope.launch {
+        weightsSetsRepo.updateSet(habitName, _selectedDate.value, time, newSet.copy(time = time))
+        _weightsSets.value = weightsSetsRepo.loadAll()
+        recordRecentExercise(habitName, newSet.exercise.trim())
+        syncWeightsDayNamesFromSets(habitName, _selectedDate.value)
+        recomputeWeightsSlotsFromSets(habitName, _selectedDate.value)
+    }
+}
+
+/**
+ * Deletes the set stamped [time] on the selected date: removes the set, its
+ * increment (count −1) and its timestamp, then recomputes the day's slots
+ * from the remaining sets.
+ */
+fun HabitViewModel.deleteWeightsSet(habitName: String, time: String) {
+    val uriString = _settings.value.fileUri
+    if (uriString.isEmpty()) return
+    viewModelScope.launch {
+        val removed = weightsSetsRepo.removeSet(habitName, _selectedDate.value, time)
+        if (!removed) return@launch
+        _weightsSets.value = weightsSetsRepo.loadAll()
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+
+        // Drop ONE timestamp at that exact time (the set's own increment)
+        val stamps = timestampRepo.getTimestampsForDay(habitName, _selectedDate.value)
+        if (stamps.contains(time)) {
+            val remaining = stamps.toMutableList()
+            remaining.remove(time)
+            timestampRepo.setTimestampsForDay(habitName, _selectedDate.value, remaining)
+        }
+
+        // Count −1 for the removed increment, persisted together with the
+        // recomputed slots below.
+        val updatedDb = cachedPhoneDb.toMutableMap()
+        updatedDb[habitName]?.let { entries ->
+            val mutable = entries.toMutableMap()
+            val c = (mutable[dateStr] ?: 0) - 1
+            if (c > 0) mutable[dateStr] = c else mutable.remove(dateStr)
+            if (mutable.isEmpty()) updatedDb.remove(habitName) else updatedDb[habitName] = mutable
+        }
+        cachedPhoneDb = updatedDb
+        recomputeWeightsSlotsFromSets(habitName, _selectedDate.value)
+        rebuildHabitList()
+        syncWeightsDayNamesFromSets(habitName, _selectedDate.value)
+    }
+}
+
+/**
+ * Builds the per-timestamp WEIGHTS-SET labels for the timestamp editor
+ * ("HH:mm:ss" → "Machine · 60 kg ×8 (Bench Press)"), matching each recorded
+ * set to the day's increment timestamps: exact second first, else the
+ * nearest within 60s (same strategy as the subtyped-habit labels — the set's
+ * stamp and the increment's stamp come from two separate "now" reads).
+ */
+fun HabitViewModel.loadWeightsTimestampLabels(
+    habitName: String,
+    date: java.time.LocalDate,
+    timestamps: List<String>,
+    onLoaded: (Map<String, String>) -> Unit
+) {
+    viewModelScope.launch {
+        val dateStr = com.example.tail.data.dateString(date)
+        val sets = _weightsSets.value[habitName]?.get(dateStr) ?: emptyList()
+        if (sets.isEmpty()) {
+            onLoaded(emptyMap())
+            return@launch
+        }
+        val unit = _settings.value.graphWeightUnit
+        fun labelFor(set: com.example.tail.data.WeightsSet): String {
+            val grams = set.weightGrams
+            val w = if (grams > 0) {
+                val tenths = com.example.tail.data.gramsToDisplayTenths(grams, unit)
+                if (tenths % 10 == 0) "${tenths / 10} $unit"
+                else com.example.tail.data.formatWeightTenths(tenths) + " $unit"
+            } else ""
+            val parts = listOf(w, "×${set.reps}").filter { it.isNotBlank() }
+            val base = parts.joinToString(" ")
+            val name = set.exercise.trim()
+            val kind = if (set.machine) "Machine" else "Free"
+            return if (name.isNotBlank()) "$kind · $base ($name)" else "$kind · $base"
+        }
+
+        fun toSeconds(t: String): Int? = runCatching {
+            val p = t.split(':')
+            if (p.size < 2) return@runCatching null
+            p[0].toInt() * 3600 + p[1].toInt() * 60 + (p.getOrNull(2)?.toIntOrNull() ?: 0)
+        }.getOrNull()
+
+        val result = mutableMapOf<String, String>()
+        val usedTimes = mutableSetOf<String>()
+        for (set in sets) {
+            val tod = set.time.substringBefore('.')
+            val label = labelFor(set)
+            if (timestamps.contains(tod) && tod !in usedTimes) {
+                result[tod] = label
+                usedTimes.add(tod)
+            } else {
+                val target = toSeconds(tod) ?: continue
+                val nearest = timestamps.distinct()
+                    .filter { it !in usedTimes }
+                    .mapNotNull { t -> toSeconds(t)?.let { t to it } }
+                    .filter { (_, s) -> kotlin.math.abs(s - target) <= 60 }
+                    .minByOrNull { (_, s) -> kotlin.math.abs(s - target) }
+                    ?.first
+                if (nearest != null) {
+                    result[nearest] = result[nearest]?.let { "$it · $label" } ?: label
+                    usedTimes.add(nearest)
+                }
+            }
+        }
+        onLoaded(result)
     }
 }
 

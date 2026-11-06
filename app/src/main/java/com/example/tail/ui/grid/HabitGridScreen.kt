@@ -243,6 +243,8 @@ import com.example.tail.ui.viewmodel.isSorenessHabit
 import com.example.tail.ui.viewmodel.loadSorenessDay
 import com.example.tail.ui.viewmodel.isIllnessEpisodeHabit
 import com.example.tail.ui.viewmodel.loadSubtypeTimestampLabels
+import com.example.tail.ui.viewmodel.loadWeightsTimestampLabels
+import com.example.tail.ui.viewmodel.updateWeightsSet
 import com.example.tail.ui.viewmodel.saveSubtypeIncrement
 import com.example.tail.ui.viewmodel.addPillToCatalog
 import com.example.tail.ui.viewmodel.loadPillDay
@@ -1016,6 +1018,10 @@ fun HabitGridScreen(
     // Subtype label per time-of-day ("HH:mm:ss" → "chinups ×5") for subtyped
     // habits — shown as a badge on each timestamp card (see TimestampEditorDialog).
     var timestampEditorSubtypes by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    // Weights-set labels for the timestamp editor ("HH:mm:ss" → set label) and
+    // the time whose set is open in the weights edit popup.
+    var timestampEditorWeights by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var weightsSetEditTime by remember { mutableStateOf<String?>(null) }
     // Text entries for the currently selected edit-mode habit (for view/edit in edit bar)
     var editModeTextEntries by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     // Schedule block details popup: the tapped block + its instance texts
@@ -1058,7 +1064,10 @@ fun HabitGridScreen(
     LaunchedEffect(Unit) { refreshQuickCaptureReviewCount() }
     // Per-day exercise-name records for weights habits (PB display, graph
     // filter, edit-screen name readout) — loaded once on screen entry.
-    LaunchedEffect(Unit) { viewModel.loadWeightsExerciseNames() }
+    LaunchedEffect(Unit) {
+        viewModel.loadWeightsExerciseNames()
+        viewModel.loadWeightsSets()
+    }
 
     // All-time PR flash state — shows when a weights log breaks an
     // exercise's all-time weight/reps record. Auto-dismisses after a
@@ -2573,6 +2582,16 @@ fun HabitGridScreen(
 
     // (or jumps to the meal editor for meal habits).
     timestampEditorHabitName?.let { habitName ->
+        val isWeights = habitName in settings.weightsHabits
+        if (isWeights) {
+            // Weights habits: badge each card with the SET logged at that
+            // time ("Machine · 60 kg ×8 (Bench Press)").
+            LaunchedEffect(habitName, timestampEditorList) {
+                viewModel.loadWeightsTimestampLabels(habitName, selectedDate, timestampEditorList) { labels ->
+                    if (timestampEditorHabitName == habitName) timestampEditorWeights = labels
+                }
+            }
+        }
         TimestampEditorDialog(
             habitName = habitName,
             timestamps = timestampEditorList,
@@ -2584,7 +2603,10 @@ fun HabitGridScreen(
             canEditText = habitName in settings.textInputHabits,
             isMinutesPrimary = viewModel.isMinutesPrimaryHabit(habitName),
             minutesByTime = timestampEditorMinutes,
-            subtypeLabelsByTime = timestampEditorSubtypes,
+            subtypeLabelsByTime = timestampEditorSubtypes +
+                if (isWeights) timestampEditorWeights else emptyMap(),
+            isWeightsHabit = isWeights,
+            onEditWeightsSet = { time -> if (isWeights) weightsSetEditTime = time },
             viewedDate = selectedDate,
             onMoveTimeGroupToDay = { time, toDate ->
                 timestampScope.launch {
@@ -2790,6 +2812,38 @@ fun HabitGridScreen(
                 scheduleRefresh++
             }
         )
+
+        // Weights habits: the pencil on a timestamp card opens the familiar
+        // weights popup, pre-filled with the SET logged at that time.
+        weightsSetEditTime?.let { editTime ->
+            val set = viewModel.getWeightsDaySets(habitName).firstOrNull { it.time == editTime }
+            if (set != null) {
+                WeightsInputDialog(
+                    habitName = habitName,
+                    defaultUnit = settings.graphWeightUnit,
+                    recentExercises = settings.weightsRecentExercises[habitName] ?: emptyList(),
+                    initialWeightGrams = set.weightGrams,
+                    initialReps = set.reps,
+                    initialMachine = set.machine,
+                    initialExerciseName = set.exercise,
+                    onConfirm = { grams, reps, machine, name ->
+                        val time = editTime
+                        weightsSetEditTime = null
+                        viewModel.updateWeightsSet(
+                            habitName, time,
+                            com.example.tail.data.WeightsSet(machine, name, grams, reps, time)
+                        )
+                        // Refresh the badges for the edited set.
+                        viewModel.loadWeightsTimestampLabels(habitName, selectedDate, timestampEditorList) { labels ->
+                            if (timestampEditorHabitName == habitName) timestampEditorWeights = labels
+                        }
+                    },
+                    onDismiss = { weightsSetEditTime = null }
+                )
+            } else {
+                weightsSetEditTime = null
+            }
+        }
     }
 
     // (Location edit dialog moved to the map screen — tapping the location

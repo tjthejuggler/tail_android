@@ -2025,6 +2025,8 @@ internal fun EditModeControlBar(
     onToggleWeights: (String) -> Unit = {},
     /** Weights habits: the selected date's slot values (null = not a weights habit). */
     weightsDayValues: com.example.tail.data.WeightsDayValues? = null,
+    /** Weights habits: per-set editing handles (day sets + add/update/delete). */
+    weightsSetEdit: WeightsSetEditHandles = WeightsSetEditHandles(),
     /** Display unit ("kg"/"lb") for the weights day summary + editor. */
     weightsUnit: String = "kg",
     /** Called when the user saves the weights day editor (habitName, values, exerciseName). */
@@ -2358,9 +2360,13 @@ internal fun EditModeControlBar(
                         unit = weightsUnit,
                         recentExercises = weightsRecentExercises,
                         dayExerciseNames = weightsDayExerciseNames,
+                        daySets = weightsSetEdit.daySets,
                         onSetValues = { v, exerciseName ->
                             onSetWeightsDayValues(selectedHabitName, v, exerciseName)
                         },
+                        onAddSet = weightsSetEdit.onAddSet,
+                        onUpdateSet = weightsSetEdit.onUpdateSet,
+                        onDeleteSet = weightsSetEdit.onDeleteSet,
                         onDeleteDay = { onDeleteWeightsDay(selectedHabitName) }
                     )
                 }
@@ -3776,6 +3782,19 @@ internal fun EditModeHabitHeaderRow(
  */
 
 
+/** Per-set weights editing handles passed as ONE object (EditModeControlBar is
+ *  at the JVM 64KB method limit — four more callback params made it overflow). */
+internal data class WeightsSetEditHandles(
+    /** The selected date's individually recorded sets (empty = legacy day). */
+    val daySets: List<com.example.tail.data.WeightsSet> = emptyList(),
+    /** Log a NEW set (same path as the grid popup: slot writes + increment). */
+    val onAddSet: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String) -> Unit = { _, _, _, _ -> },
+    /** Replace the set stamped [time]. */
+    val onUpdateSet: (time: String, set: com.example.tail.data.WeightsSet) -> Unit = { _, _ -> },
+    /** Remove the set stamped [time] (its increment + timestamp go too). */
+    val onDeleteSet: (time: String) -> Unit = { _ -> }
+)
+
 @Composable
 internal fun EditModeWeightsSummarySection(
     habitName: String,
@@ -3788,11 +3807,20 @@ internal fun EditModeWeightsSummarySection(
      * shown in the summary and used to pre-fill the day editor.
      */
     dayExerciseNames: Map<String, String> = emptyMap(),
+    /** The day's individually recorded sets (empty = pre-sidecar aggregated day). */
+    daySets: List<com.example.tail.data.WeightsSet> = emptyList(),
     onSetValues: (com.example.tail.data.WeightsDayValues, String) -> Unit,
+    /** Log a NEW set for the day (slot writes + increment, like the grid popup). */
+    onAddSet: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String) -> Unit = { _, _, _, _ -> },
+    /** Replace the set stamped [time]. */
+    onUpdateSet: (time: String, set: com.example.tail.data.WeightsSet) -> Unit = { _, _ -> },
+    /** Remove the set stamped [time] (its increment + timestamp go too). */
+    onDeleteSet: (time: String) -> Unit = { _ -> },
     /** Called when the user deletes ALL weights data for the selected day. */
     onDeleteDay: () -> Unit
 ) {
     var showEditor by remember { mutableStateOf(false) }
+    var showLegacyEditor by remember { mutableStateOf(false) }
 
     fun weightLabel(grams: Int): String {
         if (grams <= 0) return "—"
@@ -3800,7 +3828,19 @@ internal fun EditModeWeightsSummarySection(
         return if (tenths % 10 == 0) "${tenths / 10} $unit"
         else "${com.example.tail.data.formatWeightTenths(tenths)} $unit"
     }
-    val summary = if (!values.hasAny) {
+    val summary = if (daySets.isNotEmpty()) {
+        // Per-set summary: every popup submission is its own line.
+        daySets.joinToString("\n") { set ->
+            buildString {
+                append(set.time)
+                append("  ")
+                append(if (set.machine) "Machine" else "Free")
+                if (set.weightGrams > 0) append(" ${weightLabel(set.weightGrams)}")
+                if (set.reps > 0) append(" ×${set.reps}")
+                if (set.exercise.isNotBlank()) append(" (${set.exercise})")
+            }
+        }
+    } else if (!values.hasAny) {
         "No weights logged for this day"
     } else buildString {
         if (values.machineWeightGrams > 0 || values.machineReps > 0) {
@@ -3837,6 +3877,64 @@ internal fun EditModeWeightsSummarySection(
     }
 
     if (showEditor) {
+        if (daySets.isNotEmpty()) {
+            // Per-set editor: each popup submission stays its own entry.
+            WeightsSetsDayEditorDialog(
+                habitName = habitName,
+                sets = daySets,
+                unit = unit,
+                recentExercises = recentExercises,
+                onAddSet = onAddSet,
+                onUpdateSet = onUpdateSet,
+                onDeleteSet = onDeleteSet,
+                onDeleteDay = {
+                    onDeleteDay()
+                    showEditor = false
+                },
+                onDismiss = { showEditor = false }
+            )
+        } else {
+            // No per-set records for this day. If the day carries legacy
+            // aggregate data, offer it as ONE legacy entry inside the same
+            // set-list dialog (its Edit opens the aggregated editor); if the
+            // day is empty, just offer adding sets.
+            WeightsSetsDayEditorDialog(
+                habitName = habitName,
+                sets = emptyList(),
+                unit = unit,
+                recentExercises = recentExercises,
+                legacyEntry = if (values.hasAny) {
+                    buildString {
+                        if (values.machineWeightGrams > 0 || values.machineReps > 0) {
+                            if (isNotEmpty()) append(" · ")
+                            append("Machine ${weightLabel(values.machineWeightGrams)} × ${values.machineReps}")
+                            dayExerciseNames[com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE]
+                                ?.let { append(" ($it)") }
+                        }
+                        if (values.freeWeightGrams > 0 || values.freeReps > 0) {
+                            if (isNotEmpty()) append(" · ")
+                            append("Free ${weightLabel(values.freeWeightGrams)} × ${values.freeReps}")
+                            dayExerciseNames[com.example.tail.data.WeightsExerciseRepository.KEY_FREE]
+                                ?.let { append(" ($it)") }
+                        }
+                    }.takeIf { it.isNotBlank() }
+                } else null,
+                onAddSet = onAddSet,
+                onUpdateSet = onUpdateSet,
+                onDeleteSet = onDeleteSet,
+                onOpenLegacyEditor = { showLegacyEditor = true },
+                onDeleteDay = {
+                    onDeleteDay()
+                    showEditor = false
+                },
+                onDismiss = { showEditor = false }
+            )
+        }
+    }
+
+    // Legacy aggregated entry (logged before per-set recording existed) —
+    // edited as ONE entry via the old day editor, layered over the set list.
+    if (showLegacyEditor) {
         WeightsDayEditorDialog(
             habitName = habitName,
             initial = values,
@@ -3845,13 +3943,15 @@ internal fun EditModeWeightsSummarySection(
             defaultUnit = unit,
             onConfirm = { newValues, exerciseName ->
                 onSetValues(newValues, exerciseName)
+                showLegacyEditor = false
                 showEditor = false
             },
             onDelete = {
                 onDeleteDay()
+                showLegacyEditor = false
                 showEditor = false
             },
-            onDismiss = { showEditor = false }
+            onDismiss = { showLegacyEditor = false }
         )
     }
 }

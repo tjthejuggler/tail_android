@@ -346,6 +346,28 @@ class HabitViewModel(
         }
     }
 
+    /** Full per-set log for weights habits (habit → date → sets, newest last). */
+    internal val _weightsSets =
+        MutableStateFlow<Map<String, Map<String, List<com.example.tail.data.WeightsSet>>>>(emptyMap())
+    val weightsSets: StateFlow<Map<String, Map<String, List<com.example.tail.data.WeightsSet>>>> =
+        _weightsSets.asStateFlow()
+
+    /** Repository for the per-set weights log (internal storage). */
+    val weightsSetsRepo = com.example.tail.data.WeightsSetsRepository(context)
+
+    /** (Re)loads the per-set weights log from internal storage. */
+    fun loadWeightsSets() {
+        viewModelScope.launch {
+            _weightsSets.value = weightsSetsRepo.loadAll()
+        }
+    }
+
+    /** The selected date's recorded sets for [habitName] (empty = pre-sidecar day). */
+    fun getWeightsDaySets(habitName: String): List<com.example.tail.data.WeightsSet> {
+        val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+        return _weightsSets.value[habitName]?.get(dateStr) ?: emptyList()
+    }
+
     // ── Habit-ask notifications (system + in-app center + one-time flash) ───
     /** Single source of truth for pending asks; system notifications mirror it. */
     val notificationStore = NotificationStore(context)
