@@ -435,57 +435,85 @@ class VisionProcessingWorker(
                                 "(${mealLog.calories} cal) for '$targetHabit'"
                         )
 
-                        // Increment the habit count for the meal's day
+                        // Increment the habit count for the meal's day.
+                        // The habits DB is a single JSON file (often on a
+                        // Syncthing-synced volume) — a load can transiently
+                        // fail with MalformedJsonException when it catches a
+                        // half-synced copy. That previously cost the meal its
+                        // +1 AND its timestamp permanently (meal logged, habit
+                        // untouched). Retry a few times before giving up; the
+                        // timestamp is only recorded when the count landed,
+                        // so the two can never drift apart.
                         if (settings.fileUri.isNotEmpty()) {
-                            try {
-                                val mealDate = Instant.ofEpochMilli(mealLog.timestamp)
-                                    .atZone(ZoneId.systemDefault()).toLocalDate()
-                                QcDiag.log(
-                                    "INCREMENT",
-                                    "item=${QcDiag.short(item.id)} incrementing '$targetHabit' " +
-                                        "mealDate=$mealDate " +
-                                        "(${if (mealDate == LocalDate.now()) "today" else "backfill"})"
-                                )
-                                if (mealDate == LocalDate.now()) {
-                                    habitsRepo.incrementHabit(
-                                        Uri.parse(settings.fileUri),
-                                        appContext,
-                                        targetHabit,
-                                        1
+                            val mealDate = Instant.ofEpochMilli(mealLog.timestamp)
+                                .atZone(ZoneId.systemDefault()).toLocalDate()
+                            var incrementError: Exception? = null
+                            for (attempt in 1..3) {
+                                try {
+                                    QcDiag.log(
+                                        "INCREMENT",
+                                        "item=${QcDiag.short(item.id)} incrementing '$targetHabit' " +
+                                            "mealDate=$mealDate attempt=$attempt " +
+                                            "(${if (mealDate == LocalDate.now()) "today" else "backfill"})"
                                     )
-                                } else {
-                                    habitsRepo.incrementHabitForDate(
-                                        Uri.parse(settings.fileUri),
-                                        appContext,
-                                        targetHabit,
-                                        1,
-                                        mealDate
+                                    if (mealDate == LocalDate.now()) {
+                                        habitsRepo.incrementHabit(
+                                            Uri.parse(settings.fileUri),
+                                            appContext,
+                                            targetHabit,
+                                            1
+                                        )
+                                    } else {
+                                        habitsRepo.incrementHabitForDate(
+                                            Uri.parse(settings.fileUri),
+                                            appContext,
+                                            targetHabit,
+                                            1,
+                                            mealDate
+                                        )
+                                    }
+                                    incrementError = null
+                                    break
+                                } catch (e: Exception) {
+                                    incrementError = e
+                                    QcDiag.error(
+                                        "INCREMENT",
+                                        "item=${QcDiag.short(item.id)} increment attempt $attempt " +
+                                            "FAILED for '$targetHabit' (meal log still saved): " +
+                                            "${e.message}",
+                                        e
+                                    )
+                                    kotlinx.coroutines.delay(10_000L)
+                                }
+                            }
+                            if (incrementError == null) {
+                                try {
+                                    // Record the increment timestamp so manually
+                                    // captured meals are timestamped too
+                                    timestampRepo.addTimestamp(
+                                        habitName = targetHabit,
+                                        date = mealDate,
+                                        time = java.time.LocalTime.ofInstant(
+                                            Instant.ofEpochMilli(mealLog.timestamp),
+                                            ZoneId.systemDefault()
+                                        ).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+                                    )
+                                    Log.i(TAG, "Incremented habit '$targetHabit' for meal: ${mealLog.title}")
+                                    QcDiag.log(
+                                        "INCREMENT",
+                                        "item=${QcDiag.short(item.id)} incremented '$targetHabit' +1 " +
+                                            "and recorded timestamp for meal '${mealLog.title}'"
+                                    )
+                                } catch (e: Exception) {
+                                    QcDiag.error(
+                                        "INCREMENT",
+                                        "item=${QcDiag.short(item.id)} timestamp record FAILED for " +
+                                            "'$targetHabit' (count WAS incremented): ${e.message}",
+                                        e
                                     )
                                 }
-                                // Record the increment timestamp so manually
-                                // captured meals are timestamped too
-                                timestampRepo.addTimestamp(
-                                    habitName = targetHabit,
-                                    date = mealDate,
-                                    time = java.time.LocalTime.ofInstant(
-                                        Instant.ofEpochMilli(mealLog.timestamp),
-                                        ZoneId.systemDefault()
-                                    ).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
-                                )
-                                Log.i(TAG, "Incremented habit '$targetHabit' for meal: ${mealLog.title}")
-                                QcDiag.log(
-                                    "INCREMENT",
-                                    "item=${QcDiag.short(item.id)} incremented '$targetHabit' +1 " +
-                                        "and recorded timestamp for meal '${mealLog.title}'"
-                                )
-                            } catch (e: Exception) {
-                                QcDiag.error(
-                                    "INCREMENT",
-                                    "item=${QcDiag.short(item.id)} increment FAILED for " +
-                                        "'$targetHabit' (meal log still saved): ${e.message}",
-                                    e
-                                )
-                                Log.e(TAG, "Failed to increment habit '$targetHabit'", e)
+                            } else {
+                                Log.e(TAG, "Failed to increment habit '$targetHabit' after retries", incrementError)
                                 // The meal log is still saved; just the count increment failed
                             }
                         }

@@ -1268,32 +1268,55 @@ class MediaCaptureActivity : ComponentActivity() {
                     )
 
                     if (settings.fileUri.isNotEmpty()) {
-                        try {
-                            val habitsRepo = HabitsRepository()
-                            habitsRepo.incrementHabit(
-                                Uri.parse(settings.fileUri),
-                                this@MediaCaptureActivity,
-                                targetHabitName,
-                                1
-                            )
-                            // Record the increment timestamp so captured meals
-                            // are timestamped like every other increment path
-                            com.example.tail.data.HabitTimestampRepository(this@MediaCaptureActivity)
-                                .addTimestamp(habitName = targetHabitName)
-                            QcDiag.log(
-                                "INCREMENT",
-                                "processCaptureInline: incremented '$targetHabitName' +1 " +
-                                    "and recorded timestamp for meal '${created.title}'"
-                            )
-                            Log.i(TAG, "Incremented habit '$targetHabitName' for meal: ${created.title}")
-                        } catch (e: Exception) {
-                            QcDiag.error(
-                                "INCREMENT",
-                                "processCaptureInline: increment FAILED for " +
-                                    "'$targetHabitName' (meal log still saved): ${e.message}",
-                                e
-                            )
-                            Log.e(TAG, "Failed to increment habit '$targetHabitName'", e)
+                        // Retry: the habits DB is a single synced JSON file and
+                        // a load can transiently fail on a half-synced copy —
+                        // without a retry the meal keeps its card but silently
+                        // loses the +1 and the timestamp.
+                        var incrementError: Exception? = null
+                        for (attempt in 1..3) {
+                            try {
+                                val habitsRepo = HabitsRepository()
+                                habitsRepo.incrementHabit(
+                                    Uri.parse(settings.fileUri),
+                                    this@MediaCaptureActivity,
+                                    targetHabitName,
+                                    1
+                                )
+                                incrementError = null
+                                break
+                            } catch (e: Exception) {
+                                incrementError = e
+                                QcDiag.error(
+                                    "INCREMENT",
+                                    "processCaptureInline: increment attempt $attempt FAILED for " +
+                                        "'$targetHabitName' (meal log still saved): ${e.message}",
+                                    e
+                                )
+                                kotlinx.coroutines.delay(10_000L)
+                            }
+                        }
+                        if (incrementError == null) {
+                            try {
+                                // Record the increment timestamp so captured meals
+                                // are timestamped like every other increment path
+                                com.example.tail.data.HabitTimestampRepository(this@MediaCaptureActivity)
+                                    .addTimestamp(habitName = targetHabitName)
+                                QcDiag.log(
+                                    "INCREMENT",
+                                    "processCaptureInline: incremented '$targetHabitName' +1 " +
+                                        "and recorded timestamp for meal '${created.title}'"
+                                )
+                                Log.i(TAG, "Incremented habit '$targetHabitName' for meal: ${created.title}")
+                            } catch (e: Exception) {
+                                QcDiag.error(
+                                    "INCREMENT",
+                                    "processCaptureInline: timestamp record FAILED for " +
+                                        "'$targetHabitName' (count WAS incremented): ${e.message}",
+                                    e
+                                )
+                            }
+                        } else {
+                            Log.e(TAG, "Failed to increment habit '$targetHabitName' after retries", incrementError)
                         }
                     }
                 }

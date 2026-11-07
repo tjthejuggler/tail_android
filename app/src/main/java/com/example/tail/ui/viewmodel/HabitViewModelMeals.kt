@@ -560,13 +560,28 @@ fun HabitViewModel.clearMealVoiceStatus() {
 internal suspend fun HabitViewModel.recordMealIncrement(habitName: String, atMillis: Long) {
     val uriString = _settings.value.fileUri
     if (uriString.isEmpty()) return
+    val zdt = java.time.Instant.ofEpochMilli(atMillis)
+        .atZone(java.time.ZoneId.systemDefault())
+    val date = zdt.toLocalDate()
     try {
-        val zdt = java.time.Instant.ofEpochMilli(atMillis)
-            .atZone(java.time.ZoneId.systemDefault())
-        val date = zdt.toLocalDate()
-        habitsRepo.incrementHabitForDate(
-            android.net.Uri.parse(uriString), context, habitName, 1, date
-        )
+        // Retry: the habits DB is a single synced JSON file — a load can
+        // transiently fail on a half-synced copy, which previously cost the
+        // meal its +1 AND its timestamp permanently.
+        var incrementError: Exception? = null
+        for (attempt in 1..3) {
+            try {
+                habitsRepo.incrementHabitForDate(
+                    android.net.Uri.parse(uriString), context, habitName, 1, date
+                )
+                incrementError = null
+                break
+            } catch (e: Exception) {
+                incrementError = e
+                Log.e(TAG, "Meal habit increment attempt $attempt for '$habitName' failed", e)
+                if (attempt < 3) delay(10_000L)
+            }
+        }
+        if (incrementError != null) throw incrementError!!
         // Mirror the disk delta into the in-memory cache so the rebuild and
         // every future optimistic persist see the incremented count.
         cachedPhoneDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, 1, date)
