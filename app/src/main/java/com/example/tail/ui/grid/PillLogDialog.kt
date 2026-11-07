@@ -30,6 +30,9 @@ import com.example.tail.data.PillLogParser
 import com.example.tail.ui.viewmodel.PillSuggestion
 import java.time.LocalDate
 
+/** Quiet period before a pending pill floats to the top of the list. */
+private const val REORDER_DELAY_MS = 700L
+
 /** Format helper: 1050.0 → "1050", 0.6 → "0.6". */
 private fun fmtAmount(d: Double): String =
     if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
@@ -55,12 +58,20 @@ fun PillLogDialog(
 ) {
     // Pending servings for THIS submission: pill/line name → count.
     val pending = remember { mutableStateMapOf<String, Int>() }
-    // Display order: pills with pending>0 first (in the order they were set),
-    // the rest alphabetical. Recomputed whenever counts change.
-    val orderedPills = remember(catalogPills, pending.toMap()) {
-        val set = catalogPills.filter { (pending[it] ?: 0) > 0 }
-        val rest = catalogPills.filter { (pending[it] ?: 0) == 0 }
-            .sortedBy { it.lowercase() }
+    // Float-to-top snapshot, applied only after a short quiet period: the
+    // reorder "hesitates" so the pill just set to 1 can be tapped to 2, 3, 4…
+    // before it jumps to the top of the list.
+    val floatedSnapshot = remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(pending.toMap()) {
+        kotlinx.coroutines.delay(REORDER_DELAY_MS)
+        floatedSnapshot.value = pending.keys.filter { (pending[it] ?: 0) > 0 }
+    }
+    // Display order: floated pills first (in the order they were set), the
+    // rest alphabetical. The snapshot (not the live counts) drives the
+    // ordering, so rapid +/- taps keep rows in place.
+    val orderedPills = remember(catalogPills, floatedSnapshot.value) {
+        val set = floatedSnapshot.value.filter { it in catalogPills }
+        val rest = catalogPills.filter { it !in set }.sortedBy { it.lowercase() }
         set + rest
     }
     val freeText = remember { mutableStateOf("") }

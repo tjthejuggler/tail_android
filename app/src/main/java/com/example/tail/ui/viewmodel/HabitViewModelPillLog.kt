@@ -125,39 +125,89 @@ data class PillSuggestion(
 )
 
 /**
- * Most-likely-next suggestions for the pill dialog: the habit's past log
- * entries (single lines AND multi-line groupings taken together) ranked by
- * the shared TextOptionScorer with PILL-TUNED parameters:
- *  - a short (~4-day) recency half-life so the regimen actually taken over
- *    the last few days dominates a months-old one;
- *  - a small floor weight so long-retired groupings stay listed, just ranked low;
- *  - a wide (~3.5 h) circular time-of-day window so "rough period of the
- *    day" (e.g. mornings) — not exact clock times — drives the affinity boost.
+ * Most-likely-next suggestions for the pill dialog, grounded in the CURRENT
+ * catalog and driven by recent co-taken groupings:
+ *
+ *  1. Every past log entry (one submission = one multi-line grouping) is
+ *     canonicalised line-by-line through [PillLogParser.matchPill]; lines
+ *     that match nothing in the catalog are DROPPED — a suggestion can
+ *     therefore never contain a pill that is not one of ours (retired or
+ *     mistyped historical names no longer leak through).
+ *  2. Identical canonical groupings are MERGED (a grouping logged as
+ *     "Omega\nCreatine" and "Omega, Creatine 5g" now pool their score
+ *     instead of fragmenting it).
+ *  3. Score = recency-weighted occurrences (≈4-day half-life so the regimen
+ *     actually taken over the last few days dominates) + a rough-period
+ *     time-of-day affinity (±3.5 h circular) + a boost for groupings that
+ *     share pills with what was ALREADY LOGGED TODAY (continuation of
+ *     today's regimen surfaces to the top).
  */
 fun HabitViewModel.loadPillSuggestions(
     habitName: String,
     onResult: (List<PillSuggestion>) -> Unit
 ) {
     viewModelScope.launch {
+        val catalog = effectivePillCatalog()
         val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
         val log = textInputRepo.loadTextLog(uri, context, habitName)
-        val suggestions = com.example.tail.data.TextOptionScorer
-            .orderOptions(
-                log, java.time.LocalTime.now(),
-                halfLifeDays = PILL_HALF_LIFE_DAYS,
-                floorWeight = PILL_FLOOR_WEIGHT,
-                timeWindowMinutes = PILL_TIME_WINDOW_MINUTES
-            )
-            .take(8)
-            .map { option ->
-                val counts = LinkedHashMap<String, Int>()
-                for (line in PillLogParser.splitLines(option)) {
-                    counts[line] = (counts[line] ?: 0) + 1
+        val now = java.time.LocalTime.now()
+        val today = LocalDate.now()
+        val nowMinutes = now.hour * 60 + now.minute
+        val tsFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+        data class Occ(val minutesOfDay: Int, val daysAgo: Long)
+
+        // grouping key (canonical, sorted, counts baked in) → occurrences
+        val byGrouping = LinkedHashMap<String, Pair<Map<String, Int>, MutableList<Occ>>>()
+        // pills already logged today — continuation bonus context
+        val todayPills = mutableSetOf<String>()
+
+        for ((ts, text) in log) {
+            val dt = runCatching { LocalDateTime.parse(ts, tsFmt) }.getOrNull() ?: continue
+            val daysAgo = java.time.temporal.ChronoUnit.DAYS.between(dt.toLocalDate(), today)
+            if (daysAgo < 0) continue
+            val counts = LinkedHashMap<String, Int>()
+            for (line in PillLogParser.splitLines(text)) {
+                // Canonicalise to the current catalog; drop unknown pills.
+                val pill = PillLogParser.matchPill(line, catalog) ?: continue
+                counts[pill] = (counts[pill] ?: 0) + 1
+            }
+            if (counts.isEmpty()) continue
+            if (daysAgo == 0L) todayPills += counts.keys
+            val key = counts.entries.sortedBy { it.key }.joinToString("|") { "${it.key}×${it.value}" }
+            byGrouping.getOrPut(key) { counts to mutableListOf() }.second
+                .add(Occ(dt.hour * 60 + dt.minute, daysAgo))
+        }
+
+        data class Scored(val counts: Map<String, Int>, val score: Double)
+        val suggestions = byGrouping.map { (_, pair) ->
+            val (counts, occs) = pair
+            var score = 0.0
+            var windowed = 0.0
+            for (o in occs) {
+                val w = maxOf(Math.exp(-o.daysAgo / PILL_HALF_LIFE_DAYS), PILL_FLOOR_WEIGHT)
+                score += w
+                var dist = kotlin.math.abs(nowMinutes - o.minutesOfDay)
+                if (dist > 720) dist = 1440 - dist // circular across midnight
+                if (dist <= PILL_TIME_WINDOW_MINUTES) {
+                    windowed += w * (1.0 - dist.toDouble() / PILL_TIME_WINDOW_MINUTES)
                 }
-                val label = counts.entries.joinToString(" · ") { (line, n) ->
+            }
+            val timeAffinity = (windowed / occs.size).coerceIn(0.0, 1.0)
+            // Rough-period affinity: a modest nudge, recency stays the driver.
+            score += PILL_TIME_WEIGHT * timeAffinity
+            // Groupings extending what was already taken today rank higher.
+            val overlap = todayPills.count { it in counts }
+            if (overlap > 0) score *= 1.0 + PILL_TODAY_OVERLAP_BOOST * overlap
+            Scored(counts, score)
+        }
+            .sortedWith(compareByDescending<Scored> { it.score })
+            .take(8)
+            .map { scored ->
+                val label = scored.counts.entries.joinToString(" · ") { (line, n) ->
                     if (n > 1) "$line ×$n" else line
                 }
-                PillSuggestion(label = label, counts = counts)
+                PillSuggestion(label = label, counts = scored.counts)
             }
         onResult(suggestions)
     }
@@ -171,6 +221,12 @@ private const val PILL_FLOOR_WEIGHT = 0.02
 
 /** Rough-period time-of-day window half-width (±3.5 h, circular). */
 private const val PILL_TIME_WINDOW_MINUTES = 210
+
+/** Contribution multiplier of the time-of-day affinity term. */
+private const val PILL_TIME_WEIGHT = 0.6
+
+/** Per-shared-pill score multiplier for groupings extending today's log. */
+private const val PILL_TODAY_OVERLAP_BOOST = 0.5
 
 /** Adds a new pill to the persisted catalog (user catalog wins over defaults). */
 fun HabitViewModel.addPillToCatalog(name: String, description: String, onDone: () -> Unit = {}) {
