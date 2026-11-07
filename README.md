@@ -1,6 +1,10 @@
 # Tail — Habit Tracker Android App
 
-**Last updated:** 2026-10-22T11:35Z
+**Last updated:** 2026-11-06T07:55Z
+
+## 2026-11-06T07:55Z — JugCoach sessions now feed conditional linked habits
+- **The bug.** Completing a juggling run in JugCoach writes the run to Tail via the session broadcast ([`ACTION_JUGCOACH_SESSION`](app/src/main/java/com/example/tail/ipc/JugCoachSessionReceiver.kt:64)), which bypassed the conditional linked-habit feed entirely — so incrementing "Juggle Run" never fed its conditionally linked "Juggle" habit, although the plain "+1" IPC path ([`HabitIncrementReceiver`](app/src/main/java/com/example/tail/ipc/HabitIncrementReceiver.kt:251)) did feed it.
+- **The fix.** [`handleSession`](app/src/main/java/com/example/tail/ipc/JugCoachSessionReceiver.kt:93) now snapshots the source habit's count before the atomic 7-key write and, inside the same mutex-locked block, runs the identical feed logic as `HabitIncrementReceiver`: per-link value resolution, divider-applied "feed points" deltas, "feed max1" and target "max 1" caps, linked-habit timestamps and `HabitIncrementBus` emits. Backfill (`ACTION_JUGCOACH_BACKFILL`) deliberately stays feed-free — SET semantics, same as the Garmin/GitHub backfills.
 
 ## 2026-10-22T11:35Z — Phone Usage habit family (UsageStats auto-captured metrics)
 - **New automatic family, environment-style.** Daily on-device phone-usage snapshots from Android UsageStatsManager ([`PhoneUsageRepository`](core-data/src/main/java/com/example/tail/data/phoneusage/PhoneUsageRepository.kt:59)): first unlock minute, evening last usage (04:00 cutoff), total screen minutes, unlock count, median session (×10), long sessions (20 min+), pre-sleep (21:00–04:00 fallback window) and night (23:00–05:00) screen minutes, plus first-app label and top-3 app-category buckets kept in the snapshot. Requires the "Usage access" special permission (grant button deep-links there; `PACKAGE_USAGE_STATS` was already in the manifest).

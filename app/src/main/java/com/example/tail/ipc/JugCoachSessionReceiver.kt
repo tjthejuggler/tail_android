@@ -129,12 +129,20 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
                 // cap (a JugCoach-usage habit is typically capped at 1/day).
                 // The metric slots below bypass the cap because they are
                 // cumulative totals, not binary "did it" counts.
+                //
+                // For conditional sources we also snapshot today's primary
+                // count BEFORE the write — the linked-habit feed below uses it
+                // for its "feed points" delta and the "feed max1" cap, exactly
+                // like HabitIncrementReceiver's plain "+1" path.
+                val isConditional = habitName in settings.conditionalHabits
                 var binaryIncrement = 1
-                if (habitName in settings.maxOneHabits) {
+                var sourceCountBefore = -1
+                if (habitName in settings.maxOneHabits || isConditional) {
                     val db = habitsRepo.loadDatabase(uri, appContext)
                     val todayStr = java.time.LocalDate.now().toString()
                     val currentCount = db[habitName]?.get(todayStr) ?: 0
-                    if (currentCount >= 1) {
+                    if (isConditional) sourceCountBefore = currentCount
+                    if (habitName in settings.maxOneHabits && currentCount >= 1) {
                         binaryIncrement = 0
                         Log.i(TAG, "Skipping binary increment for '$habitName' — already at max 1 for today")
                     }
@@ -158,6 +166,63 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
 
                 fileMutex.withLock {
                     habitsRepo.incrementHabitSlots(uri, appContext, increments)
+
+                    // Also increment any conditional linked habits — mirrors
+                    // HabitIncrementReceiver so a JugCoach run on a conditional
+                    // source (e.g. "Juggle Run") feeds its linked habits
+                    // (e.g. "Juggle"). Each link feeds the value configured
+                    // for it: Points (primary count) by default, or one of the
+                    // linked habit's raw secondary slots. Feed semantics match
+                    // the manual tap path: "feed points" sources feed their
+                    // divider-applied POINTS delta, others the raw amount,
+                    // with the "feed max1" cap on Points targets. Inside the
+                    // same mutex-locked block so the whole 7-key update plus
+                    // the linked feeds stay atomic against rapid-fire runs.
+                    if (sourceCountBefore >= 0) {
+                        val linkedHabits = settings.conditionalLinkedHabits[habitName] ?: emptySet()
+                        val todayStr = java.time.LocalDate.now().toString()
+                        val feedPoints = habitName in settings.conditionalFeedPointsHabits
+                        val sourceDivider = settings.habitDividers[habitName] ?: 1
+                        for (linkedName in linkedHabits) {
+                            val valueKey = com.example.tail.data.effectiveConditionalLinkValueKey(
+                                settings.conditionalLinkValues, settings.secondaryValueHabits,
+                                settings.chessComHabitLinks, habitName, linkedName
+                            )
+                            val targetKey = com.example.tail.data.conditionalLinkStorageKey(linkedName, valueKey)
+                            val linkAmount = settings.conditionalLinkAmounts[habitName]?.get(linkedName) ?: 1
+                            val baseFeedAmount = com.example.tail.data.conditionalTapFeedAmount(
+                                sourceCountBefore, binaryIncrement, feedPoints, sourceDivider, linkAmount
+                            )
+                            // "Feed max1" cap: skip Points feeds when this source
+                            // already fed its 1 point today (primary/Points feeds only)
+                            val feedAmount = if (
+                                targetKey == linkedName &&
+                                habitName in settings.conditionalFeedMaxOneHabits
+                            ) {
+                                com.example.tail.data.conditionalCappedFeedAmount(sourceCountBefore, baseFeedAmount)
+                            } else baseFeedAmount
+                            if (feedAmount == 0) continue
+                            // Respect the "max 1" cap on linked habits (primary/Points feeds only)
+                            if (targetKey == linkedName && linkedName in settings.maxOneHabits) {
+                                val db = habitsRepo.loadDatabase(uri, appContext)
+                                val currentCount = db[linkedName]?.get(todayStr) ?: 0
+                                if (currentCount >= 1) {
+                                    Log.i(TAG, "Skipping linked increment for '$linkedName' — already at max 1")
+                                    continue
+                                }
+                            }
+                            habitsRepo.incrementHabitForDate(uri, appContext, targetKey, feedAmount, java.time.LocalDate.now())
+                            HabitIncrementBus.emit(linkedName)
+                            Log.i(TAG, "Incremented linked habit '$linkedName' (conditional on '$habitName', feeds $valueKey +$feedAmount)")
+
+                            // Record timestamp for the linked habit too
+                            try {
+                                HabitTimestampRepository(appContext).addTimestamp(linkedName)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to record timestamp for linked '$linkedName': ${e.message}")
+                            }
+                        }
+                    }
                 }
                 HabitIncrementBus.emit(habitName)
                 Log.i(
