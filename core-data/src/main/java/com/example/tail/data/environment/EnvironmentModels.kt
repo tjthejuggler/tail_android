@@ -40,6 +40,8 @@ data class EnvironmentSnapshot(
     val humidityMean: Double? = null,
     val precipitationMm: Double? = null,
     val uvIndexMax: Double? = null,
+    /** True when uvIndexMax was DERIVED from ERA5 shortwave radiation (no real UV exists before the Forecast API's ~92-day window). */
+    val uvIndexMaxEstimated: Boolean = false,
     val pressureMeanHpa: Double? = null,
     val windMaxKmh: Double? = null,
 
@@ -88,6 +90,7 @@ data class EnvironmentSnapshot(
         humidityMean?.let { put("rh", it) }
         precipitationMm?.let { put("prcp", it) }
         uvIndexMax?.let { put("uv", it) }
+        if (uvIndexMaxEstimated && uvIndexMax != null) put("uvE", true)
         pressureMeanHpa?.let { put("pres", it) }
         windMaxKmh?.let { put("wind", it) }
         aqiEuropeanMax?.let { put("aqi", it) }
@@ -133,7 +136,9 @@ data class EnvironmentSnapshot(
                 locationLabel = o.optString("label", ""),
                 tempMinC = d("tMin"), tempMaxC = d("tMax"), tempMeanC = d("tMean"),
                 humidityMean = d("rh"), precipitationMm = d("prcp"),
-                uvIndexMax = d("uv"), pressureMeanHpa = d("pres"), windMaxKmh = d("wind"),
+                uvIndexMax = d("uv"),
+                uvIndexMaxEstimated = o.optBoolean("uvE", false),
+                pressureMeanHpa = d("pres"), windMaxKmh = d("wind"),
                 aqiEuropeanMax = if (o.has("aqi")) o.getInt("aqi") else null,
                 pm25Mean = d("pm25"), pm10Mean = d("pm10"), ozoneMean = d("o3"), no2Mean = d("no2"),
                 pollenGrassMax = d("polGrass"), pollenBirchMax = d("polBirch"),

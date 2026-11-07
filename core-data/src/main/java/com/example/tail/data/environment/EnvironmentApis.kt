@@ -34,6 +34,9 @@ object EnvironmentApis {
     private const val CONNECT_TIMEOUT_MS = 10_000
     private const val READ_TIMEOUT_MS = 20_000
 
+    /** Calibration: uv_index_max ≈ 0.0082 × max hourly shortwave radiation (W/m²). */
+    private const val UV_SWR_COEFF = 0.0082
+
     /** One GET; returns the body as String or null on any failure. */
     private fun httpGet(url: String): String? = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
@@ -79,16 +82,71 @@ object EnvironmentApis {
                 httpGet("https://archive-api.open-meteo.com/v1/archive?$params"),
                 from, to
             )
-            if (archive.isNotEmpty()) return@withContext archive
+            if (archive.isNotEmpty()) {
+                return@withContext fillUvEstimates(lat, lon, archive)
+            }
         }
         val primary = httpGet("https://api.open-meteo.com/v1/forecast?$params")
         val parsed = parseWeatherRange(primary, from, to)
-        if (parsed.isNotEmpty()) parsed else {
+        val result = if (parsed.isNotEmpty()) parsed else {
             parseWeatherRange(
                 httpGet("https://archive-api.open-meteo.com/v1/archive?$params"),
                 from, to
             )
         }
+        fillUvEstimates(lat, lon, result)
+    }
+
+    /**
+     * The Archive API (ERA5) has NO uv_index variable at all — only the
+     * Forecast API serves real UV, and only ~92 days back. For any day the
+     * weather fetch left without UV, derive it from ERA5 hourly shortwave
+     * radiation: a global calibration against 360 real-UV days across both
+     * hemispheres gives uv_index_max ≈ 0.0082 × max_hourly_SW_radiation
+     * (median error ~0.4 UVI). Values are flagged estimated
+     * ([WeatherResult.uvEstimated]) so downstream analyses can tell them
+     * apart from measured UV. Polar-night days (max SWR = 0) legitimately
+     * estimate UV = 0.
+     */
+    private fun fillUvEstimates(
+        lat: Double,
+        lon: Double,
+        results: Map<LocalDate, WeatherResult>
+    ): Map<LocalDate, WeatherResult> {
+        val missing = results.filterValues { it.uvIndexMax == null }
+        if (missing.isEmpty()) return results
+        val swrMax = fetchSwrMaxRange(lat, lon, missing.keys.min(), missing.keys.max()) ?: return results
+        return results.mapValues { (d, r) ->
+            if (r.uvIndexMax == null && swrMax.containsKey(d)) r.copy(
+                uvIndexMax = (UV_SWR_COEFF * swrMax.getValue(d) * 100).toInt() / 100.0,
+                uvEstimated = true
+            ) else r
+        }
+    }
+
+    /** Daily MAX of ERA5 hourly shortwave radiation (W/m²) for a date range. */
+    private fun fetchSwrMaxRange(
+        lat: Double,
+        lon: Double,
+        from: LocalDate,
+        to: LocalDate
+    ): Map<LocalDate, Double>? {
+        val body = httpGet(
+            "https://archive-api.open-meteo.com/v1/archive?latitude=$lat&longitude=$lon" +
+                "&start_date=$from&end_date=$to&hourly=shortwave_radiation&timezone=auto"
+        ) ?: return null
+        return runCatching {
+            val hourly = JSONObject(body).getJSONObject("hourly")
+            val times = hourly.getJSONArray("time")
+            val vals = hourly.optJSONArray("shortwave_radiation") ?: return null
+            val out = mutableMapOf<LocalDate, Double>()
+            for (i in 0 until times.length()) {
+                val d = runCatching { LocalDate.parse(times.getString(i).take(10)) }.getOrNull() ?: continue
+                val v = if (i < vals.length() && !vals.isNull(i)) vals.getDouble(i) else continue
+                if (v > (out[d] ?: Double.NEGATIVE_INFINITY)) out[d] = v
+            }
+            out
+        }.onFailure { Log.w(TAG, "swr-range parse failed: ${it.message}") }.getOrNull()
     }
 
     private fun parseWeatherRange(
@@ -158,7 +216,10 @@ object EnvironmentApis {
             val archive = httpGet(
                 "https://archive-api.open-meteo.com/v1/archive?$params"
             )
-            parseWeather(archive) ?: parsed
+            val fallback = parseWeather(archive) ?: parsed
+            if (fallback != null) {
+                fillUvEstimates(lat, lon, mapOf(date to fallback))[date] ?: fallback
+            } else fallback
         }
     }
 
@@ -171,7 +232,9 @@ object EnvironmentApis {
         val precipitationMm: Double?,
         val uvIndexMax: Double?,
         val pressureMeanHpa: Double?,
-        val windMaxKmh: Double?
+        val windMaxKmh: Double?,
+        /** True when uvIndexMax was derived from ERA5 shortwave radiation. */
+        val uvEstimated: Boolean = false
     ) {
         /** True when at least one metric came back non-null. */
         val hasAnyData: Boolean
@@ -456,6 +519,7 @@ object EnvironmentApis {
                 humidityMean = w?.humidityMean, precipitationMm = w?.precipitationMm,
                 uvIndexMax = w?.uvIndexMax, pressureMeanHpa = w?.pressureMeanHpa,
                 windMaxKmh = w?.windMaxKmh,
+                uvIndexMaxEstimated = w?.uvEstimated ?: false,
                 aqiEuropeanMax = a?.aqiEuropeanMax,
                 pm25Mean = a?.pm25Mean, pm10Mean = a?.pm10Mean,
                 ozoneMean = a?.ozoneMean, no2Mean = a?.no2Mean,

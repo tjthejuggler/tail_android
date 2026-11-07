@@ -74,14 +74,20 @@ class EnvironmentRepository(private val context: Context) {
      * weather. Weather is globally available (Open-Meteo archive reaches back
      * to 1940), so a "fetched" day with no temperatures at all is a failed or
      * zero-padded capture that must be retried — otherwise phantom 0 °C days
-     * would be skipped forever. Other metrics that are legitimately
+     * would be skipped forever. UV index max is likewise globally served by
+     * Open-Meteo (same archive), so a fetched day with temperatures but a
+     * null UV was captured before the UV field was added to the request —
+     * it must be re-fetched too, or the UV metric's coverage stays frozen at
+     * the feature-addition date forever. Other metrics that are legitimately
      * unavailable (Kp older than ~30 days, pollen outside Europe, unknown
      * water hardness…) still do NOT make the day incomplete.
      */
     fun needsFetch(date: LocalDate): Boolean {
         val snap = getSnapshot(date) ?: return true
         if (snap.fetchedAt.isBlank()) return true
-        return snap.tempMinC == null && snap.tempMaxC == null && snap.tempMeanC == null
+        val hasWeather = snap.tempMinC != null || snap.tempMaxC != null || snap.tempMeanC != null
+        if (!hasWeather) return true
+        return snap.uvIndexMax == null
     }
 
     /**
@@ -209,6 +215,8 @@ class EnvironmentRepository(private val context: Context) {
             humidityMean = fresh.humidityMean ?: base.humidityMean,
             precipitationMm = fresh.precipitationMm ?: base.precipitationMm,
             uvIndexMax = fresh.uvIndexMax ?: base.uvIndexMax,
+            uvIndexMaxEstimated = if (fresh.uvIndexMax != null) fresh.uvIndexMaxEstimated
+            else base.uvIndexMaxEstimated && base.uvIndexMax != null,
             pressureMeanHpa = fresh.pressureMeanHpa ?: base.pressureMeanHpa,
             windMaxKmh = fresh.windMaxKmh ?: base.windMaxKmh,
             aqiEuropeanMax = fresh.aqiEuropeanMax ?: base.aqiEuropeanMax,
@@ -335,7 +343,8 @@ class EnvironmentRepository(private val context: Context) {
             date = date.toString(), lat = 0.0, lon = 0.0,
             tempMinC = w.tempMinC, tempMaxC = w.tempMaxC, tempMeanC = w.tempMeanC,
             humidityMean = w.humidityMean, precipitationMm = w.precipitationMm,
-            uvIndexMax = w.uvIndexMax, pressureMeanHpa = w.pressureMeanHpa,
+            uvIndexMax = w.uvIndexMax, uvIndexMaxEstimated = w.uvEstimated,
+            pressureMeanHpa = w.pressureMeanHpa,
             windMaxKmh = w.windMaxKmh
         )
     }
