@@ -240,6 +240,38 @@ fun HabitViewModel.addPillToCatalog(name: String, description: String, onDone: (
     }
 }
 
+/**
+ * Edits an existing catalog pill (long-press → edit in the pill dialog).
+ *
+ *  - Description: always editable; the persisted user catalog overlays the
+ *    defaults, so this also customises default pills.
+ *  - Rename: only for USER-ADDED pills (default catalog keys can't be removed
+ *    from the shipped map, so renaming them would duplicate the entry; the
+ *    description override still applies). History is NOT rewritten — the
+ *    parser's containment matching keeps old lines resolving to the pill.
+ */
+fun HabitViewModel.updatePillInCatalog(
+    oldName: String,
+    newName: String,
+    description: String,
+    onDone: () -> Unit = {}
+) {
+    viewModelScope.launch {
+        val cleanNew = newName.trim()
+        val cleanOld = oldName.trim()
+        if (cleanOld.isEmpty()) return@launch
+        val rename = cleanNew.isNotEmpty() && cleanNew != cleanOld &&
+            cleanOld !in PillLogParser.DEFAULT_CATALOG
+        var catalog = _settings.value.pillCatalog
+        if (rename) catalog = catalog - cleanOld
+        val key = if (rename) cleanNew else cleanOld
+        catalog = catalog + (key to description.trim())
+        settingsRepo.savePillCatalog(catalog)
+        _settings.value = _settings.value.copy(pillCatalog = catalog)
+        onDone()
+    }
+}
+
 private fun HabitViewModel.recomputePillDayInternal(habitName: String, date: LocalDate) {
     viewModelScope.launch(Dispatchers.IO) {
         val repo = PillDoseRepository()

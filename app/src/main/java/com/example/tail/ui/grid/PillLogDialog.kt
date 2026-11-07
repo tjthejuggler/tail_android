@@ -7,8 +7,17 @@ package com.example.tail.ui.grid
 //  - Pills with pending servings float to the top; the rest alphabetical.
 //  - Compact rows to fit more on screen.
 //  - Add-new-pill inline (joins the persistent catalog).
+//  - LONG-PRESS a pill row → edit its details (name + per-serving
+//    composition), including 📷 AI-camera auto-fill from a photo of the
+//    bottle/box (same assist as the text-input options editor).
 //  - Non-blocking double-tap guard per spec item 3.
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -42,8 +51,13 @@ private fun fmtAmount(d: Double): String =
  *   sorts them (pending-first, then alphabetical).
  * @param suggestions Likely-next chips (see [com.example.tail.ui.viewmodel.loadPillSuggestions]).
  * @param onAddPill Called with (name, per-serving description) for a new catalog pill.
+ * @param onUpdatePill Called with (oldName, newName, per-serving description)
+ *   when a pill's details are edited (long-press → edit → save).
+ * @param onGenerateDescription AI-camera assist: analyse [imageFile] + [instruction]
+ *   into a per-serving description (photo deleted after use).
  * @param onConfirm Receives the NEW lines to append (one per serving).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PillLogDialog(
     habitName: String,
@@ -53,6 +67,8 @@ fun PillLogDialog(
     catalog: Map<String, String>,
     suggestions: List<PillSuggestion> = emptyList(),
     onAddPill: (String, String) -> Unit = { _, _ -> },
+    onUpdatePill: (String, String, String) -> Unit = { _, _, _ -> },
+    onGenerateDescription: (pillName: String, instruction: String, imageFile: java.io.File, onResult: (String?) -> Unit) -> Unit = { _, _, _, _ -> },
     onConfirm: (List<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -79,6 +95,8 @@ fun PillLogDialog(
     var showAddPill by remember { mutableStateOf(false) }
     val newPillName = remember { mutableStateOf("") }
     val newPillDesc = remember { mutableStateOf("") }
+    // Long-press → edit details
+    var editPill by remember { mutableStateOf<String?>(null) }
     val totalPending = pending.values.sum()
 
     /** Repeated same-day servings are deliberate re-dosing — no confirmation. */
@@ -99,7 +117,7 @@ fun PillLogDialog(
             Column {
                 Text(text = habitName, fontSize = 16.sp)
                 Text(
-                    text = "One line = one serving · repeats re-dose",
+                    text = "One line = one serving · repeats re-dose · long-press a pill to edit",
                     fontSize = 10.sp, color = Color(0xFF888888)
                 )
             }
@@ -164,7 +182,12 @@ fun PillLogDialog(
                 // ── Compact pill rows ─────────────────────────────────────────
                 orderedPills.forEach { pill ->
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                onClick = { addServing(pill) },
+                                onLongClick = { editPill = pill }
+                            ),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -296,6 +319,159 @@ fun PillLogDialog(
                     if (lines.isNotEmpty()) onConfirm(lines)
                 },
                 enabled = totalPending > 0
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+
+    // ── Long-press editor: rename (user pills) + per-serving details + AI camera ──
+    editPill?.let { pill ->
+        PillEditDialog(
+            pillName = pill,
+            description = catalog[pill] ?: "",
+            isDefaultPill = pill in PillLogParser.DEFAULT_CATALOG,
+            onGenerateDescription = onGenerateDescription,
+            onSave = { newName, desc ->
+                onUpdatePill(pill, newName, desc)
+                editPill = null
+            },
+            onDismiss = { editPill = null }
+        )
+    }
+}
+
+/**
+ * Per-pill detail editor, opened by long-pressing a pill row in
+ * [PillLogDialog]. Mirrors the text-input options editor's AI-camera assist:
+ * photograph the bottle/box, the vision model fills the per-serving
+ * composition ("e.g. Magnesium 150mg, B6 2mg").
+ */
+@Composable
+private fun PillEditDialog(
+    pillName: String,
+    description: String,
+    isDefaultPill: Boolean,
+    onGenerateDescription: (String, String, java.io.File, (String?) -> Unit) -> Unit,
+    onSave: (newName: String, description: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var editName by remember { mutableStateOf(pillName) }
+    var editDesc by remember { mutableStateOf(description) }
+    var aiInstruction by remember { mutableStateOf("") }
+    var aiBusy by remember { mutableStateOf(false) }
+    var aiError by remember { mutableStateOf<String?>(null) }
+    var aiCaptureFile by remember { mutableStateOf<java.io.File?>(null) }
+
+    val aiCameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { ok ->
+        val file = aiCaptureFile
+        aiCaptureFile = null
+        if (ok && file != null) {
+            aiBusy = true
+            aiError = null
+            onGenerateDescription(pillName, aiInstruction, file) { result ->
+                aiBusy = false
+                if (result != null) editDesc = result
+                else aiError = "AI generation failed — check LLM settings (Meals AI)"
+            }
+        }
+    }
+    fun aiFileUri(file: java.io.File) = androidx.core.content.FileProvider.getUriForFile(
+        context, "com.example.tail.fileprovider", file
+    )
+    val aiPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            aiCaptureFile?.let { aiCameraLauncher.launch(aiFileUri(it)) }
+        } else aiError = "Camera permission denied"
+    }
+    fun launchAiCamera() {
+        val file = java.io.File(
+            context.filesDir,
+            "meal_images/pill_ai_${java.util.UUID.randomUUID()}.jpg"
+        ).apply { parentFile?.mkdirs() }
+        aiCaptureFile = file
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) aiCameraLauncher.launch(aiFileUri(file))
+        else aiPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(text = "Edit pill", fontSize = 16.sp)
+                Text(
+                    text = if (isDefaultPill)
+                        "Default catalog pill — details editable, name fixed"
+                    else "Long-press edit · history is kept",
+                    fontSize = 10.sp, color = Color(0xFF888888)
+                )
+            }
+        },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = editName,
+                    onValueChange = { editName = it },
+                    label = { Text("Pill name", fontSize = 9.sp) },
+                    singleLine = true,
+                    enabled = !isDefaultPill,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(fontSize = 12.sp)
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = editDesc,
+                    onValueChange = { editDesc = it },
+                    label = { Text("Per-serving composition", fontSize = 9.sp) },
+                    placeholder = { Text("e.g. Magnesium 150mg, B6 2mg", fontSize = 9.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(fontSize = 12.sp)
+                )
+
+                // ── AI camera assist: photo the bottle/box → auto-fill details ──
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = aiInstruction,
+                    onValueChange = { aiInstruction = it },
+                    label = { Text("AI instruction (e.g. parse the label)", fontSize = 9.sp) },
+                    singleLine = true,
+                    enabled = !aiBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(fontSize = 11.sp)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        onClick = { launchAiCamera() },
+                        enabled = !aiBusy,
+                        contentPadding = PaddingValues(horizontal = 6.dp)
+                    ) {
+                        Text(
+                            if (aiBusy) "Analyzing photo…" else "📷 AI camera",
+                            fontSize = 11.sp,
+                            color = if (aiBusy) Color(0xFF888888) else Color(0xFF88CCFF)
+                        )
+                    }
+                    aiError?.let {
+                        Text(text = it, fontSize = 9.sp, color = Color(0xFFFF6666), maxLines = 1)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(editName, editDesc) },
+                enabled = editName.trim().isNotEmpty()
             ) { Text("Save") }
         },
         dismissButton = {

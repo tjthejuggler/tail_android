@@ -247,6 +247,8 @@ import com.example.tail.ui.viewmodel.loadWeightsTimestampLabels
 import com.example.tail.ui.viewmodel.updateWeightsSet
 import com.example.tail.ui.viewmodel.saveSubtypeIncrement
 import com.example.tail.ui.viewmodel.addPillToCatalog
+import com.example.tail.ui.viewmodel.updatePillInCatalog
+import com.example.tail.ui.viewmodel.generateOptionDescriptionFromCamera
 import com.example.tail.ui.viewmodel.loadPillDay
 import com.example.tail.ui.viewmodel.loadPillOptions
 import com.example.tail.ui.viewmodel.loadPillSuggestions
@@ -2977,6 +2979,19 @@ fun HabitGridScreen(
                         pillDialogCatalog = catalog
                     }
                 }
+            },
+            onUpdatePill = { oldName, newName, description ->
+                viewModel.updatePillInCatalog(oldName, newName, description) {
+                    viewModel.loadPillOptions(habit.name) { pills, catalog ->
+                        pillDialogCatalogPills = pills
+                        pillDialogCatalog = catalog
+                    }
+                }
+            },
+            onGenerateDescription = { pillName, instruction, imageFile, onResult ->
+                viewModel.generateOptionDescriptionFromCamera(
+                    habit.name, pillName, instruction, imageFile, onResult
+                )
             },
             onConfirm = { lines ->
                 viewModel.savePillLines(habit.name, selectedDate, lines)
