@@ -483,6 +483,7 @@ internal fun SpecialHabitTypesSection(
     phoneUsageContent: @Composable () -> Unit = {},
     episodeContent: @Composable () -> Unit = {},
     pillLogContent: @Composable () -> Unit = {},
+    bloodTestContent: @Composable () -> Unit = {},
     githubContent: @Composable () -> Unit,
     movieBridgeContent: @Composable () -> Unit
 ) {
@@ -531,6 +532,7 @@ internal fun SpecialHabitTypesSection(
         phoneUsageContent()
         episodeContent()
         pillLogContent()
+        bloodTestContent()
         githubContent()
         movieBridgeContent()
     }

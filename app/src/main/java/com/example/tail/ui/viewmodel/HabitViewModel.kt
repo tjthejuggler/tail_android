@@ -257,6 +257,9 @@ class HabitViewModel(
     /** Repository for daily environment snapshots (weather/air/pollen/Kp/water). */
     val environmentRepo = com.example.tail.data.environment.EnvironmentRepository(context)
 
+    /** Repository for the blood-test item database (blood-test-type habits). */
+    val bloodTestRepo = com.example.tail.data.bloodtest.BloodTestRepository(context)
+
     // ── Environment habit state (logic in HabitViewModelEnvironment.kt) ────
     /** Snapshot for [_selectedDate]; null when none stored (or feature off). */
     internal val _envSnapshot =
@@ -1626,7 +1629,10 @@ class HabitViewModel(
         /** Total machine reps of the day. */
         val weightsMachineReps: Int? = null,
         /** Total free reps of the day. */
-        val weightsFreeReps: Int? = null
+        val weightsFreeReps: Int? = null,
+        // ── Blood-test habit data (blood:<item> metrics) ──
+        /** Item name → value ×100 for every item measured that day. */
+        val bloodTestValues: Map<String, Double>? = null
     )
 
     /**
@@ -1664,6 +1670,25 @@ class HabitViewModel(
         endDate: LocalDate,
         textFilter: String = ""
     ): List<GraphDataPoint> {
+        // Blood-test habits: one point per day with entries; rawValue = the
+        // day's item count (default "Items tested" metric), bloodTestValues
+        // carries every measured item (×100) for the per-item graph metrics.
+        if (habitName in _settings.value.bloodTestHabits) {
+            val counts = bloodTestRepo.dailyItemCounts(habitName)
+            val values = bloodTestRepo.dailyItemValues(habitName)
+            val startStr = startDate.toString()
+            val endStr = endDate.toString()
+            return counts.keys.filter { it >= startStr && it <= endStr }.sorted().map { d ->
+                val count = counts[d] ?: 0
+                GraphDataPoint(
+                    date = java.time.LocalDate.parse(d),
+                    dateStr = d,
+                    rawValue = count,
+                    pointsValue = count,
+                    bloodTestValues = values[d]
+                )
+            }
+        }
         val isMeal = isMealHabit(habitName)
         // Episode ("Injury") habits: the DB value is the binary injured flag;
         // a recorded per-day severity rating overrides it so the graph line

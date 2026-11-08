@@ -183,6 +183,10 @@ import com.example.tail.data.findShortcutInfo
 import com.example.tail.ui.viewmodel.buildHabitSuggestions
 import com.example.tail.ui.viewmodel.setSuggestionExcluded
 import com.example.tail.ui.viewmodel.incrementHabit
+import com.example.tail.ui.viewmodel.loadBloodTestDialogData
+import com.example.tail.ui.viewmodel.readBloodTestDocuments
+import com.example.tail.ui.viewmodel.parseBloodTestWithAi
+import com.example.tail.ui.viewmodel.saveBloodTestEntry
 import com.example.tail.data.isActivityEntry
 import com.example.tail.data.isAppIconName
 import com.example.tail.data.isAppLink
@@ -945,6 +949,11 @@ fun HabitGridScreen(
     var sorenessDialogOpen by remember { mutableStateOf(false) }
     var subtypeDialogBreakdown by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     // Pill-log dialog state (count-coded dosing habits, e.g. "Took pills")
+    // Blood-test dialog state (habit + loaded dialog data)
+    var bloodTestDialogHabit by remember { mutableStateOf<Habit?>(null) }
+    var bloodTestDialogData by remember {
+        mutableStateOf<com.example.tail.ui.viewmodel.BloodTestDialogData?>(null)
+    }
     var pillDialogHabit by remember { mutableStateOf<Habit?>(null) }
     var pillDialogToday by remember { mutableStateOf(com.example.tail.data.PillDayDoses()) }
     var pillDialogCatalogPills by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -1879,6 +1888,15 @@ fun HabitGridScreen(
                                     }
                                     viewModel.loadPillSuggestions(habit.name) { pillDialogSuggestions = it }
                                     pillDialogHabit = habit
+                                }
+                                // Blood-test type: tapping opens the lab-item
+                                // dialog (manual form + AI text parsing).
+                                habit.name in settings.bloodTestHabits -> {
+                                    bloodTestDialogData = null
+                                    viewModel.loadBloodTestDialogData(habit.name, selectedDate) {
+                                        bloodTestDialogData = it
+                                    }
+                                    bloodTestDialogHabit = habit
                                 }
                                 habit.name in settings.weightsHabits -> weightsDialogHabit = habit
                                 habit.name in settings.textInputHabits -> {
@@ -2964,6 +2982,29 @@ fun HabitGridScreen(
     }
 
     // Pill-log dialog (count-coded dosing)
+    bloodTestDialogHabit?.let { habit ->
+        val btData = bloodTestDialogData
+        if (btData != null) {
+            BloodTestDialog(
+                habitName = habit.name,
+                date = selectedDate,
+                data = btData,
+                onParseAi = { text, docText, docImages, onResult ->
+                    viewModel.parseBloodTestWithAi(text, docText, docImages, onResult)
+                },
+                onReadDocuments = { uris, onResult ->
+                    viewModel.readBloodTestDocuments(uris, onResult)
+                },
+                onConfirm = { source, rawText, items, entryDate, note ->
+                    viewModel.saveBloodTestEntry(
+                        habit.name, entryDate, null, source, rawText, items, note
+                    )
+                    bloodTestDialogHabit = null
+                },
+                onDismiss = { bloodTestDialogHabit = null }
+            )
+        }
+    }
     pillDialogHabit?.let { habit ->
         PillLogDialog(
             habitName = habit.name,

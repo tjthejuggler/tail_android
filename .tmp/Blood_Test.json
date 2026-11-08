@@ -1,0 +1,3746 @@
+[
+  {
+    "id": "seed-2021-01-23-0-49866",
+    "date": "2021-01-23",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": null,
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 80.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-22-1-6054",
+    "date": "2021-01-22",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": null,
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 99.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-21-2-74452",
+    "date": "2021-01-21",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": null,
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 73.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-19-3-16719",
+    "date": "2021-01-19",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": null,
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 70.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-16-4-39177",
+    "date": "2021-01-16",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "12hr fast, high fast low to moderate carbs, moderate excercise",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 6.18,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 89.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-11-5-9523",
+    "date": "2021-01-11",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "16hr fast, high fat, low carb, moderate excercise",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 4.93,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 71.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-09-6-23054",
+    "date": "2021-01-09",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, high fat, moderate carbs, moderate excercise",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 10.56,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 76.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-08-7-1796",
+    "date": "2021-01-08",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "17hr fast, moderate endurance exc lately, moderate fat/carb",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 4.44,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 72.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-04-8-796",
+    "date": "2021-01-04",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, light run yesterday, moderate fat and carb",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 5.79,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 73.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-03-9-87313",
+    "date": "2021-01-03",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11hr fast, rest day, high fat, low carb",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 7.54,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 95.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2021-01-02-10-27198",
+    "date": "2021-01-02",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, high fat, moderate carb yesterday, ran half marathon",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 2.07,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 67.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-12-30-11-34229",
+    "date": "2020-12-30",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, same",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 28.61,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 103.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-12-28-12-78746",
+    "date": "2020-12-28",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, same as last entry",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 26.39,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 95.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-12-25-13-78607",
+    "date": "2020-12-25",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "14hr fast,same diet and exercise as last entry",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 47.8,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 86.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-12-20-14-61322",
+    "date": "2020-12-20",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "12hr fast, been eating low sugar, moderate carb, moderate fat,a good amount of endurance excessive",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 10.19,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 73.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-12-08-15-64674",
+    "date": "2020-12-08",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "14hr fast, been eating low sugar, normal carbs and fat, intermittent fasting",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 20.56,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 74.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-10-28-16-78683",
+    "date": "2020-10-28",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "10hr fast, been eating high fat, but not strict keto, regular moderate cardio",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 23.89,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 86.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-09-29-17-78464",
+    "date": "2020-09-29",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, eating moderate keto lately, moderate cardio",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 10.89,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 98.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-24-18-52037",
+    "date": "2020-08-24",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "16hr fast, 6 mile run yesterday, and 260 mile bike ride over 3 days before that, eating not extreme keto",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 2.6,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 89.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-14-19-43956",
+    "date": "2020-08-14",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "16hr fast, 5 mile walk yesterday, 5k aerobic run day before, staying on keto diet",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 6.25,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 90.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-12-20-96597",
+    "date": "2020-08-12",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "15hr fast, anaerobic 5k yesterday, went back to high fat yesterday",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 8.61,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 93.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-11-21-21946",
+    "date": "2020-08-11",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "14hr fast, heavy carb and low fat yesterday, 36min hiit yesterday",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 13.89,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 100.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-10-22-90010",
+    "date": "2020-08-10",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, heavy carb and low fat yesterday, 8 mile aerobic run yesterday",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 5.86,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 95.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-09-23-24133",
+    "date": "2020-08-09",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, keto, no moderate cardio yesterday",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 8.1,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 102.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-08-24-56981",
+    "date": "2020-08-08",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "16hr fast, keto and few calories yesterday bc threw up from spicy sauce, moderate cardio yesterday",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 6.67,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 96.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-06-25-27759",
+    "date": "2020-08-06",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "14hr fast, keto, hour after moderate cardio",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 9.17,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 99.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-06-26-78368",
+    "date": "2020-08-06",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11hr fast, keto, moderate cardio yesterday",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 8.01,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 101.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-05-27-13752",
+    "date": "2020-08-05",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "10hr fast, keto, moderate cardio yesterday",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 4.75,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 94.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-04-28-20414",
+    "date": "2020-08-04",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11hr fast, keto, but had a low carb cider yesterday, biked 70 miles yesterday",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 11.66,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 105.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-03-29-19356",
+    "date": "2020-08-03",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11hr fast, keto after several days of no cardio",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 5.33,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 96.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.0,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-02-30-88486",
+    "date": "2020-08-02",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "12hr",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 7.43,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 107.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-08-01-31-23986",
+    "date": "2020-08-01",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11hr",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 3.59,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 97.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-31-32-86027",
+    "date": "2020-07-31",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "8hr, yesterday keto with super slightly high late night protein",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 5.0,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 99.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-30-33-93285",
+    "date": "2020-07-30",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11hr fast, yesterday was a rest day",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 3.52,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 95.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-29-34-94223",
+    "date": "2020-07-29",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, 80 mile bike yesterday, very keto diet",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.46,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 76.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-28-35-98892",
+    "date": "2020-07-28",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11hr fast, 3 gels yesterday during 5hr 50 mile cycle, high fat/protein after cycle",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 6.32,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 91.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-27-36-43956",
+    "date": "2020-07-27",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11.5hr fast, just woke up",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 6.25,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 90.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-26-37-37294",
+    "date": "2020-07-26",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "2hr fast, just before bed",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 9.55,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 86.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-26-38-63425",
+    "date": "2020-07-26",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "6hr after honey and a nap",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 106.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-26-39-41641",
+    "date": "2020-07-26",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "2hr after honey",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 100.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-26-40-22900",
+    "date": "2020-07-26",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "1hr after 2 tablespoons honey",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 122.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-26-41-89693",
+    "date": "2020-07-26",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "up all night trpn and eating little snacks",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 89.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-25-42-42663",
+    "date": "2020-07-25",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "17hr fast, 1hr after 6 mile walk",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 7.4,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 80.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-25-43-93844",
+    "date": "2020-07-25",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, just woke up",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 8.98,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 97.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-24-44-70722",
+    "date": "2020-07-24",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "15:45hr fast, 1hr after ice bath",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 11.53,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 83.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-24-45-97929",
+    "date": "2020-07-24",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "14:45hr fast, immediately after ice bath",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 8.43,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 91.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-24-46-42857",
+    "date": "2020-07-24",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "14hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 10.66,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 96.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-23-47-20011",
+    "date": "2020-07-23",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "16hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 6.58,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 83.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-23-48-85314",
+    "date": "2020-07-23",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "15hr fast, just walked 5 miles",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 24.72,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 89.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-23-49-29232",
+    "date": "2020-07-23",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "6hr fast, just woke after ~5hrs of sleep",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 10.0,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 90.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-22-50-91146",
+    "date": "2020-07-22",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "1hr after eating in a 5hr keto feeding window",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 8.51,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 92.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-22-51-38784",
+    "date": "2020-07-22",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "42hrs, right before eating",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 2.6,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 75.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-22-52-50590",
+    "date": "2020-07-22",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "38hr, went for short walk,lay around watching TV",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 3.75,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 81.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-22-53-99172",
+    "date": "2020-07-22",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "32hr, just woke up",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 3.37,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 85.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-07-21-54-54080",
+    "date": "2020-07-21",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "20hr, been eating carbs lately",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 6.5,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 82.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-05-15-55-24879",
+    "date": "2020-05-15",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "14hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 11.44,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 103.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-05-14-56-78911",
+    "date": "2020-05-14",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "85hr",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.24,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 58.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-05-13-57-15956",
+    "date": "2020-05-13",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "75hr",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.13,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 59.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-05-13-58-61815",
+    "date": "2020-05-13",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "62hr",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.0,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 58.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-05-12-59-32166",
+    "date": "2020-05-12",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "52hr",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.4,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 63.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-05-12-60-5690",
+    "date": "2020-05-12",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "36hr",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 6.428,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 81.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-05-11-61-59376",
+    "date": "2020-05-11",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "29hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 6.2,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 78.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-05-11-62-24371",
+    "date": "2020-05-11",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "16hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 18.3,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 99.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-05-05-63-15390",
+    "date": "2020-05-05",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "15hr fast, after moderate excersise,low carb diet",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 97.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-04-27-64-40905",
+    "date": "2020-04-27",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "27hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 89.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-04-19-65-32051",
+    "date": "2020-04-19",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast,eating moderate fat and moderate carbs",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 101.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-03-26-66-82503",
+    "date": "2020-03-26",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "15hr fast, eating moderate high fat, moderate carb for the last few weeks",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 98.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-02-19-67-55143",
+    "date": "2020-02-19",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "15hr fast, not eating especially keto, yesterday was quite carby",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 86.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-02-14-68-79795",
+    "date": "2020-02-14",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "14hr fast high fat diet lately, but also moderate carbs,and doing 5hr feeding",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 97.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-02-09-69-71432",
+    "date": "2020-02-09",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "8hr fast after 8hr heavy eating after big fast ended",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 94.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-02-08-70-76324",
+    "date": "2020-02-08",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "82hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 56.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-02-07-71-14180",
+    "date": "2020-02-07",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "60hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 48.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-02-06-72-31500",
+    "date": "2020-02-06",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "31hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 65.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "date": "2020-02-04",
+    "id": "a59355b8-3088-46a5-97a0-f0c92de96d52",
+    "items": [
+      {
+        "flag": "normal",
+        "name": "Reverse T3",
+        "range": "9.2-24.1",
+        "unit": "ng/dL",
+        "value": 19.7
+      },
+      {
+        "flag": "normal",
+        "name": "T3 Uptake",
+        "range": "24-39",
+        "unit": "%",
+        "value": 28.0
+      },
+      {
+        "flag": "normal",
+        "name": "Free Thyroxine Index",
+        "range": "1.2-4.9",
+        "unit": "null",
+        "value": 2.1
+      },
+      {
+        "flag": "normal",
+        "name": "Thyroid Peroxidase Antibody",
+        "range": "0-34",
+        "unit": "IU/mL",
+        "value": 13.0
+      },
+      {
+        "flag": "normal",
+        "name": "Thyroxine (T4)",
+        "range": "4.5-12.0",
+        "unit": "ug/dL",
+        "value": 7.4
+      },
+      {
+        "flag": "normal",
+        "name": "Free Thyroxine (T4)",
+        "range": "0.82-1.77",
+        "unit": "ng/dL",
+        "value": 1.36
+      },
+      {
+        "flag": "normal",
+        "name": "Triiodothyronine (T3)",
+        "range": "71-180",
+        "unit": "ng/dL",
+        "value": 117.0
+      },
+      {
+        "flag": "normal",
+        "name": "Free Triiodothyronine (T3)",
+        "range": "2.0-4.4",
+        "unit": "pg/mL",
+        "value": 3.3
+      },
+      {
+        "flag": "normal",
+        "name": "TSH",
+        "range": "0.450-4.500",
+        "unit": "uIU/mL",
+        "value": 1.77
+      }
+    ],
+    "source": "ai"
+  },
+  {
+    "id": "seed-2020-02-04-73-69984",
+    "date": "2020-02-04",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "~12 hr fast, not very keto,but high fat intake lately",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 95.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-01-23-74-32971",
+    "date": "2020-01-23",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "15hr fast, moderate excercise, not very keto",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 98.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-01-10-75-69681",
+    "date": "2020-01-10",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "15hr fast, not very keto day",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 106.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-01-07-76-43124",
+    "date": "2020-01-07",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "~13hr fast, keto",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 100.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2020-01-01-77-47929",
+    "date": "2020-01-01",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, keto",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 86.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2019-12-29-78-16789",
+    "date": "2019-12-29",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "14hr fast, keto",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 92.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2019-12-26-79-69681",
+    "date": "2019-12-26",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "10hr fast, higher than average carbs yesterday",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 106.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2019-12-23-80-80777",
+    "date": "2019-12-23",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, still keto",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 104.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2019-12-22-81-64115",
+    "date": "2019-12-22",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "12hr fast, been keto for a few days",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 98.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2019-12-17-82-26780",
+    "date": "2019-12-17",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "17hr fast, little while after bike ride",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 93.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2019-12-16-83-18811",
+    "date": "2019-12-16",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 87.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2019-12-15-84-43437",
+    "date": "2019-12-15",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "2hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 115.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-19-134-44675",
+    "date": "2018-09-19",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11hr fast, but I have been eating moderate carbs for several days now",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 81.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-13-133-27235",
+    "date": "2018-09-13",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "11:50 7hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.08,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 74.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-11-132-60824",
+    "date": "2018-09-11",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "9:15a 14hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.04,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 79.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 4.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-10-131-33977",
+    "date": "2018-09-10",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "6:20pm small keto meals all day",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.59,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 70.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 6.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-09-128-66221",
+    "date": "2018-09-09",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "125hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.4,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 44.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 6.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-09-129-22955",
+    "date": "2018-09-09",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "144.5hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.37,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 42.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 6.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-09-130-97202",
+    "date": "2018-09-09",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "155.5 fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.43,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 43.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 5.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-08-127-46245",
+    "date": "2018-09-08",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "108hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.56,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 49.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 4.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-07-124-43776",
+    "date": "2018-09-07",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "86hr fast, just woke up",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.75,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 51.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-07-125-23842",
+    "date": "2018-09-07",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "92hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.94,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 64.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-07-126-91395",
+    "date": "2018-09-07",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "99.75hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.36,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 45.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 6.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-06-119-51267",
+    "date": "2018-09-06",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "54.5hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.66,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 58.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 4.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-06-120-70224",
+    "date": "2018-09-06",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "62hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.11,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 68.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-06-121-96022",
+    "date": "2018-09-06",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "66hr fast,after workout",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 2.15,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 93.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-06-122-61885",
+    "date": "2018-09-06",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "72hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.2,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 74.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-06-123-45323",
+    "date": "2018-09-06",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "75.5hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.88,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 62.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-05-116-63122",
+    "date": "2018-09-05",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "36hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.4,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 69.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-05-117-28169",
+    "date": "2018-09-05",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "45hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 1.33,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 67.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-05-118-29437",
+    "date": "2018-09-05",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "49hr fast",
+    "items": [
+      {
+        "name": "GKI",
+        "value": 0.66,
+        "unit": null,
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Glucose",
+        "value": 55.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 4.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-04-113-50131",
+    "date": "2018-09-04",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "17hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 89.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-04-114-16719",
+    "date": "2018-09-04",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "22hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 70.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-04-115-17469",
+    "date": "2018-09-04",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "28hr fast",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 2.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-09-01-112-61686",
+    "date": "2018-09-01",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "4hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 97.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-30-110-46959",
+    "date": "2018-08-30",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "21hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 69.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-30-111-97562",
+    "date": "2018-08-30",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "27hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 62.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.0,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-29-108-16275",
+    "date": "2018-08-29",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "16hr fast, just woke up",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 86.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.0,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-29-109-4378",
+    "date": "2018-08-29",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "6hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 85.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-28-107-9109",
+    "date": "2018-08-28",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "16hr fast,woke up, meditated, did short apnea training, pooped",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 93.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-26-106-70786",
+    "date": "2018-08-26",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "5hr fast",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 85.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.6,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-25-105-28305",
+    "date": "2018-08-25",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "fasting 4hrs, but only ate a little sugary chocolate and nuts, before that tasted additional 6 hours, but had more sugary chocolate and nuts and vegan cookie bite and blueberries",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 3.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-22-104-16051",
+    "date": "2018-08-22",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "fasting 10hr, just woke up",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 77.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 4.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-21-103-78136",
+    "date": "2018-08-21",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "fasting 14hr",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 73.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.8,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-19-101-88047",
+    "date": "2018-08-19",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "17hr fast, resting",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 79.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-19-102-37901",
+    "date": "2018-08-19",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "just after light meal",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 88.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-18-100-22739",
+    "date": "2018-08-18",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "6hr fast, resting",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 75.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 6.1,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-16-99-61298",
+    "date": "2018-08-16",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "5hr fast, resting",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 2.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-14-97-47093",
+    "date": "2018-08-14",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "10hr fast, resting",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 3.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-14-98-17917",
+    "date": "2018-08-14",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "1.5hrs since final meal, resting",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 2.5,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-13-95-99079",
+    "date": "2018-08-13",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "late night, 7hr fast",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 1.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-13-96-28242",
+    "date": "2018-08-13",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "4hr fast, resting, after cold shower",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 68.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 3.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-11-93-16738",
+    "date": "2018-08-11",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "4hr fast since resteraunt thai peanut curry with 5 tablespoons of coconut oil, after poker, evening",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 78.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.7,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-11-94-63843",
+    "date": "2018-08-11",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "1hr after last test, just finished hot bath followed by cold shower",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 1.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-10-91-82037",
+    "date": "2018-08-10",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "12hr fast, resting",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 0.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-10-92-1899",
+    "date": "2018-08-10",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "6hr fast, resting, evening",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 2.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-09-88-87609",
+    "date": "2018-08-09",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "16hr fast, after 15min after excercise",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 110.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.3,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-09-89-47981",
+    "date": "2018-08-09",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "1hr after large avacado salad",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 83.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 0.4,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-09-90-43024",
+    "date": "2018-08-09",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "2hr after salad",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 88.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 1.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-08-85-56979",
+    "date": "2018-08-08",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "13hr fast, resting",
+    "items": [
+      {
+        "name": "Glucose",
+        "value": 80.0,
+        "unit": "mg/dL",
+        "range": null,
+        "flag": null
+      },
+      {
+        "name": "Ketones",
+        "value": 2.0,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-08-86-82037",
+    "date": "2018-08-08",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "after large avacado salad and nut butter, resting",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 0.9,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  },
+  {
+    "id": "seed-2018-08-08-87-17469",
+    "date": "2018-08-08",
+    "time": null,
+    "source": "seed",
+    "rawText": null,
+    "note": "after 1 scoop ketocana + resteraunt thai red curry",
+    "items": [
+      {
+        "name": "Ketones",
+        "value": 2.2,
+        "unit": "mmol/L",
+        "range": null,
+        "flag": null
+      }
+    ]
+  }
+]

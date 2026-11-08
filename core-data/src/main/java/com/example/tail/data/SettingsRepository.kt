@@ -122,6 +122,8 @@ private val KEY_SICK_EPISODE_MIGRATED = booleanPreferencesKey("sick_episode_migr
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 // Pill log habit type keys (count-coded dosing for "Took pills")
 private val KEY_PILL_LOG_HABITS = stringSetPreferencesKey("pill_log_habits")
+// Blood test habit type keys (structured lab-item database behind one square)
+private val KEY_BLOOD_TEST_HABITS = stringSetPreferencesKey("blood_test_habits")
 // Pill catalog: name → composition description, stored with the KV codec
 private val KEY_PILL_CATALOG = stringPreferencesKey("pill_catalog")
 // One-time Took-pills → pill-log migration + dose backfill flag.
@@ -1242,6 +1244,7 @@ class SettingsRepository(private val context: Context) {
             sickEpisodeMigrated = prefs[KEY_SICK_EPISODE_MIGRATED] ?: false,
             subtypedHabits = prefs[KEY_SUBTYPED_HABITS] ?: emptySet(),
             pillLogHabits = prefs[KEY_PILL_LOG_HABITS] ?: emptySet(),
+            bloodTestHabits = prefs[KEY_BLOOD_TEST_HABITS] ?: emptySet(),
             pillCatalog = decodeFileUriMap(prefs[KEY_PILL_CATALOG] ?: ""),
             habitSubtypes = decodeSubtypesMap(habitSubtypesRaw),
             subtypeDataFileUris = decodeFileUriMap(subtypeDataFileUrisRaw),
@@ -1759,6 +1762,11 @@ class SettingsRepository(private val context: Context) {
     /** Saves the set of habits that have the "pill log" type enabled. */
     suspend fun savePillLogHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_PILL_LOG_HABITS] = habits }
+    }
+
+    /** Saves the set of habits that have the "blood test" type enabled. */
+    suspend fun saveBloodTestHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_BLOOD_TEST_HABITS] = habits }
     }
 
     /** Saves the pill catalog (pill name → composition description). */

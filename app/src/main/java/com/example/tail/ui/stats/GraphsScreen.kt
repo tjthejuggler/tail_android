@@ -73,6 +73,7 @@ import androidx.compose.ui.window.PopupProperties
 import com.example.tail.ui.grid.HabitInfoPanel
 import com.example.tail.ui.stats.metricLabel
 import com.example.tail.ui.viewmodel.HabitViewModel
+import com.example.tail.ui.viewmodel.isBloodTestHabit
 import com.example.tail.ui.viewmodel.clearGraphZoom
 import com.example.tail.ui.viewmodel.customValueLabel
 import com.example.tail.ui.viewmodel.getAvailableMetrics
@@ -558,7 +559,9 @@ fun GraphsPanel(
                             color = color,
                             isTextInput = viewModel.isTextInputHabit(habitName),
                             metric = metricKey,
-                            metricLabel = com.example.tail.data.displayLabelForValue(
+                            metricLabel = if (com.example.tail.data.bloodtest.isBloodMetric(metricKey))
+                                com.example.tail.data.bloodtest.bloodMetricLabel(metricKey)
+                            else com.example.tail.data.displayLabelForValue(
                                 habitName, metricKey, settings.valueDisplayLabels
                             )
                         )
@@ -694,6 +697,10 @@ fun GraphsPanel(
                                 String.format("%.1f", point.value / 10.0)
                             } else if (point.metric == com.example.tail.data.GRAPH_METRIC_RUNTIME && point.value > 0) {
                                 formatRuntimeMinutes(point.value)
+                            } else if (com.example.tail.data.bloodtest.isBloodMetric(point.metric) &&
+                                point.metric != com.example.tail.data.bloodtest.BLOOD_METRIC_COUNT) {
+                                // ×100-scaled blood-test item value
+                                String.format("%.2f", point.value / 100.0)
                             } else if (com.example.tail.data.isWeightsWeightMetric(point.metric) && point.value > 0) {
                                 // ×10-scaled display unit (kg or lb per the graph toggle)
                                 com.example.tail.data.formatWeightTenths(point.value) + " " + settings.graphWeightUnit
@@ -1140,7 +1147,12 @@ fun GraphsPanel(
 private fun displayValueForMetric(
     dp: HabitViewModel.GraphDataPoint,
     metric: String
-): Int = when (metric) {
+): Int = if (com.example.tail.data.bloodtest.isBloodMetric(metric)) {
+    // Blood-test metrics: count uses the day's item count; per-item metrics
+    // read the ×100-scaled value from bloodTestValues.
+    if (metric == com.example.tail.data.bloodtest.BLOOD_METRIC_COUNT) dp.rawValue
+    else kotlin.math.round(dp.bloodTestValues?.get(metric.removePrefix("blood:")) ?: 0.0).toInt()
+} else when (metric) {
     com.example.tail.data.GRAPH_METRIC_VALUE1 -> dp.garminValue ?: dp.rawValue
     // No rawValue fallback: days without a secondary entry must read as 0,
     // otherwise sparse secondary data (e.g. timer minutes) would display the
@@ -1177,6 +1189,10 @@ private fun displayValueForMetric(
  */
 fun formatTooltipValue(value: Int, metric: String): String {
     return when {
+        // Blood-test item values are stored ×100 — render with 2 decimals.
+        com.example.tail.data.bloodtest.isBloodMetric(metric) &&
+            metric != com.example.tail.data.bloodtest.BLOOD_METRIC_COUNT ->
+            String.format("%.2f", value / 100.0)
         metric == com.example.tail.data.GRAPH_METRIC_IMDB && value > 0 ->
             String.format("%.1f", value / 10.0)
         metric == com.example.tail.data.GRAPH_METRIC_RUNTIME && value > 0 ->
@@ -1280,6 +1296,36 @@ private fun GraphMetricToggleRow(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Blood-test habits: the 🩸 Items… button opens the popup filter
+            // where any subset of every measured item can be picked for the
+            // graph (selection persists; "Items tested" is the default).
+            var bloodFilterOpen by remember(habitName) { mutableStateOf(false) }
+            if (viewModel.isBloodTestHabit(habitName)) {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF3A1A5A), RoundedCornerShape(8.dp))
+                        .combinedClickable(
+                            onClick = { bloodFilterOpen = true },
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        )
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "🩸 Items…",
+                        color = Color(0xFFBB88FF),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (bloodFilterOpen) {
+                    BloodTestItemFilterPopup(
+                        habitName = habitName,
+                        viewModel = viewModel,
+                        onDismiss = { bloodFilterOpen = false }
+                    )
+                }
+            }
             availableMetrics.forEachIndexed { index, option ->
                 val isActive = option.key in selectedMetrics
                 // Active buttons are tinted with the exact color of their
@@ -1831,11 +1877,14 @@ private fun HabitLineChart(
             textAlign = android.graphics.Paint.Align.RIGHT
         }
 
-        // Check if any series is a Garmin fitness age metric that needs decimal formatting
+        // Check if any series needs decimal formatting (Garmin fitness age,
+        // blood-test item values — both are ×100-scaled)
         val needsDecimalFormatting = seriesData.any { series ->
             val garminType = garminHabitLinks[series.habitName]?.let { com.example.tail.data.health.GarminType.fromKey(it) }
             garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
-            garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE
+            garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE ||
+            (com.example.tail.data.bloodtest.isBloodMetric(series.metric) &&
+                series.metric != com.example.tail.data.bloodtest.BLOOD_METRIC_COUNT)
         }
 
         if (useMultiScale) {

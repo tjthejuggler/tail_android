@@ -1239,6 +1239,15 @@ data class AppSettings(
     val subtypedHabits: Set<String> = emptySet(),
 
     /**
+     * Habits that have the "blood test" type enabled. Tapping the square
+     * opens the blood-test dialog (manual per-item form + AI text parsing);
+     * every entry is stored in a per-habit structured item database
+     * (files/blood_tests/<habit>.json) and the habit's daily count in
+     * habitsdb.txt equals the number of test items measured that day.
+     */
+    val bloodTestHabits: Set<String> = emptySet(),
+
+    /**
      * Habits that have the "pill log" type enabled (e.g. "Took pills"):
      * one pill per line, line multiplicity = servings (count-coded dosing).
      * Tapping opens the pill log dialog instead of the plain text dialog.

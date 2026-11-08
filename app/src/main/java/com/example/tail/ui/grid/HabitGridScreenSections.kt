@@ -1952,6 +1952,15 @@ internal fun EditModeControlBar(
     pillLogHabits: Set<String> = emptySet(),
     /** Called when the user toggles the pill-log type for a habit. */
     onTogglePillLog: (String) -> Unit = {},
+    /** Habits with the blood-test type (structured lab items) enabled. */
+    bloodTestHabits: Set<String> = emptySet(),
+    onLoadBloodTestResults: (
+        String,
+        java.time.LocalDate,
+        (List<com.example.tail.data.bloodtest.BloodTestEntry>) -> Unit
+    ) -> Unit = { _, _, _ -> },
+    /** Called when the user toggles the blood-test type for a habit. */
+    onToggleBloodTest: (String) -> Unit = {},
     episodeHabits: Set<String> = emptySet(),
     onToggleEpisode: (String) -> Unit = {},
     sickEpisodeHabits: Set<String> = emptySet(),
@@ -2655,238 +2664,35 @@ internal fun EditModeControlBar(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     // ── Dated Entry toggle ────────────────────────────────────
-                    val isDatedEntry = selectedHabitName in datedEntryHabits
-                    var showDatedEntryInfo by remember { mutableStateOf(false) }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Column {
-                                Text(text = "Dated Entry", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                                Text(
-                                    text = if (isDatedEntry) "Auto-counts from linked file" else "Manual count only",
-                                    color = Color(0xFF888888), fontSize = 10.sp
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            IconButton(
-                                onClick = { showDatedEntryInfo = true },
-                                modifier = Modifier.size(20.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Info,
-                                    contentDescription = "Dated Entry format info",
-                                    tint = Color(0xFF6699CC),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                        Switch(
-                            checked = isDatedEntry,
-                            onCheckedChange = { onToggleDatedEntry(selectedHabitName) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFFFFCC44),
-                                checkedTrackColor = Color(0xFF4A3A00),
-                                uncheckedThumbColor = Color(0xFF888888),
-                                uncheckedTrackColor = Color(0xFF333333)
-                            )
-                        )
-                    }
-
-                    if (isDatedEntry) {
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // Dated-entry file picker row
-                        val hasDatedFile = datedEntryFileUris.containsKey(selectedHabitName)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "  Source file", color = Color(0xFFAAAAAA), fontSize = 12.sp)
-                                Text(
-                                    text = if (hasDatedFile) "✓ File linked" else "⚠ No file linked",
-                                    color = if (hasDatedFile) Color(0xFFFFCC44) else Color(0xFFFF8844),
-                                    fontSize = 10.sp
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                if (hasDatedFile) {
-                                    Button(
-                                        onClick = { onRefreshDatedEntry(selectedHabitName) },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A1A)),
-                                        modifier = Modifier.height(32.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Refresh,
-                                            contentDescription = "Re-parse linked file and refresh values",
-                                            tint = Color(0xFF88FF88),
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Refresh", fontSize = 11.sp, color = Color(0xFF88FF88))
-                                    }
-                                }
-                                Button(
-                                    onClick = { onPickDatedEntryFile(selectedHabitName) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
-                                    modifier = Modifier.height(32.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Folder,
-                                        contentDescription = "Pick dated entry source file",
-                                        tint = Color(0xFFFFCC44),
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        if (hasDatedFile) "Change" else "Link File",
-                                        fontSize = 11.sp,
-                                        color = Color(0xFFFFCC44)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Dated Entry format info dialog
-                    if (showDatedEntryInfo) {
-                        DatedEntryInfoDialog(onDismiss = { showDatedEntryInfo = false })
-                    }
+                    EditModeDatedEntrySection(
+                        habitName = selectedHabitName,
+                        datedEntryHabits = datedEntryHabits,
+                        datedEntryFileUris = datedEntryFileUris,
+                        onToggleDatedEntry = onToggleDatedEntry,
+                        onRefreshDatedEntry = onRefreshDatedEntry,
+                        onPickDatedEntryFile = onPickDatedEntryFile
+                    )
 
                     Spacer(modifier = Modifier.height(6.dp))
 
                     // ── Conditional toggle ────────────────────────────────────
-                    val isConditional = selectedHabitName in conditionalHabits
-                    val linkedCount = conditionalLinkedHabits[selectedHabitName]?.size ?: 0
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(text = "Conditional", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                            Text(
-                                text = if (isConditional) "Auto-increments $linkedCount linked habit(s)" else "No auto-increment",
-                                color = Color(0xFF888888), fontSize = 10.sp
-                            )
-                        }
-                        Switch(
-                            checked = isConditional,
-                            onCheckedChange = { onToggleConditional(selectedHabitName) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color(0xFFFF88CC),
-                                checkedTrackColor = Color(0xFF4A0030),
-                                uncheckedThumbColor = Color(0xFF888888),
-                                uncheckedTrackColor = Color(0xFF333333)
-                            )
-                        )
-                    }
-
-                    if (isConditional) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        // ── "Feed max1" sub-setting (only while conditional is on) ──
-                        val isFeedMaxOne = selectedHabitName in conditionalFeedMaxOneHabits
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "  Feed max1 point/day", color = Color(0xFFAAAAAA), fontSize = 12.sp)
-                                Text(
-                                    text = if (isFeedMaxOne) "Linked habits get at most 1 point per day"
-                                           else "Every increment feeds its linked habits",
-                                    color = if (isFeedMaxOne) Color(0xFF66BB6A) else Color(0xFF888888),
-                                    fontSize = 10.sp
-                                )
-                            }
-                            Switch(
-                                checked = isFeedMaxOne,
-                                onCheckedChange = { onToggleConditionalFeedMaxOne(selectedHabitName) },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Color(0xFFFF88CC),
-                                    checkedTrackColor = Color(0xFF4A0030),
-                                    uncheckedThumbColor = Color(0xFF888888),
-                                    uncheckedTrackColor = Color(0xFF333333)
-                                )
-                            )
-                        }
-
-                        // ── "Feed points" sub-setting (only while conditional is
-                        // on AND a divider > 1 makes points differ from raw) ──
-                        val srcDivider = habitDividers[selectedHabitName] ?: 1
-                        if (srcDivider > 1) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            val isFeedPoints = selectedHabitName in conditionalFeedPointsHabits
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(text = "  Feed points (÷$srcDivider)", color = Color(0xFFAAAAAA), fontSize = 12.sp)
-                                    Text(
-                                        text = if (isFeedPoints) "Linked habits receive this habit's points"
-                                               else "Linked habits receive the raw count",
-                                        color = if (isFeedPoints) Color(0xFF66BB6A) else Color(0xFF888888),
-                                        fontSize = 10.sp
-                                    )
-                                }
-                                Switch(
-                                    checked = isFeedPoints,
-                                    onCheckedChange = { onToggleConditionalFeedPoints(selectedHabitName) },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color(0xFFFF88CC),
-                                        checkedTrackColor = Color(0xFF4A0030),
-                                        uncheckedThumbColor = Color(0xFF888888),
-                                        uncheckedTrackColor = Color(0xFF333333)
-                                    )
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "  Linked habits", color = Color(0xFFAAAAAA), fontSize = 12.sp)
-                                val linkNames = conditionalLinkedHabits[selectedHabitName]
-                                Text(
-                                    text = if (linkNames.isNullOrEmpty()) "⚠ None selected"
-                                           else "✓ ${linkNames.joinToString(", ") { n ->
-                                               val vk = effectiveConditionalLinkValueKey(conditionalLinkValues, secondaryValueSettings.habits, chessComHabitLinks, selectedHabitName, n)
-                                               val amt = conditionalLinkAmounts[selectedHabitName]?.get(n) ?: 1
-                                               val label = if (vk == GRAPH_METRIC_POINTS) n
-                                                           else "$n (${displayLabelForValue(n, vk, valueDisplayLabels)})"
-                                               if (amt != 1) "$label×$amt" else label
-                                           }}",
-                                    color = if (linkNames.isNullOrEmpty()) Color(0xFFFF8844) else Color(0xFFFF88CC),
-                                    fontSize = 10.sp
-                                )
-                            }
-                            Button(
-                                onClick = { onSetConditionalLinks(selectedHabitName) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A0030)),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Text(
-                                    if (linkedCount > 0) "Edit Links" else "Set Links",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFFFF88CC)
-                                )
-                            }
-                        }
-                    }
+                    EditModeConditionalSection(
+                        habitName = selectedHabitName,
+                        conditionalHabits = conditionalHabits,
+                        conditionalLinkedHabits = conditionalLinkedHabits,
+                        conditionalFeedMaxOneHabits = conditionalFeedMaxOneHabits,
+                        conditionalFeedPointsHabits = conditionalFeedPointsHabits,
+                        habitDividers = habitDividers,
+                        conditionalLinkAmounts = conditionalLinkAmounts,
+                        conditionalLinkValues = conditionalLinkValues,
+                        secondaryValueHabits = secondaryValueSettings.habits,
+                        chessComHabitLinks = chessComHabitLinks,
+                        valueDisplayLabels = valueDisplayLabels,
+                        onToggleConditional = onToggleConditional,
+                        onToggleConditionalFeedMaxOne = onToggleConditionalFeedMaxOne,
+                        onToggleConditionalFeedPoints = onToggleConditionalFeedPoints,
+                        onSetConditionalLinks = onSetConditionalLinks
+                    )
 
                     // ── Conditional Backfill (only for habits that other habits link to) ──
                     ConditionalBackfillSection(
@@ -3491,30 +3297,23 @@ internal fun EditModeControlBar(
                             }
                         },
                         pillLogContent = {
-                            // ── Pill log (count-coded dosing) toggle ──────────
-                            val isPillLog = selHabitName in pillLogHabits
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text(text = "Pill log", color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                                    Text(
-                                        text = if (isPillLog) "One line = one serving, doses auto-computed"
-                                        else "Count-coded pill dosing",
-                                        color = Color(0xFF888888), fontSize = 10.sp
-                                    )
-                                }
-                                Switch(
-                                    checked = isPillLog,
-                                    onCheckedChange = { onTogglePillLog(selHabitName) },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color(0xFFBB88FF),
-                                        checkedTrackColor = Color(0xFF3A1A5A),
-                                        uncheckedThumbColor = Color(0xFF888888),
-                                        uncheckedTrackColor = Color(0xFF333333)
-                                    )
+                            PillLogTypeToggleRow(
+                                habitName = selHabitName,
+                                enabled = selHabitName in pillLogHabits,
+                                onToggle = onTogglePillLog
+                            )
+                        },
+                        bloodTestContent = {
+                            BloodTestTypeToggleRow(
+                                habitName = selHabitName,
+                                enabled = selHabitName in bloodTestHabits,
+                                onToggle = onToggleBloodTest
+                            )
+                            if (selHabitName in bloodTestHabits) {
+                                BloodTestResultsButton(
+                                    habitName = selHabitName,
+                                    date = selectedDate,
+                                    onLoad = onLoadBloodTestResults
                                 )
                             }
                         },
@@ -4804,3 +4603,328 @@ internal fun HabitInputModesSection(
  *
  * Extracted from EditModeControlBar to keep it under the JVM method-size limit.
  */
+
+@Composable
+internal fun PillLogTypeToggleRow(
+    habitName: String,
+    enabled: Boolean,
+    onToggle: (String) -> Unit
+) {
+    // ── Pill log (count-coded dosing) toggle ──────────
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Pill log", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (enabled) "One line = one serving, doses auto-computed"
+                else "Count-coded pill dosing",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = { onToggle(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFBB88FF),
+                checkedTrackColor = Color(0xFF3A1A5A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+}
+
+@Composable
+internal fun BloodTestTypeToggleRow(
+    habitName: String,
+    enabled: Boolean,
+    onToggle: (String) -> Unit
+) {
+    // ── Blood test (lab-item database) toggle ─────────
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Blood test", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (enabled) "Any panel · items via form or AI paste"
+                else "Log any blood test's items; count = items tested",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = { onToggle(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFBB88FF),
+                checkedTrackColor = Color(0xFF3A1A5A),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+}
+
+@Composable
+internal fun EditModeDatedEntrySection(
+    habitName: String,
+    datedEntryHabits: Set<String>,
+    datedEntryFileUris: Map<String, String>,
+    onToggleDatedEntry: (String) -> Unit,
+    onRefreshDatedEntry: (String) -> Unit,
+    onPickDatedEntryFile: (String) -> Unit
+) {
+    val isDatedEntry = habitName in datedEntryHabits
+    var showDatedEntryInfo by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Column {
+                Text(text = "Dated Entry", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(
+                    text = if (isDatedEntry) "Auto-counts from linked file" else "Manual count only",
+                    color = Color(0xFF888888), fontSize = 10.sp
+                )
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+            IconButton(
+                onClick = { showDatedEntryInfo = true },
+                modifier = Modifier.size(20.dp)
+            ) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = "Dated Entry format info",
+                    tint = Color(0xFF6699CC),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+        Switch(
+            checked = isDatedEntry,
+            onCheckedChange = { onToggleDatedEntry(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFFFCC44),
+                checkedTrackColor = Color(0xFF4A3A00),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    if (isDatedEntry) {
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Dated-entry file picker row
+        val hasDatedFile = datedEntryFileUris.containsKey(habitName)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "  Source file", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                Text(
+                    text = if (hasDatedFile) "✓ File linked" else "⚠ No file linked",
+                    color = if (hasDatedFile) Color(0xFFFFCC44) else Color(0xFFFF8844),
+                    fontSize = 10.sp
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (hasDatedFile) {
+                    Button(
+                        onClick = { onRefreshDatedEntry(habitName) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3A1A)),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "Re-parse linked file and refresh values",
+                            tint = Color(0xFF88FF88),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Refresh", fontSize = 11.sp, color = Color(0xFF88FF88))
+                    }
+                }
+                Button(
+                    onClick = { onPickDatedEntryFile(habitName) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A2A00)),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = "Pick dated entry source file",
+                        tint = Color(0xFFFFCC44),
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        if (hasDatedFile) "Change" else "Link File",
+                        fontSize = 11.sp,
+                        color = Color(0xFFFFCC44)
+                    )
+                }
+            }
+        }
+    }
+
+    // Dated Entry format info dialog
+    if (showDatedEntryInfo) {
+        DatedEntryInfoDialog(onDismiss = { showDatedEntryInfo = false })
+    }
+}
+
+@Composable
+internal fun EditModeConditionalSection(
+    habitName: String,
+    conditionalHabits: Set<String>,
+    conditionalLinkedHabits: Map<String, Set<String>>,
+    conditionalFeedMaxOneHabits: Set<String>,
+    conditionalFeedPointsHabits: Set<String>,
+    habitDividers: Map<String, Int>,
+    conditionalLinkAmounts: Map<String, Map<String, Int>>,
+    conditionalLinkValues: Map<String, Map<String, String>>,
+    secondaryValueHabits: Set<String>,
+    chessComHabitLinks: Map<String, String>,
+    valueDisplayLabels: Map<String, Map<String, String>>,
+    onToggleConditional: (String) -> Unit,
+    onToggleConditionalFeedMaxOne: (String) -> Unit,
+    onToggleConditionalFeedPoints: (String) -> Unit,
+    onSetConditionalLinks: (String) -> Unit
+) {
+    val isConditional = habitName in conditionalHabits
+    val linkedCount = conditionalLinkedHabits[habitName]?.size ?: 0
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(text = "Conditional", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(
+                text = if (isConditional) "Auto-increments $linkedCount linked habit(s)" else "No auto-increment",
+                color = Color(0xFF888888), fontSize = 10.sp
+            )
+        }
+        Switch(
+            checked = isConditional,
+            onCheckedChange = { onToggleConditional(habitName) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFFFF88CC),
+                checkedTrackColor = Color(0xFF4A0030),
+                uncheckedThumbColor = Color(0xFF888888),
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
+
+    if (isConditional) {
+        Spacer(modifier = Modifier.height(4.dp))
+        // ── "Feed max1" sub-setting (only while conditional is on) ──
+        val isFeedMaxOne = habitName in conditionalFeedMaxOneHabits
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "  Feed max1 point/day", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                Text(
+                    text = if (isFeedMaxOne) "Linked habits get at most 1 point per day"
+                           else "Every increment feeds its linked habits",
+                    color = if (isFeedMaxOne) Color(0xFF66BB6A) else Color(0xFF888888),
+                    fontSize = 10.sp
+                )
+            }
+            Switch(
+                checked = isFeedMaxOne,
+                onCheckedChange = { onToggleConditionalFeedMaxOne(habitName) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFFFF88CC),
+                    checkedTrackColor = Color(0xFF4A0030),
+                    uncheckedThumbColor = Color(0xFF888888),
+                    uncheckedTrackColor = Color(0xFF333333)
+                )
+            )
+        }
+
+        // ── "Feed points" sub-setting (only while conditional is
+        // on AND a divider > 1 makes points differ from raw) ──
+        val srcDivider = habitDividers[habitName] ?: 1
+        if (srcDivider > 1) {
+            Spacer(modifier = Modifier.height(4.dp))
+            val isFeedPoints = habitName in conditionalFeedPointsHabits
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "  Feed points (÷$srcDivider)", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                    Text(
+                        text = if (isFeedPoints) "Linked habits receive this habit's points"
+                               else "Linked habits receive the raw count",
+                        color = if (isFeedPoints) Color(0xFF66BB6A) else Color(0xFF888888),
+                        fontSize = 10.sp
+                    )
+                }
+                Switch(
+                    checked = isFeedPoints,
+                    onCheckedChange = { onToggleConditionalFeedPoints(habitName) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color(0xFFFF88CC),
+                        checkedTrackColor = Color(0xFF4A0030),
+                        uncheckedThumbColor = Color(0xFF888888),
+                        uncheckedTrackColor = Color(0xFF333333)
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "  Linked habits", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+                val linkNames = conditionalLinkedHabits[habitName]
+                Text(
+                    text = if (linkNames.isNullOrEmpty()) "⚠ None selected"
+                           else "✓ ${linkNames.joinToString(", ") { n ->
+                            val vk = effectiveConditionalLinkValueKey(conditionalLinkValues, secondaryValueHabits, chessComHabitLinks, habitName, n)
+                            val amt = conditionalLinkAmounts[habitName]?.get(n) ?: 1
+                            val label = if (vk == GRAPH_METRIC_POINTS) n
+                                        else "$n (${displayLabelForValue(n, vk, valueDisplayLabels)})"
+                            if (amt != 1) "$label×$amt" else label
+                        }}",
+                    color = if (linkNames.isNullOrEmpty()) Color(0xFFFF8844) else Color(0xFFFF88CC),
+                    fontSize = 10.sp
+                )
+            }
+            Button(
+                onClick = { onSetConditionalLinks(habitName) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A0030)),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text(
+                    if (linkedCount > 0) "Edit Links" else "Set Links",
+                    fontSize = 11.sp,
+                    color = Color(0xFFFF88CC)
+                )
+            }
+        }
+    }
+}

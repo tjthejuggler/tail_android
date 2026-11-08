@@ -1,0 +1,375 @@
+============================================================
+BLOOD TEST BACKLOG SEED
+============================================================
+
+[1] Parsed 135 entries (2018-08-08 → 2021-01-23), 332 items total
+    96 distinct dates; sample:
+
+[DRY RUN] Full list of everything that would be injected (332 items):
+
+  2018-08-08  Glucose=80.0 mg/dL, Ketones=2.0 mmol/L
+              note: 13hr fast, resting
+              Ketones=0.9 mmol/L
+              note: after large avacado salad and nut butter, resting
+              Ketones=2.2 mmol/L
+              note: after 1 scoop ketocana + resteraunt thai red curry
+  2018-08-09  Glucose=110.0 mg/dL, Ketones=0.3 mmol/L
+              note: 16hr fast, after 15min after excercise
+              Glucose=83.0 mg/dL, Ketones=0.4 mmol/L
+              note: 1hr after large avacado salad
+              Glucose=88.0 mg/dL, Ketones=1.2 mmol/L
+              note: 2hr after salad
+  2018-08-10  Ketones=0.9 mmol/L
+              note: 12hr fast, resting
+              Ketones=2.9 mmol/L
+              note: 6hr fast, resting, evening
+  2018-08-11  Glucose=78.0 mg/dL, Ketones=1.7 mmol/L
+              note: 4hr fast since resteraunt thai peanut curry with 5 tablespoons of coconut oil, after poker, evening
+              Ketones=1.9 mmol/L
+              note: 1hr after last test, just finished hot bath followed by cold shower
+  2018-08-13  Ketones=1.2 mmol/L
+              note: late night, 7hr fast
+              Glucose=68.0 mg/dL, Ketones=3.7 mmol/L
+              note: 4hr fast, resting, after cold shower
+  2018-08-14  Ketones=3.4 mmol/L
+              note: 10hr fast, resting
+              Ketones=2.5 mmol/L
+              note: 1.5hrs since final meal, resting
+  2018-08-16  Ketones=2.7 mmol/L
+              note: 5hr fast, resting
+  2018-08-18  Glucose=75.0 mg/dL, Ketones=6.1 mmol/L
+              note: 6hr fast, resting
+  2018-08-19  Glucose=79.0 mg/dL, Ketones=2.4 mmol/L
+              note: 17hr fast, resting
+              Glucose=88.0 mg/dL, Ketones=3.2 mmol/L
+              note: just after light meal
+  2018-08-21  Glucose=73.0 mg/dL, Ketones=2.8 mmol/L
+              note: fasting 14hr
+  2018-08-22  Glucose=77.0 mg/dL, Ketones=4.5 mmol/L
+              note: fasting 10hr, just woke up
+  2018-08-25  Ketones=3.1 mmol/L
+              note: fasting 4hrs, but only ate a little sugary chocolate and nuts, before that tasted additional 6 hours, but had more sugary chocolate and nuts and vegan cookie bite and blueberries
+  2018-08-26  Glucose=85.0 mg/dL, Ketones=1.6 mmol/L
+              note: 5hr fast
+  2018-08-28  Glucose=93.0 mg/dL, Ketones=1.3 mmol/L
+              note: 16hr fast,woke up, meditated, did short apnea training, pooped
+  2018-08-29  Glucose=86.0 mg/dL, Ketones=2.0 mmol/L
+              note: 16hr fast, just woke up
+              Glucose=85.0 mg/dL, Ketones=2.1 mmol/L
+              note: 6hr fast
+  2018-08-30  Glucose=69.0 mg/dL, Ketones=2.1 mmol/L
+              note: 21hr fast
+              Glucose=62.0 mg/dL, Ketones=3.0 mmol/L
+              note: 27hr fast
+  2018-09-01  Glucose=97.0 mg/dL, Ketones=1.3 mmol/L
+              note: 4hr fast
+  2018-09-04  Glucose=89.0 mg/dL, Ketones=1.1 mmol/L
+              note: 17hr fast
+              Glucose=70.0 mg/dL, Ketones=1.6 mmol/L
+              note: 22hr fast
+              Ketones=2.2 mmol/L
+              note: 28hr fast
+  2018-09-05  GKI=1.4, Glucose=69.0 mg/dL, Ketones=2.7 mmol/L
+              note: 36hr fast
+              GKI=1.33, Glucose=67.0 mg/dL, Ketones=2.8 mmol/L
+              note: 45hr fast
+              GKI=0.66, Glucose=55.0 mg/dL, Ketones=4.6 mmol/L
+              note: 49hr fast
+  2018-09-06  GKI=0.66, Glucose=58.0 mg/dL, Ketones=4.9 mmol/L
+              note: 54.5hr fast
+              GKI=1.11, Glucose=68.0 mg/dL, Ketones=3.4 mmol/L
+              note: 62hr fast
+              GKI=2.15, Glucose=93.0 mg/dL, Ketones=2.4 mmol/L
+              note: 66hr fast,after workout
+              GKI=1.2, Glucose=74.0 mg/dL, Ketones=3.4 mmol/L
+              note: 72hr fast
+              GKI=0.88, Glucose=62.0 mg/dL, Ketones=3.9 mmol/L
+              note: 75.5hr fast
+  2018-09-07  GKI=0.75, Glucose=51.0 mg/dL, Ketones=3.8 mmol/L
+              note: 86hr fast, just woke up
+              GKI=0.94, Glucose=64.0 mg/dL, Ketones=3.8 mmol/L
+              note: 92hr fast
+              GKI=0.36, Glucose=45.0 mg/dL, Ketones=6.9 mmol/L
+              note: 99.75hr fast
+  2018-09-08  GKI=0.56, Glucose=49.0 mg/dL, Ketones=4.9 mmol/L
+              note: 108hr fast
+  2018-09-09  GKI=0.4, Glucose=44.0 mg/dL, Ketones=6.1 mmol/L
+              note: 125hr fast
+              GKI=0.37, Glucose=42.0 mg/dL, Ketones=6.3 mmol/L
+              note: 144.5hr fast
+              GKI=0.43, Glucose=43.0 mg/dL, Ketones=5.6 mmol/L
+              note: 155.5 fast
+  2018-09-10  GKI=0.59, Glucose=70.0 mg/dL, Ketones=6.6 mmol/L
+              note: 6:20pm small keto meals all day
+  2018-09-11  GKI=1.04, Glucose=79.0 mg/dL, Ketones=4.2 mmol/L
+              note: 9:15a 14hr fast
+  2018-09-13  GKI=1.08, Glucose=74.0 mg/dL, Ketones=3.8 mmol/L
+              note: 11:50 7hr fast
+  2018-09-19  Glucose=81.0 mg/dL, Ketones=0.3 mmol/L
+              note: 11hr fast, but I have been eating moderate carbs for several days now
+  2019-12-15  Glucose=115.0 mg/dL, Ketones=0.2 mmol/L
+              note: 2hr fast
+  2019-12-16  Glucose=87.0 mg/dL, Ketones=0.3 mmol/L
+              note: 11hr fast
+  2019-12-17  Glucose=93.0 mg/dL, Ketones=0.2 mmol/L
+              note: 17hr fast, little while after bike ride
+  2019-12-22  Glucose=98.0 mg/dL, Ketones=0.9 mmol/L
+              note: 12hr fast, been keto for a few days
+  2019-12-23  Glucose=104.0 mg/dL, Ketones=0.3 mmol/L
+              note: 13hr fast, still keto
+  2019-12-26  Glucose=106.0 mg/dL, Ketones=0.3 mmol/L
+              note: 10hr fast, higher than average carbs yesterday
+  2019-12-29  Glucose=92.0 mg/dL, Ketones=0.3 mmol/L
+              note: 14hr fast, keto
+  2020-01-01  Glucose=86.0 mg/dL, Ketones=0.4 mmol/L
+              note: 13hr fast, keto
+  2020-01-07  Glucose=100.0 mg/dL, Ketones=0.7 mmol/L
+              note: ~13hr fast, keto
+  2020-01-10  Glucose=106.0 mg/dL, Ketones=0.3 mmol/L
+              note: 15hr fast, not very keto day
+  2020-01-23  Glucose=98.0 mg/dL, Ketones=0.1 mmol/L
+              note: 15hr fast, moderate excercise, not very keto
+  2020-02-04  Glucose=95.0 mg/dL, Ketones=0.4 mmol/L
+              note: ~12 hr fast, not very keto,but high fat intake lately
+  2020-02-06  Glucose=65.0 mg/dL, Ketones=2.8 mmol/L
+              note: 31hr fast
+  2020-02-07  Glucose=48.0 mg/dL, Ketones=3.8 mmol/L
+              note: 60hr fast
+  2020-02-08  Glucose=56.0 mg/dL, Ketones=3.9 mmol/L
+              note: 82hr fast
+  2020-02-09  Glucose=94.0 mg/dL, Ketones=2.5 mmol/L
+              note: 8hr fast after 8hr heavy eating after big fast ended
+  2020-02-14  Glucose=97.0 mg/dL, Ketones=0.4 mmol/L
+              note: 14hr fast high fat diet lately, but also moderate carbs,and doing 5hr feeding
+  2020-02-19  Glucose=86.0 mg/dL, Ketones=0.5 mmol/L
+              note: 15hr fast, not eating especially keto, yesterday was quite carby
+  2020-03-26  Glucose=98.0 mg/dL, Ketones=0.2 mmol/L
+              note: 15hr fast, eating moderate high fat, moderate carb for the last few weeks
+  2020-04-19  Glucose=101.0 mg/dL, Ketones=0.2 mmol/L
+              note: 13hr fast,eating moderate fat and moderate carbs
+  2020-04-27  Glucose=89.0 mg/dL, Ketones=0.8 mmol/L
+              note: 27hr fast
+  2020-05-05  Glucose=97.0 mg/dL, Ketones=0.8 mmol/L
+              note: 15hr fast, after moderate excersise,low carb diet
+  2020-05-11  GKI=6.2, Glucose=78.0 mg/dL, Ketones=0.7 mmol/L
+              note: 29hr fast
+              GKI=18.3, Glucose=99.0 mg/dL, Ketones=0.3 mmol/L
+              note: 16hr fast
+  2020-05-12  GKI=1.4, Glucose=63.0 mg/dL, Ketones=2.5 mmol/L
+              note: 52hr
+              GKI=6.428, Glucose=81.0 mg/dL, Ketones=0.7 mmol/L
+              note: 36hr
+  2020-05-13  GKI=1.13, Glucose=59.0 mg/dL, Ketones=2.9 mmol/L
+              note: 75hr
+              GKI=1.0, Glucose=58.0 mg/dL, Ketones=3.2 mmol/L
+              note: 62hr
+  2020-05-14  GKI=1.24, Glucose=58.0 mg/dL, Ketones=2.6 mmol/L
+              note: 85hr
+  2020-05-15  GKI=11.44, Glucose=103.0 mg/dL, Ketones=0.5 mmol/L
+              note: 14hr fast
+  2020-07-21  GKI=6.5, Glucose=82.0 mg/dL, Ketones=0.7 mmol/L
+              note: 20hr, been eating carbs lately
+  2020-07-22  GKI=8.51, Glucose=92.0 mg/dL, Ketones=0.6 mmol/L
+              note: 1hr after eating in a 5hr keto feeding window
+              GKI=2.6, Glucose=75.0 mg/dL, Ketones=1.6 mmol/L
+              note: 42hrs, right before eating
+              GKI=3.75, Glucose=81.0 mg/dL, Ketones=1.2 mmol/L
+              note: 38hr, went for short walk,lay around watching TV
+              GKI=3.37, Glucose=85.0 mg/dL, Ketones=1.4 mmol/L
+              note: 32hr, just woke up
+  2020-07-23  GKI=6.58, Glucose=83.0 mg/dL, Ketones=0.7 mmol/L
+              note: 16hr fast
+              GKI=24.72, Glucose=89.0 mg/dL, Ketones=0.2 mmol/L
+              note: 15hr fast, just walked 5 miles
+              GKI=10.0, Glucose=90.0 mg/dL, Ketones=0.5 mmol/L
+              note: 6hr fast, just woke after ~5hrs of sleep
+  2020-07-24  GKI=11.53, Glucose=83.0 mg/dL, Ketones=0.4 mmol/L
+              note: 15:45hr fast, 1hr after ice bath
+              GKI=8.43, Glucose=91.0 mg/dL, Ketones=0.6 mmol/L
+              note: 14:45hr fast, immediately after ice bath
+              GKI=10.66, Glucose=96.0 mg/dL, Ketones=0.5 mmol/L
+              note: 14hr fast
+  2020-07-25  GKI=7.4, Glucose=80.0 mg/dL, Ketones=0.6 mmol/L
+              note: 17hr fast, 1hr after 6 mile walk
+              GKI=8.98, Glucose=97.0 mg/dL, Ketones=0.6 mmol/L
+              note: 13hr fast, just woke up
+  2020-07-26  GKI=9.55, Glucose=86.0 mg/dL, Ketones=0.5 mmol/L
+              note: 2hr fast, just before bed
+              Glucose=106.0 mg/dL, Ketones=0.5 mmol/L
+              note: 6hr after honey and a nap
+              Glucose=100.0 mg/dL, Ketones=0.2 mmol/L
+              note: 2hr after honey
+              Glucose=122.0 mg/dL, Ketones=0.2 mmol/L
+              note: 1hr after 2 tablespoons honey
+              Glucose=89.0 mg/dL, Ketones=0.6 mmol/L
+              note: up all night trpn and eating little snacks
+  2020-07-27  GKI=6.25, Glucose=90.0 mg/dL, Ketones=0.8 mmol/L
+              note: 11.5hr fast, just woke up
+  2020-07-28  GKI=6.32, Glucose=91.0 mg/dL, Ketones=0.8 mmol/L
+              note: 11hr fast, 3 gels yesterday during 5hr 50 mile cycle, high fat/protein after cycle
+  2020-07-29  GKI=1.46, Glucose=76.0 mg/dL, Ketones=2.9 mmol/L
+              note: 13hr fast, 80 mile bike yesterday, very keto diet
+  2020-07-30  GKI=3.52, Glucose=95.0 mg/dL, Ketones=1.5 mmol/L
+              note: 11hr fast, yesterday was a rest day
+  2020-07-31  GKI=5.0, Glucose=99.0 mg/dL, Ketones=1.1 mmol/L
+              note: 8hr, yesterday keto with super slightly high late night protein
+  2020-08-01  GKI=3.59, Glucose=97.0 mg/dL, Ketones=1.5 mmol/L
+              note: 11hr
+  2020-08-02  GKI=7.43, Glucose=107.0 mg/dL, Ketones=0.8 mmol/L
+              note: 12hr
+  2020-08-03  GKI=5.33, Glucose=96.0 mg/dL, Ketones=1.0 mmol/L
+              note: 11hr fast, keto after several days of no cardio
+  2020-08-04  GKI=11.66, Glucose=105.0 mg/dL, Ketones=0.5 mmol/L
+              note: 11hr fast, keto, but had a low carb cider yesterday, biked 70 miles yesterday
+  2020-08-05  GKI=4.75, Glucose=94.0 mg/dL, Ketones=1.1 mmol/L
+              note: 10hr fast, keto, moderate cardio yesterday
+  2020-08-06  GKI=9.17, Glucose=99.0 mg/dL, Ketones=0.6 mmol/L
+              note: 14hr fast, keto, hour after moderate cardio
+              GKI=8.01, Glucose=101.0 mg/dL, Ketones=0.7 mmol/L
+              note: 11hr fast, keto, moderate cardio yesterday
+  2020-08-08  GKI=6.67, Glucose=96.0 mg/dL, Ketones=0.8 mmol/L
+              note: 16hr fast, keto and few calories yesterday bc threw up from spicy sauce, moderate cardio yesterday
+  2020-08-09  GKI=8.1, Glucose=102.0 mg/dL, Ketones=0.7 mmol/L
+              note: 13hr fast, keto, no moderate cardio yesterday
+  2020-08-10  GKI=5.86, Glucose=95.0 mg/dL, Ketones=0.9 mmol/L
+              note: 13hr fast, heavy carb and low fat yesterday, 8 mile aerobic run yesterday
+  2020-08-11  GKI=13.89, Glucose=100.0 mg/dL, Ketones=0.4 mmol/L
+              note: 14hr fast, heavy carb and low fat yesterday, 36min hiit yesterday
+  2020-08-12  GKI=8.61, Glucose=93.0 mg/dL, Ketones=0.6 mmol/L
+              note: 15hr fast, anaerobic 5k yesterday, went back to high fat yesterday
+  2020-08-14  GKI=6.25, Glucose=90.0 mg/dL, Ketones=0.8 mmol/L
+              note: 16hr fast, 5 mile walk yesterday, 5k aerobic run day before, staying on keto diet
+  2020-08-24  GKI=2.6, Glucose=89.0 mg/dL, Ketones=1.9 mmol/L
+              note: 16hr fast, 6 mile run yesterday, and 260 mile bike ride over 3 days before that, eating not extreme keto
+  2020-09-29  GKI=10.89, Glucose=98.0 mg/dL, Ketones=0.5 mmol/L
+              note: 13hr fast, eating moderate keto lately, moderate cardio
+  2020-10-28  GKI=23.89, Glucose=86.0 mg/dL, Ketones=0.2 mmol/L
+              note: 10hr fast, been eating high fat, but not strict keto, regular moderate cardio
+  2020-12-08  GKI=20.56, Glucose=74.0 mg/dL, Ketones=0.2 mmol/L
+              note: 14hr fast, been eating low sugar, normal carbs and fat, intermittent fasting
+  2020-12-20  GKI=10.19, Glucose=73.0 mg/dL, Ketones=0.4 mmol/L
+              note: 12hr fast, been eating low sugar, moderate carb, moderate fat,a good amount of endurance excessive
+  2020-12-25  GKI=47.8, Glucose=86.0 mg/dL, Ketones=0.1 mmol/L
+              note: 14hr fast,same diet and exercise as last entry
+  2020-12-28  GKI=26.39, Glucose=95.0 mg/dL, Ketones=0.2 mmol/L
+              note: 13hr fast, same as last entry
+  2020-12-30  GKI=28.61, Glucose=103.0 mg/dL, Ketones=0.2 mmol/L
+              note: 13hr fast, same
+  2021-01-02  GKI=2.07, Glucose=67.0 mg/dL, Ketones=1.8 mmol/L
+              note: 13hr fast, high fat, moderate carb yesterday, ran half marathon
+  2021-01-03  GKI=7.54, Glucose=95.0 mg/dL, Ketones=0.7 mmol/L
+              note: 11hr fast, rest day, high fat, low carb
+  2021-01-04  GKI=5.79, Glucose=73.0 mg/dL, Ketones=0.7 mmol/L
+              note: 13hr fast, light run yesterday, moderate fat and carb
+  2021-01-08  GKI=4.44, Glucose=72.0 mg/dL, Ketones=0.9 mmol/L
+              note: 17hr fast, moderate endurance exc lately, moderate fat/carb
+  2021-01-09  GKI=10.56, Glucose=76.0 mg/dL, Ketones=0.4 mmol/L
+              note: 13hr fast, high fat, moderate carbs, moderate excercise
+  2021-01-11  GKI=4.93, Glucose=71.0 mg/dL, Ketones=0.8 mmol/L
+              note: 16hr fast, high fat, low carb, moderate excercise
+  2021-01-16  GKI=6.18, Glucose=89.0 mg/dL, Ketones=0.8 mmol/L
+              note: 12hr fast, high fast low to moderate carbs, moderate excercise
+  2021-01-19  Glucose=70.0 mg/dL, Ketones=1.6 mmol/L
+  2021-01-21  Glucose=73.0 mg/dL, Ketones=0.8 mmol/L
+  2021-01-22  Glucose=99.0 mg/dL, Ketones=0.6 mmol/L
+  2021-01-23  Glucose=80.0 mg/dL, Ketones=0.3 mmol/L
+
+[DRY RUN] Per-date habit counts that would be written (count = total items that day, incl. existing entries):
+  2018-08-08: +4
+  2018-08-09: +6
+  2018-08-10: +2
+  2018-08-11: +3
+  2018-08-13: +3
+  2018-08-14: +2
+  2018-08-16: +1
+  2018-08-18: +2
+  2018-08-19: +4
+  2018-08-21: +2
+  2018-08-22: +2
+  2018-08-25: +1
+  2018-08-26: +2
+  2018-08-28: +2
+  2018-08-29: +4
+  2018-08-30: +4
+  2018-09-01: +2
+  2018-09-04: +5
+  2018-09-05: +9
+  2018-09-06: +15
+  2018-09-07: +9
+  2018-09-08: +3
+  2018-09-09: +9
+  2018-09-10: +3
+  2018-09-11: +3
+  2018-09-13: +3
+  2018-09-19: +2
+  2019-12-15: +2
+  2019-12-16: +2
+  2019-12-17: +2
+  2019-12-22: +2
+  2019-12-23: +2
+  2019-12-26: +2
+  2019-12-29: +2
+  2020-01-01: +2
+  2020-01-07: +2
+  2020-01-10: +2
+  2020-01-23: +2
+  2020-02-04: +2
+  2020-02-06: +2
+  2020-02-07: +2
+  2020-02-08: +2
+  2020-02-09: +2
+  2020-02-14: +2
+  2020-02-19: +2
+  2020-03-26: +2
+  2020-04-19: +2
+  2020-04-27: +2
+  2020-05-05: +2
+  2020-05-11: +6
+  2020-05-12: +6
+  2020-05-13: +6
+  2020-05-14: +3
+  2020-05-15: +3
+  2020-07-21: +3
+  2020-07-22: +12
+  2020-07-23: +9
+  2020-07-24: +9
+  2020-07-25: +6
+  2020-07-26: +11
+  2020-07-27: +3
+  2020-07-28: +3
+  2020-07-29: +3
+  2020-07-30: +3
+  2020-07-31: +3
+  2020-08-01: +3
+  2020-08-02: +3
+  2020-08-03: +3
+  2020-08-04: +3
+  2020-08-05: +3
+  2020-08-06: +6
+  2020-08-08: +3
+  2020-08-09: +3
+  2020-08-10: +3
+  2020-08-11: +3
+  2020-08-12: +3
+  2020-08-14: +3
+  2020-08-24: +3
+  2020-09-29: +3
+  2020-10-28: +3
+  2020-12-08: +3
+  2020-12-20: +3
+  2020-12-25: +3
+  2020-12-28: +3
+  2020-12-30: +3
+  2021-01-02: +3
+  2021-01-03: +3
+  2021-01-04: +3
+  2021-01-08: +3
+  2021-01-09: +3
+  2021-01-11: +3
+  2021-01-16: +3
+  2021-01-19: +2
+  2021-01-21: +2
+  2021-01-22: +2
+  2021-01-23: +2
+
+[DRY RUN] Nothing was written.

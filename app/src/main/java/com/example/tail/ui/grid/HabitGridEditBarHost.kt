@@ -12,6 +12,8 @@ import com.example.tail.ui.viewmodel.invertHabit
 import com.example.tail.ui.viewmodel.setComboHabitMembers
 import com.example.tail.ui.viewmodel.renameHabit
 import com.example.tail.ui.viewmodel.togglePillLog
+import com.example.tail.ui.viewmodel.toggleBloodTest
+import com.example.tail.ui.viewmodel.loadBloodTestEntriesForDate
 import com.example.tail.ui.viewmodel.openNotificationListenerSettings
 import com.example.tail.ui.settings.TextInputOptionsEditorDialog
 import com.example.tail.ui.settings.TextInputCharacteristicsEditorDialog
@@ -218,6 +220,11 @@ internal fun EditBarHost(
         habitSubtypes = settings.habitSubtypes,
         pillLogHabits = settings.pillLogHabits,
         onTogglePillLog = { name -> viewModel.togglePillLog(name) },
+        bloodTestHabits = settings.bloodTestHabits,
+        onToggleBloodTest = { name -> viewModel.toggleBloodTest(name) },
+        onLoadBloodTestResults = { name, date, cb ->
+            viewModel.loadBloodTestEntriesForDate(name, date, cb)
+        },
         allHabitNames = viewModel.getAllHabitNames(),
         rollForwardHabits = settings.rollForwardHabits,
         rollForwardManualDates = settings.rollForwardManualDates,

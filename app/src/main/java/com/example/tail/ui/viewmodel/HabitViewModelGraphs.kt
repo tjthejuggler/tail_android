@@ -22,6 +22,7 @@ import com.example.tail.data.movie.BridgeMovie
 import com.example.tail.data.chess.ChessComRepository
 import com.example.tail.data.chess.ChessComType
 import com.example.tail.data.chess.DailyStatsMap
+import com.example.tail.data.bloodtest.BLOOD_METRIC_COUNT
 import com.example.tail.data.DatedEntryRepository
 import com.example.tail.data.DayStats
 import com.example.tail.data.GRAPH_METRIC_CALORIES
@@ -294,6 +295,22 @@ fun HabitViewModel.clearGraphSelection() {
  * get Value2. Meal habits additionally get Calories, Protein, Carbs, Fat.
  */
 fun HabitViewModel.getAvailableMetrics(habitName: String): List<GraphMetricOption> {
+    // Blood-test habits: the "Items tested" count metric plus one metric per
+    // currently-selected item (the 🩸 Items… popup adds/removes them).
+    if (isBloodTestHabit(habitName)) {
+        val metrics = mutableListOf(
+            GraphMetricOption(BLOOD_METRIC_COUNT, com.example.tail.data.bloodtest.bloodMetricLabel(BLOOD_METRIC_COUNT))
+        )
+        getSelectedMetrics(habitName).filter { it != BLOOD_METRIC_COUNT }.forEach { key ->
+            metrics.add(
+                GraphMetricOption(
+                    key,
+                    com.example.tail.data.bloodtest.bloodMetricLabel(key)
+                )
+            )
+        }
+        return metrics
+    }
     val labels = _settings.value.valueDisplayLabels
     val metrics = mutableListOf(
         GraphMetricOption(GRAPH_METRIC_POINTS, com.example.tail.data.displayLabelForValue(habitName, GRAPH_METRIC_POINTS, labels))
@@ -389,6 +406,14 @@ fun HabitViewModel.getAvailableMetrics(habitName: String): List<GraphMetricOptio
  * Defaults to {points} when nothing is stored.
  */
 fun HabitViewModel.getSelectedMetrics(habitName: String): Set<String> {
+    // Blood-test habits: default to the "Items tested" count series; the
+    // stored selection is filtered to valid blood: keys (stale item keys
+    // simply drop away).
+    if (isBloodTestHabit(habitName)) {
+        val storedBt = _settings.value.graphMetricSelection[habitName]
+            ?.filter { it.startsWith("blood:") }?.toSet()
+        return if (storedBt.isNullOrEmpty()) setOf(BLOOD_METRIC_COUNT) else storedBt
+    }
     val stored = _settings.value.graphMetricSelection[habitName]
     if (stored != null) {
         // For GitHub habits, migrate legacy "value1" to the corresponding GitHub metric
