@@ -104,10 +104,16 @@ fun PillLogDialog(
         pending[pill] = (pending[pill] ?: 0) + 1
     }
 
-    /** Applies a suggestion's counts on top of anything already pending. */
+    /**
+     * Applies a suggestion by COMPLETING the grouping: servings already
+     * logged today are not re-added, so one tap fills exactly what is left
+     * of the bundle and Save appends only the remainder.
+     */
     fun applySuggestion(s: PillSuggestion) {
         for ((line, count) in s.counts) {
-            pending[line] = (pending[line] ?: 0) + count
+            val already = existingToday.servings[line] ?: 0
+            val remaining = (count - already).coerceAtLeast(0)
+            if (remaining > 0) pending[line] = (pending[line] ?: 0) + remaining
         }
     }
 
