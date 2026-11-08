@@ -2115,9 +2115,14 @@ private fun computeAppStats(
     val parsedDates = sortedDatesList.map { parseDate(it) }
 
     for ((habitName, entries) in db) {
-        // Skip internal value-slot storage entries and disabled habits
+        // Skip internal value-slot storage entries, disabled habits, and
+        // no-points habits — the overview streak aggregates (totalStreakDays /
+        // totalAntiStreakDays / totalNetStreakDays) exclude all three, so the
+        // historical per-date series must match or the graph's last point
+        // diverges from the "Current" badge shown in the same popup.
         if (isInternalValueKey(habitName)) continue
         if (habitName in disabledHabits) continue
+        if (habitName in noPointsHabits) continue
         val divider = dividers[habitName] ?: 1
         val habitFirstDate = run {
             val primFirst = entries.keys.minOrNull()
@@ -2204,6 +2209,7 @@ private fun computeAppStats(
         for ((habitName, entries) in db) {
             if (isInternalValueKey(habitName)) continue
             if (habitName in disabledHabits) continue
+            if (habitName in noPointsHabits) continue
             val habitFirstDate = run {
                 val primFirst = entries.keys.minOrNull()
                 if (habitName in timerMinutesPrimaryHabits || habitName in secondaryValueFallbackHabits) {
