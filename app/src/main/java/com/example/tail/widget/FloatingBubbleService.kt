@@ -3397,9 +3397,78 @@ class FloatingBubbleService : Service() {
                     return@launch
                 }
 
+                // Conditional feeds: capture the source's primary count
+                // BEFORE the write — the linked-habit feed below needs it for
+                // the "feed max1" cap (first increment of the day) and the
+                // "feed points" divider delta (points(before+amount) minus
+                // points(before)), exactly like HabitIncrementReceiver and
+                // JugCoachSessionReceiver.
+                var sourceCountBefore = -1
+                if (sessions > 0 && habit in settings.conditionalHabits) {
+                    sourceCountBefore = habitsRepo.loadDatabase(Uri.parse(uriStr), applicationContext)[habit]
+                        ?.get(LocalDate.now().toString()) ?: 0
+                }
+
                 val db = habitsRepo.incrementHabitWithMinutes(
                     Uri.parse(uriStr), applicationContext, habit, minutes, sessions
                 )
+
+                // Also increment any conditional linked habits — mirrors
+                // HabitIncrementReceiver / JugCoachSessionReceiver so a bubble
+                // timer session on a conditional source (e.g. "Juggle Fun")
+                // feeds its linked habits (e.g. "Juggle"). Feed semantics
+                // match the manual tap path: the session count is the source
+                // delta ("feed points" sources send their divider-applied
+                // POINTS delta, others the raw amount, with the "feed max1"
+                // cap on Points targets). Minutes-only writes (sessions = 0,
+                // text-input habits — their increment happens later in the
+                // input window, which has its own feed) feed nothing here.
+                if (sourceCountBefore >= 0) {
+                    val linkedHabits = settings.conditionalLinkedHabits[habit] ?: emptySet()
+                    val todayStr = LocalDate.now().toString()
+                    val feedPoints = habit in settings.conditionalFeedPointsHabits
+                    val sourceDivider = settings.habitDividers[habit] ?: 1
+                    for (linkedName in linkedHabits) {
+                        val valueKey = com.example.tail.data.effectiveConditionalLinkValueKey(
+                            settings.conditionalLinkValues, settings.secondaryValueHabits,
+                            settings.chessComHabitLinks, habit, linkedName
+                        )
+                        val targetKey = com.example.tail.data.conditionalLinkStorageKey(linkedName, valueKey)
+                        val linkAmount = settings.conditionalLinkAmounts[habit]?.get(linkedName) ?: 1
+                        val baseFeedAmount = com.example.tail.data.conditionalTapFeedAmount(
+                            sourceCountBefore, sessions, feedPoints, sourceDivider, linkAmount
+                        )
+                        // "Feed max1" cap: skip Points feeds when this source
+                        // already fed its 1 point today (primary/Points feeds only)
+                        val feedAmount = if (
+                            targetKey == linkedName &&
+                            habit in settings.conditionalFeedMaxOneHabits
+                        ) {
+                            com.example.tail.data.conditionalCappedFeedAmount(sourceCountBefore, baseFeedAmount)
+                        } else baseFeedAmount
+                        if (feedAmount == 0) continue
+                        // Respect the "max 1" cap on linked habits (primary/Points feeds only)
+                        if (targetKey == linkedName && linkedName in settings.maxOneHabits) {
+                            val currentCount = db[linkedName]?.get(todayStr) ?: 0
+                            if (currentCount >= 1) {
+                                Log.i("FloatingBubbleService", "Skipping linked increment for '$linkedName' — already at max 1")
+                                continue
+                            }
+                        }
+                        habitsRepo.incrementHabitForDate(
+                            Uri.parse(uriStr), applicationContext, targetKey, feedAmount, LocalDate.now()
+                        )
+                        HabitIncrementBus.emit(linkedName)
+                        Log.i("FloatingBubbleService", "Incremented linked habit '$linkedName' (conditional on '$habit', feeds $valueKey +$feedAmount)")
+
+                        // Record timestamp for the linked habit too
+                        try {
+                            HabitTimestampRepository(applicationContext).addTimestamp(linkedName)
+                        } catch (e: Exception) {
+                            Log.w("FloatingBubbleService", "Failed to record timestamp for linked '$linkedName': ${e.message}")
+                        }
+                    }
+                }
 
                 // Record the session in the timestamp store — same convention
                 // as every other timer-fed increment path (see
