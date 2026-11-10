@@ -84,7 +84,8 @@ internal object CompanionReadEndpoints {
         "change_feed",         // /v2/changes + ContentObserver + broadcast
         "capability_flags",    // this endpoint
         "bridge_config",       // /v2/bridge_config — Tail Bridge URL+token for companions
-        "weights_v3"           // /v3/weights* — weights history, PBs, recent exercises
+        "weights_v3",          // /v3/weights* — weights history, PBs, recent exercises
+        "weights_sets_v3"      // /v3/weights/sets — per-set log (sidecar), ?from/?to filters
     )
 
     // ── Column names ─────────────────────────────────────────────────────────
@@ -660,6 +661,61 @@ internal object CompanionReadEndpoints {
     )
 
     private val WEIGHTS_RECENT_COLUMNS = arrayOf(COL_HABIT_NAME, COL_EXERCISE_NAME)
+
+    const val COL_WEIGHT_GRAMS = "weight_grams"
+    const val COL_REPS = "reps"
+    const val COL_TIME_OF_DAY = "time_of_day"
+
+    private val WEIGHTS_SETS_COLUMNS = arrayOf(
+        COL_HABIT_NAME, COL_DATE, COL_MACHINE,
+        COL_EXERCISE_NAME, COL_WEIGHT_GRAMS, COL_REPS, COL_TIME_OF_DAY
+    )
+
+    /**
+     * `/v3/weights/sets` — rows: [WEIGHTS_SETS_COLUMNS]. The per-set sidecar
+     * (weights_sets.json): one row per individually logged set with its own
+     * exercise name, weight, reps and time — unlike the day-aggregated
+     * `/v3/weights` this distinguishes multiple exercises done on the same
+     * day/slot. Optional `?from=yyyy-MM-dd` / `?to=yyyy-MM-dd` filters.
+     */
+    fun queryWeightsSets(
+        context: Context?,
+        settings: AppSettings?,
+        uri: android.net.Uri,
+        projection: Array<out String>?
+    ): Cursor {
+        val cols = projection ?: WEIGHTS_SETS_COLUMNS
+        val cursor = MatrixCursor(cols)
+        if (context == null || settings == null || !settings.companionApiEnabled) return cursor
+        val from = uri.getQueryParameter("from")
+        val to = uri.getQueryParameter("to")
+        val all: Map<String, Map<String, List<com.example.tail.data.WeightsSet>>> = runBlocking {
+            try {
+                com.example.tail.data.WeightsSetsRepository(context).loadAll()
+            } catch (_: Exception) {
+                emptyMap()
+            }
+        }
+        for (habit in settings.weightsHabits.sorted()) {
+            val byDate = all[habit] ?: continue
+            for (date in byDate.keys.sorted()) {
+                if (from != null && date < from) continue
+                if (to != null && date > to) continue
+                for (set in byDate[date].orEmpty()) {
+                    emit(cursor, cols, mapOf(
+                        COL_HABIT_NAME to habit,
+                        COL_DATE to date,
+                        COL_MACHINE to if (set.machine) 1 else 0,
+                        COL_EXERCISE_NAME to set.exercise,
+                        COL_WEIGHT_GRAMS to set.weightGrams,
+                        COL_REPS to set.reps,
+                        COL_TIME_OF_DAY to set.time
+                    ))
+                }
+            }
+        }
+        return cursor
+    }
 
     /** The four weight-slot series of one weights habit from the habits DB. */
     private fun loadWeightsSlots(

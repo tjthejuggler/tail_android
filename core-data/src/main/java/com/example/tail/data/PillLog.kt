@@ -58,7 +58,7 @@ object PillLogParser {
         "Magnesium Glycinate 150mg" to "Magnesium Glycinate 150mg",
         "Zinc" to "Zinc 5mg",
         "Creatine 3g" to "Creatine 3g",
-        "Glutamine 10g" to "Glutamine 10g",
+        "Glutamine 5g" to "Glutamine 5g",
         "Iron 18mg" to "Iron 18mg",
         "C 1g" to "Vitamin C 1g",
         "Spirulina 4g" to "Spirulina 4g",
@@ -76,7 +76,12 @@ object PillLogParser {
      */
     val LEGACY_REMOVED_CATALOG_KEYS: Set<String> = setOf(
         "Vitamin D3", "Vitamin K2", "Calcium", "Magnesium", "Boron", "Copper",
-        "Creatine", "Glutamine", "Iron"
+        "Creatine", "Glutamine", "Iron",
+        // Base dose changed 10g → 5g (2026-11-10); the 10g picker option is
+        // retired so the list stays uncluttered. Historical "Glutamine 10g"
+        // lines carry their own typed dose token, so they still parse to a
+        // correct 10 g dose without needing this catalog entry.
+        "Glutamine 10g"
     )
 
     /** Extra aliases: short user spelling → canonical catalog name. */

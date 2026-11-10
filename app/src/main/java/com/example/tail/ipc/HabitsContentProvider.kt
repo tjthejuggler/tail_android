@@ -95,6 +95,7 @@ class HabitsContentProvider : ContentProvider() {
         val V3_WEIGHTS_URI: Uri = Uri.parse("content://$AUTHORITY/v3/weights")
         val V3_WEIGHTS_PBS_URI: Uri = Uri.parse("content://$AUTHORITY/v3/weights/pbs")
         val V3_WEIGHTS_RECENT_URI: Uri = Uri.parse("content://$AUTHORITY/v3/weights/recent_exercises")
+        val V3_WEIGHTS_SETS_URI: Uri = Uri.parse("content://$AUTHORITY/v3/weights/sets")
         val V2_CAPABILITIES_URI: Uri = Uri.parse("content://$AUTHORITY/v2/capabilities")
         val V2_HABITS_URI: Uri = Uri.parse("content://$AUTHORITY/v2/habits")
         val V2_APPS_URI: Uri = Uri.parse("content://$AUTHORITY/v2/apps")
@@ -111,6 +112,7 @@ class HabitsContentProvider : ContentProvider() {
         private const val CODE_V3_WEIGHTS = 20
         private const val CODE_V3_WEIGHTS_PBS = 21
         private const val CODE_V3_WEIGHTS_RECENT = 22
+        private const val CODE_V3_WEIGHTS_SETS = 23
         private const val CODE_V2_CAPABILITIES = 10
         private const val CODE_V2_HABITS = 11
         private const val CODE_V2_APPS = 12
@@ -125,6 +127,7 @@ class HabitsContentProvider : ContentProvider() {
             addURI(AUTHORITY, "v3/weights", CODE_V3_WEIGHTS)
             addURI(AUTHORITY, "v3/weights/pbs", CODE_V3_WEIGHTS_PBS)
             addURI(AUTHORITY, "v3/weights/recent_exercises", CODE_V3_WEIGHTS_RECENT)
+            addURI(AUTHORITY, "v3/weights/sets", CODE_V3_WEIGHTS_SETS)
             addURI(AUTHORITY, "v2/capabilities", CODE_V2_CAPABILITIES)
             addURI(AUTHORITY, "v2/habits", CODE_V2_HABITS)
             addURI(AUTHORITY, "v2/apps", CODE_V2_APPS)
@@ -151,6 +154,7 @@ class HabitsContentProvider : ContentProvider() {
         CODE_V3_WEIGHTS -> CompanionReadEndpoints.queryWeightsHistory(context, loadSettings(), projection)
         CODE_V3_WEIGHTS_PBS -> CompanionReadEndpoints.queryWeightsPbs(context, loadSettings(), projection)
         CODE_V3_WEIGHTS_RECENT -> CompanionReadEndpoints.queryWeightsRecentExercises(loadSettings(), projection)
+        CODE_V3_WEIGHTS_SETS -> CompanionReadEndpoints.queryWeightsSets(context, loadSettings(), uri, projection)
         CODE_V2_CAPABILITIES -> CompanionReadEndpoints.queryCapabilities(projection)
         CODE_V2_BRIDGE_CONFIG -> CompanionReadEndpoints.queryBridgeConfig(loadSettings(), projection)
         CODE_V2_BRIDGE_CONFIG -> CompanionReadEndpoints.queryBridgeConfig(loadSettings(), projection)

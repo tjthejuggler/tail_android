@@ -54,6 +54,32 @@ class PillLogParserTest {
     }
 
     @Test
+    fun `glutamine 5g base dose with retired 10g option keeps history doses intact`() {
+        // The 10g picker option is retired: not in the catalog, and scrubbed
+        // from any persisted settings overlay via LEGACY_REMOVED_CATALOG_KEYS.
+        assertTrue(!catalog.containsKey("Glutamine 10g"))
+        assertTrue("Glutamine 10g" in PillLogParser.LEGACY_REMOVED_CATALOG_KEYS)
+        assertNull(PillLogParser.matchPill("Glutamine 10g", catalog))
+
+        // Historical "Glutamine 10g" lines carry their own typed dose token:
+        // even unmatched, the dose is still counted at the accurate 10 g.
+        val histDay = PillLogParser.parseDay(listOf("Glutamine 10g", "Glutamine 10g"), catalog)
+        assertEquals(20.0, totalDose(histDay, "Glutamine"), 0.001)
+
+        // New 5g base dose: its own catalog entry, one tap = one 5g serving.
+        assertTrue(catalog.containsKey("Glutamine 5g"))
+        assertEquals("Glutamine 5g", PillLogParser.matchPill("Glutamine 5g", catalog))
+        val newDay = PillLogParser.parseDay(listOf("Glutamine 5g"), catalog)
+        assertEquals(1, newDay.servings["Glutamine 5g"])
+        assertEquals(5.0, doseOf(newDay, "Glutamine 5g", "Glutamine"), 0.001)
+
+        // Mixed day: old 10g line + two 5g taps never cross-contaminate.
+        val mixed = PillLogParser.parseDay(listOf("Glutamine 10g", "Glutamine 5g", "Glutamine 5g"), catalog)
+        assertEquals(2, mixed.servings["Glutamine 5g"])
+        assertEquals(20.0, totalDose(mixed, "Glutamine"), 0.001)
+    }
+
+    @Test
     fun `D3 25µg K2 20µg historical line is a catalog pill with both doses`() {
         val pill = "D3 25µg, K2 20µg"
         val day = PillLogParser.parseDay(listOf(pill, pill), catalog)
