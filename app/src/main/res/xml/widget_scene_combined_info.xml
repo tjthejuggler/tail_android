@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AppWidgetProvider metadata for the combined scene widget.
+    4 cells wide / 2 cells tall (the classic tier-bar strip doubled in
+    height so the Kenga + Octo 1x2 portrait figures fit inside).
+    Updates are pushed from CombinedSceneWidgetProvider.refreshAll() on
+    every habit increment AND whenever Kenga/Octo announce a figure
+    change (ACTION_SCENE_FIGURES_CHANGED); the 30-minute OS tick is only
+    a date-rollover fallback.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialLayout="@layout/widget_scene_combined"
+    android:minWidth="320dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="110dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen"
+    android:previewImage="@mipmap/ic_launcher" />

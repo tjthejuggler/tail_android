@@ -53,6 +53,12 @@ class TailApplication : Application() {
                 com.example.tail.widget.TierBarWidgetProvider.refreshAll(ctx)
             } catch (_: Exception) {
             }
+            try {
+                // 4x2 combined scene: same tier refresh + hash-gated
+                // Kenga/Octo figure pull (cheap no-op when unchanged).
+                com.example.tail.widget.CombinedSceneWidgetProvider.refreshAll(ctx)
+            } catch (_: Exception) {
+            }
         }
         com.example.tail.data.AppHooks.refreshWallpaperAfterSave = { ctx, db ->
             try {

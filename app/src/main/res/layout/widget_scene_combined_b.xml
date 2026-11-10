@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Combined scene widget (4 wide x 2 tall): the runtime-composited
+    scene bitmap (sky + ground + lizard + guest figures) fills the
+    frame. NO root background — the composited bitmap already carries
+    the rounded corners, and a background drawable would bleed through
+    them as a coloured border.
+
+    Touch model (mirrors the 4x1 tier bar's feature set):
+      · left area  — invisible horizontal habit-screen zones (settings-
+                     configured); with none selected the container itself
+                     opens Tail.
+      · right area — guest strip: Kenga | Octo halves, each deep-linking
+                     into its app.
+      · top bar    — notification-count circle + quick-launch buttons
+                     (same TierBarWidgetConfig sources as the tier bar).
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/scene_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:id="@+id/scene_bg"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:contentDescription="Tail combined scene" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal">
+
+        <!-- Habit-screen zones (settings-configured, tier-bar parity). -->
+        <LinearLayout
+            android:id="@+id/scene_habit_zones"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="2"
+            android:orientation="horizontal"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView android:id="@+id/scene_zone_0" android:layout_width="0dp"
+                android:layout_height="match_parent" android:layout_weight="1"
+                android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/scene_zone_1" android:layout_width="0dp"
+                android:layout_height="match_parent" android:layout_weight="1"
+                android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/scene_zone_2" android:layout_width="0dp"
+                android:layout_height="match_parent" android:layout_weight="1"
+                android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/scene_zone_3" android:layout_width="0dp"
+                android:layout_height="match_parent" android:layout_weight="1"
+                android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/scene_zone_4" android:layout_width="0dp"
+                android:layout_height="match_parent" android:layout_weight="1"
+                android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/scene_zone_5" android:layout_width="0dp"
+                android:layout_height="match_parent" android:layout_weight="1"
+                android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/scene_zone_6" android:layout_width="0dp"
+                android:layout_height="match_parent" android:layout_weight="1"
+                android:clickable="true" android:focusable="true" />
+            <TextView android:id="@+id/scene_zone_7" android:layout_width="0dp"
+                android:layout_height="match_parent" android:layout_weight="1"
+                android:clickable="true" android:focusable="true" />
+        </LinearLayout>
+
+        <!-- Guest strip: Kenga (left half) | Octo (right half). -->
+        <LinearLayout
+            android:id="@+id/scene_guest_area"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView
+                android:id="@+id/scene_zone_kenga"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="Open Kenga" />
+
+            <TextView
+                android:id="@+id/scene_zone_octo"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="Open Octo" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Top bar: notification badge + quick-launch circles (runtime
+         bitmaps, identical scheme to the tier bar). -->
+    <LinearLayout
+        android:id="@+id/scene_top_bar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="3dp">
+
+        <ImageView
+            android:id="@+id/scene_notif"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="Pending habit notifications" />
+
+        <ImageView
+            android:id="@+id/scene_btn_grid"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="Habits grid" />
+
+        <ImageView
+            android:id="@+id/scene_btn_map"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="Map" />
+
+        <ImageView
+            android:id="@+id/scene_btn_app_stats"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="App stats" />
+
+        <ImageView
+            android:id="@+id/scene_btn_chess_stats"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="Chess readiness stats" />
+
+        <ImageView
+            android:id="@+id/scene_btn_settings"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="Settings" />
+    </LinearLayout>
+</FrameLayout>

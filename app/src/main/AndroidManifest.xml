@@ -432,6 +432,39 @@
         </receiver>
 
         <!--
+            Combined scene widget (4x2): the tall sibling of the tier bar.
+            Same tier colour system + the live Kenga/Octo figures. Refreshed
+            on habit increments (AppHooks.refreshWidgets) and whenever a
+            sibling app announces a figure change (signature-protected
+            broadcast below).
+        -->
+        <receiver
+            android:name=".widget.CombinedSceneWidgetProvider"
+            android:exported="true"
+            android:label="Tail scene">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_scene_combined_info" />
+        </receiver>
+
+        <!--
+            Kenga/Octo -> Tail figure-changed ping. Signature permission
+            gates senders (same keystore family only); the receiver just
+            re-runs the hash-gated figure pull + repaint.
+        -->
+        <receiver
+            android:name=".widget.SceneFigureRefreshReceiver"
+            android:exported="true"
+            android:permission="com.example.tail.permission.TAIL_INTEGRATION">
+            <intent-filter>
+                <action android:name="com.example.tail.ACTION_SCENE_FIGURES_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
             HabitListRemoteViewsService: backs the ListView inside the expanded
             widget. Must hold android.permission.BIND_REMOTEVIEWS so only the
             system can bind to it (Android requires this for RemoteViewsService).
