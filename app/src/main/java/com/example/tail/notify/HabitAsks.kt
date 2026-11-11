@@ -8,6 +8,7 @@ import com.example.tail.data.HabitNotification
 import com.example.tail.data.HabitTimestampRepository
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.NotificationStore
+import com.example.tail.data.movie.MovieCacheStore
 import com.example.tail.data.movie.OmdbService
 import com.example.tail.data.SettingsRepository
 import com.example.tail.data.TextInputRepository
@@ -163,7 +164,14 @@ object HabitAsks {
             val settings = settingsRepo.settingsFlow.first()
             // Internal-first: no external file needed — null URI means internal-only.
             val uriStr = settings.textInputFileUris[ask.habitName]
-            val (payloadTime, payloadMinutes) = HabitNotification.parseMoviePayload(ask.payload)
+            val (payloadTime, payloadMinutesRaw) = HabitNotification.parseMoviePayload(ask.payload)
+            // The payload length is baked at DETECTION time, when the movie
+            // had just started and the bridge often reports 0 watched minutes.
+            // Resolve the CURRENT watched length from the phone-local cache
+            // (kept fresh by the background sync worker) so a system-shade
+            // "Yes" — which has no length editor — still auto-sets the
+            // actually-watched minutes.
+            val payloadMinutes = resolveMovieMinutes(appContext, ask.title, payloadMinutesRaw)
             val time = payloadTime?.let { parseTime(it) } ?: LocalTime.now()
             // The movie's watch day: embedded in the payload when the ask was
             // created, falling back to the id's marker day (legacy asks), then
@@ -575,6 +583,61 @@ object HabitAsks {
             postedCount++
         }
         return firstPosted
+    }
+
+    /**
+     * The effective watch minutes for answering a movie ask: [payloadMinutes]
+     * when the ask already carries a length, else the CURRENT length from the
+     * phone-local movie cache (kept fresh by the background sync worker and
+     * the app-open refresh). The ask payload's length is baked at DETECTION
+     * time — the movie had often just started, so the bridge reported 0
+     * watched minutes then; by answer time the cache holds the real total.
+     * Matching is by parsed cache key so an annotated title still matches.
+     */
+    suspend fun resolveMovieMinutes(
+        appContext: Context,
+        title: String,
+        payloadMinutes: Int
+    ): Int {
+        if (payloadMinutes > 0) return payloadMinutes
+        return try {
+            val key = OmdbService.parseTitle(title).cacheKey
+            MovieCacheStore.load(appContext).movies
+                .firstOrNull { OmdbService.parseTitle(it.title).cacheKey == key }
+                ?.totalWatchMin?.takeIf { it > 0 } ?: 0
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to resolve movie minutes from cache: ${e.message}")
+            0
+        }
+    }
+
+    /**
+     * Re-bakes a movie ask's payload length from the current movie cache when
+     * the ask carries none (detected at movie start). Persists the update so
+     * EVERY surface that later shows the ask — flash, bell center, system
+     * shade — seeds its length wheel with the actually-watched minutes.
+     * Returns the (possibly updated) ask; non-movie asks pass through.
+     */
+    suspend fun refreshMovieAskMinutes(
+        appContext: Context,
+        ask: HabitNotification
+    ): HabitNotification {
+        if (ask.type != HabitNotification.TYPE_MOVIE) return ask
+        val (time, minutes) = HabitNotification.parseMoviePayload(ask.payload)
+        if (minutes > 0) return ask
+        val fresh = resolveMovieMinutes(appContext, ask.title, 0)
+        if (fresh <= 0) return ask
+        val day = HabitNotification.parseMoviePayloadDate(ask.payload)
+        val updated = ask.copy(
+            payload = HabitNotification.moviePayload(time ?: "", fresh, day)
+        )
+        try {
+            NotificationStore(appContext).update(updated)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist refreshed movie minutes: ${e.message}")
+        }
+        Log.i(TAG, "Refreshed movie ask '${ask.title}' length to $fresh min from cache")
+        return updated
     }
 
     private fun parseDateOrNull(dateStr: String): LocalDate? = try {

@@ -4318,8 +4318,16 @@ class HabitViewModel(
                                 ?: LocalDate.now()
                         // The length annotation can be overridden at answer
                         // time (partial watch) — the minutes slot re-syncs
-                        // from whatever lands in the text.
-                        val minutes = minutesOverride ?: payloadMinutes
+                        // from whatever lands in the text. An override only
+                        // counts when the user actually set a length; a wheel
+                        // left untouched at its 0 seed (ask detected at movie
+                        // start) falls back to the payload, then to the
+                        // CURRENT watched length from the movie cache so the
+                        // actually-watched minutes are auto-set.
+                        val minutes = (minutesOverride?.takeIf { it > 0 })
+                            ?: com.example.tail.notify.HabitAsks.resolveMovieMinutes(
+                                context, ask.title, payloadMinutes
+                            )
                         val text = if (minutes > 0) {
                             "${ask.title} ($minutes min)"
                         } else {
@@ -4369,8 +4377,16 @@ class HabitViewModel(
                     .firstOrNull { !it.flashShown && it.type != HabitNotification.TYPE_INFO }
                 if (unseen != null) {
                     notificationStore.markFlashShown(unseen.id)
+                    // Re-bake a movie ask's length from the current cache when
+                    // it was detected at movie start (0 watched minutes then)
+                    // — so the flash's editable Length wheel seeds with the
+                    // actually-watched total instead of 0.
+                    val refreshed = com.example.tail.notify.HabitAsks
+                        .refreshMovieAskMinutes(context, unseen)
+                    onAsk(refreshed)
+                } else {
+                    onAsk(null)
                 }
-                onAsk(unseen)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to consume unseen ask: ${e.message}")
                 onAsk(null)

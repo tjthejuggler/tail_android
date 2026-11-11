@@ -60,6 +60,18 @@ class NotificationStore(private val context: Context) {
         }
     }
 
+    /** Replaces the stored ask with the same id as [notification] (no-op when absent). */
+    suspend fun update(notification: HabitNotification) {
+        dataStore.edit { prefs ->
+            val current = HabitNotificationCodec.decode(prefs[KEY_NOTIFICATIONS])
+            val target = current.indexOfFirst { it.id == notification.id }
+            if (target < 0) return@edit
+            val updated = current.toMutableList()
+            updated[target] = notification
+            prefs[KEY_NOTIFICATIONS] = HabitNotificationCodec.encode(updated)
+        }
+    }
+
     /** Marks the one-time flash as shown for [id] (no-op when absent). */
     suspend fun markFlashShown(id: String) {
         dataStore.edit { prefs ->
